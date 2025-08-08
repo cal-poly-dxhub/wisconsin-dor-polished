@@ -1,0 +1,44 @@
+[project]
+name = "wisconsin-bot"
+version = "0.1.0"
+description = "A chatbot for the Wisconsin Department of Revenue"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.pyrefly]
+python-platform = "darwin"
+python-interpreter = ".venv/bin/python"
+search-path = []
+replace-imports-with-any = []
+
+[tool.pyrefly.errors]
+bad-assignment = true     # Ensure variable assignments match their annotated types
+bad-argument-count = true # Catch calls with incorrect argument counts
+bad-argument-type = true  # Catch calls with incorrect argument types
+missing-argument = true   # Catch required arguments missing in calls
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle errors
+  "W",  # pycodestyle warnings
+  "F",  # pyflakes
+  "I",  # isort
+  "B",  # flake8-bugbear
+  "C4", # flake8-comprehensions
+  "UP", # pyupgrade
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[dependency-groups]
+dev = ["pytest>=8.4.1"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["scripts"]
