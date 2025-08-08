@@ -9,7 +9,8 @@
     "build": "bun run --filter='*' build",
     "dev": "bun run --filter='*' dev",
     "test": "bun run --filter='*' test",
-    "deploy": "bun run --elide-lines=0 --filter='infra' deploy"
+    "deploy": "bun run --elide-lines=0 --filter='infra' deploy",
+    "bundle": "uv run scripts/bundle.py"
   },
   "devDependencies": {
     "@types/node": "^22.7.9",
@@ -18,4 +19,5 @@
   "engines": {
     "bun": "1.2.19"
   }
-} 
+}
+

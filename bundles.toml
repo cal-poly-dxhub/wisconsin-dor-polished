@@ -1,0 +1,10 @@
+# Directory to use as root when bundling. dest directories will be
+# relative to this directory.
+target_directory = "packages/infra/bundle"
+
+# dest: a folder in the bundling target directory
+# sources: a list of folders or files to copy into the destination
+
+# [[bundles]]
+# dest = "chat_api"
+# sources = ["./sessions/lambdas/chat_api/"]
