@@ -1,0 +1,21 @@
+{
+  "name": "wisconsin-sst",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "bun run --filter='*' build",
+    "dev": "bun run --filter='*' dev",
+    "test": "bun run --filter='*' test",
+    "deploy": "bun run --elide-lines=0 --filter='infra' deploy"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.9",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "bun": "1.2.19"
+  }
+} 
