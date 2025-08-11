@@ -1,0 +1,18 @@
+{
+  "name": "shared-lambda-layers",
+  "version": "0.1.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.208.0",
+    "constructs": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.7.9",
+    "typescript": "~5.6.3"
+  }
+} 

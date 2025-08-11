@@ -8,6 +8,7 @@ pnpm-debug.log*
 
 # TypeScript compiled output
 *.js
+!*.test.js
 *.js.map
 *.d.ts
 *.d.ts.map
@@ -112,7 +113,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/

@@ -38,6 +38,15 @@ indent-style = "space"
 line-ending = "auto"
 
 [dependency-groups]
+chat-api = [
+  "aws-lambda-powertools>=3.18.0",
+  "boto3>=1.40.2",
+  "pydantic>=2.11.7",
+  "pydantic-core>=2.33.2",
+]
+step-function-types = [
+  "pydantic>=2.11.7",
+]
 dev = ["pytest>=8.4.1"]
 
 [tool.ruff.lint.isort]

@@ -9,15 +9,18 @@
     "build": "bun run --filter='*' build",
     "dev": "bun run --filter='*' dev",
     "test": "bun run --filter='*' test",
-    "deploy": "bun run --elide-lines=0 --filter='infra' deploy",
+    "deploy": "bun run bundle && bun run --elide-lines=0 --filter='infra' deploy",
     "bundle": "uv run scripts/bundle.py"
   },
   "devDependencies": {
     "@types/node": "^22.7.9",
     "typescript": "^5.6.3"
   },
+  "dependencies": {
+    "aws-cdk-lib": "2.208.0",
+    "constructs": "^10.0.0"
+  },
   "engines": {
     "bun": "1.2.19"
   }
 }
-
