@@ -15,6 +15,7 @@ export class WisconsinBotStack extends cdk.Stack {
       description:
         'Stack providing API and WebSocket session services for the Wisconsin bot.',
       stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
+      websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
     });
   }
 }

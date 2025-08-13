@@ -3,13 +3,15 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as apigatewayv2Integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 
 export interface SessionsStackProps extends cdk.StackProps {
   stepFunctionTypesLayer: lambda.LayerVersion;
+  websocketUtilsLayer: lambda.LayerVersion;
 }
 
-export class SessionsStack extends cdk.Stack {
+export class SessionsStack extends cdk.NestedStack {
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
 
@@ -55,6 +57,168 @@ export class SessionsStack extends cdk.Stack {
         actions: ['events:PutEvents'],
         resources: ['*'],
       })
+    );
+
+    const connectHandler = new lambda.Function(this, 'ConnectHandler', {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'connect.handler',
+      code: lambda.Code.fromAsset('bundle/connect', {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash',
+            '-c',
+            [
+              'pip install --platform manylinux2014_x86_64 --only-binary=:all: -r requirements.txt -t /asset-output',
+              'cp -r . /asset-output',
+            ].join(' && '),
+          ],
+        },
+      }),
+      environment: {
+        SESSIONS_TABLE_NAME: sessionTable.tableName,
+      },
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+    });
+
+    const disconnectHandler = new lambda.Function(this, 'DisconnectHandler', {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'disconnect.handler',
+      code: lambda.Code.fromAsset('bundle/disconnect', {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash',
+            '-c',
+            [
+              'pip install --platform manylinux2014_x86_64 --only-binary=:all: -r requirements.txt -t /asset-output',
+              'cp -r . /asset-output',
+            ].join(' && '),
+          ],
+        },
+      }),
+      environment: {
+        SESSIONS_TABLE_NAME: sessionTable.tableName,
+      },
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+    });
+
+    const defaultHandler = new lambda.Function(this, 'DefaultHandler', {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'default.handler',
+      code: lambda.Code.fromAsset('bundle/default', {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash',
+            '-c',
+            [
+              'pip install --platform manylinux2014_x86_64 --only-binary=:all: -r requirements.txt -t /asset-output',
+              'cp -r . /asset-output',
+            ].join(' && '),
+          ],
+        },
+      }),
+      layers: [props.websocketUtilsLayer],
+      environment: {
+        SESSIONS_TABLE_NAME: sessionTable.tableName,
+      },
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+    });
+
+    // Grant permissions to WebSocket handlers
+    sessionTable.grantReadWriteData(connectHandler);
+    sessionTable.grantReadWriteData(disconnectHandler);
+
+    // Grant API Gateway Management API permissions for sending WebSocket messages
+    defaultHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['execute-api:ManageConnections'],
+        resources: ['*'],
+      })
+    );
+
+    const websocketApi = new apigatewayv2.WebSocketApi(
+      this,
+      'SessionsWebSocketApi',
+      {
+        apiName: 'Wisconsin Sessions WebSocket API',
+        description: 'WebSocket API for managing chat sessions',
+      }
+    );
+
+    const connectIntegration =
+      new apigatewayv2Integrations.WebSocketLambdaIntegration(
+        'ConnectIntegration',
+        connectHandler
+      );
+
+    const disconnectIntegration =
+      new apigatewayv2Integrations.WebSocketLambdaIntegration(
+        'DisconnectIntegration',
+        disconnectHandler
+      );
+
+    const defaultIntegration =
+      new apigatewayv2Integrations.WebSocketLambdaIntegration(
+        'DefaultIntegration',
+        defaultHandler
+      );
+
+    websocketApi.addRoute('$connect', {
+      integration: connectIntegration,
+    });
+    websocketApi.addRoute('$disconnect', {
+      integration: disconnectIntegration,
+    });
+    websocketApi.addRoute('$default', {
+      integration: defaultIntegration,
+    });
+
+    // Create CloudWatch log groups for WebSocket API logging
+    const executionLogGroup = new logs.LogGroup(
+      this,
+      'WebSocketExecutionLogs',
+      {
+        logGroupName: `/aws/apigateway/websocket-execution-logs`,
+        retention: logs.RetentionDays.ONE_WEEK,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }
+    );
+
+    const websocketStage = new apigatewayv2.WebSocketStage(
+      this,
+      'WebSocketDevStage',
+      {
+        webSocketApi: websocketApi,
+        stageName: 'dev',
+        autoDeploy: true,
+      }
+    );
+
+    // Use L1 construct to enable execution logging (not supported in L2 WebSocket constructs)
+    const cfnStage = websocketStage.node.defaultChild as apigatewayv2.CfnStage;
+
+    // Enable execution logging and detailed metrics
+    cfnStage.defaultRouteSettings = {
+      loggingLevel: 'INFO', // 'ERROR' | 'INFO' | 'OFF'
+      dataTraceEnabled: false, // true => full req/resp (verbose)
+      detailedMetricsEnabled: true,
+    };
+
+    // Grant API Gateway permission to write to CloudWatch Logs
+    executionLogGroup.grantWrite(
+      new iam.ServicePrincipal('apigateway.amazonaws.com')
+    );
+
+    // Add WebSocket callback URL to default handler environment
+    defaultHandler.addEnvironment(
+      'WEBSOCKET_CALLBACK_URL',
+      websocketStage.callbackUrl
     );
 
     const httpApi = new apigatewayv2.HttpApi(this, 'SessionsHttpApi', {
@@ -125,6 +289,22 @@ export class SessionsStack extends cdk.Stack {
       value: devStage.url,
       description: 'URL of the dev stage',
       exportName: 'WisconsinBot-SessionsDevStageUrl',
+    });
+
+    new cdk.CfnOutput(this, 'WebSocketApiUrl', {
+      value: websocketStage.url,
+      description: 'URL of the WebSocket API',
+      exportName: 'WisconsinBot-WebSocketApiUrl',
+    });
+
+    new cdk.CfnOutput(this, 'WebSocketApiId', {
+      value: websocketApi.apiId,
+      description: 'ID of the WebSocket API',
+    });
+
+    new cdk.CfnOutput(this, 'WebSocketExecutionLogGroup', {
+      value: executionLogGroup.logGroupName,
+      description: 'CloudWatch Log Group for WebSocket execution logs',
     });
   }
 }

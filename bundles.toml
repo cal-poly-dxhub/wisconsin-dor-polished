@@ -13,3 +13,39 @@ sources = ["./packages/sessions/lambdas/chat_api/"]
 dest = "step_function_types/python/step_function_types"
 sources = ["./packages/shared/lambda_layers/step_function_types/"]
 
+[[bundles]]
+dest = "websocket_utils/python/websocket_utils"
+sources = ["./packages/shared/lambda_layers/websocket_utils/"]
+
+[[bundles]]
+dest = "connect"
+sources = [
+    "./packages/sessions/lambdas/websocket/connect.py",
+    "./packages/sessions/lambdas/websocket/websocket_errors.py",
+    "./packages/sessions/lambdas/websocket/response_utils.py",
+    "./packages/sessions/lambdas/websocket/validators.py",
+    "./packages/sessions/lambdas/websocket/__init__.py",
+    "./packages/sessions/lambdas/websocket/requirements.txt",
+]
+
+[[bundles]]
+dest = "disconnect"
+sources = [
+    "./packages/sessions/lambdas/websocket/disconnect.py",
+    "./packages/sessions/lambdas/websocket/websocket_errors.py",
+    "./packages/sessions/lambdas/websocket/response_utils.py",
+    "./packages/sessions/lambdas/websocket/validators.py",
+    "./packages/sessions/lambdas/websocket/__init__.py",
+    "./packages/sessions/lambdas/websocket/requirements.txt",
+]
+
+[[bundles]]
+dest = "default"
+sources = [
+    "./packages/sessions/lambdas/websocket/default.py",
+    "./packages/sessions/lambdas/websocket/websocket_errors.py",
+    "./packages/sessions/lambdas/websocket/response_utils.py",
+    "./packages/sessions/lambdas/websocket/validators.py",
+    "./packages/sessions/lambdas/websocket/__init__.py",
+    "./packages/sessions/lambdas/websocket/requirements.txt",
+]
