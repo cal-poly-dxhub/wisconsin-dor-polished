@@ -3,8 +3,16 @@ import logging
 import os
 
 import boto3
+from botocore.exceptions import ClientError
 
-from websocket_utils.models import PlainWebSocketMessage, WebSocketMessage
+from websocket_utils.errors import (
+    InvalidMessageError,
+    MessageDeliveryError,
+    SessionLookupError,
+    SessionNotFoundError,
+    WebSocketConnectionError,
+)
+from websocket_utils.models import ErrorMessage, PlainWebSocketMessage, WebSocketMessage
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
@@ -17,11 +25,15 @@ class WebSocketServer:
 
     def __init__(self, connection_id: str):
         self.connection_id = connection_id
-        # Extract domain and stage from the WebSocket callback URL
         endpoint_url = os.environ["WEBSOCKET_CALLBACK_URL"]
+
         # Convert wss://domain/stage to https://domain/stage
         endpoint_url = endpoint_url.replace("wss://", "https://")
-        self.client = boto3.client("apigatewaymanagementapi", endpoint_url=endpoint_url)
+        try:
+            self.client = boto3.client("apigatewaymanagementapi", endpoint_url=endpoint_url)
+        except Exception as e:
+            logger.error(f"Failed to create WebSocket client: {e}")
+            raise WebSocketConnectionError(details={"original_error": str(e)}) from e
 
     async def send_json(self, body: WebSocketMessage) -> None:
         """
@@ -30,19 +42,50 @@ class WebSocketServer:
             body: The message body (Pydantic model).
         """
 
+        logger.info(f"Sending message to connection {self.connection_id}")
         match body:
-            # For echoing
+            case ErrorMessage(error=error):
+                message = {"error": error}
             case PlainWebSocketMessage(message=message):
+                # For echoing during testing
                 pass
             case _:
                 logger.error("WebSocket client received an unknown message type")
+                raise InvalidMessageError(details={"message_type": type(body).__name__})
 
         try:
             response = self.client.post_to_connection(
                 ConnectionId=self.connection_id, Data=json.dumps(message)
             )
-            logger.debug(f"Message sent successfully to connection {self.connection_id}")
+            logger.info(f"Message sent successfully to connection {self.connection_id}")
             return response
         except Exception as e:
             logger.error(f"Failed to send message to connection {self.connection_id}: {e}")
-            raise
+            raise MessageDeliveryError(
+                details={"connection_id": self.connection_id, "original_error": str(e)}
+            ) from e
+
+
+async def get_ws_connection_from_session(session_id: str) -> WebSocketServer:
+    """
+    Look up the websocket connection ID for a session in DynamoDB and return a WebSocket client.
+    """
+    dynamodb = boto3.client("dynamodb")
+    table_name = os.environ["SESSIONS_TABLE_NAME"]
+
+    # Allow error to bubble
+    try:
+        resp = dynamodb.get_item(
+            TableName=table_name,
+            Key={"sessionId": {"S": session_id}},
+        )
+    except ClientError as e:
+        logger.error(f"Failed to lookup connection ID for session {session_id}: {e}")
+        raise SessionLookupError(session_id=session_id, details={"aws_error": str(e)}) from e
+
+    item = resp.get("Item")
+    if not item or "connectionId" not in item:
+        raise SessionNotFoundError(session_id=session_id, details={"table_response": resp})
+
+    connection_id = item["connectionId"]["S"]
+    return WebSocketServer(connection_id)
