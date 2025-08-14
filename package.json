@@ -8,9 +8,11 @@
   "scripts": {
     "build": "bun run --filter='*' build",
     "dev": "bun run --filter='*' dev",
-    "test": "bun run --filter='*' test",
+    "pytest": "uv run pytest",
+    "test": "bun run --elide-lines=0 --filter='*' test",
     "deploy": "bun run bundle && bun run --elide-lines=0 --filter='infra' deploy",
-    "bundle": "uv run scripts/bundle.py"
+    "bundle": "uv run scripts/bundle.py",
+    "stream": "bash scripts/stream_logs.sh"
   },
   "devDependencies": {
     "@types/node": "^22.7.9",
