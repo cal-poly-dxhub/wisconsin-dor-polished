@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { SessionsStack } from '../../sessions/infra/sessions-stack';
+import { MessagesStack } from '../../messages/infra/messages-stack';
 import { LambdaLayersStack } from '../../shared/lambda_layers/infra/lambda-layers-stack';
 
 export class WisconsinBotStack extends cdk.Stack {
@@ -16,6 +17,11 @@ export class WisconsinBotStack extends cdk.Stack {
         'Stack providing API and WebSocket session services for the Wisconsin bot.',
       stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
       websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
+    });
+
+    new MessagesStack(this, 'WisconsinMessagesStack', {
+      description:
+        'Stack providing messaging services (classifier and workflows).',
     });
   }
 }
