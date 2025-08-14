@@ -49,3 +49,7 @@ sources = [
     "./packages/sessions/lambdas/websocket/__init__.py",
     "./packages/sessions/lambdas/websocket/requirements.txt",
 ]
+
+[[bundles]]
+dest = "classifier"
+sources = ["./packages/messages/lambdas/classifier"]

@@ -1,7 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
-import * as path from 'path';
 
 export class LambdaLayersStack extends cdk.NestedStack {
   public readonly stepFunctionTypesLayer: lambda.LayerVersion;

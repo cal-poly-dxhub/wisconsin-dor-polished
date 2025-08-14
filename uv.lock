@@ -252,6 +252,9 @@ chat-api = [
     { name = "pydantic" },
     { name = "pydantic-core" },
 ]
+classifier = [
+    { name = "pydantic" },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -275,6 +278,7 @@ chat-api = [
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-core", specifier = ">=2.33.2" },
 ]
+classifier = [{ name = "pydantic", specifier = ">=2.11.7" }]
 dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.1.0" },

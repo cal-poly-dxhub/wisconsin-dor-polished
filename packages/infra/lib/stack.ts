@@ -22,6 +22,7 @@ export class WisconsinBotStack extends cdk.Stack {
     new MessagesStack(this, 'WisconsinMessagesStack', {
       description:
         'Stack providing messaging services (classifier and workflows).',
+      stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
     });
   }
 }

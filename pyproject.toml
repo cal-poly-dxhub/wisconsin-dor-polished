@@ -53,13 +53,13 @@ chat-api = [
   "pydantic>=2.11.7",
   "pydantic-core>=2.33.2",
 ]
-step-function-types = [
-  "pydantic>=2.11.7",
-]
-dev = ["pytest>=8.4.1"]
+step-function-types = ["pydantic>=2.11.7"]
 dev = ["pytest>=8.4.1", "pytest-asyncio>=1.1.0"]
 websocket = ["pydantic>=2.11.7"]
 websocket-utils = ["pydantic>=2.11.7"]
+classifier = [
+    "pydantic>=2.11.7",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["scripts"]
