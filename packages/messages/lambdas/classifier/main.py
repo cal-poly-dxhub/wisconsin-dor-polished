@@ -52,6 +52,7 @@ def handler(event: dict, context) -> dict:
             # Trigger streaming and generation jobs if we found a matching FAQ
             logger.info("FAQ match found, preparing response jobs.")
             return ClassifierResult(
+                successful=True,
                 query_class="faq",
                 stream_documents_job=StreamResourcesJob(
                     query_id=user_query.query_id,
@@ -72,6 +73,7 @@ def handler(event: dict, context) -> dict:
             # Otherwise trigger a retrieval job
             logger.info("No FAQ match found, preparing retrieval job.")
             return ClassifierResult(
+                successful=True,
                 query_class="rag",
                 retrieve_job=RetrieveJob(
                     query=user_query.query,
@@ -79,8 +81,11 @@ def handler(event: dict, context) -> dict:
                     session_id=user_query.session_id,
                 ),
             ).model_dump()
-    except Exception as e: # Error was logged at root.
+    except Exception as e:  # Error was logged at root.
         if session_id:
-            asyncio.run(report_error(e, session_id))
+            asyncio.run(report_error(e, session_id=session_id))
 
-        return ClassifierResult(query_class=None).model_dump()
+        return ClassifierResult(
+            successful=False,
+            query_class=None,
+        ).model_dump()

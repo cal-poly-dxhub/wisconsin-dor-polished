@@ -51,7 +51,14 @@ class UnexpectedError(MessagesError):
         return ErrorMessage(error="An unexpected error occurred while processing a message.")
 
 
-async def report_error(error: Exception, session_id: str):
+class UnknownResourceType(MessagesError):
+    """Raised when an unknown resource type is encountered."""
+
+    def __init__(self, details: dict[str, Any] | None = None):
+        super().__init__(status_code=500, details=details)
+
+    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
+        return ErrorMessage(error="Internal server error occurred while processing message.")
 
 
 async def report_error(

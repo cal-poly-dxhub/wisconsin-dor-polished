@@ -75,7 +75,25 @@ class StreamResourcesJob(BaseModel):
 # a plan retrieval job for queries classified as RAG. Differentiate
 # based on the query_class field.
 class ClassifierResult(BaseModel):
+    successful: bool
     query_class: Literal["faq", "rag"] | None = None
     stream_documents_job: StreamResourcesJob | None = None
     generate_response_job: GenerateResponseJob | None = None
     retrieve_job: RetrieveJob | None = None
+
+
+# Retrieving documents causes document streaming and
+# response generation jobs
+class RetrieveResult(BaseModel):
+    successful: bool
+    stream_documents_job: StreamResourcesJob | None = None
+    generate_response_job: GenerateResponseJob | None = None
+
+
+# Terminal states
+class StreamResourcesResult(BaseModel):
+    successful: bool
+
+
+class GenerateResponseResult(BaseModel):
+    successful: bool

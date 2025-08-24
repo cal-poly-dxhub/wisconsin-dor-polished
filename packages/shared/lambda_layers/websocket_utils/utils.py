@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from collections.abc import AsyncGenerator
 
 import boto3
 from botocore.exceptions import ClientError
@@ -12,7 +13,14 @@ from websocket_utils.errors import (
     SessionNotFoundError,
     WebSocketConnectionError,
 )
-from websocket_utils.models import ErrorMessage, PlainWebSocketMessage, WebSocketMessage
+from websocket_utils.models import (
+    AnswerEventType,
+    DocumentsMessage,
+    ErrorMessage,
+    FAQMessage,
+    PlainWebSocketMessage,
+    WebSocketMessage,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
@@ -36,16 +44,32 @@ class WebSocketServer:
             raise WebSocketConnectionError(details={"original_error": str(e)}) from e
 
     async def send_json(self, body: WebSocketMessage) -> None:
-        """
-        Send a JSON object over websocket using API Gateway Management API.
-        Args:
-            body: The message body (Pydantic model).
-        """
-
         logger.info(f"Sending message to connection {self.connection_id}")
+
         match body:
             case ErrorMessage(error=error):
                 message = {"error": error}
+
+            case DocumentsMessage():
+                message = {
+                    "streamId": "resources",
+                    "body": body.model_dump(by_alias=True),
+                }
+            case FAQMessage():
+                message = {
+                    "streamId": "resources",
+                    "body": body.model_dump(by_alias=True),
+                }
+            case AnswerEventType(event="start"):
+                message = {
+                    "streamId": "answer-event",
+                    "body": body.model_dump(by_alias=True),
+                }
+            case AnswerEventType(event="stop"):
+                message = {
+                    "streamId": "answer-event",
+                    "body": body.model_dump(by_alias=True),
+                }
             case PlainWebSocketMessage(message=message):
                 # For echoing during testing
                 pass
@@ -65,8 +89,34 @@ class WebSocketServer:
                 details={"connection_id": self.connection_id, "original_error": str(e)}
             ) from e
 
+    async def stream_fragments(self, event_stream: AsyncGenerator[str]) -> None:
+        logger.info(f"Streaming fragments to connection {self.connection_id}")
 
-async def get_ws_connection_from_session(session_id: str) -> WebSocketServer:
+        async for fragment in event_stream:
+            message = {"streamId": "answer", "fragment": fragment}
+
+            # Send fragment
+            try:
+                response = self.client.post_to_connection(
+                    ConnectionId=self.connection_id, Data=json.dumps(message)
+                )
+            except Exception as e:
+                logger.error(f"Failed to send fragment to connection {self.connection_id}: {e}")
+                raise MessageDeliveryError(
+                    details={"connection_id": self.connection_id, "original_error": str(e)}
+                ) from e
+
+            # Handle non-successful error codes
+            if response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 200:
+                logger.error(
+                    f"Failed to send fragment to connection {self.connection_id}: {response}"
+                )
+                raise MessageDeliveryError(
+                    details={"connection_id": self.connection_id, "response": response}
+                )
+
+
+def get_ws_connection_from_session(session_id: str) -> WebSocketServer:
     """
     Look up the websocket connection ID for a session in DynamoDB and return a WebSocket client.
     """

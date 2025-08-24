@@ -253,13 +253,26 @@ chat-api = [
     { name = "pydantic-core" },
 ]
 classifier = [
+    { name = "boto3" },
     { name = "pydantic" },
 ]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
+resource-streaming = [
+    { name = "boto3" },
+    { name = "pydantic" },
+]
+retrieval = [
+    { name = "boto3" },
+    { name = "pydantic" },
+]
 step-function-types = [
+    { name = "pydantic" },
+]
+streaming = [
+    { name = "boto3" },
     { name = "pydantic" },
 ]
 websocket = [
@@ -278,11 +291,26 @@ chat-api = [
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-core", specifier = ">=2.33.2" },
 ]
-classifier = [{ name = "pydantic", specifier = ">=2.11.7" }]
+classifier = [
+    { name = "boto3", specifier = ">=1.40.7" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+]
 dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.1.0" },
 ]
+resource-streaming = [
+    { name = "boto3", specifier = ">=1.40.7" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+]
+retrieval = [
+    { name = "boto3", specifier = ">=1.40.7" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+]
 step-function-types = [{ name = "pydantic", specifier = ">=2.11.7" }]
+streaming = [
+    { name = "boto3", specifier = ">=1.40.7" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+]
 websocket = [{ name = "pydantic", specifier = ">=2.11.7" }]
 websocket-utils = [{ name = "pydantic", specifier = ">=2.11.7" }]

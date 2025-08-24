@@ -2,8 +2,6 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 # Add the parent directory to sys.path to import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(
@@ -146,8 +144,9 @@ class TestClassifierHandler:
         # Verify that report_error was called with the exception and session_id
         mock_report_error.assert_called_once()
         call_args = mock_report_error.call_args[0]
+        call_kwargs = mock_report_error.call_args[1]
         assert isinstance(call_args[0], RuntimeError)
-        assert call_args[1] == "test-session-456"
+        assert call_kwargs["session_id"] == "test-session-456"
 
         # Verify error response structure
         classifier_result = ClassifierResult(**result)
@@ -184,8 +183,9 @@ class TestClassifierHandler:
             # Verify that report_error was called with the exception and session_id
             mock_report_error.assert_called_once()
             call_args = mock_report_error.call_args[0]
+            call_kwargs = mock_report_error.call_args[1]
             assert isinstance(call_args[0], ValidationError)
-            assert call_args[1] == "test-session-456"
+            assert call_kwargs["session_id"] == "test-session-456"
 
             # Verify error response structure
             classifier_result = ClassifierResult(**result)
