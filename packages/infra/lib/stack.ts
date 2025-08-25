@@ -12,7 +12,7 @@ export class WisconsinBotStack extends cdk.Stack {
       description: 'Shared lambda layers for the Wisconsin bot.',
     });
 
-    new SessionsStack(this, 'WisconsinSessionsStack', {
+    const sessionsStack = new SessionsStack(this, 'WisconsinSessionsStack', {
       description:
         'Stack providing API and WebSocket session services for the Wisconsin bot.',
       stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
@@ -23,6 +23,9 @@ export class WisconsinBotStack extends cdk.Stack {
       description:
         'Stack providing messaging services (classifier and workflows).',
       stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
+      websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
+      sessionsTable: sessionsStack.sessionsTable,
+      websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
     });
   }
 }

@@ -12,10 +12,13 @@ export interface SessionsStackProps extends cdk.StackProps {
 }
 
 export class SessionsStack extends cdk.NestedStack {
+  public readonly sessionsTable: cdk.aws_dynamodb.Table;
+  public readonly websocketCallbackUrl: string;
+
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
 
-    const sessionTable = new cdk.aws_dynamodb.Table(this, 'SessionTable', {
+    this.sessionsTable = new cdk.aws_dynamodb.Table(this, 'SessionTable', {
       partitionKey: {
         name: 'sessionId',
         type: cdk.aws_dynamodb.AttributeType.STRING,
@@ -49,16 +52,16 @@ export class SessionsStack extends cdk.NestedStack {
           ],
         },
       }),
-      layers: [props.stepFunctionTypesLayer],
+      layers: [props.stepFunctionTypesLayer, props.websocketUtilsLayer],
       description: 'Lambda function that handles API requests',
       timeout: cdk.Duration.seconds(10),
       memorySize: 128,
       environment: {
-        SESSIONS_TABLE_NAME: sessionTable.tableName,
+        SESSIONS_TABLE_NAME: this.sessionsTable.tableName,
       },
     });
 
-    sessionTable.grantReadWriteData(apiHandler);
+    this.sessionsTable.grantReadWriteData(apiHandler);
 
     apiHandler.addToRolePolicy(
       new iam.PolicyStatement({
@@ -85,7 +88,7 @@ export class SessionsStack extends cdk.NestedStack {
         },
       }),
       environment: {
-        SESSIONS_TABLE_NAME: sessionTable.tableName,
+        SESSIONS_TABLE_NAME: this.sessionsTable.tableName,
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
@@ -108,7 +111,7 @@ export class SessionsStack extends cdk.NestedStack {
         },
       }),
       environment: {
-        SESSIONS_TABLE_NAME: sessionTable.tableName,
+        SESSIONS_TABLE_NAME: this.sessionsTable.tableName,
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
@@ -132,22 +135,22 @@ export class SessionsStack extends cdk.NestedStack {
       }),
       layers: [props.websocketUtilsLayer],
       environment: {
-        SESSIONS_TABLE_NAME: sessionTable.tableName,
+        SESSIONS_TABLE_NAME: this.sessionsTable.tableName,
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
     });
 
     // Grant permissions to WebSocket handlers
-    sessionTable.grantReadWriteData(connectHandler);
-    sessionTable.grantReadWriteData(disconnectHandler);
+    this.sessionsTable.grantReadWriteData(connectHandler);
+    this.sessionsTable.grantReadWriteData(disconnectHandler);
     disconnectHandler.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['dynamodb:Query'],
         resources: [
-          sessionTable.tableArn,
-          `${sessionTable.tableArn}/index/connectionId`,
+          this.sessionsTable.tableArn,
+          `${this.sessionsTable.tableArn}/index/connectionId`,
         ],
       })
     );
@@ -239,6 +242,9 @@ export class SessionsStack extends cdk.NestedStack {
       'WEBSOCKET_CALLBACK_URL',
       websocketStage.callbackUrl
     );
+
+    // Store the callback URL for use by other stacks
+    this.websocketCallbackUrl = websocketStage.callbackUrl;
 
     const httpApi = new apigatewayv2.HttpApi(this, 'SessionsHttpApi', {
       apiName: 'Wisconsin Sessions API',
