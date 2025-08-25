@@ -221,13 +221,13 @@ describe('Step Function Integration Tests', () => {
       expect(result.successful).toBe(true);
     });
 
-    test('retrieval lambda should return RetrieveResult with documents', async () => {
+    test('retrieval lambda should return RetrieveResult with RAG documents', async () => {
       jest.setTimeout(30000);
 
-      // RetrieveJob input for retrieval
+      // RetrieveJob input for retrieval (RAG route - no "FAQ" in query)
       const payload = {
         query: 'How do I apply for a driver license in Wisconsin?',
-        query_id: `test-retrieval-${Date.now()}`,
+        query_id: `test-retrieval-rag-${Date.now()}`,
         session_id: sharedSessionId,
       };
 
@@ -240,19 +240,61 @@ describe('Step Function Integration Tests', () => {
       expect(result).toHaveProperty('generate_response_job');
       expect(result.successful).toBe(true);
 
-      // Verify structure of jobs when present
+      // Verify RAG-specific structure
       expect(result.stream_documents_job).toBeDefined();
       expect(result.stream_documents_job).toHaveProperty('query_id');
       expect(result.stream_documents_job).toHaveProperty('session_id');
-      expect(result.stream_documents_job).toHaveProperty('resource_type');
+      expect(result.stream_documents_job.resource_type).toBe('documents');
       expect(result.stream_documents_job).toHaveProperty('content');
+      expect(result.stream_documents_job.content).toHaveProperty('documents');
 
       expect(result.generate_response_job).toBeDefined();
       expect(result.generate_response_job).toHaveProperty('query');
       expect(result.generate_response_job).toHaveProperty('query_id');
       expect(result.generate_response_job).toHaveProperty('session_id');
-      expect(result.generate_response_job).toHaveProperty('resource_type');
+      expect(result.generate_response_job.resource_type).toBe('documents');
       expect(result.generate_response_job).toHaveProperty('resources');
+      expect(result.generate_response_job.resources).toHaveProperty(
+        'documents'
+      );
+    });
+
+    test('retrieval lambda should return RetrieveResult with FAQ resource', async () => {
+      jest.setTimeout(30000);
+
+      // RetrieveJob input for retrieval (FAQ route - contains "FAQ" in query)
+      const payload = {
+        query: 'Show me FAQ about Wisconsin services',
+        query_id: `test-retrieval-faq-${Date.now()}`,
+        session_id: sharedSessionId,
+      };
+
+      const result = await invokeLambda(RETRIEVAL_ARN, payload);
+
+      // Verify RetrieveResult structure
+      expect(result).toBeDefined();
+      expect(result).toHaveProperty('successful');
+      expect(result).toHaveProperty('stream_documents_job');
+      expect(result).toHaveProperty('generate_response_job');
+      expect(result.successful).toBe(true);
+
+      // Verify FAQ-specific structure
+      expect(result.stream_documents_job).toBeDefined();
+      expect(result.stream_documents_job).toHaveProperty('query_id');
+      expect(result.stream_documents_job).toHaveProperty('session_id');
+      expect(result.stream_documents_job.resource_type).toBe('faq');
+      expect(result.stream_documents_job).toHaveProperty('content');
+      expect(result.stream_documents_job.content).toHaveProperty('question');
+      expect(result.stream_documents_job.content).toHaveProperty('answer');
+
+      expect(result.generate_response_job).toBeDefined();
+      expect(result.generate_response_job).toHaveProperty('query');
+      expect(result.generate_response_job).toHaveProperty('query_id');
+      expect(result.generate_response_job).toHaveProperty('session_id');
+      expect(result.generate_response_job.resource_type).toBe('faq');
+      expect(result.generate_response_job).toHaveProperty('resources');
+      expect(result.generate_response_job.resources).toHaveProperty('question');
+      expect(result.generate_response_job.resources).toHaveProperty('answer');
     });
 
     test('streaming lambda should return GenerateResponseResult', async () => {
@@ -303,14 +345,48 @@ describe('Step Function Integration Tests', () => {
 
   // Step Function Integration Tests
   describe('Step Function Integration Tests', () => {
-    test('should execute step function successfully with valid query', async () => {
+    test('should execute step function successfully with RAG query', async () => {
       jest.setTimeout(60000); // 60 seconds for step function execution
 
       const client = new SFNClient({ region: AWS_REGION });
 
       const input = {
-        query: 'What is the Wisconsin State Capitol?',
-        query_id: `itest-valid-${Date.now()}`,
+        query: 'How do I renew my Wisconsin driver license?',
+        query_id: `itest-rag-${Date.now()}`,
+        session_id: sharedSessionId,
+      };
+
+      const command = new StartExecutionCommand({
+        stateMachineArn: STEP_FUNCTION_ARN,
+        input: JSON.stringify(input),
+      });
+
+      const response = await client.send(command);
+      expect(response.executionArn).toBeDefined();
+
+      const result = await waitForExecution(response.executionArn, client);
+
+      // Verify the step function completed successfully
+      expect(result).toBeDefined();
+
+      // Step function returns an array of results from parallel execution
+      expect(Array.isArray(result)).toBe(true);
+
+      // Check that all parallel execution results are successful
+      result.forEach(parallelResult => {
+        expect(parallelResult).toHaveProperty('successful');
+        expect(parallelResult.successful).toBe(true);
+      });
+    });
+
+    test('should execute step function successfully with FAQ query', async () => {
+      jest.setTimeout(60000); // 60 seconds for step function execution
+
+      const client = new SFNClient({ region: AWS_REGION });
+
+      const input = {
+        query: 'Show me FAQ about Wisconsin state services',
+        query_id: `itest-faq-${Date.now()}`,
         session_id: sharedSessionId,
       };
 

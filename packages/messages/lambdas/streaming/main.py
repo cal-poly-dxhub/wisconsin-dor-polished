@@ -38,9 +38,9 @@ def test_faq_model_config() -> ModelConfig:
         prompt="""Using the provided frequently asked question, generate a concise yet
 information-complete answer to the user query. Avoid adding unnecessary information or details that
 are not directly relevant to the question; simply adapt the answer to the user's query.
-\n\nUser query: \n{query}. \n\nFAQ: \n{faq}. Don't address the FAQ directly or say something like
-"based on the FAQ..."; just use it to inform your response in a way that makes linguistic sense 
-with the user's query."""
+\n\nUser query: \n{query}. \n\nFAQ question: \n{question}. \n\nFAQ answer: \n{answer}. Don't address
+the FAQ directly or say something like "based on the FAQ..."; just use it to inform your response in
+a way that makes linguistic sense with the user's query."""
     )
 
 
