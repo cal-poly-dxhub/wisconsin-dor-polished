@@ -81,3 +81,16 @@ class SessionLookupError(WebSocketError):
         """Convert error to response body."""
 
         return ErrorMessage(error="Unable to retrieve session information. Try signing in again.")
+
+
+class ConnectionNotFoundError(WebSocketError):
+    """Raised when the sesssion does not have a WebSocket connection."""
+
+    def __init__(self, session_id: str, details: dict[str, Any] | None = None):
+        self.session_id = session_id
+        super().__init__(details=details)
+
+    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
+        """Convert error to response body."""
+
+        return ErrorMessage(error="Internal server error occurred while processing message.")

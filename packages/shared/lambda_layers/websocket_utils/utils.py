@@ -7,6 +7,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from websocket_utils.errors import (
+    ConnectionNotFoundError,
     InvalidMessageError,
     MessageDeliveryError,
     SessionLookupError,
@@ -123,7 +124,8 @@ def get_ws_connection_from_session(session_id: str) -> WebSocketServer:
     dynamodb = boto3.client("dynamodb")
     table_name = os.environ["SESSIONS_TABLE_NAME"]
 
-    # Allow error to bubble
+    logger.info(f"Looking up connection ID for session {session_id} in table {table_name}")
+
     try:
         resp = dynamodb.get_item(
             TableName=table_name,
@@ -134,8 +136,12 @@ def get_ws_connection_from_session(session_id: str) -> WebSocketServer:
         raise SessionLookupError(session_id=session_id, details={"aws_error": str(e)}) from e
 
     item = resp.get("Item")
-    if not item or "connectionId" not in item:
+    if not item:
+        logger.error(f"No session found with session ID {session_id}")
         raise SessionNotFoundError(session_id=session_id, details={"table_response": resp})
+    if not item.get("connectionId") or not item["connectionId"].get("S"):
+        logger.error(f"No connection ID found for session ID {session_id}")
+        raise ConnectionNotFoundError(session_id=session_id, details={"table_response": resp})
 
     connection_id = item["connectionId"]["S"]
     return WebSocketServer(connection_id)
