@@ -81,9 +81,7 @@ class ModelConfig(BaseModel):
         None, description="Configuration for Bedrock models", alias="config"
     )
     id: str = Field(..., min_length=1, description="Model identifier", alias="id")
-    prompt: str | None = Field(
-        None, min_length=1, description="Prompt for the model", alias="prompt"
-    )
+    prompt: str = Field(min_length=1, description="Prompt for the model", alias="prompt")
     model_config = ConfigDict(
         populate_by_name=True, allow_population_by_alias=True, alias_generator=to_camel
     )

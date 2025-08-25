@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared", "lambda_layers")
 )
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "streaming"))
 
 with patch.dict(os.environ, {"SESSIONS_TABLE_NAME": "test-sessions-table", "LOG_LEVEL": "INFO"}):
     from step_function_types.errors import ValidationError

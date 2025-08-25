@@ -61,6 +61,16 @@ class UnknownResourceType(MessagesError):
         return ErrorMessage(error="Internal server error occurred while processing message.")
 
 
+class ConfigNotFound(MessagesError):
+    """Raised when a config is not found."""
+
+    def __init__(self, details: dict[str, Any] | None = None):
+        super().__init__(status_code=500, details=details)
+
+    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
+        return ErrorMessage(error="Internal server error occurred while processing message.")
+
+
 async def report_error(
     error: Exception,
     ws_connect: WebSocketServer | None = None,
