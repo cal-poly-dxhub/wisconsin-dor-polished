@@ -89,9 +89,9 @@ class TestWebSocketHandlers:
         """Test successful WebSocket disconnection"""
         from disconnect import handler
 
-        # Mock successful query and delete operations
+        # Mock successful query and update operations
         mock_dynamodb.query.return_value = {"Items": [{"sessionId": {"S": "test-session-456"}}]}
-        mock_dynamodb.delete_item.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}}
+        mock_dynamodb.update_item.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}}
 
         result = handler(disconnect_event, mock_context)
 
@@ -101,11 +101,12 @@ class TestWebSocketHandlers:
         assert query_args[1]["IndexName"] == "connectionId"
         assert query_args[1]["KeyConditionExpression"] == "connectionId = :cid"
 
-        # Verify DynamoDB delete was called correctly
-        mock_dynamodb.delete_item.assert_called_once()
-        delete_args = mock_dynamodb.delete_item.call_args
-        assert delete_args[1]["Key"]["sessionId"]["S"] == "test-session-456"
-        assert delete_args[1]["ConditionExpression"] == "connectionId = :cid"
+        # Verify DynamoDB update was called correctly to remove connectionId
+        mock_dynamodb.update_item.assert_called_once()
+        update_args = mock_dynamodb.update_item.call_args
+        assert update_args[1]["Key"]["sessionId"]["S"] == "test-session-456"
+        assert update_args[1]["UpdateExpression"] == "REMOVE connectionId"
+        assert update_args[1]["ConditionExpression"] == "connectionId = :cid"
 
         # Verify successful response
         assert result["statusCode"] == 200
@@ -156,8 +157,8 @@ class TestWebSocketHandlers:
         # Verify query was called
         mock_dynamodb.query.assert_called_once()
 
-        # Verify delete was not called since no session found
-        mock_dynamodb.delete_item.assert_not_called()
+        # Verify update was not called since no session found
+        mock_dynamodb.update_item.assert_not_called()
 
         # Verify successful response (disconnect should succeed even if no session)
         assert result["statusCode"] == 200

@@ -15,7 +15,7 @@ table_name = os.environ.get("SESSIONS_TABLE_NAME")
 
 def remove_connection_data(connection_id: str):
     """
-    Remove sessions with the given connection ID.
+    Clear the connection ID from sessions with the given connection ID.
     """
 
     # Allow errors to bubble
@@ -29,21 +29,23 @@ def remove_connection_data(connection_id: str):
         },
     )
 
-    entries = []
-    if not entries:
+    if not response.get("Items"):
         logger.warning(f"No session found with connection ID {connection_id}")
+        return None
 
     for item in response.get("Items", []):
         session_id = item["sessionId"]["S"]
-        dynamodb.delete_item(
+        # Update the session to remove the connectionId instead of deleting the session
+        dynamodb.update_item(
             TableName=table_name,
             Key={"sessionId": {"S": session_id}},
+            UpdateExpression="REMOVE connectionId",
             ConditionExpression="connectionId = :cid",
             ExpressionAttributeValues={
                 ":cid": {"S": connection_id},
             },
         )
-        logger.info(f"Successfully deleted session {session_id} with connection ID {connection_id}")
+        logger.info(f"Successfully cleared connection ID {connection_id} from session {session_id}")
         return session_id
 
 

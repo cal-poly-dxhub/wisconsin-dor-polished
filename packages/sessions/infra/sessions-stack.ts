@@ -24,6 +24,15 @@ export class SessionsStack extends cdk.NestedStack {
       billingMode: cdk.aws_dynamodb.BillingMode.PAY_PER_REQUEST,
     });
 
+    this.sessionsTable.addGlobalSecondaryIndex({
+      indexName: 'connectionId',
+      partitionKey: {
+        name: 'connectionId',
+        type: cdk.aws_dynamodb.AttributeType.STRING,
+      },
+      projectionType: cdk.aws_dynamodb.ProjectionType.ALL,
+    });
+
     const apiHandler = new lambda.Function(this, 'ApiHandler', {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'main.handler',
@@ -132,6 +141,16 @@ export class SessionsStack extends cdk.NestedStack {
     // Grant permissions to WebSocket handlers
     sessionTable.grantReadWriteData(connectHandler);
     sessionTable.grantReadWriteData(disconnectHandler);
+    disconnectHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['dynamodb:Query'],
+        resources: [
+          sessionTable.tableArn,
+          `${sessionTable.tableArn}/index/connectionId`,
+        ],
+      })
+    );
 
     // Grant API Gateway Management API permissions for sending WebSocket messages
     defaultHandler.addToRolePolicy(
