@@ -1,0 +1,36 @@
+[ragResponse]
+id = "ragResponse"
+prompt = """Using the provided documents, answer the user query. Do not reference the documents. Respond as if you were speaking to the user. Documents: {documents}. User query: {query}"""
+
+[ragResponse.config]
+modelId = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+system = [
+    { "text" = "You are an expert in machine learning and you answer questions based on the documents that are provided to you. Answer the user question." },
+]
+
+[ragResponse.config.inferenceConfig]
+temperature = 0.0
+maxTokens = 512
+topP = 0.85
+
+[ragResponse.config.additionalModelRequestFields]
+retrievalMaxChunks = 5
+
+[faqResponse]
+id = "faqResponse"
+prompt = """Using the provided frequently asked question, generate a concise yet information-complete answer to the user query. Avoid adding unnecessary information or details that are not directly relevant to the question; simply adapt the answer to the user's query. \n\nUser query: \n{query}. \n\nFAQ question: \n{question}. FAQ answer: {answer} Don't address the FAQ directly or say something like "based on the FAQ..."; just use it to inform your response in a way that makes linguistic sense with the user's query."""
+
+[faqResponse.config]
+modelId = "amazon.nova-pro-v1:0"
+system = [
+    { "text" = "Given frequently asked questions, you provide responses to user queries. You do not elaborate more than necessary and you only use evidence from the documents in your answers." },
+]
+
+[faqResponse.config.inferenceConfig]
+temperature = 0.0
+maxTokens = 512
+topP = 0.85
+
+[faqResponse.config.additionalModelRequestFields]
+retrievalMaxChunks = 5
+

@@ -3,6 +3,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { Construct } from 'constructs';
 
 export interface MessagesStackProps extends cdk.StackProps {
@@ -15,9 +16,21 @@ export interface MessagesStackProps extends cdk.StackProps {
 export class MessagesStack extends cdk.NestedStack {
   public readonly classifierFunction: lambda.Function;
   public readonly classifierStateMachine: sfn.StateMachine;
+  public readonly modelConfigTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props: MessagesStackProps) {
     super(scope, id, props);
+
+    // Model Configuration Table
+    this.modelConfigTable = new dynamodb.Table(this, 'ModelConfigTable', {
+      partitionKey: {
+        name: 'id',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
 
     // Classifier Lambda
     this.classifierFunction = new lambda.Function(this, 'ClassifierFunction', {
@@ -149,12 +162,14 @@ export class MessagesStack extends cdk.NestedStack {
         environment: {
           SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
           WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
+          MODEL_CONFIG_TABLE_NAME: this.modelConfigTable.tableName,
         },
       }
     );
 
     // Grant DynamoDB read permissions to response streaming function
     props.sessionsTable.grantReadData(streamingHandler);
+    this.modelConfigTable.grantReadData(streamingHandler);
 
     // Grant API Gateway Management API permissions for sending WebSocket messages
     streamingHandler.addToRolePolicy(
@@ -421,6 +436,11 @@ export class MessagesStack extends cdk.NestedStack {
     new cdk.CfnOutput(this, 'ChatStateMachineArn', {
       value: this.classifierStateMachine.stateMachineArn,
       description: 'ARN of the classifier Step Functions state machine',
+    });
+
+    new cdk.CfnOutput(this, 'ModelConfigTableName', {
+      value: this.modelConfigTable.tableName,
+      description: 'Name of the Model Configuration DynamoDB table',
     });
   }
 }
