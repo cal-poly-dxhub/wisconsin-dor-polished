@@ -1,0 +1,16 @@
+/* Chat message styling utilities */
+.chat-query {
+  font-weight: 500;
+  font-size: 1.25rem;
+  color: hsl(var(--foreground));
+}
+
+.chat-response {
+  font-weight: 300;
+  font-size: 1.125rem;
+  color: hsl(var(--foreground));
+}
+
+.chat-response-aligned {
+  margin-left: 1.125rem;
+} 
