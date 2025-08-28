@@ -83,7 +83,6 @@ export type QueryStatus =
 
 // Main store interface
 export interface ChatStore {
-  sessionId: string | null;
   sessionStatus: SessionStatus;
 
   connectionState: ConnectionState;
@@ -97,7 +96,6 @@ export interface ChatStore {
   errors: ChatError[];
   draftMessage: string;
 
-  setSessionId: (sessionId: string) => void;
   setSessionStatus: (status: SessionStatus) => void;
   setConnectionState: (state: ConnectionState) => void;
   setChatState: (state: ChatState) => void;
@@ -106,6 +104,7 @@ export interface ChatStore {
   addQuery: (query: Query) => void;
   updateQueryStatus: (queryId: string, status: QueryStatus) => void;
   updateQueryResponse: (queryId: string, content: string) => void;
+  appendQueryResponse: (queryId: string, fragment: string) => void;
   updateQueryResources: (queryId: string, resources: QueryResources) => void;
 
   setQueryError: (queryId: string, error: QueryError) => void;

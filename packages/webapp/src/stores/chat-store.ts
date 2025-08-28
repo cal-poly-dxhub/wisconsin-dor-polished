@@ -15,7 +15,6 @@ import type {
 export const useChatStore = create<ChatStore>()(
   immer((set, get) => ({
     // Initial application state
-    sessionId: null,
     sessionStatus: 'idle' as SessionStatus,
     connectionState: 'closed' as ConnectionState,
     chatState: 'idle' as ChatState,
@@ -26,11 +25,6 @@ export const useChatStore = create<ChatStore>()(
     draftMessage: '',
 
     // Session management
-    setSessionId: (sessionId: string) =>
-      set(state => {
-        state.sessionId = sessionId;
-      }),
-
     setSessionStatus: (sessionStatus: SessionStatus) =>
       set(state => {
         state.sessionStatus = sessionStatus;
@@ -62,6 +56,13 @@ export const useChatStore = create<ChatStore>()(
       set(state => {
         if (state.queries[queryId]) {
           state.queries[queryId].response.content = content;
+        }
+      }),
+
+    appendQueryResponse: (queryId: string, fragment: string) =>
+      set(state => {
+        if (state.queries[queryId]) {
+          state.queries[queryId].response.content += fragment;
         }
       }),
 
@@ -133,7 +134,6 @@ export const useChatStore = create<ChatStore>()(
 
     reset: () =>
       set(state => {
-        state.sessionId = null;
         state.sessionStatus = 'idle';
         state.chatState = 'idle';
         state.currentQueryId = null;
