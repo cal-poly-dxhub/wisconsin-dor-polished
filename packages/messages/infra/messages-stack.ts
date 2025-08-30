@@ -4,6 +4,8 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
 
 export interface MessagesStackProps extends cdk.StackProps {
@@ -411,6 +413,23 @@ export class MessagesStack extends cdk.NestedStack {
           includeExecutionData: true,
         },
       }
+    );
+
+    const triggerMessageProcessing = new events.Rule(
+      this,
+      'TriggerMessageProcessing',
+      {
+        eventPattern: {
+          source: ['wisconsin-dor.chat-api'],
+          detailType: ['ChatMessageReceived'],
+        },
+      }
+    );
+
+    triggerMessageProcessing.addTarget(
+      new targets.SfnStateMachine(this.classifierStateMachine, {
+        input: events.RuleTargetInput.fromEventPath('$'),
+      })
     );
 
     new cdk.CfnOutput(this, 'ClassifierFunctionArn', {
