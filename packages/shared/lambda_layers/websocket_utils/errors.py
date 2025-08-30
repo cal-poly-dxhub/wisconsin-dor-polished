@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from typing import Any
 
-from websocket_utils.models import ErrorMessage
+from websocket_utils.models import ErrorContent, ErrorMessage
 
 
 class WebSocketError(Exception):
@@ -31,7 +31,12 @@ class WebSocketConnectionError(WebSocketError):
 
     def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
         """Convert error to response body."""
-        return ErrorMessage(error="Failed to establish WebSocket connection. Try signing in again.")
+        return ErrorMessage(
+            response_type="error",
+            content=ErrorContent(
+                error="Failed to establish WebSocket connection. Try signing in again."
+            ),
+        )
 
 
 class MessageDeliveryError(WebSocketError):
@@ -42,7 +47,12 @@ class MessageDeliveryError(WebSocketError):
 
     def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
         """Convert error to response body."""
-        return ErrorMessage(error="Failed to deliver message over WebSocket. Try signing in again.")
+        return ErrorMessage(
+            response_type="error",
+            content=ErrorContent(
+                error="Failed to deliver message over WebSocket. Try signing in again."
+            ),
+        )
 
 
 class SessionNotFoundError(WebSocketError):
@@ -54,7 +64,12 @@ class SessionNotFoundError(WebSocketError):
 
     def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
         """Convert error to response body."""
-        return ErrorMessage(error="Session not found. Try signing in again.")
+        return ErrorMessage(
+            response_type="error",
+            content=ErrorContent(
+                error="Session not found. Try signing in again.",
+            ),
+        )
 
 
 class InvalidMessageError(WebSocketError):
@@ -65,7 +80,13 @@ class InvalidMessageError(WebSocketError):
 
     def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
         """Convert error to response body."""
-        return ErrorMessage(error="Internal server error.")
+        # return ErrorMessage(error="Internal server error.")
+        return ErrorMessage(
+            response_type="error",
+            content=ErrorContent(
+                error="Internal server error.",
+            ),
+        )
 
 
 class SessionLookupError(WebSocketError):
@@ -80,7 +101,12 @@ class SessionLookupError(WebSocketError):
     def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
         """Convert error to response body."""
 
-        return ErrorMessage(error="Unable to retrieve session information. Try signing in again.")
+        return ErrorMessage(
+            response_type="error",
+            content=ErrorContent(
+                error="Unable to retrieve session information. Try signing in again."
+            ),
+        )
 
 
 class ConnectionNotFoundError(WebSocketError):
@@ -93,4 +119,9 @@ class ConnectionNotFoundError(WebSocketError):
     def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
         """Convert error to response body."""
 
-        return ErrorMessage(error="Internal server error occurred while processing message.")
+        return ErrorMessage(
+            response_type="error",
+            content=ErrorContent(
+                error="WebSocket connection not found. Try signing in again.",
+            ),
+        )

@@ -30,7 +30,9 @@ class TestReportError:
 
         sent_message = mock_ws.send_json.call_args[0][0]
         assert isinstance(sent_message, ErrorMessage)
-        assert sent_message.error == "An unexpected error occurred while processing a message."
+        assert (
+            sent_message.content.error == "An unexpected error occurred while processing a message."
+        )
 
     @pytest.mark.asyncio
     @patch("step_function_types.errors.get_ws_connection_from_session")
@@ -48,7 +50,7 @@ class TestReportError:
 
         sent_message = mock_ws.send_json.call_args[0][0]
         assert isinstance(sent_message, ErrorMessage)
-        assert sent_message.error == "A server error occurred while processing the message."
+        assert sent_message.content.error == "A server error occurred while processing the message."
 
     @pytest.mark.asyncio
     @patch("step_function_types.errors.get_ws_connection_from_session")
@@ -66,7 +68,9 @@ class TestReportError:
 
         sent_message = mock_ws.send_json.call_args[0][0]
         assert isinstance(sent_message, ErrorMessage)
-        assert sent_message.error == "An unexpected error occurred while processing a message."
+        assert (
+            sent_message.content.error == "An unexpected error occurred while processing a message."
+        )
 
     @pytest.mark.asyncio
     @patch("step_function_types.errors.logger")
@@ -135,4 +139,7 @@ class TestReportError:
         for call in mock_ws.send_json.call_args_list:
             sent_message = call[0][0]
             assert isinstance(sent_message, ErrorMessage)
-            assert sent_message.error == "An unexpected error occurred while processing a message."
+            assert (
+                sent_message.content.error
+                == "An unexpected error occurred while processing a message."
+            )

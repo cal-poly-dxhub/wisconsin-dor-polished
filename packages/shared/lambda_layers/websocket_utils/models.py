@@ -24,12 +24,13 @@ class PlainWebSocketMessage(WebSocketMessage):
     message: str = Field(description="The message to be sent over the websocket.")
 
 
-class ErrorMessage(WebSocketMessage):
-    """
-    Used to report errors that occur during step function processing.
-    """
-
+class ErrorContent(WebSocketMessage):
     error: str = Field(description="The error message to be sent over the websocket.")
+
+
+class ErrorMessage(WebSocketMessage):
+    response_type: Literal["error"] = "error"
+    content: ErrorContent
 
 
 class SourceDocument(WebSocketMessage):

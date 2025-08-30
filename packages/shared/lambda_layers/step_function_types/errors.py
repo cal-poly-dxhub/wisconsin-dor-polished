@@ -3,7 +3,7 @@ import os
 from abc import abstractmethod
 from typing import Any
 
-from websocket_utils.models import ErrorMessage
+from websocket_utils.models import ErrorMessage, ErrorContent
 from websocket_utils.utils import WebSocketServer, get_ws_connection_from_session
 
 logger = logging.getLogger()
@@ -38,7 +38,11 @@ class ValidationError(MessagesError):
 
     def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
         """Convert error to response body."""
-        return ErrorMessage(error="A server error occurred while processing the message.")
+        return ErrorMessage(
+            content=ErrorContent(
+                error="A server error occurred while processing the message.",
+            )
+        )
 
 
 class UnexpectedError(MessagesError):
@@ -48,7 +52,11 @@ class UnexpectedError(MessagesError):
         super().__init__(status_code=500, details=details)
 
     def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
-        return ErrorMessage(error="An unexpected error occurred while processing a message.")
+        return ErrorMessage(
+            content=ErrorContent(
+                error="An unexpected error occurred while processing a message.",
+            )
+        )
 
 
 class UnknownResourceType(MessagesError):
@@ -58,7 +66,11 @@ class UnknownResourceType(MessagesError):
         super().__init__(status_code=500, details=details)
 
     def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
-        return ErrorMessage(error="Internal server error occurred while processing message.")
+        return ErrorMessage(
+            content=ErrorContent(
+                error="Internal server error occurred while processing message.",
+            )
+        )
 
 
 class ConfigNotFound(MessagesError):
@@ -68,7 +80,11 @@ class ConfigNotFound(MessagesError):
         super().__init__(status_code=500, details=details)
 
     def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
-        return ErrorMessage(error="Internal server error occurred while processing message.")
+        return ErrorMessage(
+            content=ErrorContent(
+                error="Internal server error occurred while processing message.",
+            )
+        )
 
 
 async def report_error(
@@ -97,6 +113,10 @@ async def report_error(
 
     if not isinstance(error, MessagesError):
         error = UnexpectedError(details={"original_error": str(error)})
+
+    if ws_connect is None:
+        logger.error("WebSocket connection is None; skipping error report.")
+        return
 
     try:
         await ws_connect.send_json(error.to_response())

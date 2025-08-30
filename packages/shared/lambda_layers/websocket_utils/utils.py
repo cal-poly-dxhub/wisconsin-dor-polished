@@ -50,9 +50,11 @@ class WebSocketServer:
         logger.info(f"Sending message to connection {self.connection_id}")
 
         match body:
-            case ErrorMessage(error=error):
-                message = {"error": error}
-
+            case ErrorMessage():
+                message = {
+                    "streamId": "error",
+                    "body": body.model_dump(by_alias=True),
+                }
             case DocumentsMessage():
                 message = {
                     "streamId": "resources",
