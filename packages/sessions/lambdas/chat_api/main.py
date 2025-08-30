@@ -188,8 +188,6 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
 
 def handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
     """Main Lambda handler function."""
-    logger.info("Test lambda handler")
-    logger.error("Testing error logging")
     try:
         logger.info(f"Received event: {event}")
         response = app.resolve(event, context)
