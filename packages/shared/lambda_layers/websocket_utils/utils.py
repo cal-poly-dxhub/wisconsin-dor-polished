@@ -19,6 +19,8 @@ from websocket_utils.models import (
     DocumentsMessage,
     ErrorMessage,
     FAQMessage,
+    FragmentContent,
+    FragmentMessage,
     PlainWebSocketMessage,
     WebSocketMessage,
 )
@@ -90,11 +92,16 @@ class WebSocketServer:
                 details={"connection_id": self.connection_id, "original_error": str(e)}
             ) from e
 
-    async def stream_fragments(self, event_stream: AsyncGenerator[str]) -> None:
+    async def stream_fragments(self, event_stream: AsyncGenerator[str], query_id: str) -> None:
         logger.info(f"Streaming fragments to connection {self.connection_id}")
 
         async for fragment in event_stream:
-            message = {"streamId": "answer", "fragment": fragment}
+            fragment_content = FragmentContent(fragment=fragment)
+            fragment_message = FragmentMessage(query_id=query_id, content=fragment_content)
+            message = {
+                "streamId": "answer",
+                "body": fragment_message.model_dump(by_alias=True),
+            }
 
             # Send fragment
             try:

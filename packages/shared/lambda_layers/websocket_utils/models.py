@@ -68,3 +68,13 @@ class AnswerEventType(WebSocketMessage):
     response_type: Literal["answer-event"] = "answer-event"
     event: Literal["start", "stop"]
     query_id: str
+
+
+class FragmentContent(WebSocketMessage):
+    fragment: str
+
+
+class FragmentMessage(WebSocketMessage):
+    response_type: Literal["fragment"] = "fragment"
+    query_id: str
+    content: FragmentContent
