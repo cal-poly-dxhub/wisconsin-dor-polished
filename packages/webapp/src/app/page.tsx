@@ -1,36 +1,17 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+'use client';
 
-export default function Home() {
+import { NarrowApp } from '@/components/layout/narrow-app';
+import { WideApp } from '@/components/layout/wide-app';
+import { useBreakpoint } from '@/hooks/use-breakpoint';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+export default function App() {
+  const breakpoint = useBreakpoint();
+  const queryClient = new QueryClient();
+
   return (
-    <main className="flex min-h-screen items-center justify-center p-8">
-      <Card className="w-[400px]">
-        <CardHeader>
-          <CardTitle>shadcn/ui Card Demo</CardTitle>
-          <CardDescription>
-            This is a demonstration of the shadcn/ui Card component with the
-            custom CSS styles applied.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            The card component is working correctly with the new globals.css and
-            scrollbar styles. You can see the custom theme variables and styling
-            in action.
-          </p>
-        </CardContent>
-        <CardFooter className="flex justify-between">
-          <p className="text-xs text-muted-foreground">
-            shadcn/ui initialized successfully
-          </p>
-        </CardFooter>
-      </Card>
-    </main>
+    <QueryClientProvider client={queryClient}>
+      {breakpoint === 'wide' ? <WideApp /> : <NarrowApp />}
+    </QueryClientProvider>
   );
 }

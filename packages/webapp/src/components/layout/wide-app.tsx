@@ -5,16 +5,25 @@ import { ChatContainer } from '@/components/messages/chat-container';
 import { ChatInput } from '@/components/messages/chat-input';
 import { useChatStore } from '@/stores/chat-store';
 import type { Document, DocumentsContent } from '@/stores/types';
+import { useWebSocketChat } from '@/hooks/use-websocket-chat';
+
+const stableConfig = {
+  websocketUrl: process.env.NEXT_PUBLIC_WEBSOCKET_URL!,
+};
 
 export function WideApp() {
   const { currentQueryId, queries } = useChatStore();
+  const { sendMessage } = useWebSocketChat(stableConfig);
 
-  // Get documents from the currently selected message
   const selectedQuery = currentQueryId ? queries[currentQueryId] : null;
   const documents: Document[] =
     selectedQuery?.resources?.type === 'documents'
       ? (selectedQuery.resources.content as DocumentsContent).documents
       : [];
+
+  const handleSendMessage = (message: string) => {
+    sendMessage({ message });
+  };
 
   return (
     <div className="bg-background grid h-screen grid-cols-[1fr_400px] gap-6 p-32">
@@ -26,7 +35,7 @@ export function WideApp() {
         <div className="absolute bottom-12 left-1/2 z-20 w-3/4 max-w-2xl -translate-x-1/2 transform">
           <ChatInput
             placeholder="Type your message..."
-            onSendMessage={message => console.log('Message sent:', message)}
+            onSendMessage={handleSendMessage}
           />
         </div>
       </div>
