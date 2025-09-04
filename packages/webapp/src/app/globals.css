@@ -160,109 +160,353 @@
     linear-gradient(90deg, rgba(255, 255, 255, 0.15) 1px, transparent 1px);
 }
 
-/* Single div blur gradient effect */
-.gradient-blur {
+/* Multi-segment gradient blur for narrow view - bottom */
+.gradient-blur-narrow {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 400px;
+  z-index: 1;
+  inset: auto 16px 0px 16px;
+  height: 20%;
   pointer-events: none;
-  z-index: 8;
 }
 
-.gradient-blur::before {
-  content: "";
+/* Multi-segment gradient blur for narrow view - top */
+.gradient-blur-narrow-top {
+  position: absolute;
+  z-index: 1;
+  inset: 0px 16px auto 16px;
+  height: 20%;
+  pointer-events: none;
+}
+
+/* Multi-segment gradient blur for wide view - bottom */
+.gradient-blur-wide {
+  position: absolute;
+  z-index: 1;
+  inset: auto 16px 1px 16px;
+  height: 30%;
+  pointer-events: none;
+  border-radius: 0 0 0.5rem 0.5rem;
+}
+
+/* Multi-segment gradient blur for wide view - top */
+.gradient-blur-wide-top {
+  position: absolute;
+  z-index: 1;
+  inset: 1px 16px auto 16px;
+  height: 30%;
+  pointer-events: none;
+  border-radius: 0.5rem 0.5rem 0 0;
+}
+.gradient-blur-narrow > div,
+.gradient-blur-narrow::before,
+.gradient-blur-narrow::after,
+.gradient-blur-narrow-top > div,
+.gradient-blur-narrow-top::before,
+.gradient-blur-narrow-top::after,
+.gradient-blur-wide > div,
+.gradient-blur-wide::before,
+.gradient-blur-wide::after,
+.gradient-blur-wide-top > div,
+.gradient-blur-wide-top::before,
+.gradient-blur-wide-top::after {
   position: absolute;
   inset: 0;
+}
+.gradient-blur-narrow::before,
+.gradient-blur-wide::before {
+  content: '';
+  z-index: 1;
+  backdrop-filter: blur(0.5px);
+  mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 1) 12.5%,
+    rgba(0, 0, 0, 1) 25%,
+    rgba(0, 0, 0, 0) 37.5%
+  );
+  -webkit-mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 1) 12.5%,
+    rgba(0, 0, 0, 1) 25%,
+    rgba(0, 0, 0, 0) 37.5%
+  );
+}
+.gradient-blur-narrow > div:nth-of-type(1),
+.gradient-blur-wide > div:nth-of-type(1) {
+  z-index: 2;
+  backdrop-filter: blur(1px);
+  mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 12.5%,
+    rgba(0, 0, 0, 1) 25%,
+    rgba(0, 0, 0, 1) 37.5%,
+    rgba(0, 0, 0, 0) 50%
+  );
+  -webkit-mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 12.5%,
+    rgba(0, 0, 0, 1) 25%,
+    rgba(0, 0, 0, 1) 37.5%,
+    rgba(0, 0, 0, 0) 50%
+  );
+}
+.gradient-blur-narrow > div:nth-of-type(2),
+.gradient-blur-wide > div:nth-of-type(2) {
+  z-index: 3;
+  backdrop-filter: blur(2px);
+  mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 25%,
+    rgba(0, 0, 0, 1) 37.5%,
+    rgba(0, 0, 0, 1) 50%,
+    rgba(0, 0, 0, 0) 62.5%
+  );
+  -webkit-mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 25%,
+    rgba(0, 0, 0, 1) 37.5%,
+    rgba(0, 0, 0, 1) 50%,
+    rgba(0, 0, 0, 0) 62.5%
+  );
+}
+.gradient-blur-narrow > div:nth-of-type(3),
+.gradient-blur-wide > div:nth-of-type(3) {
+  z-index: 4;
+  backdrop-filter: blur(4px);
+  mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 37.5%,
+    rgba(0, 0, 0, 1) 50%,
+    rgba(0, 0, 0, 1) 62.5%,
+    rgba(0, 0, 0, 0) 75%
+  );
+  -webkit-mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 37.5%,
+    rgba(0, 0, 0, 1) 50%,
+    rgba(0, 0, 0, 1) 62.5%,
+    rgba(0, 0, 0, 0) 75%
+  );
+}
+.gradient-blur-narrow > div:nth-of-type(4),
+.gradient-blur-wide > div:nth-of-type(4) {
+  z-index: 5;
+  backdrop-filter: blur(8px);
+  mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 50%,
+    rgba(0, 0, 0, 1) 62.5%,
+    rgba(0, 0, 0, 1) 75%,
+    rgba(0, 0, 0, 0) 87.5%
+  );
+  -webkit-mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 50%,
+    rgba(0, 0, 0, 1) 62.5%,
+    rgba(0, 0, 0, 1) 75%,
+    rgba(0, 0, 0, 0) 87.5%
+  );
+}
+.gradient-blur-narrow > div:nth-of-type(5),
+.gradient-blur-wide > div:nth-of-type(5) {
+  z-index: 6;
+  backdrop-filter: blur(16px);
+  mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 62.5%,
+    rgba(0, 0, 0, 1) 75%,
+    rgba(0, 0, 0, 1) 87.5%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  -webkit-mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 62.5%,
+    rgba(0, 0, 0, 1) 75%,
+    rgba(0, 0, 0, 1) 87.5%,
+    rgba(0, 0, 0, 0) 100%
+  );
+}
+.gradient-blur-narrow > div:nth-of-type(6),
+.gradient-blur-wide > div:nth-of-type(6) {
+  z-index: 7;
+  backdrop-filter: blur(32px);
+  mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 75%,
+    rgba(0, 0, 0, 1) 87.5%,
+    rgba(0, 0, 0, 1) 100%
+  );
+  -webkit-mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 75%,
+    rgba(0, 0, 0, 1) 87.5%,
+    rgba(0, 0, 0, 1) 100%
+  );
+}
+.gradient-blur-narrow::after,
+.gradient-blur-wide::after {
+  content: '';
+  z-index: 8;
+  backdrop-filter: blur(64px);
+  mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 87.5%,
+    rgba(0, 0, 0, 1) 100%
+  );
+  -webkit-mask: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 87.5%,
+    rgba(0, 0, 0, 1) 100%
+  );
+}
+
+/* Top blur gradients - inverted direction */
+.gradient-blur-narrow-top::before,
+.gradient-blur-wide-top::before {
+  content: '';
+  z-index: 1;
+  backdrop-filter: blur(0.5px);
+  mask: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 1) 12.5%,
+    rgba(0, 0, 0, 1) 25%,
+    rgba(0, 0, 0, 0) 37.5%
+  );
+  -webkit-mask: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 1) 12.5%,
+    rgba(0, 0, 0, 1) 25%,
+    rgba(0, 0, 0, 0) 37.5%
+  );
+}
+.gradient-blur-narrow-top > div:nth-of-type(1),
+.gradient-blur-wide-top > div:nth-of-type(1) {
+  z-index: 2;
+  backdrop-filter: blur(1px);
+  mask: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0) 12.5%,
+    rgba(0, 0, 0, 1) 25%,
+    rgba(0, 0, 0, 1) 37.5%,
+    rgba(0, 0, 0, 0) 50%
+  );
+  -webkit-mask: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0) 12.5%,
+    rgba(0, 0, 0, 1) 25%,
+    rgba(0, 0, 0, 1) 37.5%,
+    rgba(0, 0, 0, 0) 50%
+  );
+}
+.gradient-blur-narrow-top > div:nth-of-type(2),
+.gradient-blur-wide-top > div:nth-of-type(2) {
+  z-index: 3;
+  backdrop-filter: blur(2px);
+  mask: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0) 25%,
+    rgba(0, 0, 0, 1) 37.5%,
+    rgba(0, 0, 0, 1) 50%,
+    rgba(0, 0, 0, 0) 62.5%
+  );
+  -webkit-mask: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0) 25%,
+    rgba(0, 0, 0, 1) 37.5%,
+    rgba(0, 0, 0, 1) 50%,
+    rgba(0, 0, 0, 0) 62.5%
+  );
+}
+.gradient-blur-narrow-top > div:nth-of-type(3),
+.gradient-blur-wide-top > div:nth-of-type(3) {
+  z-index: 4;
+  backdrop-filter: blur(4px);
+  mask: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0) 37.5%,
+    rgba(0, 0, 0, 1) 50%,
+    rgba(0, 0, 0, 1) 62.5%,
+    rgba(0, 0, 0, 0) 75%
+  );
+  -webkit-mask: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0) 37.5%,
+    rgba(0, 0, 0, 1) 50%,
+    rgba(0, 0, 0, 1) 62.5%,
+    rgba(0, 0, 0, 0) 75%
+  );
+}
+.gradient-blur-narrow-top > div:nth-of-type(4),
+.gradient-blur-wide-top > div:nth-of-type(4) {
+  z-index: 5;
+  backdrop-filter: blur(8px);
+  mask: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0) 50%,
+    rgba(0, 0, 0, 1) 62.5%,
+    rgba(0, 0, 0, 1) 75%,
+    rgba(0, 0, 0, 0) 87.5%
+  );
+  -webkit-mask: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0) 50%,
+    rgba(0, 0, 0, 1) 62.5%,
+    rgba(0, 0, 0, 1) 75%,
+    rgba(0, 0, 0, 0) 87.5%
+  );
+}
+.gradient-blur-narrow-top > div:nth-of-type(5),
+.gradient-blur-wide-top > div:nth-of-type(5) {
+  z-index: 6;
   backdrop-filter: blur(16px);
   mask: linear-gradient(
     to top,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 0.8) 25%,
-    rgba(0, 0, 0, 0.5) 50%,
-    rgba(0, 0, 0, 0.2) 75%,
+    rgba(0, 0, 0, 0) 62.5%,
+    rgba(0, 0, 0, 1) 75%,
+    rgba(0, 0, 0, 1) 87.5%,
     rgba(0, 0, 0, 0) 100%
   );
   -webkit-mask: linear-gradient(
     to top,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 0.8) 25%,
-    rgba(0, 0, 0, 0.5) 50%,
-    rgba(0, 0, 0, 0.2) 75%,
+    rgba(0, 0, 0, 0) 62.5%,
+    rgba(0, 0, 0, 1) 75%,
+    rgba(0, 0, 0, 1) 87.5%,
     rgba(0, 0, 0, 0) 100%
   );
 }
-
-.gradient-blur::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  backdrop-filter: blur(64px);
+.gradient-blur-narrow-top > div:nth-of-type(6),
+.gradient-blur-wide-top > div:nth-of-type(6) {
+  z-index: 7;
+  backdrop-filter: blur(32px);
   mask: linear-gradient(
     to top,
-    rgba(0, 0, 0, 0.6) 0%,
-    rgba(0, 0, 0, 0.3) 40%,
-    rgba(0, 0, 0, 0) 80%
+    rgba(0, 0, 0, 0) 75%,
+    rgba(0, 0, 0, 1) 87.5%,
+    rgba(0, 0, 0, 1) 100%
   );
   -webkit-mask: linear-gradient(
     to top,
-    rgba(0, 0, 0, 0.6) 0%,
-    rgba(0, 0, 0, 0.3) 40%,
-    rgba(0, 0, 0, 0) 80%
+    rgba(0, 0, 0, 0) 75%,
+    rgba(0, 0, 0, 1) 87.5%,
+    rgba(0, 0, 0, 1) 100%
   );
 }
-
-/* Shorter blur gradient for wide view */
-.gradient-blur-wide {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 300px;
-  pointer-events: none;
+.gradient-blur-narrow-top::after,
+.gradient-blur-wide-top::after {
+  content: '';
   z-index: 8;
-}
-
-.gradient-blur-wide::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  backdrop-filter: blur(8px);
-  border-radius: 0.5rem;
-  mask: linear-gradient(
-    to top,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 0.8) 25%,
-    rgba(0, 0, 0, 0.5) 50%,
-    rgba(0, 0, 0, 0.2) 75%,
-    rgba(0, 0, 0, 0) 100%
-  );
-  -webkit-mask: linear-gradient(
-    to top,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 0.8) 25%,
-    rgba(0, 0, 0, 0.5) 50%,
-    rgba(0, 0, 0, 0.2) 75%,
-    rgba(0, 0, 0, 0) 100%
-  );
-}
-
-.gradient-blur-wide::after {
-  content: "";
-  position: absolute;
-  inset: 0;
   backdrop-filter: blur(64px);
   mask: linear-gradient(
     to top,
-    rgba(0, 0, 0, 0.6) 0%,
-    rgba(0, 0, 0, 0.3) 40%,
-    rgba(0, 0, 0, 0) 80%
+    rgba(0, 0, 0, 0) 87.5%,
+    rgba(0, 0, 0, 1) 100%
   );
   -webkit-mask: linear-gradient(
     to top,
-    rgba(0, 0, 0, 0.6) 0%,
-    rgba(0, 0, 0, 0.3) 40%,
-    rgba(0, 0, 0, 0) 80%
+    rgba(0, 0, 0, 0) 87.5%,
+    rgba(0, 0, 0, 1) 100%
   );
 }

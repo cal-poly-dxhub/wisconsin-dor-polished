@@ -8,7 +8,6 @@ const stableConfig = {
   websocketUrl: process.env.NEXT_PUBLIC_WEBSOCKET_URL!,
 };
 
-
 export function NarrowApp() {
   const { sendMessage } = useWebSocketChat(stableConfig);
 
@@ -21,8 +20,29 @@ export function NarrowApp() {
       <div className="relative h-full w-full">
         <ChatContainer variant="narrow" />
 
-        {/* Blur gradient overlay */}
-        <div className="gradient-blur"></div>
+        {/* Top blur gradient overlay */}
+        <div className="gradient-blur-narrow-top">
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+        </div>
+
+        {/* Bottom blur gradient overlay */}
+        <div className="gradient-blur-narrow">
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+        </div>
 
         {/* Overlaid Chat Input */}
         <div className="absolute bottom-24 left-1/2 z-20 w-3/4 max-w-md -translate-x-1/2 transform">
