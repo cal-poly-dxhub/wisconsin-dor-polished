@@ -20,32 +20,8 @@ export function NarrowApp() {
       <div className="relative h-full w-full">
         <ChatContainer variant="narrow" />
 
-        {/* Top blur gradient overlay */}
-        <div className="gradient-blur-narrow-top">
-          <div></div>
-          <div></div>
-          <div></div>
-          <div></div>
-          <div></div>
-          <div></div>
-          <div></div>
-          <div></div>
-        </div>
-
-        {/* Bottom blur gradient overlay */}
-        <div className="gradient-blur-narrow">
-          <div></div>
-          <div></div>
-          <div></div>
-          <div></div>
-          <div></div>
-          <div></div>
-          <div></div>
-          <div></div>
-        </div>
-
         {/* Overlaid Chat Input */}
-        <div className="absolute bottom-24 left-1/2 z-20 w-3/4 max-w-md -translate-x-1/2 transform">
+        <div className="absolute bottom-24 left-1/2 z-20 w-3/4 max-w-2xl -translate-x-1/2 transform">
           <ChatInput
             placeholder="Type your message..."
             onSendMessage={handleSendMessage}

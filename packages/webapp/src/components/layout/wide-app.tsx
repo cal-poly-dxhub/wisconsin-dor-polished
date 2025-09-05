@@ -26,23 +26,25 @@ export function WideApp() {
   };
 
   return (
-    <div className="bg-background grid h-screen grid-cols-[1fr_400px] gap-6 p-32">
-      {/* Chat Container - Main Content Area */}
-      <div className="relative min-h-0">
-        <ChatContainer variant="wide" />
+    <div className="flex justify-center">
+      <div className="bg-background grid h-screen grid-cols-[minmax(0,64rem)_400px] gap-6 p-32">
+        {/* Chat Container - Main Content Area */}
+        <div className="relative min-h-0">
+          <ChatContainer variant="wide" />
 
-        {/* Overlaid Chat Input */}
-        <div className="absolute bottom-12 left-1/2 z-20 w-3/4 max-w-2xl -translate-x-1/2 transform">
-          <ChatInput
-            placeholder="Type your message..."
-            onSendMessage={handleSendMessage}
-          />
+          {/* Overlaid Chat Input */}
+          <div className="absolute bottom-12 left-1/2 z-20 w-3/4 max-w-2xl -translate-x-1/2 transform">
+            <ChatInput
+              placeholder="Ask me anything."
+              onSendMessage={handleSendMessage}
+            />
+          </div>
         </div>
-      </div>
 
-      {/* Documents List - Sidebar */}
-      <div className="min-h-0">
-        <DocumentList title="Documents" documents={documents} />
+        {/* Documents List - Sidebar */}
+        <div className="min-h-0">
+          <DocumentList title="Documents" documents={documents} />
+        </div>
       </div>
     </div>
   );

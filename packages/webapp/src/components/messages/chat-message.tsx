@@ -170,7 +170,7 @@ export function ChatMessage({
             animate={{ filter: 'blur(0px)', opacity: 1 }}
             exit={{ filter: 'blur(8px)', opacity: 0 }}
             transition={{ duration: 0.3 }}
-            className="chat-response-aligned mt-5"
+            className="chat-response-aligned mt-8"
           >
             <HoverCard>
               <HoverCardTrigger asChild>

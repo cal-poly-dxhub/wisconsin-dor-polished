@@ -112,30 +112,6 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
             ))}
           </div>
           <div className="h-[50%]"></div>
-
-          {/* Top blur gradient for wide variant */}
-          {variant === 'wide' && (
-            <div className="gradient-blur-wide-top">
-              <div></div>
-              <div></div>
-              <div></div>
-              <div></div>
-              <div></div>
-              <div></div>
-            </div>
-          )}
-
-          {/* Bottom blur gradient for wide variant - inside the card */}
-          {variant === 'wide' && (
-            <div className="gradient-blur-wide">
-              <div></div>
-              <div></div>
-              <div></div>
-              <div></div>
-              <div></div>
-              <div></div>
-            </div>
-          )}
         </div>
       </div>
     );

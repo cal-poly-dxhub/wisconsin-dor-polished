@@ -2,7 +2,7 @@
 import { Button } from '@/components/ui/button';
 import { useChatStore } from '@/stores/chat-store';
 import { Send } from 'lucide-react';
-import { KeyboardEvent, useState } from 'react';
+import { KeyboardEvent, useLayoutEffect, useRef, useState } from 'react';
 
 export interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -12,7 +12,7 @@ export interface ChatInputProps {
 
 export function ChatInput({
   onSendMessage,
-  placeholder = 'Type your message...',
+  placeholder = 'Ask me anything.',
   className = '',
 }: ChatInputProps) {
   const [message, setMessage] = useState('');
@@ -22,6 +22,17 @@ export function ChatInput({
   const chatState = useChatStore(s => s.chatState);
   const setChatState = useChatStore(s => s.setChatState);
   const disabled = chatState !== 'idle';
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
+
+  useLayoutEffect(() => {
+    // Conforms text input to content size
+    const ta = textAreaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    const newHeight = Math.min(ta.scrollHeight, 120);
+    ta.style.height = newHeight + 'px';
+    setIsExpanded(newHeight > 24);
+  }, [message]);
 
   const handleSend = () => {
     if (message.trim() && !disabled) {
@@ -40,25 +51,16 @@ export function ChatInput({
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setMessage(e.target.value);
-
-    // Auto-resize the textarea
-    const textarea = e.target;
-    textarea.style.height = 'auto';
-    const newHeight = Math.min(textarea.scrollHeight, 120);
-    textarea.style.height = newHeight + 'px';
-
-    // Check if expanded (more than single line)
-    setIsExpanded(newHeight > 24); // 24px is approximately one line height
   };
 
   return (
     <div className={`relative ${className}`}>
       {/* Frosted glass input container */}
       <div
-        className={`relative flex items-center gap-3 rounded-lg border px-4 pr-2 shadow-lg backdrop-blur-[8px] transition-all duration-200 ${isExpanded ? 'py-4' : 'py-2'
+        className={`relative flex items-center gap-3 rounded-lg border px-4 pr-2 backdrop-blur-[16px] transition-all duration-200 ${isExpanded ? 'py-4' : 'py-2'
           } ${disabled
-            ? 'border-gray-300/10 bg-gray-100/5 dark:border-white/5 dark:bg-white/2'
-            : 'border-gray-300/20 bg-white/10 dark:border-white/10 dark:bg-white/5'
+            ? 'bg-gray-100/5 dark:bg-white/2'
+            : 'border-1 border-border/800 bg-white/10 dark:border-border/200 dark:bg-white/5'
           }`}
       >
         {/* Grain overlay */}
@@ -80,7 +82,8 @@ export function ChatInput({
           placeholder={disabled ? 'Please wait...' : placeholder}
           disabled={disabled}
           rows={1}
-          className={`flex-1 resize-none overflow-y-auto border-0 bg-transparent text-base font-light shadow-none transition-all duration-200 outline-none focus-visible:ring-0 focus-visible:ring-offset-0 ${disabled
+          ref={textAreaRef}
+          className={`flex-1 resize-none overflow-y-auto border-0 bg-transparent text-xl font-light shadow-none transition-all duration-200 outline-none focus-visible:ring-0 focus-visible:ring-offset-0 ${disabled
             ? 'cursor-not-allowed text-gray-400 placeholder:text-gray-400/60 dark:text-gray-600 dark:placeholder:text-gray-600/60'
             : 'text-gray-800 placeholder:text-gray-600 dark:text-white dark:placeholder:text-gray-500'
             }`}
@@ -93,13 +96,13 @@ export function ChatInput({
           onClick={handleSend}
           disabled={!message.trim() || disabled}
           size="icon"
-          className={`transition-all duration-200 ${disabled
+          className={`transition-all duration-200 mr-1 ${disabled
             ? 'cursor-not-allowed border-gray-300/10 bg-gray-100/20 text-gray-400 hover:bg-gray-100/20 dark:border-white/5 dark:bg-white/5 dark:text-gray-600 dark:hover:bg-white/5'
-            : 'border-gray-300/30 bg-gray-100/40 text-gray-700 backdrop-blur-sm hover:bg-gray-200/60 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20'
+            : 'border-gray-300/30 bg-neutral-800 text-gray-700 backdrop-blur-sm hover:bg-gray-800/60 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20'
             }`}
         >
           <Send
-            className={`h-4 w-4 transition-all duration-200 ${disabled ? 'opacity-40' : 'opacity-100'}`}
+            className={`h-4 w-4 transition-all duration-200 stroke-white ${disabled ? 'opacity-40' : 'opacity-100'}`}
           />
         </Button>
       </div>
