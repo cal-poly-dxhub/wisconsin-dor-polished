@@ -73,6 +73,30 @@ class UnknownResourceType(MessagesError):
         )
 
 
+class GenericStreamingError(MessagesError):
+    def __init__(self, details: dict[str, Any] | None = None):
+        super().__init__(status_code=500, details=details)
+
+    def to_resonse(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
+        return ErrorMessage(
+            content=ErrorContent(
+                error="Internal server error occurred while streaming a response.",
+            )
+        )
+
+
+class ThrottlingError(MessagesError):
+    def __init__(self, details: dict[str, Any] | None = None):
+        super().__init__(status_code=500, details=details)
+
+    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
+        return ErrorMessage(
+            content=ErrorContent(
+                error="Request was throttled due to too many requests. Please wait and try again.",
+            )
+        )
+
+
 class ConfigNotFound(MessagesError):
     """Raised when a config is not found."""
 

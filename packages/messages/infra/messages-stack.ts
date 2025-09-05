@@ -65,6 +65,18 @@ export class MessagesStack extends cdk.NestedStack {
     // Grant DynamoDB read permissions to classifier function
     props.sessionsTable.grantReadData(this.classifierFunction);
 
+    // Grant Bedrock permissions for classifier function
+    this.classifierFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'bedrock:InvokeModel',
+          'bedrock:InvokeModelWithResponseStream',
+        ],
+        resources: ['*'],
+      })
+    );
+
     // Retrieval Lambda (accepts RetrieveJob)
     const retrievalHandler = new lambda.Function(this, 'RetrievalFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
@@ -178,6 +190,18 @@ export class MessagesStack extends cdk.NestedStack {
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['execute-api:ManageConnections'],
+        resources: ['*'],
+      })
+    );
+
+    // Grant Bedrock permissions for invoking models with response streaming
+    streamingHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'bedrock:InvokeModel',
+          'bedrock:InvokeModelWithResponseStream',
+        ],
         resources: ['*'],
       })
     );

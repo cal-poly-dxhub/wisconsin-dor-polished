@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 import pydantic
-from bedrock_utils import ModelConfig, get_model_config_from_dynamo
+from bedrock_utils import ModelConfig, call_bedrock_converse, get_model_config_from_dynamo
 from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
     DocumentResource,
@@ -39,28 +39,24 @@ async def generate_response_async(
     # TODO: stubbed streaming content; replace with Bedrock-generated content
     match resource:
         case FAQResource(question=question, answer=answer):
-            text = f"Question: {question}\nAnswer: {answer}\nQuery: {query}"
             config: ModelConfig = get_model_config_from_dynamo("faqResponse")
-            config.prompt = config.prompt.format(
+            text = config.prompt.format(
                 question=question,
                 answer=answer,
                 query=query,
             )
         case DocumentResource(documents=documents):
-            text = "\n".join([doc.title for doc in documents]) or "No documents"
             config: ModelConfig = get_model_config_from_dynamo("ragResponse")
-            config.prompt = config.prompt.format(
+            text = config.prompt.format(
                 query=query,
                 documents="\n".join([d.model_dump_json() for d in documents]),
             )
         case _:
             raise ValueError(f"Unknown resource type: {resource}")
 
-        # TODO: generate a response using the config here
-
-    logger.info(f"Using config: {config}")
-
-    async for fragment in fragment_message(text):
+    logger.info(f"Using config to generate response: {config}")
+    response = call_bedrock_converse(text, config)
+    async for fragment in response:
         yield fragment
 
 

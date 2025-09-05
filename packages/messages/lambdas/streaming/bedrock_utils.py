@@ -1,5 +1,9 @@
+import logging
 import os
+from collections.abc import AsyncGenerator
 from typing import Any
+
+from step_function_types.errors import report_error, GenericStreamingError, ThrottlingError
 
 import boto3
 import pydantic
@@ -8,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from step_function_types.errors import ConfigNotFound
 
 # PyDantic models that validate Bedrock model configuration parameters.
+
+logger = logging.getLogger(__name__)
 
 
 class SystemPrompt(BaseModel):
@@ -67,7 +73,7 @@ class BedrockConfig(BaseModel):
 
     def to_bedrock_params(self) -> dict[str, Any]:
         """Convert to parameters ready for bedrock.converse() call"""
-        return self.dict(exclude_none=True)
+        return self.model_dump(exclude_none=True)
 
 
 def to_camel(string: str) -> str:
@@ -77,8 +83,8 @@ def to_camel(string: str) -> str:
 
 
 class ModelConfig(BaseModel):
-    config: BedrockConfig | None = Field(
-        None, description="Configuration for Bedrock models", alias="config"
+    config: BedrockConfig = Field(
+        ..., description="Configuration for Bedrock models", alias="config"
     )
     id: str = Field(..., min_length=1, description="Model identifier", alias="id")
     prompt: str = Field(min_length=1, description="Prompt for the model", alias="prompt")
@@ -117,3 +123,96 @@ def get_model_config_from_dynamo(config_id: str) -> ModelConfig:
     except pydantic.ValidationError as e:
         raise ValueError(f"Invalid config for model ID {config_id}: {e}") from e
     return config
+
+
+async def call_bedrock_converse(
+    query: str, model_config: ModelConfig, region: str = "us-west-2"
+) -> AsyncGenerator[str]:
+    """
+    Call Bedrock Converse API with streaming using ModelConfig.
+
+    Args:
+        query: The user's query/message
+        model_config: The ModelConfig containing Bedrock configuration
+        region: AWS region for Bedrock client (default: us-west-2)
+
+    Yields:
+        str: Text fragments from the streaming response
+    """
+
+    logger.info(f"Calling Bedrock Converse API with query: {query}")
+    bedrock_client = boto3.client("bedrock-runtime", region_name=region)
+
+    conversation_request: dict = {
+        "messages": [{"role": "user", "content": [{"text": query}]}],
+        **model_config.config.to_bedrock_params(),
+    }
+
+    try:
+        response = bedrock_client.converse_stream(**conversation_request)
+    except Exception as e:
+        logger.error(f"Error calling Bedrock Converse API: {e}")
+        raise GenericStreamingError(details={"original_error": str(e)}) from e
+
+    logger.info("Starting to process Bedrock stream response")
+
+    stream = response.get("stream")
+    if not stream:
+        logger.error("No stream found in Bedrock response")
+        raise GenericStreamingError(details={"message": "No stream in Bedrock response"})
+
+    for event in stream:
+        # Handle contentBlockDelta events which contain text deltas
+        if "contentBlockDelta" in event:
+            delta = event["contentBlockDelta"].get("delta", {})
+            if "text" in delta:
+                text_fragment = delta["text"]
+                logger.debug(f"Yielding text fragment: {text_fragment}")
+                yield text_fragment
+
+        # Handle messageStart events
+        elif "messageStart" in event:
+            logger.debug(f"Message started with role: {event['messageStart'].get('role')}")
+
+        # Handle contentBlockStart events
+        elif "contentBlockStart" in event:
+            logger.debug(
+                f"Content block started at index: {event['contentBlockStart'].get('contentBlockIndex')}"
+            )
+
+        # Handle contentBlockStop events
+        elif "contentBlockStop" in event:
+            logger.debug(
+                f"Content block stopped at index: {event['contentBlockStop'].get('contentBlockIndex')}"
+            )
+
+        # Handle messageStop events
+        elif "messageStop" in event:
+            stop_reason = event["messageStop"].get("stopReason")
+            logger.info(f"Message stopped with reason: {stop_reason}")
+
+        # Handle metadata events (usage, metrics, etc.)
+        elif "metadata" in event:
+            metadata = event["metadata"]
+            if "usage" in metadata:
+                usage = metadata["usage"]
+                logger.info(
+                    f"Token usage - Input: {usage.get('inputTokens')}, Output: {usage.get('outputTokens')}, Total: {usage.get('totalTokens')}"
+                )
+
+        elif (
+            "internalServerException" in event
+            or "modelStreamErrorException" in event
+            or "validationException" in event
+            or "serviceUnavailableException" in event
+        ):
+            logger.error(f"Error event from Bedrock: {event}")
+            raise GenericStreamingError(details={"event": event})
+
+        elif "throttlingException" in event:
+            logger.error(f"Throttling event from Bedrock: {event}")
+            raise ThrottlingError(details={"event": event})
+
+        else:
+            logger.error(f"Unknown event type from Bedrock: {event}")
+            raise GenericStreamingError(details={"unknown_event": event})
