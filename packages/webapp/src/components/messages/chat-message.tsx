@@ -58,13 +58,15 @@ export function StreamResponse({
 }: StreamResponseProps) {
   return (
     <div className={`chat-response font-sans ${className || ''}`}>
-      <AnimatedMarkdown
-        content={content}
-        animation={streamingComplete ? 'none' : 'blurAndSharpen'}
-        animationDuration={streamingComplete ? '0s' : '1s'}
-        animationTimingFunction="ease"
-        sep="word"
-      />
+      <div className="markdown-container">
+        <AnimatedMarkdown
+          content={content}
+          animation={streamingComplete ? 'none' : 'blurAndSharpen'}
+          animationDuration={streamingComplete ? '0s' : '1s'}
+          animationTimingFunction="ease"
+          sep="word"
+        />
+      </div>
     </div>
   );
 }
@@ -78,18 +80,19 @@ export function DocumentsStreamResponse({
   return (
     <div className={`chat-response font-sans ${className || ''}`}>
       {/* Documents List */}
-      <div className="mt-6 mb-3">
+      <div className="mt-3">
         <DocumentList documents={documents} title="Referenced Documents" />
       </div>
 
-      {/* Response Content */}
-      <AnimatedMarkdown
-        content={content}
-        animation={streamingComplete ? 'none' : 'blurAndSharpen'}
-        animationDuration={streamingComplete ? '0s' : '1s'}
-        animationTimingFunction="ease"
-        sep="word"
-      />
+      <div className="markdown-container">
+        <AnimatedMarkdown
+          content={content}
+          animation={streamingComplete ? 'none' : 'blurAndSharpen'}
+          animationDuration={streamingComplete ? '0s' : '1s'}
+          animationTimingFunction="ease"
+          sep="word"
+        />
+      </div>
     </div>
   );
 }
@@ -226,7 +229,7 @@ export function ChatMessage({
       <div style={{ pointerEvents: selected ? 'auto' : 'none' }}>
         <div className={messageContentClassName}>
           {/* Query Paragraph */}
-          <p className={`chat-query mb-4`}>{query}</p>
+          <p className={`chat-query mb-2`}>{query}</p>
 
           {/* Response Paragraph */}
           {memoizedResponse}

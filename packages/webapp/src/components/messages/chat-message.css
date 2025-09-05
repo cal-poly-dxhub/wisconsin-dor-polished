@@ -6,11 +6,159 @@
 }
 
 .chat-response {
-  font-weight: 300;
+  font-weight: 200;
   font-size: 1.125rem;
   color: hsl(var(--foreground));
 }
 
 .chat-response-aligned {
   margin-left: 1.125rem;
+}
+
+/* Markdown formatting styles */
+.markdown-container {
+  font-family: '42 Dot Sans', Arial, Helvetica, sans-serif;
+  color: hsl(var(--foreground));
+  background: transparent;
+  line-height: 1.7;
+  font-size: 1rem;
+  font-weight: 200;
+}
+
+/* Headings */
+.markdown-container h1,
+.markdown-container h2,
+.markdown-container h3,
+.markdown-container h4,
+.markdown-container h5,
+.markdown-container h6 {
+  font-family: '42 Dot Sans', Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  margin-top: 1.5em;
+  margin-bottom: 1em;
+  line-height: 1.25;
+  color: hsl(var(--foreground));
+}
+
+.markdown-container h1 { font-size: 2.2rem; }
+.markdown-container h2 { font-size: 1.7rem; }
+.markdown-container h3 { font-size: 1.3rem; }
+.markdown-container h4 { font-size: 1.1rem; }
+.markdown-container h5 { font-size: 1rem; }
+.markdown-container h6 { font-size: 0.95rem; }
+
+/* Paragraphs */
+.markdown-container p {
+  margin-top: 1.2em;
+  margin-bottom: 1.2em;
+  font-size: 1.125rem;
+  font-weight: 100 !important;
+}
+
+/* Code blocks & Inline code */
+.markdown-container pre,
+.markdown-container code {
+  font-family: 'Fira Mono', 'Roboto Mono', 'Menlo', monospace;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.2em 0.5em;
+  font-size: 0.97em;
+  color: var(--card-foreground);
+}
+
+.markdown-container pre {
+  padding: 1em;
+  margin: 1.5em 0;
+  overflow-x: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--card-foreground);
+}
+
+/* Lists */
+.markdown-container ul,
+.markdown-container ol {
+  margin-left: 1.5em;
+  margin-bottom: 1.5em;
+  margin-top: 1em;
+  padding-left: 0;
+}
+
+.markdown-container li {
+  margin-bottom: 0.8em;
+  line-height: 1.6;
+  font-size: 1.125rem;
+  font-weight: 200 !important;
+}
+
+.markdown-container ul {
+  list-style-type: disc;
+}
+
+.markdown-container ul ul {
+  list-style-type: circle;
+  margin-top: 0.25em;
+}
+
+.markdown-container ul ul ul {
+  list-style-type: square;
+}
+
+.markdown-container ol {
+  list-style-type: decimal;
+}
+
+.markdown-container ol ol {
+  list-style-type: lower-alpha;
+  margin-top: 0.25em;
+}
+
+.markdown-container ol ol ol {
+  list-style-type: lower-roman;
+}
+
+/* Links */
+.markdown-container a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  transition: color 0.2s;
+}
+.markdown-container a:hover {
+  color: hsl(var(--primary) / 0.8);
+}
+
+/* Blockquotes */
+.markdown-container blockquote {
+  border-left: 4px solid hsl(var(--primary));
+  background: hsl(var(--muted));
+  padding: 0.8em 1em;
+  margin: 1.5em 0;
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+/* Images */
+.markdown-container img {
+  max-width: 100%;
+  border-radius: 8px;
+  display: block;
+  margin: 1em auto;
+}
+
+/* Tables */
+.markdown-container table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.5em 0;
+  font-size: 0.97em;
+}
+.markdown-container th,
+.markdown-container td {
+  border: 1px solid var(--border);
+  padding: 0.6em 0.8em;
+}
+.markdown-container th {
+  background: var(--muted);
+  font-weight: 500;
 } 
