@@ -38,6 +38,7 @@ export const ErrorContentSchema = z.object({
 
 export const ErrorMessageSchema = z.object({
   responseType: z.literal('error'),
+  queryId: z.string(),
   content: ErrorContentSchema,
 });
 

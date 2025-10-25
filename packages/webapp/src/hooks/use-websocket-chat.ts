@@ -1,10 +1,14 @@
-import { useCallback, useMemo, useState } from 'react';
+/**
+ * Hook wrapping useValidatedWebSocket specifying UI behavior around
+ * basic session creation and messaging (e.g., how queries are updated
+ * on receipt of message fragments from the server).
+ */
+
+import { useCallback, useMemo, useEffect } from 'react';
 import { useValidatedWebSocket } from './use-validated-websocket';
 import { useChatStore } from '../stores/chat-store';
-import { useSendMessage, useCreateSession } from './api/chat';
 import type { MessageUnion } from '@messages/websocket-interface';
 import type { ConnectionState, Query } from '../stores/types';
-import type { SendMessageRequest } from '../api/chat-api';
 
 export interface UseWebSocketChatOptions {
   websocketUrl: string;
@@ -13,28 +17,17 @@ export interface UseWebSocketChatOptions {
   onError?: (error: string) => void;
 }
 
-export interface SendMessageParams {
-  message: string;
-}
-
 export interface UseWebSocketChatReturn {
   connectionState: ConnectionState;
   isConnected: boolean;
   disconnect: () => void;
   reconnect: () => void;
-  error: string | null;
-  sendMessage: (params: SendMessageParams) => void;
-  websocketUrl: string;
-  sessionId: string | null;
+  sendMessage: (message: string) => void;
 }
 
 export function useWebSocketChat(
   options: UseWebSocketChatOptions
 ): UseWebSocketChatReturn {
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const websocketUrl = useMemo(() => {
-    return sessionId ? `${options.websocketUrl}?sessionId=${sessionId}` : '';
-  }, [options.websocketUrl, sessionId]);
   const setConnectionState = useChatStore(state => state.setConnectionState);
   const updateQueryStatus = useChatStore(state => state.updateQueryStatus);
   const appendQueryResponse = useChatStore(state => state.appendQueryResponse);
@@ -43,133 +36,57 @@ export function useWebSocketChat(
   );
   const setQueryError = useChatStore(state => state.setQueryError);
   const setChatState = useChatStore(state => state.setChatState);
-  const addError = useChatStore(state => state.addError);
   const addQuery = useChatStore(state => state.addQuery);
   const setCurrentQueryId = useChatStore(state => state.setCurrentQueryId);
 
-  const createSessionMutation = useCreateSession({
-    onSuccess: data => {
-      setSessionId(data.sessionId);
-    },
-    onError: error => {
-      console.error('Error creating session', error);
-      const errorMessage =
-        error instanceof Error ? error.message : 'Failed to create session';
-
-      addError({
-        id: crypto.randomUUID(),
-        type: 'api',
-        message: errorMessage,
-        userMessage: 'Failed to create session',
-        retryable: true,
-        timestamp: new Date(),
-      });
-
-      options.onError?.(errorMessage);
-    },
-  });
-
-  const ensureSession = useCallback(async () => {
-    const sessionId = await createSessionMutation.mutateAsync();
-    return sessionId;
-  }, [createSessionMutation]);
-
-  const sendMessageMutation = useSendMessage({
-    onSuccess: (data, variables) => {
-      const newQuery: Query = {
-        query: variables.payload.message,
-        queryId: data.query_id,
-        type: 'outbound',
-        timestamp: new Date().toISOString(),
-        status: 'sent',
-        response: {
-          type: 'stream',
-          content: '',
-        },
-      };
-
-      addQuery(newQuery);
-      setCurrentQueryId(data.query_id);
-      setChatState('waiting_for_response');
-    },
-    onError: (error, variables) => {
-      console.error('Error sending message', error);
-
-      const errorMessage =
-        error instanceof Error ? error.message : 'Failed to send message';
-
-      addError({
-        id: crypto.randomUUID(),
-        type: 'api',
-        message: errorMessage,
-        userMessage: 'Failed to send message',
-        retryable: true,
-        timestamp: new Date(),
-      });
-
-      setChatState('idle');
-      options.onError?.(errorMessage);
-    },
-  });
-
+  // Define UI actions for each message type
   const messageHandler = useCallback(
     (message: MessageUnion) => {
       try {
         if ('responseType' in message) {
-          const { queryId } = message;
-
           switch (message.responseType) {
             case 'documents':
-              updateQueryResources(queryId, {
+              updateQueryResources(message.queryId, {
                 type: 'documents',
                 content: message.content,
               });
               break;
 
             case 'faq':
-              updateQueryResources(queryId, {
+              updateQueryResources(message.queryId, {
                 type: 'faq',
                 content: message.content,
               });
               break;
 
             case 'fragment':
-              appendQueryResponse(queryId, message.content.fragment);
+              appendQueryResponse(message.queryId, message.content.fragment);
               break;
 
             case 'answer-event':
               const { event } = message;
               if (event === 'start') {
-                updateQueryStatus(queryId, 'streaming');
+                updateQueryStatus(message.queryId, 'streaming');
                 setChatState('streaming');
               } else if (event === 'stop') {
-                updateQueryStatus(queryId, 'completed');
+                updateQueryStatus(message.queryId, 'completed');
                 setChatState('idle');
               }
               break;
 
             case 'error':
-              setQueryError(queryId, {
+              setQueryError(message.queryId, {
                 message: message.content.message,
                 userMessage: 'An error occurred while processing your request',
                 retryable: true,
               });
-              updateQueryStatus(queryId, 'failed');
+              updateQueryStatus(message.queryId, 'failed');
               break;
           }
         }
       } catch (error) {
-        addError({
-          id: crypto.randomUUID(),
-          type: 'websocket',
-          message:
-            error instanceof Error
-              ? error.message
-              : 'Unknown message processing error',
-          userMessage: 'Failed to process incoming message',
-          retryable: false,
-          timestamp: new Date(),
-        });
+        // TODO: handle error raised using boundary method
+        console.error('Error processing WebSocket message:', error);
       }
     },
     [
@@ -178,75 +95,51 @@ export function useWebSocketChat(
       updateQueryStatus,
       appendQueryResponse,
       setChatState,
-      addError,
     ]
   );
 
-  const handleConnectionStateChange = useCallback(
-    (state: ConnectionState) => {
-      setConnectionState(state);
-      options.onConnectionStateChange?.(state);
+  // Store new query; set current query ID in UI store
+  const handleSuccessfulSend = useCallback(
+    (queryId: string, message: string) => {
+      const query: Query = {
+        query: message,
+        queryId,
+        type: 'outbound',
+        timestamp: new Date().toISOString(),
+        status: 'sent',
+        response: {
+          type: 'stream',
+          content: '',
+        },
+      };
+      addQuery(query);
+      setCurrentQueryId(queryId);
     },
-    [setConnectionState, options]
+    [addQuery, setCurrentQueryId]
   );
 
-  const handleError = useCallback(
-    (event: Event) => {
-      const errorMessage = 'WebSocket connection error occurred.';
-      addError({
-        id: crypto.randomUUID(),
-        type: 'websocket',
-        message: errorMessage,
-        userMessage: 'Connection error occurred',
-        retryable: true,
-        timestamp: new Date(),
-      });
-      options.onError?.(errorMessage);
-    },
-    [addError, options]
-  );
-
+  // Create memoized WebSocket options
   const websocketOptions = useMemo(() => {
     return {
-      url: websocketUrl,
-      onConnectionOpen: handleConnectionStateChange.bind(null, 'open'),
-      onConnectionClose: handleConnectionStateChange.bind(null, 'closed'),
-      onConnectionError: handleError,
+      urlBase: options.websocketUrl,
+      onSuccessfulSend: handleSuccessfulSend,
     };
-  }, [handleConnectionStateChange, handleError, websocketUrl]);
+  }, [handleSuccessfulSend, options.websocketUrl]);
 
   // Defaults to no-ops if WebSocket URL is falsy
-  const { connectionState, isConnected, close, reconnect, error } =
+  const { connectionState, isConnected, close, reconnect, sendMessage } =
     useValidatedWebSocket(messageHandler, websocketOptions);
 
-  const sendMessage = useCallback(
-    async (params: SendMessageParams) => {
-      const { sessionId } = await ensureSession();
-      if (!sessionId) {
-        console.error('No session ID available for sending message; skipping.');
-        return;
-      }
-
-      setChatState('sending');
-      const request: SendMessageRequest = {
-        message: params.message,
-      };
-      sendMessageMutation.mutate({
-        sessionId,
-        payload: request,
-      });
-    },
-    [sendMessageMutation, setChatState, ensureSession]
-  );
+  // Keep store connection state updated
+  useEffect(() => {
+    setConnectionState(connectionState);
+  }, [connectionState, setConnectionState]);
 
   return {
     connectionState,
-    isConnected: isConnected && !!sessionId,
+    isConnected,
     disconnect: close,
     reconnect,
-    error,
     sendMessage,
-    websocketUrl,
-    sessionId,
   };
 }

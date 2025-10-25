@@ -16,7 +16,7 @@ const CreateSessionResponse = z.object({
 const SendMessageRequest = z.object({ message: z.string().min(1) });
 const SendMessageResponse = z.object({
   message: z.string(),
-  query_id: z.string().uuid(),
+  queryId: z.string().uuid(),
 });
 
 export type ApiResponse = z.infer<typeof ApiResponse>;

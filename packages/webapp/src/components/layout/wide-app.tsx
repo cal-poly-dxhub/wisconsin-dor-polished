@@ -22,7 +22,7 @@ export function WideApp() {
       : [];
 
   const handleSendMessage = (message: string) => {
-    sendMessage({ message });
+    sendMessage(message);
   };
 
   return (

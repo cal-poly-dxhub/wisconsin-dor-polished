@@ -1,6 +1,11 @@
+/**
+ * Hook providing session creation, message sending, and message receipt
+ * capabilities for a WebSocket endpoint.
+ */
+
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useSendMessage, useCreateSession } from './api/chat';
 import { WebSocket } from 'partysocket';
-import { z } from 'zod';
 import {
   MessageUnion,
   MessageHandler,
@@ -9,22 +14,19 @@ import {
 } from '@messages/websocket-interface';
 
 export interface UseValidatedWebSocketOptions {
-  url: string;
+  urlBase: string;
   protocols?: string | string[];
-  onValidationError?: (error: z.ZodError, rawMessage: unknown) => void;
-  onConnectionError?: (event: Event) => void;
-  onConnectionOpen?: (event: Event) => void;
-  onConnectionClose?: (event: CloseEvent) => void;
+  onSuccessfulSend: (queryId: string, queryMessage: string) => void;
 }
 
 export interface UseValidatedWebSocketReturn {
   connectionState: 'connecting' | 'open' | 'closing' | 'closed';
   isConnected: boolean;
   lastMessage: MessageUnion | null;
-  sendMessage: (message: unknown) => void;
+  sendMessage: (message: string) => void;
   close: () => void;
   reconnect: () => void;
-  error: string | null;
+  sessionId: string | null;
 }
 
 export const useValidatedWebSocket = (
@@ -34,39 +36,43 @@ export const useValidatedWebSocket = (
   const [connectionState, setConnectionState] = useState<
     'connecting' | 'open' | 'closing' | 'closed'
   >('connecting');
-  const [lastMessage, setLastMessage] = useState<MessageUnion | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const messageHandlerRef = useRef<MessageHandler>(messageHandler);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const websocketUrl = useMemo(() => {
+    // TODO: useMemo or useEffect?
+    return sessionId ? `${options.urlBase}?sessionId=${sessionId}` : '';
+  }, [options.urlBase, sessionId]);
 
+  const [lastMessage, setLastMessage] = useState<MessageUnion | null>(null);
+
+  const messageHandlerRef = useRef<MessageHandler>(messageHandler);
   useEffect(() => {
     messageHandlerRef.current = messageHandler;
   }, [messageHandler]);
 
-  const handlersRef = useRef<{
-    onValidationError?: (error: z.ZodError, rawMessage: unknown) => void;
-    onConnectionError?: (event: Event) => void;
-    onConnectionOpen?: (event: Event) => void;
-    onConnectionClose?: (event: CloseEvent) => void;
-  }>({
-    onValidationError: options.onValidationError,
-    onConnectionError: options.onConnectionError,
-    onConnectionOpen: options.onConnectionOpen,
-    onConnectionClose: options.onConnectionClose,
+  const createSessionMutation = useCreateSession({
+    onSuccess: data => {
+      setSessionId(data.sessionId);
+    },
+    onError: error => {
+      // TODO: raise an error here; propagate upward
+      console.error('Error creating session', error);
+    },
   });
 
+  const sendMessageMutation = useSendMessage({
+    onSuccess: (data, variables) => {
+      options.onSuccessfulSend(data.queryId, variables.payload.message);
+    },
+    onError: (error, variables) => {
+      // TODO: raise a proper error here
+      console.error('Error sending message', error);
+    },
+  });
   useEffect(() => {
-    handlersRef.current = {
-      onValidationError: options.onValidationError,
-      onConnectionError: options.onConnectionError,
-      onConnectionOpen: options.onConnectionOpen,
-      onConnectionClose: options.onConnectionClose,
-    };
-  }, [
-    options.onValidationError,
-    options.onConnectionError,
-    options.onConnectionOpen,
-    options.onConnectionClose,
-  ]);
+    // Create a session ID exactly once?
+  }, [sessionId]);
+
+  // Build WebSocket with route handlers for message, open, close, error
 
   const handleMessage = useCallback((event: MessageEvent) => {
     try {
@@ -79,16 +85,8 @@ export const useValidatedWebSocket = (
       // Set previous message and trigger message callback
       setLastMessage(messageBody);
       messageHandlerRef.current(messageBody);
-      setError(null);
     } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : 'Unknown validation error';
-      setError(`Message validation failed: ${errorMessage}`);
-
-      if (err instanceof z.ZodError && handlersRef.current.onValidationError) {
-        handlersRef.current.onValidationError(err, event.data);
-      }
-
+      // TODO: raise an error here; propagate upward
       console.error(
         'WebSocket message validation failed.',
         '\n\nMessage recieved:',
@@ -99,20 +97,24 @@ export const useValidatedWebSocket = (
     }
   }, []);
 
-  const handleOpen = useCallback((event: Event) => {
-    setConnectionState('open');
-    setError(null);
-    handlersRef.current.onConnectionOpen?.(event);
-  }, []);
+  const handleOpen = useCallback(
+    (event: Event) => {
+      setConnectionState('open');
+    },
+    [setConnectionState]
+  );
 
-  const handleClose = useCallback((event: CloseEvent) => {
-    setConnectionState('closed');
-    handlersRef.current.onConnectionClose?.(event);
-  }, []);
+  const handleClose = useCallback(
+    (event: CloseEvent) => {
+      setConnectionState('closed');
+      setSessionId(null); // Session ID invalid on close
+    },
+    [setConnectionState, setSessionId]
+  );
 
   const handleError = useCallback((event: Event) => {
-    setError('WebSocket connection error occurred');
-    handlersRef.current.onConnectionError?.(event);
+    // TODO: raise an error here; propagate upward
+    console.error('Error received over WebSocket:', event);
   }, []);
 
   const wsOptions = useMemo(() => {
@@ -127,11 +129,11 @@ export const useValidatedWebSocket = (
   }, []);
 
   const ws = useMemo(() => {
-    if (!options.url) {
+    if (!websocketUrl) {
       return null;
     }
 
-    const ws = new WebSocket(options.url, [], wsOptions);
+    const ws = new WebSocket(websocketUrl, [], wsOptions);
     ws.addEventListener('open', handleOpen);
     ws.addEventListener('close', handleClose);
     ws.addEventListener('error', handleError);
@@ -156,36 +158,48 @@ export const useValidatedWebSocket = (
     setInterval(updateConnectionState, 500);
     return ws;
   }, [
-    options.url,
     wsOptions,
     handleOpen,
     handleClose,
     handleError,
     handleMessage,
+    websocketUrl,
   ]);
 
+  // Ensure a session exists, then send a message via mutation
   const sendMessage = useCallback(
-    (message: unknown) => {
+    async (message: string) => {
       try {
-        ws?.send(JSON.stringify(message));
+        let localSessionId: string | null = sessionId; // prevent setSessionId race condition
+        if (!localSessionId) {
+          const res = await createSessionMutation.mutateAsync();
+          setSessionId(res.sessionId);
+          localSessionId = res.sessionId;
+        }
+        await sendMessageMutation.mutateAsync({
+          sessionId: localSessionId,
+          payload: { message },
+        });
       } catch (err) {
+        // TODO: raise an error here; propagate upward
         console.error('Error sending message:', err);
-        const errorMessage =
-          err instanceof Error ? err.message : 'Failed to send message';
-        setError(`Send failed: ${errorMessage}`);
-        throw err;
       }
     },
-    [ws]
+    [createSessionMutation, sendMessageMutation, sessionId]
   );
 
   const close = useCallback(() => {
     ws?.close();
+    setSessionId(null);
   }, [ws]);
 
-  const reconnect = useCallback(() => {
-    ws?.reconnect();
-  }, [ws]);
+  const reconnect = useCallback(async () => {
+    // Create a new session; the last session was cleared on disconnect.
+    const res = await createSessionMutation.mutateAsync();
+    setSessionId(res.sessionId);
+
+    // This creates a new WebSocket via the ws = useMemo(() => { ... }).
+  }, [setSessionId, createSessionMutation]);
 
   return {
     connectionState,
@@ -194,6 +208,6 @@ export const useValidatedWebSocket = (
     sendMessage,
     close,
     reconnect,
-    error,
+    sessionId,
   };
 };

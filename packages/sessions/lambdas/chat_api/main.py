@@ -171,7 +171,7 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
 
         response_body = {
             "message": "Message received and processing started",
-            "query_id": query_id,
+            "queryId": query_id,
         }
 
         return create_api_response(200, response_body)

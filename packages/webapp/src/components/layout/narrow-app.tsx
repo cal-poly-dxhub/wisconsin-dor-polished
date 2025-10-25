@@ -12,7 +12,7 @@ export function NarrowApp() {
   const { sendMessage } = useWebSocketChat(stableConfig);
 
   const handleSendMessage = (message: string) => {
-    sendMessage({ message });
+    sendMessage(message);
   };
 
   return (

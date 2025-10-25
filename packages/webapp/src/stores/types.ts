@@ -59,7 +59,6 @@ export interface ChatError {
   id: string;
   type: 'session' | 'websocket' | 'api' | 'validation';
   message: string;
-  userMessage: string; // User-facing error message
   details?: Record<string, unknown>;
   retryable: boolean;
   timestamp: Date;
