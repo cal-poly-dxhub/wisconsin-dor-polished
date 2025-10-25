@@ -12,7 +12,7 @@ export interface ChatInputProps {
 
 export function ChatInput({
   onSendMessage,
-  placeholder = 'Ask me anything.',
+  placeholder = 'Type your message...',
   className = '',
 }: ChatInputProps) {
   const [message, setMessage] = useState('');
@@ -57,11 +57,13 @@ export function ChatInput({
     <div className={`relative ${className}`}>
       {/* Frosted glass input container */}
       <div
-        className={`relative flex items-center gap-3 rounded-lg border px-4 pr-2 backdrop-blur-[16px] transition-all duration-200 ${isExpanded ? 'py-4' : 'py-2'
-          } ${disabled
+        className={`relative flex items-center gap-3 rounded-lg border px-4 pr-2 backdrop-blur-[16px] transition-all duration-200 ${
+          isExpanded ? 'py-4' : 'py-2'
+        } ${
+          disabled
             ? 'bg-gray-100/5 dark:bg-white/2'
             : 'border-1 border-border/800 bg-white/10 dark:border-border/200 dark:bg-white/5'
-          }`}
+        }`}
       >
         {/* Grain overlay */}
         <div className="pointer-events-none absolute inset-0 rounded-lg">
@@ -83,10 +85,11 @@ export function ChatInput({
           disabled={disabled}
           rows={1}
           ref={textAreaRef}
-          className={`flex-1 resize-none overflow-y-auto border-0 bg-transparent text-xl font-light shadow-none transition-all duration-200 outline-none focus-visible:ring-0 focus-visible:ring-offset-0 ${disabled
-            ? 'cursor-not-allowed text-gray-400 placeholder:text-gray-400/60 dark:text-gray-600 dark:placeholder:text-gray-600/60'
-            : 'text-gray-800 placeholder:text-gray-600 dark:text-white dark:placeholder:text-gray-500'
-            }`}
+          className={`flex-1 resize-none overflow-y-auto border-0 bg-transparent text-xl font-light shadow-none transition-all duration-200 outline-none focus-visible:ring-0 focus-visible:ring-offset-0 ${
+            disabled
+              ? 'cursor-not-allowed text-gray-400 placeholder:text-gray-400/60 dark:text-gray-600 dark:placeholder:text-gray-600/60'
+              : 'text-gray-800 placeholder:text-gray-600 dark:text-white dark:placeholder:text-gray-500'
+          }`}
           style={{
             minHeight: '1.5rem',
             maxHeight: '120px',
@@ -96,13 +99,14 @@ export function ChatInput({
           onClick={handleSend}
           disabled={!message.trim() || disabled}
           size="icon"
-          className={`transition-all duration-200 mr-1 ${disabled
-            ? 'cursor-not-allowed border-gray-300/10 bg-gray-100/20 text-gray-400 hover:bg-gray-100/20 dark:border-white/5 dark:bg-white/5 dark:text-gray-600 dark:hover:bg-white/5'
-            : 'border-gray-300/30 bg-neutral-800 text-gray-700 backdrop-blur-sm hover:bg-gray-800/60 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20'
-            }`}
+          className={`transition-all duration-200 mr-1 ${
+            disabled
+              ? 'cursor-not-allowed border-gray-300/10 bg-gray-100/20 text-gray-400 hover:bg-gray-100/20 dark:border-white/5 dark:bg-white/5 dark:text-gray-600 dark:hover:bg-white/5'
+              : 'border-gray-300/30 bg-gray-800/40 text-gray-700 backdrop-blur-sm hover:bg-gray-200/60 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20'
+          }`}
         >
           <Send
-            className={`h-4 w-4 transition-all duration-200 stroke-white ${disabled ? 'opacity-40' : 'opacity-100'}`}
+            className={`h-4 w-4 transition-all duration-200 ${disabled ? 'opacity-40' : 'opacity-100'}`}
           />
         </Button>
       </div>
