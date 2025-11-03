@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useChatStore } from '@/stores/chat-store';
 import { useSendMessage, useCreateSession } from './api/chat';
 import { WebSocket } from 'partysocket';
 import {
@@ -12,6 +13,8 @@ import {
   WebSocketMessage,
   WebSocketMessageSchema,
 } from '@messages/websocket-interface';
+import { ChatError } from '@/components/errors/chat-error';
+import { useChatError } from '@/components/errors/use-chat-error';
 
 export interface UseValidatedWebSocketOptions {
   urlBase: string;
@@ -23,7 +26,7 @@ export interface UseValidatedWebSocketReturn {
   connectionState: 'connecting' | 'open' | 'closing' | 'closed';
   isConnected: boolean;
   lastMessage: MessageUnion | null;
-  sendMessage: (message: string) => void;
+  sendMessage: (message: string) => Promise<void>;
   close: () => void;
   reconnect: () => void;
   sessionId: string | null;
@@ -33,6 +36,7 @@ export const useValidatedWebSocket = (
   messageHandler: MessageHandler,
   options: UseValidatedWebSocketOptions
 ): UseValidatedWebSocketReturn => {
+  const { handleError } = useChatError();
   const [connectionState, setConnectionState] = useState<
     'connecting' | 'open' | 'closing' | 'closed'
   >('connecting');
@@ -49,53 +53,88 @@ export const useValidatedWebSocket = (
     messageHandlerRef.current = messageHandler;
   }, [messageHandler]);
 
+  const setChatState = useChatStore(s => s.setChatState);
+
   const createSessionMutation = useCreateSession({
     onSuccess: data => {
       setSessionId(data.sessionId);
     },
     onError: error => {
-      // TODO: raise an error here; propagate upward
-      console.error('Error creating session', error);
+      handleError(
+        new ChatError(error, {
+          recoverable: true,
+          userMessage:
+            'An error occurred while creating a session. Please try again.',
+        })
+      );
+      setChatState('idle'); // So user can retry
     },
   });
+
+  // Sessions are acquired on mount and checked before message sending.
+  const ensureSession = useCallback(async () => {
+    if (sessionId) {
+      return sessionId;
+    } else {
+      try {
+        const { sessionId } = await createSessionMutation.mutateAsync();
+        return sessionId;
+      } catch (error) {
+        // Error was displayed by session creation mutation.
+        console.error('Error creating session', error);
+        return null;
+      }
+    }
+  }, [createSessionMutation, sessionId]);
+
+  useEffect(() => {
+    ensureSession();
+  }, [ensureSession]);
 
   const sendMessageMutation = useSendMessage({
     onSuccess: (data, variables) => {
       options.onSuccessfulSend(data.queryId, variables.payload.message);
     },
     onError: (error, variables) => {
-      // TODO: raise a proper error here
-      console.error('Error sending message', error);
+      // Set chat state to idle so user can retry
+      setChatState('idle');
+      handleError(
+        new ChatError(error, {
+          recoverable: true,
+          userMessage:
+            'An error occurred while sending a message. Please try again.',
+        })
+      );
     },
   });
-  useEffect(() => {
-    // Create a session ID exactly once?
-  }, [sessionId]);
 
-  // Build WebSocket with route handlers for message, open, close, error
+  const handleMessage = useCallback(
+    (event: MessageEvent) => {
+      try {
+        // Parse message
+        const rawData: unknown = JSON.parse(event.data as string);
+        const validatedMessage: WebSocketMessage =
+          WebSocketMessageSchema.parse(rawData);
+        const messageBody = validatedMessage.body;
 
-  const handleMessage = useCallback((event: MessageEvent) => {
-    try {
-      // Parse message
-      const rawData: unknown = JSON.parse(event.data as string);
-      const validatedMessage: WebSocketMessage =
-        WebSocketMessageSchema.parse(rawData);
-      const messageBody = validatedMessage.body;
-
-      // Set previous message and trigger message callback
-      setLastMessage(messageBody);
-      messageHandlerRef.current(messageBody);
-    } catch (err) {
-      // TODO: raise an error here; propagate upward
-      console.error(
-        'WebSocket message validation failed.',
-        '\n\nMessage recieved:',
-        event.data,
-        '\n\nError:',
-        err
-      );
-    }
-  }, []);
+        // Set previous message and trigger message callback
+        setLastMessage(messageBody);
+        messageHandlerRef.current(messageBody);
+      } catch (err) {
+        handleError(
+          new ChatError(
+            err instanceof Error ? err : new Error('Unknown error'),
+            {
+              recoverable: true,
+              userMessage:
+                'Could not validate message from server. Please try again.',
+            }
+          )
+        );
+      }
+    },
+    [handleError]
+  );
 
   const handleOpen = useCallback(
     (event: Event) => {
@@ -112,10 +151,21 @@ export const useValidatedWebSocket = (
     [setConnectionState, setSessionId]
   );
 
-  const handleError = useCallback((event: Event) => {
-    // TODO: raise an error here; propagate upward
-    console.error('Error received over WebSocket:', event);
-  }, []);
+  const handleConnectionError = useCallback(
+    (event: Event) => {
+      handleError(
+        new ChatError(
+          event instanceof Error ? event : new Error('Unknown error'),
+          {
+            recoverable: true,
+            userMessage:
+              'An error occurred while connecting to the server. Please try again.',
+          }
+        )
+      );
+    },
+    [handleError]
+  );
 
   const wsOptions = useMemo(() => {
     return {
@@ -128,40 +178,32 @@ export const useValidatedWebSocket = (
     };
   }, []);
 
-  const ws = useMemo(() => {
+  const wsRef = useRef<WebSocket | null>(null);
+  useEffect(() => {
     if (!websocketUrl) {
-      return null;
+      wsRef.current?.close();
+      return;
     }
 
-    const ws = new WebSocket(websocketUrl, [], wsOptions);
+    wsRef.current = new WebSocket(websocketUrl, [], wsOptions);
+    const ws = wsRef.current;
     ws.addEventListener('open', handleOpen);
     ws.addEventListener('close', handleClose);
-    ws.addEventListener('error', handleError);
+    ws.addEventListener('error', handleConnectionError);
     ws.addEventListener('message', handleMessage);
 
-    const updateConnectionState = () => {
-      switch (ws.readyState) {
-        case WebSocket.CONNECTING:
-          setConnectionState('connecting');
-          break;
-        case WebSocket.OPEN:
-          setConnectionState('open');
-          break;
-        case WebSocket.CLOSING:
-          setConnectionState('closing');
-          break;
-        case WebSocket.CLOSED:
-          setConnectionState('closed');
-          break;
-      }
+    return () => {
+      ws.removeEventListener('open', handleOpen);
+      ws.removeEventListener('close', handleClose);
+      ws.removeEventListener('error', handleConnectionError);
+      ws.removeEventListener('message', handleMessage);
+      ws.close();
     };
-    setInterval(updateConnectionState, 500);
-    return ws;
   }, [
     wsOptions,
     handleOpen,
     handleClose,
-    handleError,
+    handleConnectionError,
     handleMessage,
     websocketUrl,
   ]);
@@ -169,29 +211,26 @@ export const useValidatedWebSocket = (
   // Ensure a session exists, then send a message via mutation
   const sendMessage = useCallback(
     async (message: string) => {
-      try {
-        let localSessionId: string | null = sessionId; // prevent setSessionId race condition
-        if (!localSessionId) {
-          const res = await createSessionMutation.mutateAsync();
-          setSessionId(res.sessionId);
-          localSessionId = res.sessionId;
-        }
-        await sendMessageMutation.mutateAsync({
-          sessionId: localSessionId,
-          payload: { message },
-        });
-      } catch (err) {
-        // TODO: raise an error here; propagate upward
-        console.error('Error sending message:', err);
+      const sessionId = await ensureSession();
+      if (!sessionId) {
+        // No-op. Session creation failed and error was handled by
+        // session creation mutation.
+        console.error('Session creation failed and message was aborted');
+        return;
       }
+
+      sendMessageMutation.mutate({
+        sessionId,
+        payload: { message },
+      });
     },
-    [createSessionMutation, sendMessageMutation, sessionId]
+    [sendMessageMutation, ensureSession]
   );
 
   const close = useCallback(() => {
-    ws?.close();
+    wsRef.current?.close();
     setSessionId(null);
-  }, [ws]);
+  }, [wsRef]);
 
   const reconnect = useCallback(async () => {
     // Create a new session; the last session was cleared on disconnect.

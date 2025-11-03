@@ -9,6 +9,8 @@ import { useValidatedWebSocket } from './use-validated-websocket';
 import { useChatStore } from '../stores/chat-store';
 import type { MessageUnion } from '@messages/websocket-interface';
 import type { ConnectionState, Query } from '../stores/types';
+import { ChatError } from '@/components/errors/chat-error';
+import { useChatError } from '@/components/errors/use-chat-error';
 
 export interface UseWebSocketChatOptions {
   websocketUrl: string;
@@ -22,12 +24,13 @@ export interface UseWebSocketChatReturn {
   isConnected: boolean;
   disconnect: () => void;
   reconnect: () => void;
-  sendMessage: (message: string) => void;
+  sendMessage: (message: string) => Promise<void>;
 }
 
 export function useWebSocketChat(
   options: UseWebSocketChatOptions
 ): UseWebSocketChatReturn {
+  const { handleError } = useChatError();
   const setConnectionState = useChatStore(state => state.setConnectionState);
   const updateQueryStatus = useChatStore(state => state.updateQueryStatus);
   const appendQueryResponse = useChatStore(state => state.appendQueryResponse);
@@ -75,9 +78,10 @@ export function useWebSocketChat(
               break;
 
             case 'error':
+              // Error messages sent back from the server are already user-facing.
               setQueryError(message.queryId, {
                 message: message.content.message,
-                userMessage: 'An error occurred while processing your request',
+                userMessage: message.content.message,
                 retryable: true,
               });
               updateQueryStatus(message.queryId, 'failed');
@@ -85,16 +89,25 @@ export function useWebSocketChat(
           }
         }
       } catch (error) {
-        // TODO: handle error raised using boundary method
-        console.error('Error processing WebSocket message:', error);
+        handleError(
+          new ChatError(
+            error instanceof Error ? error : new Error('Unknown error'),
+            {
+              userMessage:
+                'An error occurred while processing a response from the server.',
+              recoverable: true,
+            }
+          )
+        );
       }
     },
     [
       updateQueryResources,
-      setQueryError,
       updateQueryStatus,
       appendQueryResponse,
       setChatState,
+      setQueryError,
+      handleError,
     ]
   );
 
