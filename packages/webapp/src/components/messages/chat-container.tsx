@@ -60,6 +60,7 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
           container.removeEventListener('scroll', handleScroll);
         };
       }
+      return () => {};
     }, [handleScroll]);
 
     // Get ordered queries based on queryOrder
