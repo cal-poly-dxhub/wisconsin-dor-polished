@@ -1,9 +1,12 @@
 import asyncio
+import datetime
+import json
 import logging
 import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
+import boto3
 import pydantic
 from bedrock_utils import ModelConfig, call_bedrock_converse, get_model_config_from_dynamo
 from step_function_types.errors import ValidationError, report_error
@@ -18,6 +21,44 @@ from websocket_utils.utils import WebSocketServer, get_ws_connection_from_sessio
 
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
+
+dynamodb = boto3.resource("dynamodb")
+chat_history_table = os.environ.get("CHAT_HISTORY_TABLE_NAME")
+
+
+def log_chat_history(
+    session_id: str,
+    query: str,
+    answer: str,
+    faqs: FAQResource | None,
+    documents: DocumentResource | None,
+):
+    if not chat_history_table:
+        logger.error(
+            "CHAT_HISTORY_TABLE_NAME environment variable not set; skipping chat history logging."
+        )
+        return
+
+    table = dynamodb.Table(chat_history_table)
+    timestamp = datetime.datetime.now(datetime.UTC).isoformat()
+
+    faqs_data = [faq.model_dump() for faq in faqs.faqs] if faqs else []
+    documents_data = [doc.model_dump() for doc in documents.documents] if documents else []
+
+    try:
+        table.put_item(
+            Item={
+                "session_id": session_id,
+                "timestamp": timestamp,
+                "query": query,
+                "answer": answer,
+                "faqs": json.dumps(faqs_data),
+                "documents": json.dumps(documents_data),
+            }
+        )
+        logger.info(f"Chat history saved for session {session_id}")
+    except Exception as e:
+        logger.error(f"Failed to save chat history: {e}", exc_info=True)
 
 
 def fragment_message(message: str) -> AsyncGenerator[str]:
@@ -34,11 +75,10 @@ def fragment_message(message: str) -> AsyncGenerator[str]:
 
 async def generate_response_async(
     query: str,
+    session_id: str,
     faqs: FAQResource | None = None,
     documents: DocumentResource | None = None,
 ) -> AsyncGenerator[str]:
-    # TODO: stubbed streaming content; replace with Bedrock-generated content
-
     n_docs = len(documents.documents) if documents else 0
     n_faqs = len(faqs.faqs) if faqs else 0
     logger.info(f"Generating response for {n_docs} documents and {n_faqs} FAQs.")
@@ -62,8 +102,14 @@ async def generate_response_async(
 
     logger.info(f"Generating response using config: {config}")
     response = call_bedrock_converse(text, config)
+
+    fragments = []
     async for fragment in response:
+        fragments.append(fragment)
         yield fragment
+
+    answer = "".join(fragments)
+    log_chat_history(session_id, query, answer, faqs, documents)
 
 
 async def _stream_message_async(
@@ -112,7 +158,7 @@ def handler(event: dict, context) -> dict[str, Any]:
         return GenerateResponseResult(successful=False).model_dump()
 
     try:
-        response: AsyncGenerator[str] = generate_response_async(job.query, job.faqs, job.documents)
+        response = generate_response_async(job.query, job.session_id, job.faqs, job.documents)
         asyncio.run(_stream_message_async(ws_connect, response, job.query_id))
         return GenerateResponseResult(successful=True).model_dump()
     except Exception as e:
