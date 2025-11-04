@@ -2,13 +2,19 @@
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import type { Document } from '../document-card/document-card';
 import { DocumentCard } from '../document-card/document-card';
+import type { FAQ } from '../document-card/faq-card';
+import { FAQCard } from '../document-card/faq-card';
+
+type DocumentItem = { type: 'document'; data: Document };
+type FAQItem = { type: 'faq'; data: FAQ };
+type ListItem = DocumentItem | FAQItem;
 
 interface DocumentListProps {
-  documents: Document[];
+  items: ListItem[];
   title?: string;
 }
 
-export type { Document };
+export type { Document, FAQ, ListItem, DocumentItem, FAQItem };
 
 const getLayoutClasses = (isNarrowLayout: boolean) => {
   const baseClasses =
@@ -21,36 +27,51 @@ const getLayoutClasses = (isNarrowLayout: boolean) => {
   return `${baseClasses} grid-cols-1 min-h-0 overflow-x-hidden overflow-y-auto py-3 pr-4 content-start relative`;
 };
 
-export function DocumentList({ documents, title }: DocumentListProps) {
+export function DocumentList({ items, title }: DocumentListProps) {
   const breakpoint = useBreakpoint();
   const isVerticalLayout = breakpoint === 'wide';
   const isNarrowLayout = breakpoint === 'narrow';
+
+  const documentCount = items.filter(item => item.type === 'document').length;
+  const faqCount = items.filter(item => item.type === 'faq').length;
+  const itemCountText =
+    documentCount && faqCount
+      ? `${documentCount} documents, ${faqCount} FAQs`
+      : documentCount
+      ? `${documentCount} documents`
+      : `${faqCount} FAQs`;
 
   return (
     <div className="relative grid h-full grid-rows-[auto_1fr] font-sans">
       {title ? (
         <div className={`mb-6 ${isVerticalLayout ? 'block' : 'hidden'}`}>
           <h1 className="text-3xl font-bold">{title}</h1>
-          <p className="text-muted-foreground mt-1">
-            {documents.length} documents
-          </p>
+          <p className="text-muted-foreground mt-1">{itemCountText}</p>
         </div>
       ) : (
         <div className="mb-6">
-          <p className="text-muted-foreground">{documents.length} documents</p>
+          <p className="text-muted-foreground">{itemCountText}</p>
         </div>
       )}
 
       <div className="relative flex min-h-0 w-full flex-col overflow-x-auto">
         <div className={`${getLayoutClasses(isNarrowLayout)} min-h-0 flex-1`}>
-          {documents.map(document => (
-            <div
-              key={document.documentId}
-              className={isNarrowLayout ? 'w-80 min-w-[20rem]' : 'w-full'}
-            >
-              <DocumentCard document={document} />
-            </div>
-          ))}
+          {items.map(item => {
+            const key =
+              item.type === 'document' ? item.data.documentId : item.data.faqId;
+            return (
+              <div
+                key={key}
+                className={isNarrowLayout ? 'w-80 min-w-[20rem]' : 'w-full'}
+              >
+                {item.type === 'document' ? (
+                  <DocumentCard document={item.data} />
+                ) : (
+                  <FAQCard faq={item.data} />
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Fade-off effect for vertical scrolling */}
