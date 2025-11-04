@@ -4,6 +4,7 @@ import { SessionsStack } from '../../sessions/infra/sessions-stack';
 import { MessagesStack } from '../../messages/infra/messages-stack';
 import { LambdaLayersStack } from '../../shared/lambda_layers/infra/lambda-layers-stack';
 import { KnowledgeBaseStack } from '../../knowledge-base/infra/knowledge-base-stack';
+import { WebappStack } from '../../webapp/infra/webapp-stack';
 
 export class WisconsinBotStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -38,6 +39,15 @@ export class WisconsinBotStack extends cdk.Stack {
       websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
       faqKnowledgeBase: knowledgeBaseStack.faqKnowledgeBase,
       ragKnowledgeBase: knowledgeBaseStack.ragKnowledgeBase,
+    });
+
+    new WebappStack(this, 'WisconsinWebappStack', {
+      description: 'Stack providing Amplify hosting for the webapp.',
+      apiUrl: sessionsStack.devStageUrl,
+      websocketUrl: sessionsStack.websocketUrl,
+      userPoolId: sessionsStack.userPoolId,
+      userPoolClientId: sessionsStack.userPoolClientId,
+      region: cdk.Stack.of(this).region,
     });
   }
 }

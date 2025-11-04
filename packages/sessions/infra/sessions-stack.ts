@@ -18,6 +18,10 @@ export class SessionsStack extends cdk.NestedStack {
   public readonly websocketCallbackUrl: string;
   public readonly userPool: cognito.UserPool;
   public readonly userPoolClient: cognito.UserPoolClient;
+  public readonly devStageUrl: string;
+  public readonly websocketUrl: string;
+  public readonly userPoolId: string;
+  public readonly userPoolClientId: string;
 
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
@@ -400,5 +404,10 @@ export class SessionsStack extends cdk.NestedStack {
       description: 'AWS Region for Cognito',
       exportName: 'WisconsinBot-CognitoRegion',
     });
+
+    this.devStageUrl = devStage.url;
+    this.websocketUrl = websocketStage.url;
+    this.userPoolId = this.userPool.userPoolId;
+    this.userPoolClientId = this.userPoolClient.userPoolClientId;
   }
 }
