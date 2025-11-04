@@ -1,17 +1,19 @@
 version: 1
-frontend:
-  phases:
-    preBuild:
-      commands:
-        - bun install --frozen-lockfile
-    build:
-      commands:
-        - bun run build
-  artifacts:
-    baseDirectory: .next
-    files:
-      - '**/*'
-  cache:
-    paths:
-      - node_modules/**/*
-      - .next/cache/**/*
+applications:
+  - appRoot: packages/webapp
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - bun install --frozen-lockfile
+        build:
+          commands:
+            - bun run build
+      artifacts:
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*
+          - .next/cache/**/*
