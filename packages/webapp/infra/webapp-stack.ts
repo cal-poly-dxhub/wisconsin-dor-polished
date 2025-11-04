@@ -70,7 +70,6 @@ applications:
           commands:
             - env | grep NEXT_PUBLIC
             - npx next build
-            - bun run build
       artifacts:
         baseDirectory: .next
         files:
