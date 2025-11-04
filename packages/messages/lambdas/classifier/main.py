@@ -38,10 +38,11 @@ def process_query(event: dict) -> UserQuery:
         raise ValidationError() from e
 
 
-def parse_qa_document(document: str) -> dict:
+def parse_qa_document(document: str) -> dict | None:
     lines = document.strip().split("\n")
     if len(lines) != 2 or not lines[0].startswith("Q:") or not lines[1].startswith("A:"):
-        raise ValueError("Invalid Q&A document format")
+        logger.error(f"Invalid Q&A document format: {document}")
+        return None
 
     return {"q": lines[0][2:].strip(), "a": lines[1][2:].strip()}
 
@@ -52,6 +53,8 @@ def process_faq_results(results: dict) -> FAQResource:
         content_hash = hashlib.sha256(result["content"]["text"].encode()).hexdigest()
         faq_id = content_hash[:7]
         qa = parse_qa_document(result["content"]["text"])
+        if not qa:
+            continue
         question = qa["q"]
         answer = qa["a"]
         faqs.append(
@@ -61,7 +64,7 @@ def process_faq_results(results: dict) -> FAQResource:
                 answer=answer,
             )
         )
-    return FAQResource(faqs=faqs)
+    return FAQResource(faqs=faqs) if faqs else None
 
 
 def try_match_faq(query: str) -> FAQResource | None:
