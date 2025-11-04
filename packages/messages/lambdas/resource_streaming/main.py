@@ -4,7 +4,7 @@ import os
 from typing import Any
 
 import pydantic
-from step_function_types.errors import UnknownResourceType, ValidationError, report_error
+from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
     DocumentResource,
     FAQResource,
@@ -42,42 +42,48 @@ async def _stream_resources_async(job: StreamResourcesJob, ws_connect: WebSocket
     Takes a job defining documents to send and streams a message with appropriate schema
     over WebSocket.
     """
+    documents_message: DocumentsMessage | None = None
+    faq_message: FAQMessage | None = None
 
-    match job.resource_type:
-        case "documents":
-            documents_resource = DocumentResource.model_validate(job.content)
-            source_documents = [
-                SourceDocument(
-                    document_id=doc.document_id,
-                    title=doc.title,
-                    content=doc.content,
-                    source=doc.source,
-                )
-                for doc in documents_resource.documents
-            ]
-            message = DocumentsMessage(
-                query_id=job.query_id,
-                content=DocumentsContent(
-                    documents=source_documents,
-                ),
+    if job.documents:
+        documents_resource = DocumentResource.model_validate(job.documents)
+        source_documents = [
+            SourceDocument(
+                document_id=doc.document_id,
+                title=doc.title,
+                content=doc.content,
+                source=doc.source,
             )
-        case "faq":
-            faq_resource = FAQResource.model_validate(job.content)
-            message = FAQMessage(
-                query_id=job.query_id,
-                content=FAQContent(
-                    faq=FAQ(
-                        question=faq_resource.question,
-                        answer=faq_resource.answer,
+            for doc in documents_resource.documents
+        ]
+        documents_message = DocumentsMessage(
+            query_id=job.query_id,
+            content=DocumentsContent(
+                documents=source_documents,
+            ),
+        )
+
+    if job.faqs:
+        faq_resource = FAQResource.model_validate(job.faqs)
+        faq_message = FAQMessage(
+            query_id=job.query_id,
+            content=FAQContent(
+                faqs=[
+                    FAQ(
+                        faq_id=faq.faq_id,
+                        question=faq.question,
+                        answer=faq.answer,
                     )
-                ),
-            )
-        case _:
-            logger.error(f"Unknown resource type: {job.resource_type}")
-            raise UnknownResourceType()
+                    for faq in faq_resource.faqs
+                ]
+            ),
+        )
 
     try:
-        await ws_connect.send_json(message)
+        if documents_message:
+            await ws_connect.send_json(documents_message)
+        if faq_message:
+            await ws_connect.send_json(faq_message)
     except WebSocketError as e:
         logger.error(f"Error while streaming resources over WebSocket: {e}", exc_info=True)
         return

@@ -4,7 +4,7 @@ import { DocumentList } from '@/components/documents/document-list';
 import { ChatContainer } from '@/components/messages/chat-container';
 import { ChatInput } from '@/components/messages/chat-input';
 import { useChatStore } from '@/stores/chat-store';
-import type { Document, DocumentsContent } from '@/stores/types';
+import type { ResourceItem } from '@/stores/types';
 import { useWebSocketChat } from '@/hooks/use-websocket-chat';
 import { Toaster } from '@/components/ui/sonner';
 
@@ -17,10 +17,7 @@ export function WideApp() {
   const { sendMessage } = useWebSocketChat(stableConfig);
 
   const selectedQuery = currentQueryId ? queries[currentQueryId] : null;
-  const documents: Document[] =
-    selectedQuery?.resources?.type === 'documents'
-      ? (selectedQuery.resources.content as DocumentsContent).documents
-      : [];
+  const items: ResourceItem[] = selectedQuery?.resources || [];
 
   return (
     <>
@@ -41,7 +38,7 @@ export function WideApp() {
 
           {/* Documents List - Sidebar */}
           <div className="min-h-0">
-            <DocumentList title="Documents" documents={documents} />
+            <DocumentList title="Documents" items={items} />
           </div>
         </div>
       </div>

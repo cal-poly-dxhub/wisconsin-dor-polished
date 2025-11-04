@@ -1,6 +1,5 @@
 'use client';
 
-import type { DocumentsContent } from '@/components/global-types/query';
 import { useChatStore } from '@/stores/chat-store';
 import { forwardRef, useCallback, useEffect, useRef } from 'react';
 import { ChatMessage } from './chat-message';
@@ -87,8 +86,8 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
             variant === 'borderless' || variant === 'narrow'
               ? 'bg-transparent'
               : variant === 'wide'
-                ? 'bg-background overflow-hidden rounded-lg border shadow-sm'
-                : 'bg-card overflow-hidden rounded-lg border shadow-sm'
+              ? 'bg-background overflow-hidden rounded-lg border shadow-sm'
+              : 'bg-card overflow-hidden rounded-lg border shadow-sm'
           }`}
         >
           <div className="h-[50%]"></div>
@@ -103,11 +102,7 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
                 timestamp={query.timestamp}
                 streamingComplete={query.status === 'completed'}
                 selected={query.queryId === selectedMessageId}
-                documents={
-                  query.resources?.type === 'documents'
-                    ? (query.resources.content as DocumentsContent).documents
-                    : []
-                }
+                items={query.resources || []}
               />
             ))}
           </div>

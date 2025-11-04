@@ -30,10 +30,15 @@ class UserQuery(BaseModel):
     session_id: str
 
 
-# Types of resources used in generating responses
-class FAQResource(BaseModel):
+class FAQ(BaseModel):
+    faq_id: str
     question: str
     answer: str
+
+
+# Types of resources used in generating responses
+class FAQResource(BaseModel):
+    faqs: list[FAQ]
 
 
 class RAGDocument(BaseModel):
@@ -47,19 +52,23 @@ class DocumentResource(BaseModel):
     documents: list[RAGDocument] = Field(default_factory=list)
 
 
-# Job passed to the response generation lambda
+# Job passed to the response generation lambda. Optionally
+# include frequently asked questions and RAG documents in
+# independent fields.
 class GenerateResponseJob(BaseModel):
     query: str
     query_id: str
     session_id: str
-    resource_type: Literal["faq", "documents", None] = Field(default=None)
-    resources: FAQResource | DocumentResource | None = Field(default=None)
+    faqs: FAQResource | None = Field(default=None)
+    documents: DocumentResource | None = Field(default=None)
 
 
-# Job passed to the retrieval lambda
+# Job passed to the retrieval lambda. Can take FAQs to provide
+# context for RAG retrieval.
 class RetrieveJob(BaseModel):
     query: str
     query_id: str
+    faqs: FAQResource | None = Field(default=None)
     session_id: str
 
 
@@ -67,8 +76,8 @@ class RetrieveJob(BaseModel):
 class StreamResourcesJob(BaseModel):
     query_id: str
     session_id: str
-    resource_type: Literal["documents", "faq"]
-    content: DocumentResource | FAQResource
+    faqs: FAQResource | None = Field(default=None)
+    documents: DocumentResource | None = Field(default=None)
 
 
 # Either a response generation job with a streaming job for FAQs or
@@ -76,6 +85,7 @@ class StreamResourcesJob(BaseModel):
 # based on the query_class field.
 class ClassifierResult(BaseModel):
     successful: bool
+    faqs: FAQResource | None = Field(default=None)
     query_class: Literal["faq", "rag"] | None = None
     stream_documents_job: StreamResourcesJob | None = None
     generate_response_job: GenerateResponseJob | None = None

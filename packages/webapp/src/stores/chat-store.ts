@@ -7,7 +7,7 @@ import type {
   ConnectionState,
   Query,
   QueryError,
-  QueryResources,
+  ResourceItem,
   QueryStatus,
   SessionStatus,
 } from './types';
@@ -66,10 +66,13 @@ export const useChatStore = create<ChatStore>()(
         }
       }),
 
-    updateQueryResources: (queryId: string, resources: QueryResources) =>
+    updateQueryResources: (queryId: string, resources: ResourceItem[]) =>
       set(state => {
-        if (state.queries[queryId]) {
-          state.queries[queryId].resources = resources;
+        if (state.queries[queryId] && resources) {
+          state.queries[queryId].resources = [
+            ...(state.queries[queryId].resources || []),
+            ...resources,
+          ];
         }
       }),
 

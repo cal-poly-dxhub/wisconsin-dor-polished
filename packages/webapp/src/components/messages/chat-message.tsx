@@ -14,6 +14,7 @@ import { useMemo, useRef } from 'react';
 
 import { DocumentList } from '../documents/document-list/document-list';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
+import type { ResourceItem } from '@/stores/types';
 
 import 'flowtoken/dist/styles.css';
 import './chat-message.css';
@@ -27,7 +28,7 @@ export interface ChatMessageProps {
   className?: string;
   streamingComplete?: boolean;
   selected?: boolean;
-  documents?: Document[];
+  items?: ResourceItem[];
 }
 
 interface StreamResponseProps {
@@ -40,7 +41,7 @@ interface DocumentsStreamResponseProps {
   content: string;
   className?: string;
   streamingComplete?: boolean;
-  documents: Document[];
+  items: ResourceItem[];
 }
 
 export interface Document {
@@ -75,13 +76,13 @@ export function DocumentsStreamResponse({
   content,
   className,
   streamingComplete,
-  documents,
+  items,
 }: DocumentsStreamResponseProps) {
   return (
     <div className={`chat-response font-sans ${className || ''}`}>
       {/* Documents List */}
       <div className="mt-3">
-        <DocumentList documents={documents} title="Referenced Documents" />
+        <DocumentList items={items} title="Referenced Documents" />
       </div>
 
       <div className="markdown-container">
@@ -101,19 +102,19 @@ function renderResponse(
   response: string,
   responseType: string,
   streamingComplete?: boolean,
-  documents?: Document[],
+  items?: ResourceItem[],
   breakpoint?: string
 ) {
   // Show documents when there documents to show and the breakpoint is narrow
   const shouldShowDocuments =
-    documents && documents.length > 0 && breakpoint === 'narrow';
+    items && items.length > 0 && breakpoint === 'narrow';
 
   if (responseType === 'stream' && shouldShowDocuments) {
     return (
       <DocumentsStreamResponse
         content={response}
         streamingComplete={streamingComplete}
-        documents={documents!}
+        items={items!}
       />
     );
   }
@@ -133,7 +134,7 @@ export function ChatMessage({
   className,
   streamingComplete,
   selected = true,
-  documents,
+  items,
 }: ChatMessageProps) {
   const messageRef = useRef<HTMLDivElement>(null);
   const breakpoint = useBreakpoint();
@@ -147,12 +148,12 @@ export function ChatMessage({
           response,
           responseType,
           streamingComplete,
-          documents,
+          items,
           breakpoint
         )}
       </div>
     );
-  }, [response, responseType, streamingComplete, documents, breakpoint]);
+  }, [response, responseType, streamingComplete, items, breakpoint]);
 
   const containerClassName = useMemo(
     () => `pl-4 font-sans ${className || ''}`,
@@ -192,10 +193,10 @@ export function ChatMessage({
                           {timestamp}
                         </p>
                       )}
-                      {documents && documents.length > 0 && (
+                      {items && items.length > 0 && (
                         <p>
                           <span className="font-medium">Documents:</span>{' '}
-                          {documents.length}
+                          {items.length}
                         </p>
                       )}
                     </div>
@@ -207,7 +208,7 @@ export function ChatMessage({
         )}
       </AnimatePresence>
     ),
-    [streamingComplete, queryId, timestamp, documents]
+    [streamingComplete, queryId, timestamp, items]
   );
 
   return (

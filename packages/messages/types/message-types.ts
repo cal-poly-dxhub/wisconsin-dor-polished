@@ -18,12 +18,13 @@ export const DocumentsMessageSchema = z.object({
 });
 
 export const FAQSchema = z.object({
+  faqId: z.string(),
   question: z.string(),
   answer: z.string(),
 });
 
 export const FAQContentSchema = z.object({
-  faq: FAQSchema,
+  faqs: z.array(FAQSchema),
 });
 
 export const FAQMessageSchema = z.object({
@@ -33,12 +34,12 @@ export const FAQMessageSchema = z.object({
 });
 
 export const ErrorContentSchema = z.object({
-  message: z.string(),
+  error: z.string(),
 });
 
 export const ErrorMessageSchema = z.object({
   responseType: z.literal('error'),
-  queryId: z.string(),
+  queryId: z.string().optional(),
   content: ErrorContentSchema,
 });
 

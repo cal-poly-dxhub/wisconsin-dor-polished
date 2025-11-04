@@ -39,67 +39,53 @@ class DocumentQueryResult(BaseModel):
     faq: FAQResource | None = None
 
 
-def retrieve_documents(query: str) -> DocumentQueryResult:
+def retrieve_documents(query: str) -> DocumentResource:
     """
-    Retrieves knowledge base for relevant documents or FAQ based on query content.
-    Returns FAQResource if "FAQ" is found in query, otherwise returns list of RAGDocuments.
+    Retrieves documents from the knowledge base based on the query.
 
     TODO: this is replaced with knowledge base querying down the road
     """
 
-    # Check if query contains "FAQ" (case-insensitive)
-    if re.search(r"\bFAQ\b", query, re.IGNORECASE):
-        # Return FAQ resource
-        return DocumentQueryResult(
-            document_type="FAQ",
-            faq=FAQResource(
-                question="How do I get started with Python programming?",
-                answer="Python is a beginner-friendly programming language. Start by installing Python from python.org, then try running simple scripts in the interactive shell or a text editor.",
+    return DocumentResource(
+        documents=[
+            RAGDocument(
+                document_id="doc-001",
+                title="Example Document",
+                content="This is an example document relevant to the query.",
+                source="https://example.com",
             ),
-        )
-    else:
-        # Return RAG documents
-        return DocumentQueryResult(
-            document_type="RAG",
-            documents=[
-                RAGDocument(
-                    document_id="doc-001",
-                    title="Example Document",
-                    content="This is an example document relevant to the query.",
-                    source="https://example.com",
+            RAGDocument(
+                document_id="doc-002",
+                title="Advanced Python",
+                content=(
+                    "This document delves into advanced Python programming concepts, such as decorators, generators, and context managers. "
+                    "It also explores metaprogramming techniques, custom class creation, and performance optimization strategies, "
+                    "helping developers write more efficient and maintainable code for complex applications."
                 ),
-                RAGDocument(
-                    document_id="doc-002",
-                    title="Advanced Python",
-                    content=(
-                        "This document delves into advanced Python programming concepts, such as decorators, generators, and context managers. "
-                        "It also explores metaprogramming techniques, custom class creation, and performance optimization strategies, "
-                        "helping developers write more efficient and maintainable code for complex applications."
-                    ),
-                    source="https://www.example.com/",
+                source="https://www.example.com/",
+            ),
+            RAGDocument(
+                document_id="doc-003",
+                title="Data Science with Python",
+                content=(
+                    "Python has become a cornerstone of data science, offering powerful libraries like Pandas, NumPy, and Matplotlib. "
+                    "This document provides a comprehensive guide to data manipulation, statistical analysis, and data visualization, "
+                    "enabling users to extract meaningful insights from large datasets and present them effectively."
                 ),
-                RAGDocument(
-                    document_id="doc-003",
-                    title="Data Science with Python",
-                    content=(
-                        "Python has become a cornerstone of data science, offering powerful libraries like Pandas, NumPy, and Matplotlib. "
-                        "This document provides a comprehensive guide to data manipulation, statistical analysis, and data visualization, "
-                        "enabling users to extract meaningful insights from large datasets and present them effectively."
-                    ),
-                    source="https://www.example.com/",
+                source="https://www.example.com/",
+            ),
+            RAGDocument(
+                document_id="doc-004",
+                title="Web Development",
+                content=(
+                    "Python is a popular choice for web development, thanks to frameworks like Flask and Django. "
+                    "This document covers the fundamentals of building dynamic, secure, and scalable web applications, "
+                    "including routing, database integration, and deploying applications to production environments."
                 ),
-                RAGDocument(
-                    document_id="doc-004",
-                    title="Web Development",
-                    content=(
-                        "Python is a popular choice for web development, thanks to frameworks like Flask and Django. "
-                        "This document covers the fundamentals of building dynamic, secure, and scalable web applications, "
-                        "including routing, database integration, and deploying applications to production environments."
-                    ),
-                    source="https://www.example.com/",
-                ),
-            ],
-        )
+                source="https://www.example.com/",
+            ),
+        ],
+    )
 
 
 def handler(event: dict, context) -> dict:
@@ -113,49 +99,22 @@ def handler(event: dict, context) -> dict:
     try:
         job = process_event(event)
         docs = retrieve_documents(job.query)
-
-        # Handle FAQ vs RAG documents based on document_type
-        if docs.document_type == "FAQ" and docs.faq is not None:
-            # FAQ case
-            result = RetrieveResult(
-                successful=True,
-                generate_response_job=GenerateResponseJob(
-                    query=job.query,
-                    query_id=job.query_id,
-                    session_id=job.session_id,
-                    resource_type="faq",
-                    resources=docs.faq,
-                ),
-                stream_documents_job=StreamResourcesJob(
-                    query_id=job.query_id,
-                    session_id=job.session_id,
-                    resource_type="faq",
-                    content=docs.faq,
-                ),
-            )
-        elif docs.document_type == "RAG" and docs.documents is not None:
-            # RAG documents case
-            documents_resource = DocumentResource(documents=docs.documents)
-            result = RetrieveResult(
-                successful=True,
-                generate_response_job=GenerateResponseJob(
-                    query=job.query,
-                    query_id=job.query_id,
-                    session_id=job.session_id,
-                    resource_type="documents",
-                    resources=documents_resource,
-                ),
-                stream_documents_job=StreamResourcesJob(
-                    query_id=job.query_id,
-                    session_id=job.session_id,
-                    resource_type="documents",
-                    content=documents_resource,
-                ),
-            )
-        else:
-            raise ValueError(
-                f"Invalid document query result: {docs.document_type} with no corresponding content"
-            )
+        result = RetrieveResult(
+            successful=True,
+            generate_response_job=GenerateResponseJob(
+                query=job.query,
+                query_id=job.query_id,
+                session_id=job.session_id,
+                documents=docs,
+                faqs=job.faqs,
+            ),
+            stream_documents_job=StreamResourcesJob(
+                query_id=job.query_id,
+                session_id=job.session_id,
+                faqs=job.faqs,
+                documents=docs,
+            ),
+        )
 
         return result.model_dump()
     except Exception as e:

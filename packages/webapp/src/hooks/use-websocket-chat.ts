@@ -49,17 +49,23 @@ export function useWebSocketChat(
         if ('responseType' in message) {
           switch (message.responseType) {
             case 'documents':
-              updateQueryResources(message.queryId, {
-                type: 'documents',
-                content: message.content,
-              });
+              updateQueryResources(
+                message.queryId,
+                message.content.documents.map(document => ({
+                  type: 'document',
+                  data: document,
+                }))
+              );
               break;
 
             case 'faq':
-              updateQueryResources(message.queryId, {
-                type: 'faq',
-                content: message.content,
-              });
+              updateQueryResources(
+                message.queryId,
+                message.content.faqs.map(faq => ({
+                  type: 'faq',
+                  data: faq,
+                }))
+              );
               break;
 
             case 'fragment':

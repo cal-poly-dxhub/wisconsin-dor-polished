@@ -16,7 +16,7 @@ export interface Query {
     type: 'stream';
     content?: string;
   };
-  resources?: QueryResources;
+  resources?: ResourceItem[];
 
   error?: QueryError;
 
@@ -31,8 +31,7 @@ export interface QueryError {
 }
 
 export interface QueryResources {
-  type: 'documents' | 'faq';
-  content: DocumentsContent | FAQContent;
+  items: ResourceItem[];
 }
 
 export interface Document {
@@ -47,12 +46,18 @@ export interface DocumentsContent {
 }
 
 export interface FAQ {
+  faqId: string;
   question: string;
   answer: string;
 }
 
 export interface FAQContent {
-  faq: FAQ;
+  faqs: Array<FAQ>;
+}
+
+export interface ResourceItem {
+  type: 'document' | 'faq';
+  data: Document | FAQ;
 }
 
 export interface ChatError {
@@ -104,7 +109,7 @@ export interface ChatStore {
   updateQueryStatus: (queryId: string, status: QueryStatus) => void;
   updateQueryResponse: (queryId: string, content: string) => void;
   appendQueryResponse: (queryId: string, fragment: string) => void;
-  updateQueryResources: (queryId: string, resources: QueryResources) => void;
+  updateQueryResources: (queryId: string, resources: ResourceItem[]) => void;
 
   setQueryError: (queryId: string, error: QueryError) => void;
   clearQueryError: (queryId: string) => void;

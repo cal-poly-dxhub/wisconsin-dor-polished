@@ -51,12 +51,13 @@ class DocumentsMessage(WebSocketMessage):
 
 
 class FAQ(WebSocketMessage):
+    faq_id: str
     question: str
     answer: str
 
 
 class FAQContent(WebSocketMessage):
-    faq: FAQ
+    faqs: list[FAQ]
 
 
 class FAQMessage(WebSocketMessage):

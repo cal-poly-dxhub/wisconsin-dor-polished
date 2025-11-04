@@ -4,17 +4,12 @@ import type { Document } from '../document-card/document-card';
 import { DocumentCard } from '../document-card/document-card';
 import type { FAQ } from '../document-card/faq-card';
 import { FAQCard } from '../document-card/faq-card';
-
-type DocumentItem = { type: 'document'; data: Document };
-type FAQItem = { type: 'faq'; data: FAQ };
-type ListItem = DocumentItem | FAQItem;
+import type { ResourceItem } from '@/stores/types';
 
 interface DocumentListProps {
-  items: ListItem[];
+  items: ResourceItem[];
   title?: string;
 }
-
-export type { Document, FAQ, ListItem, DocumentItem, FAQItem };
 
 const getLayoutClasses = (isNarrowLayout: boolean) => {
   const baseClasses =
@@ -27,19 +22,28 @@ const getLayoutClasses = (isNarrowLayout: boolean) => {
   return `${baseClasses} grid-cols-1 min-h-0 overflow-x-hidden overflow-y-auto py-3 pr-4 content-start relative`;
 };
 
-export function DocumentList({ items, title }: DocumentListProps) {
+export function DocumentList({ items = [], title }: DocumentListProps) {
   const breakpoint = useBreakpoint();
   const isVerticalLayout = breakpoint === 'wide';
   const isNarrowLayout = breakpoint === 'narrow';
 
   const documentCount = items.filter(item => item.type === 'document').length;
   const faqCount = items.filter(item => item.type === 'faq').length;
-  const itemCountText =
-    documentCount && faqCount
-      ? `${documentCount} documents, ${faqCount} FAQs`
-      : documentCount
-      ? `${documentCount} documents`
-      : `${faqCount} FAQs`;
+  const itemCountText = (() => {
+    if (documentCount === 0 && faqCount === 0) {
+      return '0 documents, 0 FAQs';
+    }
+
+    if (documentCount > 0 && faqCount > 0) {
+      return `${documentCount} documents, ${faqCount} FAQs`;
+    }
+
+    if (documentCount > 0) {
+      return `${documentCount} documents`;
+    }
+
+    return `${faqCount} FAQs`;
+  })();
 
   return (
     <div className="relative grid h-full grid-rows-[auto_1fr] font-sans">
@@ -58,16 +62,19 @@ export function DocumentList({ items, title }: DocumentListProps) {
         <div className={`${getLayoutClasses(isNarrowLayout)} min-h-0 flex-1`}>
           {items.map(item => {
             const key =
-              item.type === 'document' ? item.data.documentId : item.data.faqId;
+              item.type === 'document'
+                ? `doc-${(item.data as Document).documentId}`
+                : `faq-${(item.data as FAQ).faqId}`;
+
             return (
               <div
                 key={key}
                 className={isNarrowLayout ? 'w-80 min-w-[20rem]' : 'w-full'}
               >
                 {item.type === 'document' ? (
-                  <DocumentCard document={item.data} />
+                  <DocumentCard document={item.data as Document} />
                 ) : (
-                  <FAQCard faq={item.data} />
+                  <FAQCard faq={item.data as FAQ} />
                 )}
               </div>
             );

@@ -34,27 +34,33 @@ def fragment_message(message: str) -> AsyncGenerator[str]:
 
 async def generate_response_async(
     query: str,
-    resource: FAQResource | DocumentResource | None = None,
+    faqs: FAQResource | None = None,
+    documents: DocumentResource | None = None,
 ) -> AsyncGenerator[str]:
     # TODO: stubbed streaming content; replace with Bedrock-generated content
-    match resource:
-        case FAQResource(question=question, answer=answer):
-            config: ModelConfig = get_model_config_from_dynamo("faqResponse")
-            text = config.prompt.format(
-                question=question,
-                answer=answer,
-                query=query,
-            )
-        case DocumentResource(documents=documents):
-            config: ModelConfig = get_model_config_from_dynamo("ragResponse")
-            text = config.prompt.format(
-                query=query,
-                documents="\n".join([d.model_dump_json() for d in documents]),
-            )
-        case _:
-            raise ValueError(f"Unknown resource type: {resource}")
 
-    logger.info(f"Using config to generate response: {config}")
+    n_docs = len(documents.documents) if documents else 0
+    n_faqs = len(faqs.faqs) if faqs else 0
+    logger.info(f"Generating response for {n_docs} documents and {n_faqs} FAQs.")
+
+    config: ModelConfig = get_model_config_from_dynamo("ragResponse")
+    faqs_text = "\n".join(
+        [f"FAQ question: {faq.question}\nFAQ answer: {faq.answer}" for faq in faqs.faqs]
+        if faqs
+        else "No FAQs available."
+    )
+    documents_text = (
+        "\n".join([d.model_dump_json() for d in documents.documents])
+        if documents
+        else "No documents available."
+    )
+    text = config.prompt.format(
+        query=query,
+        documents=documents_text,
+        faqs=faqs_text,
+    )
+
+    logger.info(f"Generating response using config: {config}")
     response = call_bedrock_converse(text, config)
     async for fragment in response:
         yield fragment
@@ -106,7 +112,7 @@ def handler(event: dict, context) -> dict[str, Any]:
         return GenerateResponseResult(successful=False).model_dump()
 
     try:
-        response: AsyncGenerator[str] = generate_response_async(job.query, job.resources)
+        response: AsyncGenerator[str] = generate_response_async(job.query, job.faqs, job.documents)
         asyncio.run(_stream_message_async(ws_connect, response, job.query_id))
         return GenerateResponseResult(successful=True).model_dump()
     except Exception as e:

@@ -5,11 +5,10 @@ import os
 import pydantic
 from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
+    FAQ,
     ClassifierResult,
     FAQResource,
-    GenerateResponseJob,
     RetrieveJob,
-    StreamResourcesJob,
     UserQuery,
 )
 
@@ -34,8 +33,26 @@ def process_query(event: dict) -> UserQuery:
 
 def try_match_faq(query: str) -> FAQResource | None:
     # TODO: populate this with FAQ retrieval logic from the knowledge base
+    faqs = [
+        FAQ(
+            faq_id="faq-001",
+            question="Example Question?",
+            answer="This is an example answer.",
+        ),
+        FAQ(
+            faq_id="faq-002",
+            question="Another Example Question?",
+            answer="This is another example answer.",
+        ),
+        FAQ(
+            faq_id="faq-003",
+            question="Yet Another Example Question?",
+            answer="This is yet another example answer.",
+        ),
+    ]
     if "example" in query.lower():
-        return FAQResource(question="Example Question?", answer="This is an example answer.")
+        return FAQResource(faqs=faqs)
+
     return None
 
 
@@ -46,41 +63,19 @@ def handler(event: dict, context) -> dict:
         user_query = process_query(event)
         session_id = user_query.session_id
         logger.info(f"Received user query: {user_query.model_dump()}")
-        faq_resource = try_match_faq(user_query.query)
+        faq_resources = try_match_faq(user_query.query)
 
-        if faq_resource:
-            # Trigger streaming and generation jobs if we found a matching FAQ
-            logger.info("FAQ match found, preparing response jobs.")
-            return ClassifierResult(
-                successful=True,
-                query_class="faq",
-                stream_documents_job=StreamResourcesJob(
-                    query_id=user_query.query_id,
-                    session_id=user_query.session_id,
-                    resource_type="faq",
-                    content=faq_resource,
-                ),
-                generate_response_job=GenerateResponseJob(
-                    query=user_query.query,
-                    query_id=user_query.query_id,
-                    session_id=user_query.session_id,
-                    resource_type="faq",
-                    resources=faq_resource,
-                ),
-            ).model_dump()
-
-        else:
-            # Otherwise trigger a retrieval job
-            logger.info("No FAQ match found, preparing retrieval job.")
-            return ClassifierResult(
-                successful=True,
-                query_class="rag",
-                retrieve_job=RetrieveJob(
-                    query=user_query.query,
-                    query_id=user_query.query_id,
-                    session_id=user_query.session_id,
-                ),
-            ).model_dump()
+        # Trigger a retrieval job using FAQs
+        return ClassifierResult(
+            successful=True,
+            query_class="rag",
+            retrieve_job=RetrieveJob(
+                query=user_query.query,
+                query_id=user_query.query_id,
+                faqs=faq_resources,
+                session_id=user_query.session_id,
+            ),
+        ).model_dump()
     except Exception as e:  # Error was logged at root.
         if session_id:
             asyncio.run(report_error(e, session_id=session_id))
