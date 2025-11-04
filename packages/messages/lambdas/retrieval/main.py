@@ -1,9 +1,11 @@
 import asyncio
+import hashlib
 import logging
 import os
 import re
 from typing import Literal
 
+import boto3
 import pydantic
 from pydantic import BaseModel
 from step_function_types.errors import ValidationError, report_error
@@ -17,8 +19,14 @@ from step_function_types.models import (
     StreamResourcesJob,
 )
 
+# Max number of documents to retrieve on a RAG query.
+NUM_RAG_RESULTS = 10
+
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
+rag_kb_id = os.environ.get("RAG_KNOWLEDGE_BASE_ID")
+
+bedrock_ar = boto3.client("bedrock-agent-runtime")
 
 
 def process_event(event: dict) -> RetrieveJob:
@@ -39,53 +47,58 @@ class DocumentQueryResult(BaseModel):
     faq: FAQResource | None = None
 
 
+def process_retrieve_results(results: dict) -> DocumentResource:
+    """
+    Defines a data transformation from the Bedrock knowledge base
+    metadata type to RAGDocuments wrapped in a DocumentResource
+    (expected by streaming step).
+    """
+
+    documents = []
+    for result in results:
+        meta = result["metadata"]
+        content_hash = hashlib.sha256(result["content"]["text"].encode()).hexdigest()
+
+        # Trim file extension from doc_id and append first 7 chars of hash
+        document_id = meta["doc_id"].rsplit(".", 1)[0] + content_hash[:7]
+
+        documents.append(
+            RAGDocument(
+                document_id=document_id,
+                title=meta["doc_id"],
+                source=meta["source_url"],
+                content=result["content"]["text"],
+            )
+        )
+
+    return DocumentResource(documents=documents)
+
+
 def retrieve_documents(query: str) -> DocumentResource:
     """
     Retrieves documents from the knowledge base based on the query.
-
-    TODO: this is replaced with knowledge base querying down the road
     """
 
-    return DocumentResource(
-        documents=[
-            RAGDocument(
-                document_id="doc-001",
-                title="Example Document",
-                content="This is an example document relevant to the query.",
-                source="https://example.com",
-            ),
-            RAGDocument(
-                document_id="doc-002",
-                title="Advanced Python",
-                content=(
-                    "This document delves into advanced Python programming concepts, such as decorators, generators, and context managers. "
-                    "It also explores metaprogramming techniques, custom class creation, and performance optimization strategies, "
-                    "helping developers write more efficient and maintainable code for complex applications."
-                ),
-                source="https://www.example.com/",
-            ),
-            RAGDocument(
-                document_id="doc-003",
-                title="Data Science with Python",
-                content=(
-                    "Python has become a cornerstone of data science, offering powerful libraries like Pandas, NumPy, and Matplotlib. "
-                    "This document provides a comprehensive guide to data manipulation, statistical analysis, and data visualization, "
-                    "enabling users to extract meaningful insights from large datasets and present them effectively."
-                ),
-                source="https://www.example.com/",
-            ),
-            RAGDocument(
-                document_id="doc-004",
-                title="Web Development",
-                content=(
-                    "Python is a popular choice for web development, thanks to frameworks like Flask and Django. "
-                    "This document covers the fundamentals of building dynamic, secure, and scalable web applications, "
-                    "including routing, database integration, and deploying applications to production environments."
-                ),
-                source="https://www.example.com/",
-            ),
-        ],
+    if not rag_kb_id:
+        logger.error("RAG knowledge base ID is not set; returning no documents.")
+        return DocumentResource(documents=[])
+
+    retrieval_config = {
+        "vectorSearchConfiguration": {
+            "numberOfResults": NUM_RAG_RESULTS,
+            "overrideSearchType": "SEMANTIC",
+        }
+    }
+
+    response = bedrock_ar.retrieve(
+        knowledgeBaseId=rag_kb_id,
+        retrievalQuery={"text": query},
+        retrievalConfiguration=retrieval_config,
     )
+
+    docs = process_retrieve_results(response["retrievalResults"])
+
+    return docs
 
 
 def handler(event: dict, context) -> dict:

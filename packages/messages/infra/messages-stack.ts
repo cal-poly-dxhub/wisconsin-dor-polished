@@ -7,12 +7,15 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
+import { bedrock } from '@cdklabs/generative-ai-cdk-constructs';
 
 export interface MessagesStackProps extends cdk.StackProps {
   stepFunctionTypesLayer: lambda.LayerVersion;
   websocketUtilsLayer: lambda.LayerVersion;
   sessionsTable: cdk.aws_dynamodb.ITable;
   websocketCallbackUrl: string;
+  faqKnowledgeBase: bedrock.VectorKnowledgeBase;
+  ragKnowledgeBase: bedrock.VectorKnowledgeBase;
 }
 
 export class MessagesStack extends cdk.NestedStack {
@@ -59,6 +62,7 @@ export class MessagesStack extends cdk.NestedStack {
       environment: {
         SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
         WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
+        FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBase.knowledgeBaseId,
       },
     });
 
@@ -73,6 +77,13 @@ export class MessagesStack extends cdk.NestedStack {
           'bedrock:InvokeModel',
           'bedrock:InvokeModelWithResponseStream',
         ],
+        resources: ['*'],
+      })
+    );
+    this.classifierFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['bedrock-agent-runtime:Retrieve', 'bedrock:Retrieve'],
         resources: ['*'],
       })
     );
@@ -101,8 +112,18 @@ export class MessagesStack extends cdk.NestedStack {
       memorySize: 256,
       environment: {
         WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
+        RAG_KNOWLEDGE_BASE_ID: props.ragKnowledgeBase.knowledgeBaseId,
       },
     });
+
+    // Grant Bedrock permissions for retrieval function
+    retrievalHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['bedrock-agent-runtime:Retrieve', 'bedrock:Retrieve'],
+        resources: ['*'],
+      })
+    );
 
     // Resource Streaming Lambda (accepts StreamResourcesJob)
     const resourceStreamingHandler = new lambda.Function(

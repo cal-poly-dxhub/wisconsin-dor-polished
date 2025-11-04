@@ -6,6 +6,7 @@
       "dependencies": {
         "@aws-sdk/client-lambda": "^3.865.0",
         "@aws-sdk/client-sfn": "^3.864.0",
+        "@cdklabs/generative-ai-cdk-constructs": "^0.1.312",
         "@tanstack/react-query": "^5.85.5",
         "aws-cdk-lib": "2.208.0",
         "constructs": "^10.0.0",
@@ -112,6 +113,8 @@
     "@aws-cdk/asset-awscli-v1": ["@aws-cdk/asset-awscli-v1@2.2.242", "", {}, "sha512-4c1bAy2ISzcdKXYS1k4HYZsNrgiwbiDzj36ybwFVxEWZXVAP0dimQTCaB9fxu7sWzEjw3d+eaw6Fon+QTfTIpQ=="],
 
     "@aws-cdk/asset-node-proxy-agent-v6": ["@aws-cdk/asset-node-proxy-agent-v6@2.1.0", "", {}, "sha512-7bY3J8GCVxLupn/kNmpPc5VJz8grx+4RKfnnJiO1LG+uxkZfANZG3RMHhE+qQxxwkyQ9/MfPtTpf748UhR425A=="],
+
+    "@aws-cdk/aws-lambda-python-alpha": ["@aws-cdk/aws-lambda-python-alpha@2.221.1-alpha.0", "", { "peerDependencies": { "aws-cdk-lib": "^2.221.1", "constructs": "^10.0.0" } }, "sha512-c6xYQWmPZDdprkRQQyBDJ7/f9gYi+JBzbH/j2cyhh/Vt9KtNXcADbq4ILPFHlcZusPKmggW2pTMNUUUmH+xFug=="],
 
     "@aws-cdk/cloud-assembly-schema": ["@aws-cdk/cloud-assembly-schema@45.2.0", "", { "dependencies": { "jsonschema": "~1.4.1", "semver": "^7.7.2" } }, "sha512-5TTUkGHQ+nfuUGwKA8/Yraxb+JdNUh4np24qk/VHXmrCMq+M6HfmGWfhcg/QlHA2S5P3YIamfYHdQAB4uSNLAg=="],
 
@@ -246,6 +249,8 @@
     "@balena/dockerignore": ["@balena/dockerignore@1.0.2", "", {}, "sha512-wMue2Sy4GAVTk6Ic4tJVcnfdau+gx2EnG7S+uAEe+TWJFqE4YoWN4/H8MSLj4eYJKxGg26lZwboEniNiNwZQ6Q=="],
 
     "@bcoe/v8-coverage": ["@bcoe/v8-coverage@0.2.3", "", {}, "sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw=="],
+
+    "@cdklabs/generative-ai-cdk-constructs": ["@cdklabs/generative-ai-cdk-constructs@0.1.312", "", { "dependencies": { "@aws-cdk/aws-lambda-python-alpha": "2.221.1-alpha.0", "cdk-nag": "^2.37.55", "deepmerge": "^4.3.1" }, "peerDependencies": { "aws-cdk-lib": "^2.221.1", "constructs": "^10.3.0" } }, "sha512-ctHy0JgRdQE1jsC4SHsTWyr2feSR4NRxmL/ZViJDPw65FcvTPs1rNcgyB8uOZmr7kadeMvHA0yQ51pmlxc/XLA=="],
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
@@ -804,6 +809,8 @@
     "caniuse-lite": ["caniuse-lite@1.0.30001734", "", {}, "sha512-uhE1Ye5vgqju6OI71HTQqcBCZrvHugk0MjLak7Q+HfoBgoq5Bi+5YnwjP4fjDgrtYr/l8MVRBvzz9dPD4KyK0A=="],
 
     "case": ["case@1.6.3", "", {}, "sha512-mzDSXIPaFwVDvZAHqZ9VlbyF4yyXRuX6IvB06WvPYkqJVO24kX1PPhv9bfpKNFZyxYFmmgo03HUiD8iklmJYRQ=="],
+
+    "cdk-nag": ["cdk-nag@2.37.55", "", { "peerDependencies": { "aws-cdk-lib": "^2.176.0", "constructs": "^10.0.5" } }, "sha512-xcAkygwbph3pp7N0UEzJBmXUH/MIsluV7DYJSeZ/V3yCr0Y0QaRGO298WyD6mi4K+Rmnpl+EJoWUxcOblOqLKA=="],
 
     "chalk": ["chalk@4.1.2", "", { "dependencies": { "ansi-styles": "^4.1.0", "supports-color": "^7.1.0" } }, "sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA=="],
 

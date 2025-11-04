@@ -1,7 +1,9 @@
 import asyncio
+import hashlib
 import logging
 import os
 
+import boto3
 import pydantic
 from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
@@ -12,8 +14,13 @@ from step_function_types.models import (
     UserQuery,
 )
 
+NUM_FAQ_RESULTS = 5
+
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
+faq_kb_id = os.environ.get("FAQ_KNOWLEDGE_BASE_ID")
+
+bedrock_ar = boto3.client("bedrock-agent-runtime")
 
 
 def process_query(event: dict) -> UserQuery:
@@ -31,29 +38,53 @@ def process_query(event: dict) -> UserQuery:
         raise ValidationError() from e
 
 
-def try_match_faq(query: str) -> FAQResource | None:
-    # TODO: populate this with FAQ retrieval logic from the knowledge base
-    faqs = [
-        FAQ(
-            faq_id="faq-001",
-            question="Example Question?",
-            answer="This is an example answer.",
-        ),
-        FAQ(
-            faq_id="faq-002",
-            question="Another Example Question?",
-            answer="This is another example answer.",
-        ),
-        FAQ(
-            faq_id="faq-003",
-            question="Yet Another Example Question?",
-            answer="This is yet another example answer.",
-        ),
-    ]
-    if "example" in query.lower():
-        return FAQResource(faqs=faqs)
+def parse_qa_document(document: str) -> dict:
+    lines = document.strip().split("\n")
+    if len(lines) != 2 or not lines[0].startswith("Q:") or not lines[1].startswith("A:"):
+        raise ValueError("Invalid Q&A document format")
 
-    return None
+    return {"q": lines[0][2:].strip(), "a": lines[1][2:].strip()}
+
+
+def process_faq_results(results: dict) -> FAQResource:
+    faqs = []
+    for result in results:
+        content_hash = hashlib.sha256(result["content"]["text"].encode()).hexdigest()
+        faq_id = content_hash[:7]
+        qa = parse_qa_document(result["content"]["text"])
+        question = qa["q"]
+        answer = qa["a"]
+        faqs.append(
+            FAQ(
+                faq_id=faq_id,
+                question=question,
+                answer=answer,
+            )
+        )
+    return FAQResource(faqs=faqs)
+
+
+def try_match_faq(query: str) -> FAQResource | None:
+    if not faq_kb_id:
+        logger.error("FAQ knowledge base ID is not set; returning no FAQ resources.")
+        return None
+
+    retrieval_config = {
+        "vectorSearchConfiguration": {
+            "numberOfResults": NUM_FAQ_RESULTS,
+            "overrideSearchType": "SEMANTIC",
+        }
+    }
+
+    response = bedrock_ar.retrieve(
+        knowledgeBaseId=faq_kb_id,
+        retrievalQuery={"text": query},
+        retrievalConfiguration=retrieval_config,
+    )
+
+    faqs = process_faq_results(response["retrievalResults"])
+
+    return faqs
 
 
 def handler(event: dict, context) -> dict:
