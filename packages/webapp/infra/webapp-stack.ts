@@ -63,6 +63,7 @@ applications:
       phases:
         preBuild:
           commands:
+            - echo "Using CDK Amplify spec"
             - npm install -g bun
             - bun install --frozen-lockfile
         build:
