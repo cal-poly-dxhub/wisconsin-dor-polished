@@ -69,7 +69,7 @@ applications:
         build:
           commands:
             - env | grep NEXT_PUBLIC
-            - bun run build
+            - npx next build
       artifacts:
         baseDirectory: .next
         files:
