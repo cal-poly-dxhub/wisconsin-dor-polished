@@ -61,8 +61,7 @@ frontend:
   phases:
     preBuild:
       commands:
-        - cd packages/webapp
-        - bun install
+        - bun install --frozen-lockfile
     build:
       commands:
         - bun run build
