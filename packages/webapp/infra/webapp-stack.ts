@@ -63,9 +63,11 @@ applications:
       phases:
         preBuild:
           commands:
+            - npm install -g bun
             - bun install --frozen-lockfile
         build:
           commands:
+            - env | grep NEXT_PUBLIC
             - bun run build
       artifacts:
         baseDirectory: .next
