@@ -14,7 +14,6 @@ export default function App() {
 
   return (
     <>
-      <script src="http://localhost:8097"></script>
       <ProtectedRoute>
         <ChatErrorProvider>
           <QueryClientProvider client={queryClient}>
