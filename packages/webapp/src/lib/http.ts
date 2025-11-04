@@ -1,18 +1,25 @@
 import ky from 'ky';
+import { getIdToken } from './auth';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL!;
 if (!API_BASE_URL) throw new Error('NEXT_PUBLIC_API_BASE_URL is not set');
 
 export const http = ky.create({
-  prefixUrl: API_BASE_URL.replace(/\/+$/, ''), // trim trailing slash
+  prefixUrl: API_BASE_URL.replace(/\/+$/, ''),
   hooks: {
     beforeRequest: [
-      (req: Request) => {
+      async (req: Request) => {
         const newReq = new Request(req, {
           cache: 'no-store',
           next: { revalidate: 0 },
         });
         newReq.headers.set('Content-Type', 'application/json');
+
+        const token = await getIdToken();
+        if (token) {
+          newReq.headers.set('Authorization', `Bearer ${token}`);
+        }
+
         return newReq;
       },
     ],
@@ -32,6 +39,5 @@ export const http = ky.create({
   retry: {
     limit: 2,
     methods: ['get', 'put', 'head', 'delete', 'options', 'trace'],
-    // Don't retry POSTs.
   },
 });

@@ -1,5 +1,7 @@
 import { ThemeProvider } from '@/components/theme-provider';
 import { ThemeToggleContainer } from '@/components/theme-toggle-container';
+import { AuthProvider } from '@/contexts/auth-context';
+import { Toaster } from '@/components/ui/sonner';
 import type { Metadata } from 'next';
 import { Geist_Mono } from 'next/font/google';
 import './globals.css';
@@ -10,8 +12,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Component Display',
-  description: 'A simple page to display components',
+  title: 'Wisconsin Chat',
+  description: 'AI-powered chat application',
 };
 
 export default function RootLayout({
@@ -28,10 +30,13 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <div className="relative min-h-screen">
-            <ThemeToggleContainer />
-            {children}
-          </div>
+          <AuthProvider>
+            <div className="relative min-h-screen">
+              <ThemeToggleContainer />
+              {children}
+            </div>
+            <Toaster />
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

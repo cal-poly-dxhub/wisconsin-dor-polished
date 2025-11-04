@@ -2,6 +2,8 @@ import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as apigatewayv2Integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as apigatewayv2Authorizers from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
@@ -14,9 +16,46 @@ export interface SessionsStackProps extends cdk.StackProps {
 export class SessionsStack extends cdk.NestedStack {
   public readonly sessionsTable: cdk.aws_dynamodb.Table;
   public readonly websocketCallbackUrl: string;
+  public readonly userPool: cognito.UserPool;
+  public readonly userPoolClient: cognito.UserPoolClient;
 
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
+
+    this.userPool = new cognito.UserPool(this, 'UserPool', {
+      userPoolName: 'wisconsin-user-pool',
+      selfSignUpEnabled: true,
+      signInAliases: {
+        email: true,
+      },
+      autoVerify: {
+        email: true,
+      },
+      standardAttributes: {
+        email: {
+          required: true,
+          mutable: true,
+        },
+      },
+      passwordPolicy: {
+        minLength: 8,
+        requireLowercase: true,
+        requireUppercase: true,
+        requireDigits: true,
+        requireSymbols: true,
+      },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    this.userPoolClient = new cognito.UserPoolClient(this, 'UserPoolClient', {
+      userPool: this.userPool,
+      authFlows: {
+        userPassword: true,
+        userSrp: true,
+      },
+      generateSecret: false,
+    });
 
     this.sessionsTable = new cdk.aws_dynamodb.Table(this, 'SessionTable', {
       partitionKey: {
@@ -265,6 +304,16 @@ export class SessionsStack extends cdk.NestedStack {
       },
     });
 
+    const authorizer = new apigatewayv2Authorizers.HttpJwtAuthorizer(
+      'CognitoAuthorizer',
+      `https://cognito-idp.${cdk.Stack.of(this).region}.amazonaws.com/${
+        this.userPool.userPoolId
+      }`,
+      {
+        jwtAudience: [this.userPoolClient.userPoolClientId],
+      }
+    );
+
     const devStage = new apigatewayv2.HttpStage(this, 'DevStage', {
       httpApi,
       stageName: 'dev',
@@ -281,12 +330,14 @@ export class SessionsStack extends cdk.NestedStack {
       path: '/session',
       methods: [apigatewayv2.HttpMethod.POST],
       integration: lambdaIntegration,
+      authorizer: authorizer,
     });
 
     httpApi.addRoutes({
       path: '/session/{sessionId}/message',
       methods: [apigatewayv2.HttpMethod.POST],
       integration: lambdaIntegration,
+      authorizer: authorizer,
     });
 
     new cdk.CfnOutput(this, 'ApiHandlerFunctionArn', {
@@ -330,6 +381,24 @@ export class SessionsStack extends cdk.NestedStack {
     new cdk.CfnOutput(this, 'WebSocketExecutionLogGroup', {
       value: executionLogGroup.logGroupName,
       description: 'CloudWatch Log Group for WebSocket execution logs',
+    });
+
+    new cdk.CfnOutput(this, 'UserPoolId', {
+      value: this.userPool.userPoolId,
+      description: 'Cognito User Pool ID',
+      exportName: 'WisconsinBot-UserPoolId',
+    });
+
+    new cdk.CfnOutput(this, 'UserPoolClientId', {
+      value: this.userPoolClient.userPoolClientId,
+      description: 'Cognito User Pool Client ID',
+      exportName: 'WisconsinBot-UserPoolClientId',
+    });
+
+    new cdk.CfnOutput(this, 'CognitoRegion', {
+      value: cdk.Stack.of(this).region,
+      description: 'AWS Region for Cognito',
+      exportName: 'WisconsinBot-CognitoRegion',
     });
   }
 }
