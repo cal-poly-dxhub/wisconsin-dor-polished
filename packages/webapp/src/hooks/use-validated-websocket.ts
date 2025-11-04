@@ -95,6 +95,7 @@ export const useValidatedWebSocket = (
     onSuccess: (data, variables) => {
       options.onSuccessfulSend(data.queryId, variables.payload.message);
     },
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     onError: (error, variables) => {
       // Set chat state to idle so user can retry
       setChatState('idle');
@@ -137,6 +138,7 @@ export const useValidatedWebSocket = (
   );
 
   const handleOpen = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     (event: Event) => {
       setConnectionState('open');
     },
@@ -144,6 +146,7 @@ export const useValidatedWebSocket = (
   );
 
   const handleClose = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     (event: CloseEvent) => {
       setConnectionState('closed');
       setSessionId(null); // Session ID invalid on close

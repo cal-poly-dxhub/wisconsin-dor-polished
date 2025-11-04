@@ -17,7 +17,7 @@ const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
 });
 
 global.document = dom.window.document;
-(global as any).window = dom.window;
+(global as any).window = dom.window; // eslint-disable-line @typescript-eslint/no-explicit-any
 global.navigator = dom.window.navigator;
 
 // Mock the validated websocket hook
@@ -37,7 +37,7 @@ const mockUseValidatedWebSocket = mock(() => {
 let resolveSendMessage: (value: { query_id: string }) => void;
 let rejectSendMessage: (error: Error) => void;
 let resolveCreateSession: (value: { sessionId: string }) => void;
-let rejectCreateSession: (error: Error) => void;
+// let rejectCreateSession: (error: Error) => void;
 
 const mockSendMessage = mock(
   () =>
