@@ -221,7 +221,7 @@ export class MessagesStack extends cdk.NestedStack {
     // Grant DynamoDB read permissions to response streaming function
     props.sessionsTable.grantReadData(streamingHandler);
     this.modelConfigTable.grantReadData(streamingHandler);
-    this.chatHistoryTable.grantWriteData(streamingHandler);
+    this.chatHistoryTable.grantReadWriteData(streamingHandler);
 
     // Grant API Gateway Management API permissions for sending WebSocket messages
     streamingHandler.addToRolePolicy(

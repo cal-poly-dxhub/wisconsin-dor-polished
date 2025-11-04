@@ -1,11 +1,11 @@
 [ragResponse]
 id = "ragResponse"
-prompt = """Using the provided documents, answer the user query. Do not reference the documents. Respond as if you were speaking to the user. Documents: {documents}. User query: {query}. Format your response as Markdown."""
+prompt = """Prior conversation history: {history}. Documents: {documents}. Frequently-asked questions: {faqs}. User query: {query}. Format your response as Markdown. Only answer using information that is explicitly in the documents. If the documents do not contain the necessary information to answer the user query, state that you don't have enough information to answer the question."""
 
 [ragResponse.config]
 modelId = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
 system = [
-    { "text" = "You are an expert in machine learning and you answer questions based on the documents that are provided to you. Answer the user question." },
+    { text = "You are a helpful assistant that is familiar with the Wisconsin Department of Revenue. You answer questions based on the documents and frequently-asked questions that are provided to you and you do not synthesize information. Respond as if you were speaking to the user. You do not explicitly address the prior conversation history unless it comes up during the conversation with the user." },
 ]
 
 [ragResponse.config.inferenceConfig]
@@ -20,7 +20,7 @@ prompt = """Using the provided frequently asked question, generate a concise yet
 [faqResponse.config]
 modelId = "amazon.nova-pro-v1:0"
 system = [
-    { "text" = "Given frequently asked questions, you provide responses to user queries. You do not elaborate more than necessary and you only use evidence from the documents in your answers." },
+    { text = "Given frequently asked questions, you provide responses to user queries. You do not elaborate more than necessary and you only use evidence from the documents in your answers." },
 ]
 
 [faqResponse.config.inferenceConfig]

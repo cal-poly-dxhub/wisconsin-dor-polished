@@ -26,6 +26,28 @@ dynamodb = boto3.resource("dynamodb")
 chat_history_table = os.environ.get("CHAT_HISTORY_TABLE_NAME")
 
 
+def get_chat_history(session_id: str) -> list[dict[str, str]]:
+    if not chat_history_table:
+        logger.warning("CHAT_HISTORY_TABLE_NAME not set; returning empty chat history.")
+        return []
+
+    table = dynamodb.Table(chat_history_table)
+
+    try:
+        response = table.query(
+            KeyConditionExpression="session_id = :sid",
+            ExpressionAttributeValues={":sid": session_id},
+            ScanIndexForward=True,
+        )
+        items = response.get("Items", [])
+        history = [{"query": item["query"], "answer": item["answer"]} for item in items]
+        logger.info(f"Retrieved {len(history)} chat history items for session {session_id}")
+        return history
+    except Exception as e:
+        logger.error(f"Failed to retrieve chat history: {e}", exc_info=True)
+        return []
+
+
 def log_chat_history(
     session_id: str,
     query: str,
@@ -76,6 +98,7 @@ def fragment_message(message: str) -> AsyncGenerator[str]:
 async def generate_response_async(
     query: str,
     session_id: str,
+    chat_history: list[dict[str, str]],
     faqs: FAQResource | None = None,
     documents: DocumentResource | None = None,
 ) -> AsyncGenerator[str]:
@@ -84,20 +107,30 @@ async def generate_response_async(
     logger.info(f"Generating response for {n_docs} documents and {n_faqs} FAQs.")
 
     config: ModelConfig = get_model_config_from_dynamo("ragResponse")
-    faqs_text = "\n".join(
-        [f"FAQ question: {faq.question}\nFAQ answer: {faq.answer}" for faq in faqs.faqs]
-        if faqs
-        else "No FAQs available."
+
+    history_text = (
+        "\n".join([f"User: {item['query']}\nAssistant: {item['answer']}" for item in chat_history])
+        if chat_history
+        else "No prior conversation history."
     )
+
+    faqs_text = (
+        "\n".join([f"FAQ question: {faq.question}\nFAQ answer: {faq.answer}" for faq in faqs.faqs])
+        if faqs
+        else "No frequently-asked questions available."
+    )
+
     documents_text = (
         "\n".join([d.model_dump_json() for d in documents.documents])
         if documents
         else "No documents available."
     )
+
     text = config.prompt.format(
-        query=query,
+        history=history_text,
         documents=documents_text,
         faqs=faqs_text,
+        query=query,
     )
 
     logger.info(f"Generating response using config: {config}")
@@ -158,7 +191,19 @@ def handler(event: dict, context) -> dict[str, Any]:
         return GenerateResponseResult(successful=False).model_dump()
 
     try:
-        response = generate_response_async(job.query, job.session_id, job.faqs, job.documents)
+        chat_history = get_chat_history(job.session_id)
+    except Exception as e:
+        logger.error(f"Error while getting chat history: {e}", exc_info=True)
+        return GenerateResponseResult(successful=False).model_dump()
+
+    try:
+        response = generate_response_async(
+            job.query,
+            job.session_id,
+            chat_history,
+            job.faqs,
+            job.documents,
+        )
         asyncio.run(_stream_message_async(ws_connect, response, job.query_id))
         return GenerateResponseResult(successful=True).model_dump()
     except Exception as e:
