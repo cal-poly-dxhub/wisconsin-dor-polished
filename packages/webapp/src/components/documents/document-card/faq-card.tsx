@@ -208,15 +208,15 @@ function FAQCardModal({ faq, isAnimating, onClose }: FAQCardModalProps) {
     >
       <motion.div
         onClick={e => e.stopPropagation()}
-        className="bg-background w-full max-w-2xl rounded-lg shadow-2xl"
+        className="bg-background w-full max-w-2xl rounded-lg shadow-2xl max-h-[80vh] flex flex-col"
         variants={ANIMATION_CONFIG.modal}
         initial="initial"
         animate={isAnimating ? 'initial' : 'animate'}
         exit="exit"
         transition={{ ease: 'easeIn', duration: ANIMATION_CONFIG.duration }}
       >
-        <Card className="flex h-full flex-col border-0 shadow-none">
-          <CardHeader className="border-border border-b pb-3">
+        <Card className="flex h-full flex-col border-0 shadow-none overflow-hidden">
+          <CardHeader className="border-border border-b pb-3 flex-shrink-0">
             <div className="flex items-start justify-between">
               <FAQHeader
                 question={faq.question}
@@ -236,7 +236,7 @@ function FAQCardModal({ faq, isAnimating, onClose }: FAQCardModalProps) {
             </div>
           </CardHeader>
 
-          <CardContent className="scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 flex-1 overflow-y-visible p-6">
+          <CardContent className="scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 flex-1 overflow-y-auto p-6">
             <div className="prose prose-sm max-w-none">
               <p className="leading-relaxed whitespace-pre-wrap">
                 {faq.answer}
