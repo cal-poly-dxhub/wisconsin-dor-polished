@@ -30,7 +30,7 @@ export function UserMenu() {
   return (
     <div className="flex items-center gap-4">
       {email && <span className="text-sm text-muted-foreground">{email}</span>}
-      <Button variant="outline" size="sm" onClick={handleSignOut}>
+      <Button variant="secondary" size="default" onClick={handleSignOut}>
         Sign out
       </Button>
     </div>
