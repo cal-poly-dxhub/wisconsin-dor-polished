@@ -16,13 +16,13 @@ export interface MessagesStackProps extends cdk.StackProps {
   websocketCallbackUrl: string;
   faqKnowledgeBase: bedrock.VectorKnowledgeBase;
   ragKnowledgeBase: bedrock.VectorKnowledgeBase;
+  chatHistoryTable: dynamodb.Table;
 }
 
 export class MessagesStack extends cdk.NestedStack {
   public readonly classifierFunction: lambda.Function;
   public readonly classifierStateMachine: sfn.StateMachine;
   public readonly modelConfigTable: dynamodb.Table;
-  public readonly chatHistoryTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props: MessagesStackProps) {
     super(scope, id, props);
@@ -31,20 +31,6 @@ export class MessagesStack extends cdk.NestedStack {
     this.modelConfigTable = new dynamodb.Table(this, 'ModelConfigTable', {
       partitionKey: {
         name: 'id',
-        type: dynamodb.AttributeType.STRING,
-      },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      encryption: dynamodb.TableEncryption.AWS_MANAGED,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    });
-
-    this.chatHistoryTable = new dynamodb.Table(this, 'ChatHistoryTable', {
-      partitionKey: {
-        name: 'session_id',
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: 'timestamp',
         type: dynamodb.AttributeType.STRING,
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -213,7 +199,7 @@ export class MessagesStack extends cdk.NestedStack {
           SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
           WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
           MODEL_CONFIG_TABLE_NAME: this.modelConfigTable.tableName,
-          CHAT_HISTORY_TABLE_NAME: this.chatHistoryTable.tableName,
+          CHAT_HISTORY_TABLE_NAME: props.chatHistoryTable.tableName,
         },
       }
     );
@@ -221,7 +207,7 @@ export class MessagesStack extends cdk.NestedStack {
     // Grant DynamoDB read permissions to response streaming function
     props.sessionsTable.grantReadData(streamingHandler);
     this.modelConfigTable.grantReadData(streamingHandler);
-    this.chatHistoryTable.grantReadWriteData(streamingHandler);
+    props.chatHistoryTable.grantReadWriteData(streamingHandler);
 
     // Grant API Gateway Management API permissions for sending WebSocket messages
     streamingHandler.addToRolePolicy(

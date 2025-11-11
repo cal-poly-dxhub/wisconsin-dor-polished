@@ -1,11 +1,26 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+def to_camel_case(string: str) -> str:
+    parts = string.split("_")
+    return parts[0] + "".join(word.capitalize() for word in parts[1:])
+
+
+class CamelCaseModel(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel_case, populate_by_name=True)
 
 
 # Request body used to submit a message
-class MessageRequest(BaseModel):
+class MessageRequest(CamelCaseModel):
     message: str
+
+
+class FeedbackRequest(CamelCaseModel):
+    thumb_up: bool
+    query_id: str
+    feedback: str | None = None
 
 
 # Event emitted over EventBridge to trigger step function

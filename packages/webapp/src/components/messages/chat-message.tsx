@@ -1,16 +1,11 @@
 'use client';
 
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from '@/components/ui/hover-card';
-
-import * as HoverCardPrimitive from '@radix-ui/react-hover-card';
 import { AnimatedMarkdown } from 'flowtoken';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Info } from 'lucide-react';
-import { useMemo, useRef } from 'react';
+import { Info, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { useAssignFeedback } from '@/hooks/api/chat';
+import { useChatStore } from '@/stores/chat-store';
+import { useMemo, useRef, useState } from 'react';
 
 import { DocumentList } from '../documents/document-list/document-list';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
@@ -18,6 +13,10 @@ import type { ResourceItem } from '@/stores/types';
 
 import 'flowtoken/dist/styles.css';
 import './chat-message.css';
+import { Button } from '../ui/button';
+import { ButtonGroup } from '../ui/button-group';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { FeedbackPopover } from './feedback-popover';
 
 export interface ChatMessageProps {
   queryId: string;
@@ -50,6 +49,13 @@ export interface Document {
   content: string;
   source?: string;
   sourceUrl?: string;
+}
+
+interface MessageOptionsBarProps {
+  streamingComplete: boolean;
+  queryId: string;
+  timestamp: string;
+  items: ResourceItem[];
 }
 
 export function StreamResponse({
@@ -125,6 +131,102 @@ function renderResponse(
   );
 }
 
+function MessageOptionsBar({
+  streamingComplete,
+  queryId,
+  timestamp,
+  items,
+}: MessageOptionsBarProps) {
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [thumbsUpOpen, setThumbsUpOpen] = useState(false);
+  const [thumbsDownOpen, setThumbsDownOpen] = useState(false);
+  const assignFeedback = useAssignFeedback();
+
+  const sessionId = useChatStore(state => state.sessionId);
+
+  const handleFeedback = (thumbUp: boolean, feedback?: string) => {
+    console.log('handleFeedback', thumbUp, feedback);
+
+    if (!sessionId) {
+      console.log('Found no session ID; skipping feedback assignment.');
+      return;
+    }
+
+    console.log('Run feedback mutation');
+
+    assignFeedback.mutate({
+      sessionId: sessionId!,
+      payload: { queryId, thumbUp, feedback },
+    });
+  };
+
+  return (
+    <AnimatePresence initial={false}>
+      {streamingComplete && (
+        <motion.div
+          initial={{ filter: 'blur(8px)', opacity: 0 }}
+          animate={{ filter: 'blur(0px)', opacity: 1 }}
+          exit={{ filter: 'blur(8px)', opacity: 0 }}
+          transition={{ duration: 0.3 }}
+          className="chat-response-aligned mt-8 flex items-center gap-2"
+        >
+          <ButtonGroup>
+            <Popover open={infoOpen} onOpenChange={setInfoOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="icon" aria-label="Message Info">
+                  <Info className="h-4 w-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start">
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">Message Details</h4>
+                  <div className="space-y-1 text-xs">
+                    <p>
+                      <span className="font-medium">Query ID:</span> {queryId}
+                    </p>
+                    {timestamp && (
+                      <p>
+                        <span className="font-medium">Timestamp:</span>{' '}
+                        {timestamp}
+                      </p>
+                    )}
+                    {items && items.length > 0 && (
+                      <p>
+                        <span className="font-medium">Documents:</span>{' '}
+                        {items.length}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </ButtonGroup>
+          <ButtonGroup>
+            <FeedbackPopover
+              open={thumbsUpOpen}
+              onOpenChange={setThumbsUpOpen}
+              onSubmit={feedback => handleFeedback(true, feedback)}
+            >
+              <Button variant="outline" size="icon" aria-label="Thumbs Up">
+                <ThumbsUp className="h-4 w-4" />
+              </Button>
+            </FeedbackPopover>
+            <FeedbackPopover
+              open={thumbsDownOpen}
+              onOpenChange={setThumbsDownOpen}
+              onSubmit={feedback => handleFeedback(false, feedback)}
+            >
+              <Button variant="outline" size="icon" aria-label="Thumbs Down">
+                <ThumbsDown className="h-4 w-4" />
+              </Button>
+            </FeedbackPopover>
+          </ButtonGroup>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 export function ChatMessage({
   queryId,
   query,
@@ -162,55 +264,6 @@ export function ChatMessage({
 
   const messageContentClassName = useMemo(() => `mb-3`, []);
 
-  const memoizedInfoIcon = useMemo(
-    () => (
-      <AnimatePresence initial={false}>
-        {streamingComplete && (
-          <motion.div
-            initial={{ filter: 'blur(8px)', opacity: 0 }}
-            animate={{ filter: 'blur(0px)', opacity: 1 }}
-            exit={{ filter: 'blur(8px)', opacity: 0 }}
-            transition={{ duration: 0.3 }}
-            className="chat-response-aligned mt-8"
-          >
-            <HoverCard>
-              <HoverCardTrigger asChild>
-                <Info className="text-muted-foreground hover:text-foreground h-4 w-4 cursor-pointer transition-colors" />
-              </HoverCardTrigger>
-
-              {/* Used the primitive portal because the container clips the hover card */}
-              <HoverCardPrimitive.Portal>
-                <HoverCardContent className="">
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-semibold">Message Details</h4>
-                    <div className="space-y-1 text-xs">
-                      <p>
-                        <span className="font-medium">Query ID:</span> {queryId}
-                      </p>
-                      {timestamp && (
-                        <p>
-                          <span className="font-medium">Timestamp:</span>{' '}
-                          {timestamp}
-                        </p>
-                      )}
-                      {items && items.length > 0 && (
-                        <p>
-                          <span className="font-medium">Documents:</span>{' '}
-                          {items.length}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </HoverCardContent>
-              </HoverCardPrimitive.Portal>
-            </HoverCard>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    ),
-    [streamingComplete, queryId, timestamp, items]
-  );
-
   return (
     <motion.div
       ref={messageRef}
@@ -236,7 +289,12 @@ export function ChatMessage({
           {memoizedResponse}
 
           {/* Info icon with hover card displaying chat information */}
-          {memoizedInfoIcon}
+          <MessageOptionsBar
+            streamingComplete={streamingComplete ?? false}
+            queryId={queryId}
+            timestamp={timestamp ?? 'No timestamp available'}
+            items={items ?? []}
+          />
         </div>
       </div>
     </motion.div>

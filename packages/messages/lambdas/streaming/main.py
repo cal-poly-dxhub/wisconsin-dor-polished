@@ -35,7 +35,8 @@ def get_chat_history(session_id: str) -> list[dict[str, str]]:
 
     try:
         response = table.query(
-            KeyConditionExpression="session_id = :sid",
+            IndexName="sessionIdKey",
+            KeyConditionExpression="sessionId = :sid",
             ExpressionAttributeValues={":sid": session_id},
             ScanIndexForward=True,
         )
@@ -50,6 +51,7 @@ def get_chat_history(session_id: str) -> list[dict[str, str]]:
 
 def log_chat_history(
     session_id: str,
+    query_id: str,
     query: str,
     answer: str,
     faqs: FAQResource | None,
@@ -70,8 +72,9 @@ def log_chat_history(
     try:
         table.put_item(
             Item={
-                "session_id": session_id,
+                "sessionId": session_id,
                 "timestamp": timestamp,
+                "queryId": query_id,
                 "query": query,
                 "answer": answer,
                 "faqs": json.dumps(faqs_data),
@@ -98,6 +101,7 @@ def fragment_message(message: str) -> AsyncGenerator[str]:
 async def generate_response_async(
     query: str,
     session_id: str,
+    query_id: str,
     chat_history: list[dict[str, str]],
     faqs: FAQResource | None = None,
     documents: DocumentResource | None = None,
@@ -142,7 +146,7 @@ async def generate_response_async(
         yield fragment
 
     answer = "".join(fragments)
-    log_chat_history(session_id, query, answer, faqs, documents)
+    log_chat_history(session_id, query_id, query, answer, faqs, documents)
 
 
 async def _stream_message_async(
@@ -200,6 +204,7 @@ def handler(event: dict, context) -> dict[str, Any]:
         response = generate_response_async(
             job.query,
             job.session_id,
+            job.query_id,
             chat_history,
             job.faqs,
             job.documents,

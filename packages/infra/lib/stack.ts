@@ -29,7 +29,7 @@ export class WisconsinBotStack extends cdk.Stack {
       }
     );
 
-    new MessagesStack(this, 'WisconsinMessagesStack', {
+    const messagesStack = new MessagesStack(this, 'WisconsinMessagesStack', {
       description:
         'Stack providing messaging services (classifier and workflows).',
       stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
@@ -38,6 +38,7 @@ export class WisconsinBotStack extends cdk.Stack {
       websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
       faqKnowledgeBase: knowledgeBaseStack.faqKnowledgeBase,
       ragKnowledgeBase: knowledgeBaseStack.ragKnowledgeBase,
+      chatHistoryTable: sessionsStack.chatHistoryTable,
     });
   }
 }
