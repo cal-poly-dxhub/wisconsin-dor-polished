@@ -1,18 +1,18 @@
-"use client";
-import { Button } from "@/components/ui/button";
+'use client';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { cn } from "@/lib/utils";
-import { cva, type VariantProps } from "class-variance-authority";
-import { AnimatePresence, motion } from "framer-motion";
-import { ExternalLink, FileText, X } from "lucide-react";
-import { useCallback, useState } from "react";
-import { DocumentBadge } from "./document-badge";
+} from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+import { cva, type VariantProps } from 'class-variance-authority';
+import { AnimatePresence, motion } from 'framer-motion';
+import { ExternalLink, FileText, X } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { DocumentBadge } from './document-badge';
 
 export interface Document {
   documentId: string;
@@ -23,73 +23,73 @@ export interface Document {
 }
 
 const documentCardVariants = cva(
-  "cursor-pointer font-sans transition-shadow duration-200 ease-in-out hover:shadow-lg",
+  'cursor-pointer font-sans transition-shadow duration-200 ease-in-out hover:shadow-lg',
   {
     variants: {
       variant: {
-        compact: "max-w-sm",
-        modal: "w-full max-w-2xl",
+        compact: 'max-w-sm',
+        modal: 'w-full max-w-2xl',
       },
       size: {
-        sm: "text-sm",
-        md: "text-base",
-        lg: "text-lg",
+        sm: 'text-sm',
+        md: 'text-base',
+        lg: 'text-lg',
       },
       state: {
-        default: "",
-        expanded: "scale-95 opacity-0",
-        collapsed: "scale-100 opacity-100",
+        default: '',
+        expanded: 'scale-95 opacity-0',
+        collapsed: 'scale-100 opacity-100',
       },
     },
     defaultVariants: {
-      variant: "compact",
-      size: "md",
-      state: "default",
+      variant: 'compact',
+      size: 'md',
+      state: 'default',
     },
   }
 );
 
-const documentHeaderVariants = cva("flex min-w-0 flex-1 items-start gap-2", {
+const documentHeaderVariants = cva('flex min-w-0 flex-1 items-start gap-2', {
   variants: {
     variant: {
-      compact: "",
-      modal: "pb-2",
+      compact: '',
+      modal: 'pb-2',
     },
     size: {
-      sm: "gap-1.5",
-      md: "gap-2",
-      lg: "gap-2.5",
+      sm: 'gap-1.5',
+      md: 'gap-2',
+      lg: 'gap-2.5',
     },
   },
   defaultVariants: {
-    variant: "compact",
-    size: "md",
+    variant: 'compact',
+    size: 'md',
   },
 });
 
-const iconVariants = cva("text-muted-foreground mt-0.5 flex-shrink-0", {
+const iconVariants = cva('text-muted-foreground mt-0.5 flex-shrink-0', {
   variants: {
     size: {
-      sm: "h-3 w-3",
-      md: "h-4 w-4",
-      lg: "h-5 w-5",
+      sm: 'h-3 w-3',
+      md: 'h-4 w-4',
+      lg: 'h-5 w-5',
     },
   },
   defaultVariants: {
-    size: "md",
+    size: 'md',
   },
 });
 
-const titleVariants = cva("line-clamp-2 leading-tight opacity-90", {
+const titleVariants = cva('line-clamp-2 leading-tight opacity-90', {
   variants: {
     size: {
-      sm: "text-sm",
-      md: "text-lg",
-      lg: "text-xl",
+      sm: 'text-sm',
+      md: 'text-lg',
+      lg: 'text-xl',
     },
   },
   defaultVariants: {
-    size: "md",
+    size: 'md',
   },
 });
 
@@ -98,21 +98,21 @@ interface DocumentHeaderProps
   extends VariantProps<typeof documentHeaderVariants> {
   title: string;
   documentId?: string;
-  variant?: "compact" | "modal" | null;
+  variant?: 'compact' | 'modal' | null;
 }
 
 export function DocumentHeader({
   title,
   documentId,
-  variant = "compact",
-  size = "md",
+  variant = 'compact',
+  size = 'md',
 }: DocumentHeaderProps) {
   return (
     <div className={cn(documentHeaderVariants({ variant, size }))}>
       <FileText className={cn(iconVariants({ size }))} />
       <div className="min-w-0 flex-1">
         <CardTitle className={cn(titleVariants({ size }))}>{title}</CardTitle>
-        {variant === "modal" && documentId && (
+        {variant === 'modal' && documentId && (
           <CardDescription>Document ID: {documentId}</CardDescription>
         )}
       </div>
@@ -148,8 +148,8 @@ export function DocumentCardCompact({
   isExpanded,
   onClick,
   onSourceClick,
-  variant = "compact",
-  size = "md",
+  variant = 'compact',
+  size = 'md',
 }: DocumentCardCompactProps) {
   const contentPreview =
     document.content.length > CONTENT_PREVIEW_LENGTH
@@ -164,14 +164,14 @@ export function DocumentCardCompact({
       animate={
         isExpanded ? ANIMATION_CONFIG.expanded : ANIMATION_CONFIG.compact
       }
-      transition={{ ease: "easeIn", duration: ANIMATION_CONFIG.duration }}
+      transition={{ ease: 'easeIn', duration: ANIMATION_CONFIG.duration }}
     >
       <Card
         className={cn(
           documentCardVariants({
             variant,
             size,
-            state: isExpanded ? "expanded" : "collapsed",
+            state: isExpanded ? 'expanded' : 'collapsed',
           }),
           className
         )}
@@ -235,16 +235,16 @@ function DocumentCardModal({
       aria-labelledby="modal-title"
     >
       <motion.div
-        onClick={(e) => e.stopPropagation()}
-        className="bg-background w-full max-w-2xl rounded-lg shadow-2xl"
+        onClick={e => e.stopPropagation()}
+        className="bg-background w-full max-w-2xl rounded-lg shadow-2xl max-h-[80vh] flex flex-col"
         variants={ANIMATION_CONFIG.modal}
         initial="initial"
-        animate={isAnimating ? "initial" : "animate"}
+        animate={isAnimating ? 'initial' : 'animate'}
         exit="exit"
-        transition={{ ease: "easeIn", duration: ANIMATION_CONFIG.duration }}
+        transition={{ ease: 'easeIn', duration: ANIMATION_CONFIG.duration }}
       >
-        <Card className="flex h-full flex-col border-0 shadow-none">
-          <CardHeader className="border-border border-b pb-3">
+        <Card className="flex h-full flex-col border-0 shadow-none overflow-hidden">
+          <CardHeader className="border-border border-b pb-3 flex-shrink-0">
             <div className="flex items-start justify-between">
               <DocumentHeader
                 title={document.title}
@@ -275,7 +275,7 @@ function DocumentCardModal({
             </div>
           </CardHeader>
 
-          <CardContent className="scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 flex-1 overflow-y-visible p-6">
+          <CardContent className="scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 flex-1 overflow-y-auto p-6">
             <div className="prose prose-sm max-w-none">
               <p className="leading-relaxed whitespace-pre-wrap">
                 {document.content}
@@ -318,7 +318,7 @@ export function DocumentCard({
     (e: React.MouseEvent) => {
       e.stopPropagation();
       if (document.sourceUrl) {
-        window.open(document.sourceUrl, "_blank", "noopener,noreferrer");
+        window.open(document.sourceUrl, '_blank', 'noopener,noreferrer');
       }
       onSourceClick?.(document);
     },
