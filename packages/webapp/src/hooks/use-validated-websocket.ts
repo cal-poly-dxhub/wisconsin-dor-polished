@@ -87,10 +87,6 @@ export const useValidatedWebSocket = (
     }
   }, [createSessionMutation, sessionId]);
 
-  useEffect(() => {
-    ensureSession();
-  }, [ensureSession]);
-
   const sendMessageMutation = useSendMessage({
     onSuccess: (data, variables) => {
       options.onSuccessfulSend(data.queryId, variables.payload.message);
