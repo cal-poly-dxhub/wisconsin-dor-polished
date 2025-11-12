@@ -100,10 +100,13 @@ export interface ChatStore {
   errors: ChatError[];
   draftMessage: string;
 
+  sessionId: string | null;
+
   setSessionStatus: (status: SessionStatus) => void;
   setConnectionState: (state: ConnectionState) => void;
   setChatState: (state: ChatState) => void;
   setCurrentQueryId: (queryId: string | null) => void;
+  setSessionId: (sessionId: string | null) => void;
 
   addQuery: (query: Query) => void;
   updateQueryStatus: (queryId: string, status: QueryStatus) => void;
