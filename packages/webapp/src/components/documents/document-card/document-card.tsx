@@ -49,11 +49,11 @@ const documentCardVariants = cva(
   }
 );
 
-const documentHeaderVariants = cva('flex min-w-0 flex-1 items-start gap-2', {
+const documentHeaderVariants = cva('flex min-w-0 flex-1 gap-2', {
   variants: {
     variant: {
-      compact: '',
-      modal: 'pb-2',
+      compact: 'items-center',
+      modal: 'items-start pb-2',
     },
     size: {
       sm: 'gap-1.5',
@@ -67,8 +67,12 @@ const documentHeaderVariants = cva('flex min-w-0 flex-1 items-start gap-2', {
   },
 });
 
-const iconVariants = cva('text-muted-foreground mt-0.5 flex-shrink-0', {
+const iconVariants = cva('text-muted-foreground flex-shrink-0', {
   variants: {
+    variant: {
+      compact: '',
+      modal: 'mt-1',
+    },
     size: {
       sm: 'h-3 w-3',
       md: 'h-4 w-4',
@@ -76,12 +80,17 @@ const iconVariants = cva('text-muted-foreground mt-0.5 flex-shrink-0', {
     },
   },
   defaultVariants: {
+    variant: 'compact',
     size: 'md',
   },
 });
 
-const titleVariants = cva('line-clamp-2 leading-tight opacity-90', {
+const titleVariants = cva('leading-tight opacity-90', {
   variants: {
+    variant: {
+      compact: 'line-clamp-1 truncate',
+      modal: 'line-clamp-2',
+    },
     size: {
       sm: 'text-sm',
       md: 'text-lg',
@@ -89,6 +98,7 @@ const titleVariants = cva('line-clamp-2 leading-tight opacity-90', {
     },
   },
   defaultVariants: {
+    variant: 'compact',
     size: 'md',
   },
 });
@@ -109,9 +119,11 @@ export function DocumentHeader({
 }: DocumentHeaderProps) {
   return (
     <div className={cn(documentHeaderVariants({ variant, size }))}>
-      <FileText className={cn(iconVariants({ size }))} />
+      <FileText className={cn(iconVariants({ variant, size }))} />
       <div className="min-w-0 flex-1">
-        <CardTitle className={cn(titleVariants({ size }))}>{title}</CardTitle>
+        <CardTitle className={cn(titleVariants({ variant, size }))}>
+          {title}
+        </CardTitle>
         {variant === 'modal' && documentId && (
           <CardDescription>Document ID: {documentId}</CardDescription>
         )}

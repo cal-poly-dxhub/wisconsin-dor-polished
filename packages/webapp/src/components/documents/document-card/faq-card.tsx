@@ -46,11 +46,11 @@ const faqCardVariants = cva(
   }
 );
 
-const faqHeaderVariants = cva('flex min-w-0 flex-1 items-start gap-2', {
+const faqHeaderVariants = cva('flex min-w-0 flex-1 gap-2', {
   variants: {
     variant: {
-      compact: '',
-      modal: 'pb-2',
+      compact: 'items-center',
+      modal: 'items-start pb-2',
     },
     size: {
       sm: 'gap-1.5',
@@ -64,8 +64,12 @@ const faqHeaderVariants = cva('flex min-w-0 flex-1 items-start gap-2', {
   },
 });
 
-const iconVariants = cva('text-muted-foreground mt-0.5 flex-shrink-0', {
+const iconVariants = cva('text-muted-foreground flex-shrink-0', {
   variants: {
+    variant: {
+      compact: '',
+      modal: 'mt-1',
+    },
     size: {
       sm: 'h-3 w-3',
       md: 'h-4 w-4',
@@ -73,12 +77,17 @@ const iconVariants = cva('text-muted-foreground mt-0.5 flex-shrink-0', {
     },
   },
   defaultVariants: {
+    variant: 'compact',
     size: 'md',
   },
 });
 
-const titleVariants = cva('line-clamp-2 leading-tight opacity-90', {
+const titleVariants = cva('leading-tight opacity-90', {
   variants: {
+    variant: {
+      compact: 'line-clamp-1 truncate',
+      modal: 'line-clamp-2',
+    },
     size: {
       sm: 'text-sm',
       md: 'text-lg',
@@ -86,6 +95,7 @@ const titleVariants = cva('line-clamp-2 leading-tight opacity-90', {
     },
   },
   defaultVariants: {
+    variant: 'compact',
     size: 'md',
   },
 });
@@ -104,9 +114,9 @@ export function FAQHeader({
 }: FAQHeaderProps) {
   return (
     <div className={cn(faqHeaderVariants({ variant, size }))}>
-      <HelpCircle className={cn(iconVariants({ size }))} />
+      <HelpCircle className={cn(iconVariants({ variant, size }))} />
       <div className="min-w-0 flex-1">
-        <CardTitle className={cn(titleVariants({ size }))}>
+        <CardTitle className={cn(titleVariants({ variant, size }))}>
           {question}
         </CardTitle>
         {variant === 'modal' && faqId && (
