@@ -1,4 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as apigatewayv2Integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
@@ -18,6 +19,9 @@ export class SessionsStack extends cdk.NestedStack {
   public readonly websocketCallbackUrl: string;
   public readonly userPool: cognito.UserPool;
   public readonly userPoolClient: cognito.UserPoolClient;
+  public readonly chatHistoryTable: dynamodb.Table;
+  public readonly httpApiUrl: string;
+  public readonly websocketApiUrl: string;
 
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
@@ -57,7 +61,7 @@ export class SessionsStack extends cdk.NestedStack {
       generateSecret: false,
     });
 
-    this.sessionsTable = new cdk.aws_dynamodb.Table(this, 'SessionTable', {
+    this.sessionsTable = new dynamodb.Table(this, 'SessionTable', {
       partitionKey: {
         name: 'sessionId',
         type: cdk.aws_dynamodb.AttributeType.STRING,
@@ -73,6 +77,31 @@ export class SessionsStack extends cdk.NestedStack {
         type: cdk.aws_dynamodb.AttributeType.STRING,
       },
       projectionType: cdk.aws_dynamodb.ProjectionType.ALL,
+    });
+
+    this.chatHistoryTable = new dynamodb.Table(this, 'ChatHistoryTable', {
+      partitionKey: {
+        name: 'queryId',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // // TODO: use separate conversation IDs instead of session IDs
+    // // for chat history retrieval.
+    this.chatHistoryTable.addGlobalSecondaryIndex({
+      indexName: 'sessionIdKey',
+      partitionKey: {
+        name: 'sessionId',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'timestamp',
+        type: dynamodb.AttributeType.STRING,
+      },
+      projectionType: dynamodb.ProjectionType.ALL,
     });
 
     const apiHandler = new lambda.Function(this, 'ApiHandler', {
@@ -97,10 +126,12 @@ export class SessionsStack extends cdk.NestedStack {
       memorySize: 128,
       environment: {
         SESSIONS_TABLE_NAME: this.sessionsTable.tableName,
+        MESSAGES_TABLE_NAME: this.chatHistoryTable.tableName,
       },
     });
 
     this.sessionsTable.grantReadWriteData(apiHandler);
+    this.chatHistoryTable.grantReadWriteData(apiHandler);
 
     apiHandler.addToRolePolicy(
       new iam.PolicyStatement({
@@ -261,6 +292,8 @@ export class SessionsStack extends cdk.NestedStack {
       }
     );
 
+    this.websocketApiUrl = websocketStage.url;
+
     // Use L1 construct to enable execution logging (not supported in L2 WebSocket constructs)
     const cfnStage = websocketStage.node.defaultChild as apigatewayv2.CfnStage;
 
@@ -320,6 +353,8 @@ export class SessionsStack extends cdk.NestedStack {
       autoDeploy: true,
     });
 
+    this.httpApiUrl = devStage.url;
+
     const lambdaIntegration =
       new apigatewayv2Integrations.HttpLambdaIntegration(
         'LambdaIntegration',
@@ -335,6 +370,13 @@ export class SessionsStack extends cdk.NestedStack {
 
     httpApi.addRoutes({
       path: '/session/{sessionId}/message',
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/session/{sessionId}/feedback',
       methods: [apigatewayv2.HttpMethod.POST],
       integration: lambdaIntegration,
       authorizer: authorizer,

@@ -41,6 +41,7 @@ export function useWebSocketChat(
   const setChatState = useChatStore(state => state.setChatState);
   const addQuery = useChatStore(state => state.addQuery);
   const setCurrentQueryId = useChatStore(state => state.setCurrentQueryId);
+  const setSessionId = useChatStore(state => state.setSessionId);
 
   // Define UI actions for each message type
   const messageHandler = useCallback(
@@ -146,13 +147,25 @@ export function useWebSocketChat(
   }, [handleSuccessfulSend, options.websocketUrl]);
 
   // Defaults to no-ops if WebSocket URL is falsy
-  const { connectionState, isConnected, close, reconnect, sendMessage } =
-    useValidatedWebSocket(messageHandler, websocketOptions);
+  const {
+    connectionState,
+    isConnected,
+    close,
+    reconnect,
+    sendMessage,
+    sessionId,
+  } = useValidatedWebSocket(messageHandler, websocketOptions);
 
   // Keep store connection state updated
   useEffect(() => {
     setConnectionState(connectionState);
   }, [connectionState, setConnectionState]);
+
+  // Keep store session ID updated
+  useEffect(() => {
+    console.log('useEffect found sessionId update');
+    setSessionId(sessionId);
+  }, [sessionId, setSessionId]);
 
   return {
     connectionState,

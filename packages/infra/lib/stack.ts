@@ -29,7 +29,7 @@ export class WisconsinBotStack extends cdk.Stack {
       }
     );
 
-    new MessagesStack(this, 'WisconsinMessagesStack', {
+    const messagesStack = new MessagesStack(this, 'WisconsinMessagesStack', {
       description:
         'Stack providing messaging services (classifier and workflows).',
       stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
@@ -38,6 +38,31 @@ export class WisconsinBotStack extends cdk.Stack {
       websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
       faqKnowledgeBase: knowledgeBaseStack.faqKnowledgeBase,
       ragKnowledgeBase: knowledgeBaseStack.ragKnowledgeBase,
+      chatHistoryTable: sessionsStack.chatHistoryTable,
+    });
+
+    new cdk.CfnOutput(this, 'ApiBaseUrl', {
+      value: sessionsStack.httpApiUrl,
+      description: 'Base URL of the HTTP API',
+      exportName: 'WisconsinBot-ApiBaseUrl',
+    });
+
+    new cdk.CfnOutput(this, 'WebSocketUrl', {
+      value: sessionsStack.websocketApiUrl,
+      description: 'URL of the WebSocket API',
+      exportName: 'WisconsinBot-WebSocketUrl',
+    });
+
+    new cdk.CfnOutput(this, 'CognitoUserPoolId', {
+      value: sessionsStack.userPool.userPoolId,
+      description: 'Cognito User Pool ID',
+      exportName: 'WisconsinBot-CognitoUserPoolId',
+    });
+
+    new cdk.CfnOutput(this, 'CognitoUserPoolClientId', {
+      value: sessionsStack.userPoolClient.userPoolClientId,
+      description: 'Cognito User Pool Client ID',
+      exportName: 'WisconsinBot-CognitoUserPoolClientId',
     });
   }
 }

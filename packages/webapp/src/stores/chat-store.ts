@@ -23,6 +23,7 @@ export const useChatStore = create<ChatStore>()(
     queryOrder: [],
     errors: [],
     draftMessage: '',
+    sessionId: null,
 
     // Session management
     setSessionStatus: (sessionStatus: SessionStatus) =>
@@ -144,6 +145,11 @@ export const useChatStore = create<ChatStore>()(
         state.queryOrder = [];
         state.errors = [];
         state.draftMessage = '';
+      }),
+
+    setSessionId: (sessionId: string | null) =>
+      set(state => {
+        state.sessionId = sessionId;
       }),
   }))
 );

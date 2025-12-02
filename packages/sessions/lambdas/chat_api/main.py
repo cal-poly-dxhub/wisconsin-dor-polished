@@ -21,11 +21,12 @@ from chat_api_errors import (
     ValidationError,
     create_error_body,
 )
-from step_function_types.models import MessageEvent, MessageRequest
+from step_function_types.models import FeedbackRequest, MessageEvent, MessageRequest
 
 router = Router()
 dynamodb = boto3.client("dynamodb")
 session_table_name = os.environ["SESSIONS_TABLE_NAME"]
+message_table_name = os.environ["MESSAGES_TABLE_NAME"]
 eventbridge = boto3.client("events")
 
 cors_config = CORSConfig(
@@ -126,6 +127,26 @@ def validate_message_request(body: dict[str, Any]) -> MessageRequest:
         raise ValidationError() from e
 
 
+def validate_feedback_request(body: dict[str, Any]) -> FeedbackRequest:
+    """Validate the feedback request body and return the FeedbackRequest."""
+    if not body:
+        raise ValidationError(reason="Missing request body.")
+
+    try:
+        feedback_request = FeedbackRequest(**body)
+        return feedback_request
+    except pydantic.ValidationError as e:
+        logger.error(f"Validation error in feedback request: {e}")
+        reason = ""
+        for error in e.errors():
+            if "loc" in error and isinstance(error["loc"], tuple) and len(error["loc"]) > 0:
+                field = error["loc"][0]
+                reason += f"{field}: {error['msg']}; "
+        raise ValidationError(reason=reason.strip()) from e
+    except Exception as e:
+        raise ValidationError() from e
+
+
 def create_session() -> str:
     """Create a new chat session; return the session ID."""
     session_id = str(uuid.uuid4())
@@ -150,6 +171,56 @@ def create_session_handler() -> dict[str, Any]:
         return create_api_response(e.status_code, e.to_response())
     except Exception as e:
         logger.error(f"Unexpected error in create_session: {e}")
+        error_response = create_error_body(e)
+        return create_api_response(500, error_response)
+
+
+def update_query_feedback(session_id: str, feedback_request: FeedbackRequest):
+    """Update the DynamoDB entry for a particular query's feedback."""
+    try:
+        dynamodb.update_item(
+            TableName=message_table_name,
+            Key={"queryId": {"S": feedback_request.query_id}},
+            UpdateExpression="SET thumbUp = :thumbUp, feedback = :feedback",
+            ExpressionAttributeValues={
+                ":thumbUp": {"BOOL": feedback_request.thumb_up},
+                ":feedback": {"S": feedback_request.feedback or ""},
+            },
+        )
+    except Exception as e:
+        logger.error(f"Failed to update query feedback in DynamoDB: {e}")
+        raise DynamoDBError(
+            "update_item",
+            details={
+                "session_id": session_id,
+                "queryId": feedback_request.query_id,
+                "error": str(e),
+            },
+        ) from e
+
+
+@app.post("/session/<session_id>/feedback")
+def feedback_handler(session_id) -> dict[str, Any]:
+    """Assign feedback to a particular query."""
+    try:
+        validate_session_exists(session_id)
+
+        body = router.current_event.json_body
+        feedback_request = validate_feedback_request(body)
+
+        update_query_feedback(session_id, feedback_request)
+
+        response_body = {
+            "message": "Feedback assigned successfully",
+            "queryId": feedback_request.query_id,
+        }
+
+        return create_api_response(200, response_body)
+
+    except ChatAPIError as e:
+        return create_api_response(e.status_code, e.to_response())
+    except Exception as e:
+        logger.error(f"Unexpected error in feedback_handler: {e}")
         error_response = create_error_body(e)
         return create_api_response(500, error_response)
 

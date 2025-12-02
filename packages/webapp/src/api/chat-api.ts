@@ -18,11 +18,21 @@ const SendMessageResponse = z.object({
   message: z.string(),
   queryId: z.string().uuid(),
 });
+const FeedbackRequest = z.object({
+  queryId: z.string().uuid(),
+  thumbUp: z.boolean(),
+  feedback: z.string().optional(),
+});
+const FeedbackResponse = z.object({
+  successful: z.boolean(),
+});
 
 export type ApiResponse = z.infer<typeof ApiResponse>;
 export type CreateSessionResponse = z.infer<typeof CreateSessionResponse>;
 export type SendMessageRequest = z.infer<typeof SendMessageRequest>;
 export type SendMessageResponse = z.infer<typeof SendMessageResponse>;
+export type FeedbackRequest = z.infer<typeof FeedbackRequest>;
+export type FeedbackResponse = z.infer<typeof FeedbackResponse>;
 
 // Unwraps the common response format and enforces a body schema
 async function handleApiCall<T>(
@@ -52,5 +62,15 @@ export async function sendMessage(
   return handleApiCall(
     http.post(`session/${sessionId}/message`, { json: payload }).json(),
     SendMessageResponse
+  );
+}
+
+export async function assignFeedback(
+  sessionId: string,
+  payload: FeedbackRequest
+) {
+  return handleApiCall(
+    http.post(`session/${sessionId}/feedback`, { json: payload }).json(),
+    FeedbackResponse
   );
 }
