@@ -20,6 +20,8 @@ export class SessionsStack extends cdk.NestedStack {
   public readonly userPool: cognito.UserPool;
   public readonly userPoolClient: cognito.UserPoolClient;
   public readonly chatHistoryTable: dynamodb.Table;
+  public readonly httpApiUrl: string;
+  public readonly websocketApiUrl: string;
 
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
@@ -290,6 +292,8 @@ export class SessionsStack extends cdk.NestedStack {
       }
     );
 
+    this.websocketApiUrl = websocketStage.url;
+
     // Use L1 construct to enable execution logging (not supported in L2 WebSocket constructs)
     const cfnStage = websocketStage.node.defaultChild as apigatewayv2.CfnStage;
 
@@ -348,6 +352,8 @@ export class SessionsStack extends cdk.NestedStack {
       stageName: 'dev',
       autoDeploy: true,
     });
+
+    this.httpApiUrl = devStage.url;
 
     const lambdaIntegration =
       new apigatewayv2Integrations.HttpLambdaIntegration(
