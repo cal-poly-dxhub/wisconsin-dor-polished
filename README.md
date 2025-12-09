@@ -20,10 +20,11 @@ This is a chatbot application meant for the Wisconsin Department of Revenue (DOR
 
 ### Prerequisites
 
-- A UNIX computer with the CDK CLI installed (e.g., via `npm install -g aws-cdk`)
+- The Bun Javascript runtime (`npm install bun`)
+- A UNIX computer with the CDK CLI installed (e.g., via `bun add -g aws-cdk`)
 - A target AWS account with the CDK bootstrapped (via `cdk bootstrap`)
+- A command line session whose environment points to the target account (see [here](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html))
 - A cloned version of this repository
-- A command line session whose current directory is a clone of this repository and whose environment points to the deployment target account (see [here](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html))
 
 ### Deployment Steps
 
