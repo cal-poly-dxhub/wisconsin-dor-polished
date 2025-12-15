@@ -3,7 +3,7 @@ name = "wisconsin-bot"
 version = "0.1.0"
 description = "A chatbot for the Wisconsin Department of Revenue"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = "==3.13.0"
 dependencies = []
 
 [tool.pyrefly]
