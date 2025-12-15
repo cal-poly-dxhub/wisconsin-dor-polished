@@ -4,6 +4,9 @@ import { SessionsStack } from '../../sessions/infra/sessions-stack';
 import { MessagesStack } from '../../messages/infra/messages-stack';
 import { LambdaLayersStack } from '../../shared/lambda_layers/infra/lambda-layers-stack';
 import { KnowledgeBaseStack } from '../../knowledge-base/infra/knowledge-base-stack';
+import { CloudWatchIam } from '../../cloudwatch-iam/infra/cloudwatch-iam';
+
+const RESET_ClOUDWATCH_IAM_ROLE = false;
 
 export class WisconsinBotStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -39,6 +42,12 @@ export class WisconsinBotStack extends cdk.Stack {
       faqKnowledgeBase: knowledgeBaseStack.faqKnowledgeBase,
       ragKnowledgeBase: knowledgeBaseStack.ragKnowledgeBase,
       chatHistoryTable: sessionsStack.chatHistoryTable,
+    });
+
+    const cloudWatchIam = new CloudWatchIam(this, 'WisconsinCloudWatchIam', {
+      resetCloudWatchIamRole: RESET_ClOUDWATCH_IAM_ROLE,
+      description:
+        'IAM roles and policies for CloudWatch logging for API Gateway.',
     });
 
     new cdk.CfnOutput(this, 'ApiBaseUrl', {
