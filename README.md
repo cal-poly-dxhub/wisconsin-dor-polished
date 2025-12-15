@@ -25,6 +25,7 @@ This is a chatbot application meant for the Wisconsin Department of Revenue (DOR
 - A target AWS account with the CDK bootstrapped (via `cdk bootstrap`)
 - A command line session whose environment points to the target account (see [here](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html))
 - A cloned version of this repository
+- Docker version 27.4.0
 
 ### Deployment Steps
 
