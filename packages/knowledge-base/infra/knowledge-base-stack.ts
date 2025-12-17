@@ -10,17 +10,22 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
+    const uid = cdk.Fn.select(
+      0,
+      cdk.Fn.split('-', cdk.Fn.select(2, cdk.Fn.split('/', this.stackId)))
+    );
+
     // ===========================================================
     // Buckets for FAQ + RAG documents
     // ===========================================================
     const faqBucket = new s3.Bucket(this, 'WisDorDocsFaq', {
-      bucketName: 'wis-faq-bucket',
+      bucketName: cdk.Fn.join('-', ['wis-faq-bucket', uid]),
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       autoDeleteObjects: false,
     });
 
     const ragBucket = new s3.Bucket(this, 'WisDorDocsRag', {
-      bucketName: 'wis-rag-bucket',
+      bucketName: cdk.Fn.join('-', ['wis-rag-bucket', uid]),
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       autoDeleteObjects: false,
     });
