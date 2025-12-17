@@ -41,6 +41,8 @@ Package Lambda-function code and deploy all resources to the target account usin
 bun run deploy
 ```
 
+The following is only necessary if you'd like to run a local instance of the application:
+
 Note the template environment file `.env.example` in `packages/webapp`. This file defines environment variables necessary for the local instance of the web app. Use values from the CloudFormation/CDK output to populate these variable definitions:
 
 ```
@@ -52,7 +54,7 @@ WisconsinBotStack.WebSocketUrl -> NEXT_PUBLIC_USER_POOL_CLIENT_ID
 
 Rename `packages/webapp/.env.example` to `packages/webapp/.env.local`.
 
-Run a local instance of the frontend at `localhost:3000` with: 
+Run a local instance of the frontend at `localhost:xxxx` with: 
 ```
 bun dev
 ```
