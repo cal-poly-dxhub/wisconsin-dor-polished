@@ -5,6 +5,7 @@ import { MessagesStack } from '../../messages/infra/messages-stack';
 import { LambdaLayersStack } from '../../shared/lambda_layers/infra/lambda-layers-stack';
 import { KnowledgeBaseStack } from '../../knowledge-base/infra/knowledge-base-stack';
 import { CloudWatchIam } from '../../cloudwatch-iam/infra/cloudwatch-iam';
+import { WebAppStack } from '../../webapp/infra/webapp-stack';
 
 const RESET_ClOUDWATCH_IAM_ROLE = false;
 
@@ -50,6 +51,22 @@ export class WisconsinBotStack extends cdk.Stack {
         'IAM roles and policies for CloudWatch logging for API Gateway.',
     });
 
+    const domainName = this.node.tryGetContext('domainName');
+    const hostedZoneName = this.node.tryGetContext('hostedZoneName');
+    const hostedZoneId = this.node.tryGetContext('hostedZoneId');
+
+    const webAppStack = new WebAppStack(this, 'WisconsinWebAppStack', {
+      description:
+        'CloudFront + Lambda hosting for the Wisconsin bot web application.',
+      userPool: sessionsStack.userPool,
+      userPoolClient: sessionsStack.userPoolClient,
+      httpApiUrl: sessionsStack.httpApiUrl,
+      websocketApiUrl: sessionsStack.websocketApiUrl,
+      domainName,
+      hostedZoneName,
+      hostedZoneId,
+    });
+
     new cdk.CfnOutput(this, 'ApiBaseUrl', {
       value: sessionsStack.httpApiUrl,
       description: 'Base URL of the HTTP API',
@@ -72,6 +89,11 @@ export class WisconsinBotStack extends cdk.Stack {
       value: sessionsStack.userPoolClient.userPoolClientId,
       description: 'Cognito User Pool Client ID',
       exportName: 'WisconsinBot-CognitoUserPoolClientId',
+    });
+
+    new cdk.CfnOutput(this, 'WebAppUrl', {
+      value: webAppStack.distributionUrl,
+      description: 'URL of the web application',
     });
   }
 }
