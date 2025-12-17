@@ -86,12 +86,14 @@ export function useWebSocketChat(
 
             case 'error':
               // Error messages sent back from the server are already user-facing.
-              setQueryError(message.queryId, {
-                message: message.content.message,
-                userMessage: message.content.message,
+              setQueryError(message.queryId || '', {
+                message: message.content.error,
+                userMessage: message.content.error,
                 retryable: true,
               });
-              updateQueryStatus(message.queryId, 'failed');
+              if (message.queryId) {
+                updateQueryStatus(message.queryId, 'failed');
+              }
               break;
           }
         }

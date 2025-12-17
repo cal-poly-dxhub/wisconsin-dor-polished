@@ -17,7 +17,7 @@ const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
 });
 
 global.document = dom.window.document;
-(global as any).window = dom.window;
+(global as unknown as { window: typeof dom.window }).window = dom.window;
 global.navigator = dom.window.navigator;
 
 // Mock the validated websocket hook

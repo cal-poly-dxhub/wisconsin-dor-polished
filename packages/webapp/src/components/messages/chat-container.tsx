@@ -59,6 +59,8 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
         return () => {
           container.removeEventListener('scroll', handleScroll);
         };
+      } else {
+        return () => {};
       }
     }, [handleScroll]);
 
