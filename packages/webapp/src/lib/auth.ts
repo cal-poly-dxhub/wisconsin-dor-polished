@@ -6,18 +6,30 @@ import {
   CognitoUserAttribute,
 } from 'amazon-cognito-identity-js';
 
-const USER_POOL_ID = process.env.NEXT_PUBLIC_USER_POOL_ID!;
-const CLIENT_ID = process.env.NEXT_PUBLIC_USER_POOL_CLIENT_ID!;
+let _userPool: CognitoUserPool | null = null;
 
-if (!USER_POOL_ID) throw new Error('NEXT_PUBLIC_USER_POOL_ID is not set');
-if (!CLIENT_ID) throw new Error('NEXT_PUBLIC_USER_POOL_CLIENT_ID is not set');
+function getUserPool(): CognitoUserPool {
+  if (_userPool) return _userPool;
 
-const poolData = {
-  UserPoolId: USER_POOL_ID,
-  ClientId: CLIENT_ID,
+  const userPoolId = process.env.NEXT_PUBLIC_USER_POOL_ID;
+  const clientId = process.env.NEXT_PUBLIC_USER_POOL_CLIENT_ID;
+
+  if (!userPoolId) throw new Error('NEXT_PUBLIC_USER_POOL_ID is not set');
+  if (!clientId) throw new Error('NEXT_PUBLIC_USER_POOL_CLIENT_ID is not set');
+
+  _userPool = new CognitoUserPool({
+    UserPoolId: userPoolId,
+    ClientId: clientId,
+  });
+
+  return _userPool;
+}
+
+export const userPool = {
+  get current() {
+    return getUserPool();
+  },
 };
-
-export const userPool = new CognitoUserPool(poolData);
 
 export interface SignUpParams {
   email: string;
@@ -45,7 +57,7 @@ export const signUp = (
       }),
     ];
 
-    userPool.signUp(
+    userPool.current.signUp(
       params.email,
       params.password,
       attributeList,
@@ -72,7 +84,7 @@ export const confirmSignUp = (params: ConfirmSignUpParams): Promise<void> => {
   return new Promise((resolve, reject) => {
     const cognitoUser = new CognitoUser({
       Username: params.email,
-      Pool: userPool,
+      Pool: userPool.current,
     });
 
     cognitoUser.confirmRegistration(params.code, true, err => {
@@ -94,7 +106,7 @@ export const signIn = (params: SignInParams): Promise<CognitoUserSession> => {
 
     const cognitoUser = new CognitoUser({
       Username: params.email,
-      Pool: userPool,
+      Pool: userPool.current,
     });
 
     cognitoUser.authenticateUser(authenticationDetails, {
@@ -110,7 +122,7 @@ export const signIn = (params: SignInParams): Promise<CognitoUserSession> => {
 
 export const signOut = (): Promise<void> => {
   return new Promise(resolve => {
-    const cognitoUser = userPool.getCurrentUser();
+    const cognitoUser = userPool.current.getCurrentUser();
     if (cognitoUser) {
       cognitoUser.signOut();
     }
@@ -120,7 +132,7 @@ export const signOut = (): Promise<void> => {
 
 export const getCurrentSession = (): Promise<CognitoUserSession | null> => {
   return new Promise((resolve, reject) => {
-    const cognitoUser = userPool.getCurrentUser();
+    const cognitoUser = userPool.current.getCurrentUser();
     if (!cognitoUser) {
       resolve(null);
       return;
@@ -151,7 +163,7 @@ export const resendConfirmationCode = (email: string): Promise<void> => {
   return new Promise((resolve, reject) => {
     const cognitoUser = new CognitoUser({
       Username: email,
-      Pool: userPool,
+      Pool: userPool.current,
     });
 
     cognitoUser.resendConfirmationCode(err => {
