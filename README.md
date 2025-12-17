@@ -26,6 +26,7 @@ This is a chatbot application meant for the Wisconsin Department of Revenue (DOR
 - A command line session whose environment points to the target account (see [here](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html))
 - A cloned version of this repository
 - Docker version 27.4.0
+- uv version 0.7.12
 
 ### Deployment Steps
 
