@@ -36,6 +36,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@next/eslint-plugin-next": "15.4.5",
     "@opennextjs/aws": "^3.9.6",
     "@tailwindcss/postcss": "^4.1.12",
     "@types/jsdom": "^21.1.7",

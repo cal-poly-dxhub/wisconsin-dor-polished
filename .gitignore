@@ -1,3 +1,5 @@
+/packages/infra/cdk_out_dir
+
 # Dependencies
 node_modules/
 npm-debug.log*

@@ -91,7 +91,7 @@ export const useValidatedWebSocket = (
     onSuccess: (data, variables) => {
       options.onSuccessfulSend(data.queryId, variables.payload.message);
     },
-    onError: (error, variables) => {
+    onError: (error, _variables) => {
       // Set chat state to idle so user can retry
       setChatState('idle');
       handleError(
@@ -133,14 +133,14 @@ export const useValidatedWebSocket = (
   );
 
   const handleOpen = useCallback(
-    (event: Event) => {
+    (_event: Event) => {
       setConnectionState('open');
     },
     [setConnectionState]
   );
 
   const handleClose = useCallback(
-    (event: CloseEvent) => {
+    (_event: CloseEvent) => {
       setConnectionState('closed');
       setSessionId(null); // Session ID invalid on close
     },

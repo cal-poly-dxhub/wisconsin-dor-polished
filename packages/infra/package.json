@@ -24,9 +24,19 @@
     "typescript": "~5.6.3"
   },
   "dependencies": {
-    "aws-cdk-lib": "2.208.0",
+    "aws-cdk-lib": "^2.233.0",
     "cdk-nextjs-standalone": "^4.3.3",
     "constructs": "^10.0.0",
     "sessions": "workspace:*"
-  }
+  },
+  "description": "This is a blank project for CDK development with TypeScript.",
+  "main": "jest.config.js",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
 }

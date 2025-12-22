@@ -37,7 +37,6 @@ const mockUseValidatedWebSocket = mock(() => {
 let resolveSendMessage: (value: { query_id: string }) => void;
 let rejectSendMessage: (error: Error) => void;
 let resolveCreateSession: (value: { sessionId: string }) => void;
-let rejectCreateSession: (error: Error) => void;
 
 const mockSendMessage = mock(
   () =>

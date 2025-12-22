@@ -35,6 +35,7 @@ export function useBreakpoint() {
 
   useEffect(() => {
     // Initial breakpoint check
+    // eslint-disable-next-line
     updateBreakpoint();
 
     const handleResize = () => {
