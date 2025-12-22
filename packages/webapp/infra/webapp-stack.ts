@@ -40,15 +40,25 @@ export class WebAppStack extends cdk.NestedStack {
       });
     }
 
+    const buildCommand = `cd ../../ && bun install && cd packages/webapp && bunx open-next build && find .open-next -path '*/node_modules/.bin' -type d -exec rm -rf {} + 2>/dev/null || true`;
+    const excludeBinSymlinks = ['**/node_modules/.bin/**'];
     const nextjs = new Nextjs(this, 'NextjsApp', {
       nextjsPath: '../../packages/webapp',
-      buildCommand:
-        'cd ../../ && bun install && cd packages/webapp && bunx open-next build',
+      buildCommand,
       environment: {
         NEXT_PUBLIC_USER_POOL_ID: props.userPool.userPoolId,
         NEXT_PUBLIC_USER_POOL_CLIENT_ID: props.userPoolClient.userPoolClientId,
         NEXT_PUBLIC_API_BASE_URL: props.httpApiUrl,
         NEXT_PUBLIC_WEBSOCKET_URL: props.websocketApiUrl,
+      },
+      overrides: {
+        nextjsServer: {
+          sourceCodeAssetProps: { exclude: excludeBinSymlinks },
+          destinationCodeAssetProps: { exclude: excludeBinSymlinks },
+        },
+        nextjsStaticAssets: {
+          assetProps: { exclude: excludeBinSymlinks },
+        },
       },
       ...(props.domainName &&
         certificate &&

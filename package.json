@@ -26,6 +26,7 @@
     "typescript": "^5.6.3"
   },
   "dependencies": {
+    "@aws-cdk/cloud-assembly-schema": "^49.2.0",
     "@aws-sdk/client-lambda": "^3.865.0",
     "@aws-sdk/client-sfn": "^3.864.0",
     "@cdklabs/generative-ai-cdk-constructs": "^0.1.312",

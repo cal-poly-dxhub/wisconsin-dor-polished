@@ -1,0 +1,3 @@
+[install]
+linkNativeLibraries = false
+backend = "copyfile"

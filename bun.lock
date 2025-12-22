@@ -5,6 +5,7 @@
     "": {
       "name": "wisconsin-sst",
       "dependencies": {
+        "@aws-cdk/cloud-assembly-schema": "^49.2.0",
         "@aws-sdk/client-lambda": "^3.865.0",
         "@aws-sdk/client-sfn": "^3.864.0",
         "@cdklabs/generative-ai-cdk-constructs": "^0.1.312",
@@ -175,7 +176,7 @@
 
     "@aws-cdk/aws-lambda-python-alpha": ["@aws-cdk/aws-lambda-python-alpha@2.221.1-alpha.0", "", { "peerDependencies": { "aws-cdk-lib": "^2.221.1", "constructs": "^10.0.0" } }, "sha512-c6xYQWmPZDdprkRQQyBDJ7/f9gYi+JBzbH/j2cyhh/Vt9KtNXcADbq4ILPFHlcZusPKmggW2pTMNUUUmH+xFug=="],
 
-    "@aws-cdk/cloud-assembly-schema": ["@aws-cdk/cloud-assembly-schema@48.20.0", "", { "dependencies": { "jsonschema": "~1.4.1", "semver": "^7.7.2" } }, "sha512-+eeiav9LY4wbF/EFuCt/vfvi/Zoxo8bf94PW5clbMraChEliq83w4TbRVy0jB9jE0v1ooFTtIjSQkowSPkfISg=="],
+    "@aws-cdk/cloud-assembly-schema": ["@aws-cdk/cloud-assembly-schema@49.2.0", "", { "dependencies": { "jsonschema": "~1.4.1", "semver": "^7.7.3" } }, "sha512-+W4pgBKMTbrN1Qlq/nt5NlbnoJiMzNxTbyrke/jsCt2BKy06zKSvQ2vv71eW+fzjrYBohnEDxN7bn/dALtGpNg=="],
 
     "@aws-crypto/crc32": ["@aws-crypto/crc32@5.2.0", "", { "dependencies": { "@aws-crypto/util": "^5.2.0", "@aws-sdk/types": "^3.222.0", "tslib": "^2.6.2" } }, "sha512-nLbCWqQNgUiwwtFsen1AdzAtvuLRsQS8rYgMuxCrdKf9kOssamGLuPwyTY9wyYblNr9+1XM8v6zoDTPPSIeANg=="],
 
@@ -2869,6 +2870,8 @@
 
     "ansi-escapes/type-fest": ["type-fest@0.21.3", "", {}, "sha512-t0rzBq87m3fVcduHDUFhKmyyX+9eo6WQjZvf51Ea/M0Q7+T374Jp1aUiyUl0GKxp8M/OETVHSDvmkyPgvX+X2w=="],
 
+    "aws-cdk-lib/@aws-cdk/cloud-assembly-schema": ["@aws-cdk/cloud-assembly-schema@48.20.0", "", { "dependencies": { "jsonschema": "~1.4.1", "semver": "^7.7.2" } }, "sha512-+eeiav9LY4wbF/EFuCt/vfvi/Zoxo8bf94PW5clbMraChEliq83w4TbRVy0jB9jE0v1ooFTtIjSQkowSPkfISg=="],
+
     "aws-cdk-lib/semver": ["semver@7.7.3", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-SdsKMrI9TdgjdweUSR9MweHA4EJ8YxHn8DFaDisvhVlUOe4BF1tLD7GAj0lIqWVl+dPb/rExr0Btby5loQm20Q=="],
 
     "babel-plugin-istanbul/istanbul-lib-instrument": ["istanbul-lib-instrument@5.2.1", "", { "dependencies": { "@babel/core": "^7.12.3", "@babel/parser": "^7.14.7", "@istanbuljs/schema": "^0.1.2", "istanbul-lib-coverage": "^3.2.0", "semver": "^6.3.0" } }, "sha512-pzqtp31nLv/XFOzXGuvhCb8qhjmTVo5vjVk19XE4CRlSWz0KoeJ3bw9XsA7nOp9YBf4qHjwBxkDzKcME/J29Yg=="],
@@ -3492,6 +3495,10 @@
     "amazon-cognito-identity-js/@aws-crypto/sha256-js/@aws-sdk/types": ["@aws-sdk/types@3.398.0", "", { "dependencies": { "@smithy/types": "^2.2.2", "tslib": "^2.5.0" } }, "sha512-r44fkS+vsEgKCuEuTV+TIk0t0m5ZlXHNjSDYEUvzLStbbfUFiNus/YG4UCa0wOk9R7VuQI67badsvvPeVPCGDQ=="],
 
     "amazon-cognito-identity-js/@aws-crypto/sha256-js/tslib": ["tslib@1.14.1", "", {}, "sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg=="],
+
+    "aws-cdk-lib/@aws-cdk/cloud-assembly-schema/jsonschema": ["jsonschema@1.4.1", "", { "bundled": true }, "sha512-S6cATIPVv1z0IlxdN+zUk5EPjkGCdnhN4wVSBlvoUO1tOLJootbo9CquNJmbIh4yikWHiUedhRYrNPn1arpEmQ=="],
+
+    "aws-cdk-lib/@aws-cdk/cloud-assembly-schema/semver": ["semver@7.7.3", "", { "bundled": true, "bin": { "semver": "bin/semver.js" } }, "sha512-SdsKMrI9TdgjdweUSR9MweHA4EJ8YxHn8DFaDisvhVlUOe4BF1tLD7GAj0lIqWVl+dPb/rExr0Btby5loQm20Q=="],
 
     "express/mime-types/mime-db": ["mime-db@1.54.0", "", {}, "sha512-aU5EJuIN2WDemCcAp2vFBfp/m4EAhWJnUNSSw0ixs7/kXbd6Pg64EmwJkNdFhB8aWt1sH2CTXrLxo/iAGV3oPQ=="],
 
