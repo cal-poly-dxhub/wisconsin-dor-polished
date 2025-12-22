@@ -11,6 +11,7 @@
     "pytest": "uv run pytest",
     "test": "bun run --elide-lines=0 --filter='*' test",
     "deploy": "bun run bundle && bun run --elide-lines=0 --filter='infra' deploy",
+    "first-time": "uv run scripts/upload_model_configs.py && uv run scripts/sync_destination.py",
     "destroy": "bun run --elide-lines=0 --filter='infra' destroy",
     "bundle": "uv run scripts/bundle.py",
     "stream": "bash scripts/stream_logs.sh"

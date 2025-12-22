@@ -95,5 +95,23 @@ export class WisconsinBotStack extends cdk.Stack {
       value: webAppStack.distributionUrl,
       description: 'URL of the web application',
     });
+
+    new cdk.CfnOutput(this, 'FaqBucketName', {
+      value: knowledgeBaseStack.faqBucketName,
+      description: 'S3 bucket for FAQ documents',
+      exportName: 'WisconsinBot-FaqBucketName',
+    });
+
+    new cdk.CfnOutput(this, 'RagBucketName', {
+      value: knowledgeBaseStack.ragBucketName,
+      description: 'S3 bucket for RAG documents',
+      exportName: 'WisconsinBot-RagBucketName',
+    });
+
+    new cdk.CfnOutput(this, 'ModelConfigTableName', {
+      value: messagesStack.modelConfigTable.tableName,
+      description: 'Name of the Model Configuration DynamoDB table',
+      exportName: 'WisconsinBot-ModelConfigTableName',
+    });
   }
 }

@@ -6,6 +6,8 @@ import { Construct } from 'constructs';
 export class KnowledgeBaseStack extends cdk.NestedStack {
   public readonly faqKnowledgeBase: bedrock.VectorKnowledgeBase;
   public readonly ragKnowledgeBase: bedrock.VectorKnowledgeBase;
+  public readonly faqBucketName: string;
+  public readonly ragBucketName: string;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -68,6 +70,8 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
 
     this.faqKnowledgeBase = faqKb;
     this.ragKnowledgeBase = ragKb;
+    this.faqBucketName = faqBucket.bucketName;
+    this.ragBucketName = ragBucket.bucketName;
 
     // ===========================================================
     // Outputs for reference

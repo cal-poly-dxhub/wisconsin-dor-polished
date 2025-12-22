@@ -1,21 +1,69 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import boto3
 from botocore.exceptions import ClientError
+
+FAQ_SOURCE_BUCKET = "wis-faq-bucket"
+RAG_SOURCE_BUCKET = "wis-rag-bucket"
+SOURCE_ACCOUNT_ID = "285396213403"
+CDK_STACK_NAME = "WisconsinBotStack"
+DEFAULT_ROLE_NAME = "CrossAccountS3SyncRole"
+
+
+def get_region() -> str:
+    region = (
+        boto3.Session().region_name
+        or os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+    )
+    if not region:
+        raise ValueError("AWS region not configured. Set AWS_REGION or configure your AWS CLI.")
+    return region
+
+
+def get_bucket_from_cdk_output(export_name: str) -> str:
+    cf = boto3.client("cloudformation", region_name=get_region())
+    resp = cf.describe_stacks(StackName=CDK_STACK_NAME)
+    outputs = resp["Stacks"][0].get("Outputs", [])
+    for output in outputs:
+        if output.get("ExportName") == export_name:
+            return output["OutputValue"]
+    raise ValueError(f"Could not find CDK output with ExportName={export_name}")
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Create/update cross-account S3 sync role in DEST account with access to source and destination buckets."
     )
-    parser.add_argument("--role-name", required=True, help="Name of IAM role to create/update.")
     parser.add_argument(
-        "--source-account-id", required=True, help="12-digit AWS account ID of the SOURCE account."
+        "--role-name",
+        default=DEFAULT_ROLE_NAME,
+        help=f"Name of IAM role to create/update (default: {DEFAULT_ROLE_NAME}).",
     )
-    parser.add_argument("--source-bucket", required=True, help="Name of the SOURCE S3 bucket.")
     parser.add_argument(
-        "--dest-bucket", required=True, help="Name of the DESTINATION S3 bucket (in this account)."
+        "--source-account-id",
+        default=SOURCE_ACCOUNT_ID,
+        help=f"12-digit AWS account ID of the SOURCE account (default: {SOURCE_ACCOUNT_ID}).",
+    )
+    parser.add_argument(
+        "--faq-source-bucket",
+        default=FAQ_SOURCE_BUCKET,
+        help=f"Name of the SOURCE FAQ S3 bucket (default: {FAQ_SOURCE_BUCKET}).",
+    )
+    parser.add_argument(
+        "--faq-dest-bucket",
+        help="Name of the DESTINATION FAQ S3 bucket (default: read from CDK stack output).",
+    )
+    parser.add_argument(
+        "--rag-source-bucket",
+        default=RAG_SOURCE_BUCKET,
+        help=f"Name of the SOURCE RAG S3 bucket (default: {RAG_SOURCE_BUCKET}).",
+    )
+    parser.add_argument(
+        "--rag-dest-bucket",
+        help="Name of the DESTINATION RAG S3 bucket (default: read from CDK stack output).",
     )
     parser.add_argument(
         "--policy-name",
@@ -24,9 +72,18 @@ def main():
     )
     args = parser.parse_args()
 
-    iam = boto3.client("iam")
+    faq_dest_bucket = args.faq_dest_bucket or get_bucket_from_cdk_output(
+        "WisconsinBot-FaqBucketName"
+    )
+    rag_dest_bucket = args.rag_dest_bucket or get_bucket_from_cdk_output(
+        "WisconsinBot-RagBucketName"
+    )
 
-    # Trust policy: allow the *source* account to assume this role.
+    iam = boto3.client("iam", region_name=get_region())
+
+    source_buckets = [args.faq_source_bucket, args.rag_source_bucket]
+    dest_buckets = [faq_dest_bucket, rag_dest_bucket]
+
     trust_policy = {
         "Version": "2012-10-17",
         "Statement": [
@@ -37,14 +94,14 @@ def main():
                 "Action": "sts:AssumeRole",
             }
         ],
-    }  # [web:62][web:67]
+    }
 
     try:
         print(f"Creating role {args.role_name}...")
         iam.create_role(
             RoleName=args.role_name,
             AssumeRolePolicyDocument=json.dumps(trust_policy),
-            Description=f"Cross-account S3 sync role for {args.source_bucket} -> {args.dest_bucket}",
+            Description=f"Cross-account S3 sync role for FAQ and RAG buckets",
         )
         print(f"Role {args.role_name} created.")
     except ClientError as e:
@@ -57,36 +114,35 @@ def main():
         else:
             raise
 
-    # Inline permissions policy: read from source bucket, read/write to destination bucket.
     policy_doc = {
         "Version": "2012-10-17",
         "Statement": [
             {
-                "Sid": "AllowReadFromSourceBucket",
+                "Sid": "AllowListSourceBuckets",
                 "Effect": "Allow",
                 "Action": ["s3:ListBucket"],
-                "Resource": f"arn:aws:s3:::{args.source_bucket}",
+                "Resource": [f"arn:aws:s3:::{b}" for b in source_buckets],
             },
             {
-                "Sid": "AllowGetObjectsFromSourceBucket",
+                "Sid": "AllowGetObjectsFromSourceBuckets",
                 "Effect": "Allow",
                 "Action": ["s3:GetObject"],
-                "Resource": f"arn:aws:s3:::{args.source_bucket}/*",
+                "Resource": [f"arn:aws:s3:::{b}/*" for b in source_buckets],
             },
             {
-                "Sid": "AllowListDestBucket",
+                "Sid": "AllowListDestBuckets",
                 "Effect": "Allow",
                 "Action": ["s3:ListBucket"],
-                "Resource": f"arn:aws:s3:::{args.dest_bucket}",
+                "Resource": [f"arn:aws:s3:::{b}" for b in dest_buckets],
             },
             {
                 "Sid": "AllowWriteDestBucketObjects",
                 "Effect": "Allow",
                 "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-                "Resource": f"arn:aws:s3:::{args.dest_bucket}/*",
+                "Resource": [f"arn:aws:s3:::{b}/*" for b in dest_buckets],
             },
         ],
-    }  # [web:65][web:109][web:114]
+    }
 
     print(f"Putting inline policy {args.policy_name} on role {args.role_name}...")
     iam.put_role_policy(
@@ -96,7 +152,7 @@ def main():
     )
     print("Done.\n")
 
-    sts = boto3.client("sts")
+    sts = boto3.client("sts", region_name=get_region())
     acct_id = sts.get_caller_identity()["Account"]
     role_arn = f"arn:aws:iam::{acct_id}:role/{args.role_name}"
     print("Use this role ARN in the source account script:")

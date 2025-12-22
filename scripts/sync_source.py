@@ -29,7 +29,7 @@ def apply_bucket_policy(source_bucket: str, dest_role_arn: str):
                 "Resource": f"arn:aws:s3:::{source_bucket}/*",
             },
         ],
-    }  # [web:69][web:84]
+    }
 
     policy_str = json.dumps(bucket_policy)
 
@@ -87,12 +87,16 @@ def run_sync(source_bucket: str, dest_bucket: str, env_creds: dict | None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Grant DEST cross-account role read access to SOURCE bucket and optionally run aws s3 sync."
+        description="Grant DEST cross-account role read access to SOURCE buckets and optionally run aws s3 sync."
     )
     parser.add_argument(
-        "--source-bucket", required=True, help="Source S3 bucket name (in this account)."
+        "--faq-source-bucket", required=True, help="Source FAQ S3 bucket name (in this account)."
     )
-    parser.add_argument("--dest-bucket", required=True, help="Destination S3 bucket name.")
+    parser.add_argument("--faq-dest-bucket", required=True, help="Destination FAQ S3 bucket name.")
+    parser.add_argument(
+        "--rag-source-bucket", required=True, help="Source RAG S3 bucket name (in this account)."
+    )
+    parser.add_argument("--rag-dest-bucket", required=True, help="Destination RAG S3 bucket name.")
     parser.add_argument(
         "--dest-role-arn",
         required=True,
@@ -105,13 +109,18 @@ def main():
     )
     args = parser.parse_args()
 
-    # 1) Apply bucket policy on source bucket to allow dest role.
-    apply_bucket_policy(args.source_bucket, args.dest_role_arn)
+    bucket_pairs = [
+        ("FAQ", args.faq_source_bucket, args.faq_dest_bucket),
+        ("RAG", args.rag_source_bucket, args.rag_dest_bucket),
+    ]
 
-    # 2) Ask whether to run sync
+    for label, source, dest in bucket_pairs:
+        print(f"\n=== {label} Bucket ===")
+        apply_bucket_policy(source, args.dest_role_arn)
+
     answer = (
         input(
-            f"\nReady to sync s3://{args.source_bucket} -> s3://{args.dest_bucket} using role {args.dest_role_arn}. "
+            f"\nReady to sync FAQ and RAG buckets using role {args.dest_role_arn}. "
             f"Run sync now? [y/N]: "
         )
         .strip()
@@ -122,16 +131,18 @@ def main():
         print("Sync skipped.")
         return
 
-    # 3) Optionally assume role, then run sync
     env_creds = None
     if args.assume_role:
         print(f"Assuming role {args.dest_role_arn}...")
         env_creds = assume_dest_role(args.dest_role_arn)
 
-    print("Starting sync...")
-    run_sync(args.source_bucket, args.dest_bucket, env_creds)
-    print("Sync completed.")
+    for label, source, dest in bucket_pairs:
+        print(f"\n=== Syncing {label} Bucket ===")
+        run_sync(source, dest, env_creds)
+
+    print("\nAll syncs completed.")
 
 
 if __name__ == "__main__":
     main()
+
