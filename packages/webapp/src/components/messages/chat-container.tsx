@@ -3,6 +3,7 @@
 import { useChatStore } from '@/stores/chat-store';
 import { forwardRef, useCallback, useEffect, useRef } from 'react';
 import { ChatMessage } from './chat-message';
+import Acrylic from 'react-acrylic';
 
 interface ChatContainerProps {
   variant?: 'default' | 'borderless' | 'narrow' | 'wide';
@@ -75,41 +76,77 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
 
     return (
       <div className="relative h-full w-full">
-        <div
-          ref={node => {
-            if (typeof ref === 'function') {
-              ref(node);
-            } else if (ref) {
-              ref.current = node;
-            }
-            containerRef.current = node;
-          }}
-          className={`scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 h-full overflow-y-auto ${
-            variant === 'borderless' || variant === 'narrow'
-              ? 'bg-transparent'
-              : variant === 'wide'
-              ? 'bg-background overflow-hidden rounded-lg border shadow-sm'
-              : 'bg-card overflow-hidden rounded-lg border shadow-sm'
-          }`}
-        >
-          <div className="h-[50%]"></div>
-          <div className="space-y-10 py-[5%] pt-[10%] pr-[4%] pl-[4%]">
-            {orderedQueries.map(query => (
-              <ChatMessage
-                key={query.queryId}
-                queryId={query.queryId}
-                query={query.query}
-                response={query.response.content || ''}
-                responseType="stream"
-                timestamp={query.timestamp}
-                streamingComplete={query.status === 'completed'}
-                selected={query.queryId === selectedMessageId}
-                items={query.resources || []}
-              />
-            ))}
+        {variant === 'wide' ? (
+          <div
+            ref={node => {
+              if (typeof ref === 'function') {
+                ref(node);
+              } else if (ref) {
+                ref.current = node;
+              }
+              containerRef.current = node;
+            }}
+            className={`scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 h-full overflow-y-auto overflow-hidden rounded-lg border shadow-sm`}
+          >
+            <Acrylic
+              className="h-full w-full"
+              tintColor="rgba(255, 255, 255, 0.1)"
+              luminosity={0.1}
+            >
+              <div className="h-[50%]"></div>
+              <div className="space-y-10 py-[5%] pt-[10%] pr-[4%] pl-[4%]">
+                {orderedQueries.map(query => (
+                  <ChatMessage
+                    key={query.queryId}
+                    queryId={query.queryId}
+                    query={query.query}
+                    response={query.response.content || ''}
+                    responseType="stream"
+                    timestamp={query.timestamp}
+                    streamingComplete={query.status === 'completed'}
+                    selected={query.queryId === selectedMessageId}
+                    items={query.resources || []}
+                  />
+                ))}
+              </div>
+              <div className="h-[50%]"></div>
+            </Acrylic>
           </div>
-          <div className="h-[50%]"></div>
-        </div>
+        ) : (
+          <div
+            ref={node => {
+              if (typeof ref === 'function') {
+                ref(node);
+              } else if (ref) {
+                ref.current = node;
+              }
+              containerRef.current = node;
+            }}
+            className={`scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 h-full overflow-y-auto ${
+              variant === 'borderless' || variant === 'narrow'
+                ? 'bg-transparent'
+                : 'bg-card overflow-hidden rounded-lg border shadow-sm'
+            }`}
+          >
+            <div className="h-[50%]"></div>
+            <div className="space-y-10 py-[5%] pt-[10%] pr-[4%] pl-[4%]">
+              {orderedQueries.map(query => (
+                <ChatMessage
+                  key={query.queryId}
+                  queryId={query.queryId}
+                  query={query.query}
+                  response={query.response.content || ''}
+                  responseType="stream"
+                  timestamp={query.timestamp}
+                  streamingComplete={query.status === 'completed'}
+                  selected={query.queryId === selectedMessageId}
+                  items={query.resources || []}
+                />
+              ))}
+            </div>
+            <div className="h-[50%]"></div>
+          </div>
+        )}
       </div>
     );
   }
