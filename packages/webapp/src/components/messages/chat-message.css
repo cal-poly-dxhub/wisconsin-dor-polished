@@ -20,7 +20,7 @@
   font-family: '42 Dot Sans', Arial, Helvetica, sans-serif;
   color: hsl(var(--foreground));
   background: transparent;
-  line-height: 1.7;
+  line-height: 1.8;
   font-size: 1rem;
   font-weight: 200;
 }
@@ -34,8 +34,8 @@
 .markdown-container h6 {
   font-family: '42 Dot Sans', Arial, Helvetica, sans-serif;
   font-weight: 700;
-  margin-top: 1.5em;
-  margin-bottom: 1em;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
   line-height: 1.25;
   color: hsl(var(--foreground));
 }
@@ -49,8 +49,8 @@
 
 /* Paragraphs */
 .markdown-container p {
-  margin-top: 1.2em;
-  margin-bottom: 1.2em;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
   font-size: 1.125rem;
   font-weight: 100 !important;
 }
@@ -80,16 +80,18 @@
 .markdown-container ul,
 .markdown-container ol {
   margin-left: 1.5em;
-  margin-bottom: 1.5em;
-  margin-top: 1em;
+  margin-bottom: 0.5em;
+  margin-top: 0.5em;
   padding-left: 0;
 }
 
 .markdown-container li {
-  margin-bottom: 0.8em;
-  line-height: 1.6;
+  margin-bottom: 0.4em;
+  line-height: 1.8;
   font-size: 1.125rem;
   font-weight: 200 !important;
+  display: list-item;
+  list-style-position: outside;
 }
 
 .markdown-container ul {
