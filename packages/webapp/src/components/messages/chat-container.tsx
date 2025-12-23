@@ -88,7 +88,7 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
             variant === 'borderless' || variant === 'narrow'
               ? 'bg-transparent'
               : variant === 'wide'
-              ? 'bg-background overflow-hidden rounded-lg border shadow-sm'
+              ? 'bg-card overflow-hidden rounded-lg border shadow-sm'
               : 'bg-card overflow-hidden rounded-lg border shadow-sm'
           }`}
         >
