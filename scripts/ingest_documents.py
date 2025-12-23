@@ -18,6 +18,20 @@ import argparse
 import requests
 from urllib.parse import urlparse
 from pathlib import Path
+import botocore
+
+def ensure_bucket_exists(s3_client, bucket_name: str, region: str):
+    try:
+        s3_client.head_bucket(Bucket=bucket_name)
+        print(f"Bucket '{bucket_name}' exists")
+    except botocore.exceptions.ClientError:
+        print(f"Bucket '{bucket_name}' does not exist. Creating it...")
+        s3_client.create_bucket(
+            Bucket=bucket_name,
+            CreateBucketConfiguration={
+                "LocationConstraint": region
+            }
+        )
 
 def download_file(url: str) -> bytes:
     """Download file from URL"""
@@ -143,7 +157,12 @@ def main():
     args = parser.parse_args()
 
     # Initialize S3 client
-    s3_client = boto3.client("s3")
+    session = boto3.session.Session()
+    region = session.region_name
+    s3_client = session.client("s3")
+
+    # Ensure bucket exists
+    ensure_bucket_exists(s3_client, args.bucket, region)
 
     # Handle sync command
     if args.sync:

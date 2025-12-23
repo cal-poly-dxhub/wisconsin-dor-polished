@@ -1,0 +1,380 @@
+[
+  {
+    "documentId": "prop066-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/prop066.pdf"
+    }
+  },
+  {
+    "documentId": "pb065-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/pb065.pdf"
+    }
+  },
+  {
+    "documentId": "pr115-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/pr115.pdf"
+    }
+  },
+  {
+    "documentId": "pb061-agricultural-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/pb061.pdf"
+    }
+  },
+  {
+    "documentId": "tax18-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/tax18.pdf"
+    }
+  },
+  {
+    "documentId": "pa502-assessment-errors",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/pa502.pdf"
+    }
+  },
+  {
+    "documentId": "pb056-board-review-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/pb056.pdf"
+    }
+  },
+  {
+    "documentId": "mobile-home-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/mobhme.pdf"
+    }
+  },
+  {
+    "documentId": "pb062-assessor-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/pb062.pdf"
+    }
+  },
+  {
+    "documentId": "chargeback-steps-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/chargeback-steps.pdf"
+    }
+  },
+  {
+    "documentId": "omitted-taxes-steps-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/omitted-taxes-steps.pdf"
+    }
+  },
+  {
+    "documentId": "pb060-property-tax-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/pb060.pdf"
+    }
+  },
+  {
+    "documentId": "pa600-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/pa600.pdf"
+    }
+  },
+  {
+    "documentId": "wi-constitution-unannotated",
+    "metadata": {
+      "sourceId": "state-constitution",
+      "url": "https://docs.legis.wisconsin.gov/constitution/wi_unannotated"
+    }
+  },
+  {
+    "documentId": "wi-statutes-toc",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/statutes/prefaces/toc"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch17",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2017.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch19",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2019.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch33",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2033.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch38",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2038.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch59",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2059.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch60",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2060.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch61",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2061.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch62",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2062.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch66",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2066.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch69",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2069.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch70",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2070.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch73",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2073.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch74",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2074.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch75",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2075.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch76",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2076.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch77",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2077.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch79",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2079.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch120",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%20120.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch121",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%20121.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch165",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%20165.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch200",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%20200.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch706",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%20706.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch757",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%20757.pdf"
+    }
+  },
+  {
+    "documentId": "wi-statute-ch943",
+    "metadata": {
+      "sourceId": "state-laws",
+      "url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%20943.pdf"
+    }
+  },
+  {
+    "documentId": "wi-admin-code-index",
+    "metadata": {
+      "sourceId": "admin-rules",
+      "url": "https://docs.legis.wisconsin.gov/code/admin_code"
+    }
+  },
+  {
+    "documentId": "wi-admin-tax-ch6",
+    "metadata": {
+      "sourceId": "admin-rules",
+      "url": "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%206.pdf"
+    }
+  },
+  {
+    "documentId": "wi-admin-tax-ch12",
+    "metadata": {
+      "sourceId": "admin-rules",
+      "url": "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2012.pdf"
+    }
+  },
+  {
+    "documentId": "wi-admin-tax-ch15",
+    "metadata": {
+      "sourceId": "admin-rules",
+      "url": "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2015.pdf"
+    }
+  },
+  {
+    "documentId": "wi-admin-tax-ch16",
+    "metadata": {
+      "sourceId": "admin-rules",
+      "url": "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2016.pdf"
+    }
+  },
+  {
+    "documentId": "wi-admin-tax-ch18",
+    "metadata": {
+      "sourceId": "admin-rules",
+      "url": "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2018.pdf"
+    }
+  },
+  {
+    "documentId": "wi-admin-tax-ch19",
+    "metadata": {
+      "sourceId": "admin-rules",
+      "url": "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2019.pdf"
+    }
+  },
+  {
+    "documentId": "wi-admin-tax-ch20",
+    "metadata": {
+      "sourceId": "admin-rules",
+      "url": "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2020.pdf"
+    }
+  },
+  {
+    "documentId": "wpam-index",
+    "metadata": {
+      "sourceId": "assessment-manual",
+      "url": "https://www.revenue.wi.gov/Pages/HTML/govpub.aspx#wpam"
+    }
+  },
+  {
+    "documentId": "wpam-2025",
+    "metadata": {
+      "sourceId": "assessment-manual",
+      "url": "https://www.revenue.wi.gov/documents/wpam25.pdf"
+    }
+  },
+  {
+    "documentId": "gov-pub-property-index",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/Pages/HTML/govpub.aspx#property"
+    }
+  },
+  {
+    "documentId": "tif-manual",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/tif-manual.pdf"
+    }
+  },
+  {
+    "documentId": "pb218-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/pb218.pdf"
+    }
+  },
+  {
+    "documentId": "pb238-guide",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DOR%20Publications/pb238.pdf"
+    }
+  },
+  {
+    "documentId": "pm-201",
+    "metadata": {
+      "sourceId": "gov-publications",
+      "url": "https://www.revenue.wi.gov/DORForms/pm-201.pdf"
+    }
+  }
+]
