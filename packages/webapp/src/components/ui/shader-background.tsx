@@ -1,8 +1,11 @@
 'use client';
 
 import { ShaderGradientCanvas, ShaderGradient } from '@shadergradient/react';
+import { useTheme } from 'next-themes';
 
 export function ShaderBackground() {
+  const { theme } = useTheme();
+
   return (
     <div className="fixed inset-0 -z-10">
       <ShaderGradientCanvas
@@ -21,9 +24,9 @@ export function ShaderBackground() {
           cDistance={2.8}
           cPolarAngle={80}
           cameraZoom={13.65}
-          color1="#0a0a0a"
-          color2="#000000"
-          color3="#4f4b46"
+          color1={theme === 'light' ? "#d7d9d9" : "#0a0a0a"}
+          color2={theme === 'light' ? "#c8c7cb" : "#000000"}
+          color3={theme === 'light' ? "#080808" : "#4f4b46"}
           grain="off"
           lightType="3d"
           positionX={0}
