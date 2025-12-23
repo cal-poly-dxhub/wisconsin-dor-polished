@@ -4,6 +4,7 @@ import { ChatContainer } from '@/components/messages/chat-container';
 import { ChatInput } from '@/components/messages/chat-input';
 import { useWebSocketChat } from '@/hooks/use-websocket-chat';
 import { Toaster } from '@/components/ui/sonner';
+import { ShaderBackground } from '@/components/ui/shader-background';
 
 const stableConfig = {
   websocketUrl: process.env.NEXT_PUBLIC_WEBSOCKET_URL!,
@@ -14,7 +15,8 @@ export function NarrowApp() {
 
   return (
     <>
-      <div className="bg-background h-screen w-full p-4">
+      <ShaderBackground />
+      <div className="h-screen w-full p-4">
         <div className="relative h-full w-full">
           <ChatContainer variant="narrow" />
 

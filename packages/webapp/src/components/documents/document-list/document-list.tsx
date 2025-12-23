@@ -82,21 +82,9 @@ export function DocumentList({ items = [], title }: DocumentListProps) {
         </div>
 
         {/* Fade-off effect for vertical scrolling */}
-        {!isNarrowLayout && (
-          <>
-            <div className="from-background pointer-events-none absolute top-0 right-0 left-0 z-10 h-3 bg-gradient-to-b to-transparent" />
-            <div className="from-background pointer-events-none absolute right-0 bottom-0 left-0 z-10 h-3 bg-gradient-to-t to-transparent" />
-          </>
-        )}
       </div>
 
       {/* Fade-off effect for horizontal scrolling */}
-      {isNarrowLayout && (
-        <>
-          <div className="from-background pointer-events-none absolute top-[calc(100%-100%)] bottom-0 left-0 z-10 w-3 bg-gradient-to-r to-transparent" />
-          <div className="from-background pointer-events-none absolute top-[calc(100%-100%)] right-0 bottom-0 z-10 w-3 bg-gradient-to-l to-transparent" />
-        </>
-      )}
     </div>
   );
 }

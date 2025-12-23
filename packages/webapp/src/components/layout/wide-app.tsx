@@ -7,6 +7,7 @@ import { useChatStore } from '@/stores/chat-store';
 import type { ResourceItem } from '@/stores/types';
 import { useWebSocketChat } from '@/hooks/use-websocket-chat';
 import { Toaster } from '@/components/ui/sonner';
+import { ShaderBackground } from '@/components/ui/shader-background';
 
 const stableConfig = {
   websocketUrl: process.env.NEXT_PUBLIC_WEBSOCKET_URL!,
@@ -21,8 +22,9 @@ export function WideApp() {
 
   return (
     <>
+      <ShaderBackground />
       <div className="flex justify-center">
-        <div className="bg-background grid h-screen grid-cols-[minmax(0,64rem)_400px] gap-6 p-32">
+        <div className="grid h-screen grid-cols-[minmax(0,64rem)_400px] gap-6 p-32">
           {/* Chat Container - Main Content Area */}
           <div className="relative min-h-0">
             <ChatContainer variant="wide" />
