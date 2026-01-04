@@ -22,7 +22,7 @@ def upload_faq_files(bucket_name: str, faq_json_path: str, prefix: str = ""):
         raise ValueError("FAQ JSON must be a list of {Q, A} objects.")
 
     s3 = session.client("s3")
-    ensure_bucket_exists(s3, bucket_name, region)
+    ensure_bucket_exists(s3, bucket_name)
 
     uploaded = 0
 
