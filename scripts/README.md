@@ -1,6 +1,31 @@
 # Ingestion Pipelines
 
-This directory contains scripts for scraping and ingesting FAQs, documents, and processed chunks into their respective knowledge base buckets.
+This directory contains manual ingestion pipelines used to populate the Wisconsin DOR chatbot’s knowledge bases.
+These scripts prepare and upload data to CDK-managed S3 buckets, which are later indexed by Amazon Bedrock Knowledge Bases.
+
+Important:
+- S3 buckets are created and owned by CDK.
+- Ingestion scripts must not create buckets.
+- Always use bucket names from CloudFormation outputs.
+
+---
+
+## Prerequisites
+
+Before running any ingestion steps:
+
+- Backend infrastructure has been deployed (bun run deploy)
+- You have AWS credentials with access to:
+  - CDK-created S3 buckets
+  - Textract (for chunking)
+  - Bedrock Knowledge Base ingestion
+- You know the following values from CloudFormation outputs:
+  - FaqBucketName
+  - RagBucketName
+  - FaqKnowledgeBaseId
+  - RagKnowledgeBaseId
+  - FaqDataSourceId
+  - RagDataSourceId
 
 ---
 
@@ -39,15 +64,17 @@ documents/faqs.json
 
 ```bash 
 python3 -m scripts.ingest_FAQ \
-  --bucket <FAQ_KB_BUCKET> \
+  --bucket <FaqBucketName> \
   --file documents/faqs.json
 ```
+**Use the exact bucket name output by CDK (FaqBucketName).**
 
 ---
 
 ## 3. Ingest RAG Documents (PDFs)
 
-Downloads documents listed in the descriptor file and uploads them to S3 with metadata.
+Downloads PDF documents listed in a descriptor file and uploads them as raw source files.
+These PDFs are not directly ingested by the knowledge base.
 
 **Input:**
 
@@ -57,23 +84,43 @@ documents/document_descs.json
 
 ```bash
 python3 -m scripts.ingest_documents \
-  --bucket <PDF_BUCKET> \
+  --bucket <PDF_SOURCE_BUCKET> \
   --prefix sources/ \
   --input-file documents/document_descs.json
 ```
+**This bucket is used as an intermediate storage location for raw PDFs.**
 
 ---
 
-## 4. Ingest Custom Chunks for the RAG Knowledge Base
+## 4. Generate and Ingest Custom Chunks for the RAG Knowledge Base
 
-Runs Textract and the custom chunking pipeline on the uploaded PDFs and writes the
-resulting custom chunks to the RAG knowledge base bucket.
+Runs Textract and the custom chunking pipeline on the raw PDFs and uploads the resulting text chunks and metadata into the RAG Knowledge Base bucket.
 
 **Command:**
 
 ```bash
 python3 -m scripts.ingest_chunks \
-  --source-bucket <PDF_BUCKET> \
+  --source-bucket <PDF_SOURCE_BUCKET> \
   --prefix sources/ \
-  --dest-bucket <RAG_KB_BUCKET>
+  --dest-bucket <RagBucketName>
   ```
+  
+**Use the exact bucket name output by CDK (RagBucketName).**
+
+---
+
+## 5. Sync / Re-Ingest the Bedrock Knowledge Bases
+
+After new documents or chunks are uploaded, you must trigger ingestion so Bedrock re-indexes the data.
+
+**Command:**
+
+```bash
+aws bedrock-agent start-ingestion-job \
+  --knowledge-base-id <FaqKnowledgeBaseId> \
+  --data-source-id <FaqDataSourceId>
+
+aws bedrock-agent start-ingestion-job \
+  --knowledge-base-id <RagKnowledgeBaseId> \
+  --data-source-id <RagDataSourceId>
+```

@@ -4,7 +4,7 @@ S3 Ingest Chunks Script
 Usage:
 python3 ingest_chunks.py \
   --source-bucket <documents-source-bucket-name> \
-  --dest-bucket <chunks-destination-bucket> \
+  --dest-bucket <rag-bucket> \
   --prefix sources/
 """
 
@@ -25,18 +25,15 @@ LOG_FILE = "chunk_upload_summary.json"
 
 # === HELPERS ===
 def ensure_bucket_exists(s3_client, bucket_name: str):
+    """Fail if bucket does not exist or is not accessible."""
     try:
         s3_client.head_bucket(Bucket=bucket_name)
-        print(f"Bucket '{bucket_name}' exists")
-    except botocore.exceptions.ClientError:
-        print(f"Bucket '{bucket_name}' does not exist. Creating it...")
-        s3_client.create_bucket(
-            Bucket=bucket_name,
-            CreateBucketConfiguration={
-                "LocationConstraint": REGION_NAME
-            }
+    except botocore.exceptions.ClientError as e:
+        raise RuntimeError(
+            f"Bucket '{bucket_name}' does not exist or is not accessible.\n"
+            f"Use the exact bucket name created by CDK.\n"
+            f"Details: {e}"
         )
-
 def list_all_pdfs(bucket: str, prefix: str = "sources/") -> list:
     """List all PDFs in the source bucket."""
     pdfs = []

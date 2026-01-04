@@ -98,13 +98,6 @@
     }
   },
   {
-    "documentId": "wi-statutes-toc",
-    "metadata": {
-      "sourceId": "state-laws",
-      "url": "https://docs.legis.wisconsin.gov/statutes/prefaces/toc"
-    }
-  },
-  {
     "documentId": "wi-statute-ch17",
     "metadata": {
       "sourceId": "state-laws",
@@ -273,13 +266,6 @@
     }
   },
   {
-    "documentId": "wi-admin-code-index",
-    "metadata": {
-      "sourceId": "admin-rules",
-      "url": "https://docs.legis.wisconsin.gov/code/admin_code"
-    }
-  },
-  {
     "documentId": "wi-admin-tax-ch6",
     "metadata": {
       "sourceId": "admin-rules",
@@ -340,13 +326,6 @@
     "metadata": {
       "sourceId": "assessment-manual",
       "url": "https://www.revenue.wi.gov/documents/wpam25.pdf"
-    }
-  },
-  {
-    "documentId": "gov-pub-property-index",
-    "metadata": {
-      "sourceId": "gov-publications",
-      "url": "https://www.revenue.wi.gov/Pages/HTML/govpub.aspx#property"
     }
   },
   {

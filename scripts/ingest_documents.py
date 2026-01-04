@@ -7,9 +7,9 @@ based on input JSON configuration.
 
 Usage:
 python3 ingest.py \
-  --bucket <rag-bucket-name> \
-  --prefix <bucket-prefix> \
-  --input-file <path/to/input.json>
+  --bucket <pdf-bucket> \
+  --prefix sources/ \
+  --input-file documents/document_descs.json
 """
 
 import boto3

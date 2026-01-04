@@ -3,18 +3,16 @@ import boto3
 import argparse
 import botocore
 
-def ensure_bucket_exists(s3_client, bucket_name: str, region: str):
-    """Create bucket if it does not exist."""
+def ensure_bucket_exists(s3_client, bucket_name: str):
+    """Fail if bucket does not exist or is not accessible."""
     try:
         s3_client.head_bucket(Bucket=bucket_name)
-    except botocore.exceptions.ClientError:
-        print(f"Bucket '{bucket_name}' does not exist. Creating it...")
-        s3_client.create_bucket(
-                Bucket=bucket_name,
-                CreateBucketConfiguration={
-                    "LocationConstraint": region
-                }
-            )
+    except botocore.exceptions.ClientError as e:
+        raise RuntimeError(
+            f"Bucket '{bucket_name}' does not exist or is not accessible.\n"
+            f"Use the exact bucket name created by CDK.\n"
+            f"Details: {e}"
+        )
 
 def upload_faq_files(bucket_name: str, faq_json_path: str, prefix: str = ""):
     with open(faq_json_path, "r") as f:
@@ -57,7 +55,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Split a JSON FAQ file and upload each FAQ to S3."
     )
-    parser.add_argument("--bucket", required=True, help="S3 bucket name")
+    parser.add_argument("--bucket", required=True, help="S3 bucket name (from CDK output)")
     parser.add_argument("--file", required=True, help="Path to the FAQ JSON file")
     args = parser.parse_args()
 
