@@ -8,6 +8,9 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
   public readonly ragKnowledgeBase: bedrock.VectorKnowledgeBase;
   public readonly faqBucketName: string;
   public readonly ragBucketName: string;
+  public readonly faqDataSourceId: string;
+  public readonly ragDataSourceId: string;
+
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -43,7 +46,7 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
     });
 
     // S3 data source for FAQ KB
-    new bedrock.S3DataSource(this, 'WisDorDataSourceFaq', {
+    const faqDataSource = new bedrock.S3DataSource(this, 'WisDorDataSourceFaq', {
       bucket: faqBucket,
       knowledgeBase: faqKb,
       dataSourceName: 'faq-docs',
@@ -61,7 +64,7 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
     });
 
     // S3 data source for RAG KB
-    new bedrock.S3DataSource(this, 'WisDorDataSourceRag', {
+    const ragDataSource = new bedrock.S3DataSource(this, 'WisDorDataSourceRag', {
       bucket: ragBucket,
       knowledgeBase: ragKb,
       dataSourceName: 'rag-docs',
@@ -72,6 +75,8 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
     this.ragKnowledgeBase = ragKb;
     this.faqBucketName = faqBucket.bucketName;
     this.ragBucketName = ragBucket.bucketName;
+    this.faqDataSourceId = faqDataSource.dataSourceId;
+    this.ragDataSourceId = ragDataSource.dataSourceId;
 
     // ===========================================================
     // Outputs for reference
@@ -95,5 +100,16 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
       value: ragBucket.bucketName,
       description: 'S3 bucket for RAG documents',
     });
+
+    new cdk.CfnOutput(this, 'FaqDataSourceId', {
+      value: this.faqDataSourceId,
+      description: 'FAQ Bedrock KB Data Source ID',
+    });
+    
+    new cdk.CfnOutput(this, 'RagDataSourceId', {
+      value: this.ragDataSourceId,
+      description: 'RAG Bedrock KB Data Source ID',
+    });
+    
   }
 }
