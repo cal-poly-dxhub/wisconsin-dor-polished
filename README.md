@@ -30,16 +30,38 @@ This is a chatbot application meant for the Wisconsin Department of Revenue (DOR
 
 ### Deployment Steps
 
-Install dependencies with: 
+The following deployment steps were tested on a t3.large EC2 instance running Ubuntu Server 24.04 LTS with 128 GiB GP3 storage.
 
+Run the kickoff command to install prerequisites: 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/cal-poly-dxhub/wisconsin-dor-polished/dev/scripts/install_ubuntu_noble_24_04.sh | bash
+```
+
+Follow the instructions that the kickoff command provides to install the app. These are:
+
+```
+newgrp docker 
+cd ~/wisconsin-dor-polished 
 bun install
+bun run deploy
+bun run first-time # (also runs customer-side sync script)
 ```
 
-Package Lambda-function code and deploy all resources to the target account using:
-```bash
-bun run deploy
+A DxHub engineer needs to run the source-account data sync script (note to the DxHub engineer: do this in a clone of this repository in which you've run `uv sync`. Be sure the AWS CLI is authenticated with the Wisconsin development account.)
+
 ```
+uv run scripts/sync_source.py \
+  --faq-source-bucket wis-faq-bucket \
+  --faq-dest-bucket <FAQ_DEST (from CDK output)> \
+  --rag-source-bucket wis-rag-bucket \
+  --rag-dest-bucket <RAG_DEST (from CDK output)> \
+  --dest-role-arn <ROLE_ARN (from the prior command's output)> \
+  --assume-role
+```
+
+Sync both the FAQ and RAG knowledge bases (found under Bedrock > Knowledge Bases within the AWS console). (See [this documentation page](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-data-source-sync-ingest.html) for more.)
+
+#### Local Frontend Server
 
 The following is only necessary if you'd like to run a local instance of the application:
 
