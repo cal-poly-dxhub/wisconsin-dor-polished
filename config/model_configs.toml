@@ -3,7 +3,7 @@ id = "ragResponse"
 prompt = """Prior conversation history: {history}. Documents: {documents}. Frequently-asked questions: {faqs}. User query: {query}. Format your response as Markdown. Only answer using information that is explicitly in the documents. If the documents do not contain the necessary information to answer the user query, state that you don't have enough information to answer the question."""
 
 [ragResponse.config]
-modelId = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+modelId = "amazon.titan-embed-text-v2:0"
 system = [
     { text = "You are a helpful assistant that is familiar with the Wisconsin Department of Revenue. You answer questions based on the documents and frequently-asked questions that are provided to you and you do not synthesize information. Respond as if you were speaking to the user. You do not explicitly address the prior conversation history unless it comes up during the conversation with the user." },
 ]
