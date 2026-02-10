@@ -102,7 +102,6 @@ def get_retrieval_config() -> dict:
     default_config = {
         "numRAGResults": 10,
         "numFAQResults": 5,
-        "maxDocumentsToClient": 5,
         "sourceIdPriority": []
     }
 
@@ -169,18 +168,18 @@ def mix_and_filter_documents(
     config: dict,
 ) -> DocumentResource:
     """
-    Mix FAQs and RAG documents, apply source priority reordering, and filter to max documents.
+    Mix FAQs and RAG documents and apply source priority reordering.
 
     FAQs are converted to RAGDocuments with source_id='faqs' and mixed with existing documents.
-    Documents are then reordered based on source_id_priority and limited to max_documents.
+    Documents are then reordered based on source_id_priority.
 
     Args:
         faqs: FAQResource containing FAQs to include
         documents: DocumentResource containing RAG documents
-        config: Retrieval configuration with sourceIdPriority and maxDocumentsToClient
+        config: Retrieval configuration with sourceIdPriority
 
     Returns:
-        DocumentResource with mixed, reordered, and filtered documents
+        DocumentResource with mixed and reordered documents
     """
     # Convert FAQs to documents
     faq_documents = convert_faqs_to_documents(faqs)
@@ -195,7 +194,6 @@ def mix_and_filter_documents(
         return DocumentResource(documents=[])
 
     source_id_priority = config.get("sourceIdPriority", [])
-    max_documents = int(config.get("maxDocumentsToClient", 0))  # Convert Decimal to int
 
     # Apply source priority reordering if configured
     if source_id_priority:
@@ -223,14 +221,7 @@ def mix_and_filter_documents(
         reordered = all_documents
         logger.info("No source_id priority configured, keeping original order")
 
-    # Apply top-k filtering if configured
-    if max_documents > 0 and len(reordered) > max_documents:
-        filtered = reordered[:max_documents]
-        logger.info(f"Filtered documents from {len(reordered)} to top {max_documents}")
-    else:
-        filtered = reordered
-
-    return DocumentResource(documents=filtered)
+    return DocumentResource(documents=reordered)
 
 
 def fragment_message(message: str) -> AsyncGenerator[str]:
