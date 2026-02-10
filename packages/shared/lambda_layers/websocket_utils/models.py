@@ -38,6 +38,7 @@ class SourceDocument(WebSocketMessage):
     title: str
     content: str
     source: str | None = None
+    source_id: str | None = None
 
 
 class DocumentsContent(WebSocketMessage):

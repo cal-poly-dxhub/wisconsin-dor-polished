@@ -61,6 +61,7 @@ class RAGDocument(BaseModel):
     title: str
     content: str
     source: str | None = Field(default=None)
+    source_id: str | None = Field(default=None)
 
 
 class DocumentResource(BaseModel):

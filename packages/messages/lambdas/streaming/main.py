@@ -9,21 +9,30 @@ from typing import Any
 import boto3
 import pydantic
 from bedrock_utils import ModelConfig, call_bedrock_converse, get_model_config_from_dynamo
+from boto3.dynamodb.types import TypeDeserializer
 from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
     DocumentResource,
     FAQResource,
     GenerateResponseJob,
     GenerateResponseResult,
+    RAGDocument,
 )
-from websocket_utils.models import AnswerEventType
+from websocket_utils.models import (
+    AnswerEventType,
+    DocumentsContent,
+    DocumentsMessage,
+    SourceDocument,
+)
 from websocket_utils.utils import WebSocketServer, get_ws_connection_from_session
 
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
 
 dynamodb = boto3.resource("dynamodb")
+dynamodb_client = boto3.client("dynamodb")
 chat_history_table = os.environ.get("CHAT_HISTORY_TABLE_NAME")
+model_config_table_name = os.environ.get("MODEL_CONFIG_TABLE_NAME")
 
 
 def get_chat_history(session_id: str) -> list[dict[str, str]]:
@@ -54,7 +63,6 @@ def log_chat_history(
     query_id: str,
     query: str,
     answer: str,
-    faqs: FAQResource | None,
     documents: DocumentResource | None,
 ):
     if not chat_history_table:
@@ -66,7 +74,6 @@ def log_chat_history(
     table = dynamodb.Table(chat_history_table)
     timestamp = datetime.datetime.now(datetime.UTC).isoformat()
 
-    faqs_data = [faq.model_dump() for faq in faqs.faqs] if faqs else []
     documents_data = [doc.model_dump() for doc in documents.documents] if documents else []
 
     try:
@@ -77,13 +84,153 @@ def log_chat_history(
                 "queryId": query_id,
                 "query": query,
                 "answer": answer,
-                "faqs": json.dumps(faqs_data),
                 "documents": json.dumps(documents_data),
             }
         )
         logger.info(f"Chat history saved for session {session_id}")
     except Exception as e:
         logger.error(f"Failed to save chat history: {e}", exc_info=True)
+
+
+def get_retrieval_config() -> dict:
+    """
+    Load retrieval configuration from DynamoDB.
+
+    Returns:
+        Dictionary with retrieval config values, or defaults if not found
+    """
+    default_config = {
+        "numRAGResults": 10,
+        "numFAQResults": 5,
+        "maxDocumentsToClient": 5,
+        "sourceIdPriority": []
+    }
+
+    if not model_config_table_name:
+        logger.warning("MODEL_CONFIG_TABLE_NAME not set, using defaults")
+        return default_config
+
+    try:
+        response = dynamodb_client.get_item(
+            TableName=model_config_table_name,
+            Key={"id": {"S": "retrievalConfig"}}
+        )
+
+        item = response.get("Item")
+        if not item:
+            logger.warning("retrievalConfig not found in DynamoDB, using defaults")
+            return default_config
+
+        deserializer = TypeDeserializer()
+        config = {k: deserializer.deserialize(v) for k, v in item.items()}
+
+        # Remove the 'id' field
+        config.pop("id", None)
+
+        logger.info(f"Loaded retrieval config from DynamoDB: {config}")
+        return config
+    except Exception as e:
+        logger.error(f"Error loading retrieval config from DynamoDB: {e}", exc_info=True)
+        return default_config
+
+
+def convert_faqs_to_documents(faqs: FAQResource | None) -> list[RAGDocument]:
+    """
+    Convert FAQs to RAGDocuments with source_id='faqs'.
+
+    Args:
+        faqs: FAQResource containing list of FAQs
+
+    Returns:
+        List of RAGDocuments representing the FAQs
+    """
+    if not faqs or not faqs.faqs:
+        return []
+
+    documents = []
+    for faq in faqs.faqs:
+        # Format FAQ content to include both question and answer
+        content = f"Q: {faq.question}\nA: {faq.answer}"
+        documents.append(
+            RAGDocument(
+                document_id=faq.faq_id,
+                title=f"FAQ: {faq.question}",
+                content=content,
+                source=None,
+                source_id="faqs",
+            )
+        )
+    return documents
+
+
+def mix_and_filter_documents(
+    faqs: FAQResource | None,
+    documents: DocumentResource | None,
+    config: dict,
+) -> DocumentResource:
+    """
+    Mix FAQs and RAG documents, apply source priority reordering, and filter to max documents.
+
+    FAQs are converted to RAGDocuments with source_id='faqs' and mixed with existing documents.
+    Documents are then reordered based on source_id_priority and limited to max_documents.
+
+    Args:
+        faqs: FAQResource containing FAQs to include
+        documents: DocumentResource containing RAG documents
+        config: Retrieval configuration with sourceIdPriority and maxDocumentsToClient
+
+    Returns:
+        DocumentResource with mixed, reordered, and filtered documents
+    """
+    # Convert FAQs to documents
+    faq_documents = convert_faqs_to_documents(faqs)
+
+    # Get RAG documents
+    rag_documents = documents.documents if documents else []
+
+    # Mix all documents together
+    all_documents = faq_documents + rag_documents
+
+    if not all_documents:
+        return DocumentResource(documents=[])
+
+    source_id_priority = config.get("sourceIdPriority", [])
+    max_documents = int(config.get("maxDocumentsToClient", 0))  # Convert Decimal to int
+
+    # Apply source priority reordering if configured
+    if source_id_priority:
+        # Create a mapping of source_id to priority index (lower is higher priority)
+        priority_map = {source_id: idx for idx, source_id in enumerate(source_id_priority)}
+
+        # Separate documents into prioritized and non-prioritized groups
+        prioritized_docs = []
+        other_docs = []
+
+        for doc in all_documents:
+            if doc.source_id and doc.source_id in priority_map:
+                prioritized_docs.append(doc)
+            else:
+                other_docs.append(doc)
+
+        # Sort prioritized documents by their priority index
+        prioritized_docs.sort(key=lambda doc: priority_map.get(doc.source_id, float('inf')))
+
+        # Combine: prioritized documents first, followed by others
+        reordered = prioritized_docs + other_docs
+        logger.info(f"Reordered {len(all_documents)} documents: {len(prioritized_docs)} prioritized, {len(other_docs)} others")
+    else:
+        # No priority configured, keep original order
+        reordered = all_documents
+        logger.info("No source_id priority configured, keeping original order")
+
+    # Apply top-k filtering if configured
+    if max_documents > 0 and len(reordered) > max_documents:
+        filtered = reordered[:max_documents]
+        logger.info(f"Filtered documents from {len(reordered)} to top {max_documents}")
+    else:
+        filtered = reordered
+
+    return DocumentResource(documents=filtered)
 
 
 def fragment_message(message: str) -> AsyncGenerator[str]:
@@ -98,17 +245,67 @@ def fragment_message(message: str) -> AsyncGenerator[str]:
     return _gen()
 
 
+async def stream_documents_to_client(
+    ws_connect: WebSocketServer,
+    query_id: str,
+    documents: DocumentResource,
+):
+    """
+    Stream documents to the client via WebSocket.
+
+    Args:
+        ws_connect: WebSocket connection
+        query_id: Query ID for the message
+        documents: DocumentResource containing mixed and filtered documents
+    """
+    if not documents or not documents.documents:
+        logger.info("No documents to stream to client")
+        return
+
+    source_documents = [
+        SourceDocument(
+            document_id=doc.document_id,
+            title=doc.title,
+            content=doc.content,
+            source=doc.source,
+            source_id=doc.source_id,
+        )
+        for doc in documents.documents
+    ]
+
+    documents_message = DocumentsMessage(
+        query_id=query_id,
+        content=DocumentsContent(
+            documents=source_documents,
+        ),
+    )
+
+    await ws_connect.send_json(documents_message)
+    logger.info(f"Streamed {len(source_documents)} documents to client")
+
+
 async def generate_response_async(
     query: str,
     session_id: str,
     query_id: str,
     chat_history: list[dict[str, str]],
-    faqs: FAQResource | None = None,
-    documents: DocumentResource | None = None,
+    documents: DocumentResource,
 ) -> AsyncGenerator[str]:
+    """
+    Generate response using mixed and filtered documents.
+
+    Args:
+        query: User query
+        session_id: Session ID
+        query_id: Query ID
+        chat_history: Chat history
+        documents: DocumentResource with mixed FAQs and RAG documents
+
+    Yields:
+        Response fragments
+    """
     n_docs = len(documents.documents) if documents else 0
-    n_faqs = len(faqs.faqs) if faqs else 0
-    logger.info(f"Generating response for {n_docs} documents and {n_faqs} FAQs.")
+    logger.info(f"Generating response for {n_docs} documents.")
 
     config: ModelConfig = get_model_config_from_dynamo("ragResponse")
 
@@ -118,22 +315,16 @@ async def generate_response_async(
         else "No prior conversation history."
     )
 
-    faqs_text = (
-        "\n".join([f"FAQ question: {faq.question}\nFAQ answer: {faq.answer}" for faq in faqs.faqs])
-        if faqs
-        else "No frequently-asked questions available."
-    )
-
     documents_text = (
         "\n".join([d.model_dump_json() for d in documents.documents])
-        if documents
+        if documents and documents.documents
         else "No documents available."
     )
 
+    # Update prompt format - no separate faqs field needed
     text = config.prompt.format(
         history=history_text,
         documents=documents_text,
-        faqs=faqs_text,
         query=query,
     )
 
@@ -146,7 +337,7 @@ async def generate_response_async(
         yield fragment
 
     answer = "".join(fragments)
-    log_chat_history(session_id, query_id, query, answer, faqs, documents)
+    log_chat_history(session_id, query_id, query, answer, documents)
 
 
 async def _stream_message_async(
@@ -166,6 +357,43 @@ def process_event(event: dict) -> GenerateResponseJob:
     except pydantic.ValidationError as e:
         logger.error(f"Error while validating event: {e}", exc_info=True)
         raise ValidationError() from e
+
+
+async def _process_and_stream_async(
+    job: GenerateResponseJob,
+    ws_connect: WebSocketServer,
+    chat_history: list[dict[str, str]],
+):
+    """
+    Mix and filter documents, stream them to client, then generate and stream response.
+
+    Args:
+        job: GenerateResponseJob containing query, FAQs, and documents
+        ws_connect: WebSocket connection
+        chat_history: Chat history
+    """
+    # Load retrieval config
+    config = get_retrieval_config()
+
+    # Mix FAQs and documents, apply priority reordering, and filter
+    mixed_documents = mix_and_filter_documents(job.faqs, job.documents, config)
+
+    logger.info(f"Mixed and filtered to {len(mixed_documents.documents)} documents for query {job.query_id}")
+
+    # Stream documents to client
+    await stream_documents_to_client(ws_connect, job.query_id, mixed_documents)
+
+    # Generate response using the same mixed documents
+    response = generate_response_async(
+        job.query,
+        job.session_id,
+        job.query_id,
+        chat_history,
+        mixed_documents,
+    )
+
+    # Stream response to client
+    await _stream_message_async(ws_connect, response, job.query_id)
 
 
 def handler(event: dict, context) -> dict[str, Any]:
@@ -201,15 +429,7 @@ def handler(event: dict, context) -> dict[str, Any]:
         return GenerateResponseResult(successful=False).model_dump()
 
     try:
-        response = generate_response_async(
-            job.query,
-            job.session_id,
-            job.query_id,
-            chat_history,
-            job.faqs,
-            job.documents,
-        )
-        asyncio.run(_stream_message_async(ws_connect, response, job.query_id))
+        asyncio.run(_process_and_stream_async(job, ws_connect, chat_history))
         return GenerateResponseResult(successful=True).model_dump()
     except Exception as e:
         # WebSocket connection's up; report the error

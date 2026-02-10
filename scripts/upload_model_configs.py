@@ -98,7 +98,7 @@ def get_default_table_name(region: str | None = None) -> str:
     return get_stack_output("WisconsinBotStack", "ModelConfigTableName", region)
 
 
-def parse_toml_config(config_file: str) -> dict[str, ModelConfig]:
+def parse_toml_config(config_file: str) -> tuple[dict[str, ModelConfig], dict]:
     """
     Parse TOML configuration file and convert to ModelConfig objects.
 
@@ -106,7 +106,7 @@ def parse_toml_config(config_file: str) -> dict[str, ModelConfig]:
         config_file: Path to the TOML configuration file
 
     Returns:
-        Dictionary mapping config IDs to ModelConfig objects
+        Tuple of (model configs dictionary, retrieval config dictionary)
 
     Raises:
         FileNotFoundError: If config file doesn't exist
@@ -120,8 +120,14 @@ def parse_toml_config(config_file: str) -> dict[str, ModelConfig]:
         toml_data = toml.load(f)
 
     configs = {}
+    retrieval_config = {}
 
     for config_id, config_data in toml_data.items():
+        # Handle retrievalConfig separately
+        if config_id == "retrievalConfig":
+            retrieval_config = config_data
+            continue
+
         try:
             # Extract basic fields
             model_config_data = {
@@ -169,7 +175,7 @@ def parse_toml_config(config_file: str) -> dict[str, ModelConfig]:
         except Exception as e:
             raise ValueError(f"Invalid configuration for {config_id}: {e}") from e
 
-    return configs
+    return configs, retrieval_config
 
 
 def convert_floats_to_decimal(obj):
@@ -192,12 +198,13 @@ def convert_floats_to_decimal(obj):
         return obj
 
 
-def upload_to_dynamodb(configs: dict[str, ModelConfig], table_name: str, region: str | None = None):
+def upload_to_dynamodb(configs: dict[str, ModelConfig], retrieval_config: dict, table_name: str, region: str | None = None):
     """
     Upload model configurations to DynamoDB.
 
     Args:
         configs: Dictionary of ModelConfig objects keyed by ID
+        retrieval_config: Retrieval configuration dictionary
         table_name: Name of the DynamoDB table
         region: AWS region (optional, uses session default if not provided)
 
@@ -206,12 +213,14 @@ def upload_to_dynamodb(configs: dict[str, ModelConfig], table_name: str, region:
     """
     if not region:
         region = get_aws_region()
-        
+
     dynamodb = boto3.resource("dynamodb", region_name=region)
     table = dynamodb.Table(table_name)
 
-    print(f"Uploading {len(configs)} configurations to DynamoDB table: {table_name}")
+    total_configs = len(configs) + (1 if retrieval_config else 0)
+    print(f"Uploading {total_configs} configurations to DynamoDB table: {table_name}")
 
+    # Upload model configs
     for config_id, model_config in configs.items():
         try:
             # Convert ModelConfig to dict using pydantic's model_dump
@@ -229,6 +238,21 @@ def upload_to_dynamodb(configs: dict[str, ModelConfig], table_name: str, region:
             raise
         except Exception as e:
             print(f"✗ Error processing {config_id}: {e}")
+            raise
+
+    # Upload retrieval config
+    if retrieval_config:
+        try:
+            item = {"id": "retrievalConfig", **retrieval_config}
+            # Convert floats to Decimal for DynamoDB compatibility
+            item = convert_floats_to_decimal(item)
+            table.put_item(Item=item)
+            print(f"✓ Uploaded configuration: retrievalConfig")
+        except ClientError as e:
+            print(f"✗ Failed to upload retrievalConfig: {e}")
+            raise
+        except Exception as e:
+            print(f"✗ Error processing retrievalConfig: {e}")
             raise
 
 
@@ -260,8 +284,8 @@ def main():
     try:
         # Parse configuration file
         print(f"Parsing configuration file: {args.config_file}")
-        configs = parse_toml_config(args.config_file)
-        print(f"Successfully parsed {len(configs)} configurations")
+        configs, retrieval_config = parse_toml_config(args.config_file)
+        print(f"Successfully parsed {len(configs)} model configurations")
 
         # Validate configurations
         for config_id, config in configs.items():
@@ -281,7 +305,7 @@ def main():
             print(f"Using table: {table_name}")
 
         # Upload to DynamoDB
-        upload_to_dynamodb(configs, table_name, args.region)
+        upload_to_dynamodb(configs, retrieval_config, table_name, args.region)
         print("✓ All configurations uploaded successfully")
 
     except Exception as e:

@@ -13,6 +13,8 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
     const { queries, queryOrder, setCurrentQueryId, currentQueryId } =
       useChatStore();
 
+    console.log(queries);
+
     // Use currentQueryId from store instead of selectedMessageId
     const selectedMessageId = currentQueryId;
     const setSelectedMessageId = setCurrentQueryId;

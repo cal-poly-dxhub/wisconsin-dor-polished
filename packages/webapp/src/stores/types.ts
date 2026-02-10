@@ -38,7 +38,8 @@ export interface Document {
   documentId: string;
   title: string;
   content: string;
-  source?: string;
+  source?: string | null;
+  sourceId?: string | null;
 }
 
 export interface DocumentsContent {

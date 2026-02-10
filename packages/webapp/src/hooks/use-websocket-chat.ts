@@ -43,6 +43,55 @@ export function useWebSocketChat(
   const setCurrentQueryId = useChatStore(state => state.setCurrentQueryId);
   const setSessionId = useChatStore(state => state.setSessionId);
 
+  /**
+   * Parse FAQ content from document format back to FAQ format.
+   *
+   * Expected content format:
+   * Q: {question}
+   * A: {answer}
+   *
+   * @param document - Document with sourceId="faqs"
+   * @returns FAQ object or null if parsing fails
+   */
+  const parseFAQFromDocument = useCallback((document: any) => {
+    try {
+      // Parse the content to extract question and answer
+      const content = document.content || '';
+      const lines = content.split('\n');
+
+      let question = '';
+      let answerLines: string[] = [];
+      let foundAnswer = false;
+
+      for (const line of lines) {
+        if (line.startsWith('Q:')) {
+          question = line.substring(2).trim();
+        } else if (line.startsWith('A:')) {
+          foundAnswer = true;
+          answerLines.push(line.substring(2).trim());
+        } else if (foundAnswer) {
+          answerLines.push(line);
+        }
+      }
+
+      const answer = answerLines.join('\n').trim();
+
+      if (!question || !answer) {
+        console.warn('Failed to parse FAQ from document:', document);
+        return null;
+      }
+
+      return {
+        faqId: document.documentId,
+        question,
+        answer,
+      };
+    } catch (error) {
+      console.error('Error parsing FAQ from document:', error, document);
+      return null;
+    }
+  }, []);
+
   // Define UI actions for each message type
   const messageHandler = useCallback(
     (message: MessageUnion) => {
@@ -50,12 +99,29 @@ export function useWebSocketChat(
         if ('responseType' in message) {
           switch (message.responseType) {
             case 'documents':
+              console.log('Documents received from server:', message.content.documents);
               updateQueryResources(
                 message.queryId,
-                message.content.documents.map(document => ({
-                  type: 'document',
-                  data: document,
-                }))
+                message.content.documents.map(document => {
+                  // Check if this is an FAQ (sourceId="faqs")
+                  if (document.sourceId === 'faqs') {
+                    const faq = parseFAQFromDocument(document);
+                    if (faq) {
+                      return {
+                        type: 'faq' as const,
+                        data: faq,
+                      };
+                    }
+                    // If parsing fails, fall through to document type
+                    console.warn('FAQ parsing failed, treating as document:', document);
+                  }
+
+                  // Regular document
+                  return {
+                    type: 'document' as const,
+                    data: document,
+                  };
+                })
               );
               break;
 
@@ -98,6 +164,12 @@ export function useWebSocketChat(
           }
         }
       } catch (error) {
+        console.error(
+          'Failed to process validated WebSocket message:',
+          message,
+          '\nProcessing error:',
+          error
+        );
         handleError(
           new ChatError(
             error instanceof Error ? error : new Error('Unknown error'),
@@ -111,6 +183,7 @@ export function useWebSocketChat(
       }
     },
     [
+      parseFAQFromDocument,
       updateQueryResources,
       updateQueryStatus,
       appendQueryResponse,

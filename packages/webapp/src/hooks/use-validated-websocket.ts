@@ -106,9 +106,11 @@ export const useValidatedWebSocket = (
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
+      let rawData: unknown;
       try {
         // Parse message
-        const rawData: unknown = JSON.parse(event.data as string);
+        rawData = JSON.parse(event.data as string);
+        console.log('Raw WebSocket data before validation:', rawData);
         const validatedMessage: WebSocketMessage =
           WebSocketMessageSchema.parse(rawData);
         const messageBody = validatedMessage.body;
@@ -117,6 +119,12 @@ export const useValidatedWebSocket = (
         setLastMessage(messageBody);
         messageHandlerRef.current(messageBody);
       } catch (err) {
+        console.error(
+          'Failed to validate WebSocket message from server:',
+          rawData,
+          '\nValidation error:',
+          err
+        );
         handleError(
           new ChatError(
             err instanceof Error ? err : new Error('Unknown error'),

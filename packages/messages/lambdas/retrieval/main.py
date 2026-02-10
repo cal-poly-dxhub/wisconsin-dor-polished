@@ -7,6 +7,7 @@ from typing import Literal
 
 import boto3
 import pydantic
+from boto3.dynamodb.types import TypeDeserializer
 from pydantic import BaseModel
 from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
@@ -19,14 +20,55 @@ from step_function_types.models import (
     StreamResourcesJob,
 )
 
-# Max number of documents to retrieve on a RAG query.
-NUM_RAG_RESULTS = 10
-
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
 rag_kb_id = os.environ.get("RAG_KNOWLEDGE_BASE_ID")
+model_config_table_name = os.environ.get("MODEL_CONFIG_TABLE_NAME")
 
 bedrock_ar = boto3.client("bedrock-agent-runtime")
+dynamodb_client = boto3.client("dynamodb")
+
+
+def get_retrieval_config() -> dict:
+    """
+    Load retrieval configuration from DynamoDB.
+
+    Returns:
+        Dictionary with retrieval config values, or defaults if not found
+    """
+    default_config = {
+        "numRAGResults": 10,
+        "numFAQResults": 5,
+        "maxDocumentsToClient": 5,
+        "sourceIdPriority": []
+    }
+
+    if not model_config_table_name:
+        logger.warning("MODEL_CONFIG_TABLE_NAME not set, using defaults")
+        return default_config
+
+    try:
+        response = dynamodb_client.get_item(
+            TableName=model_config_table_name,
+            Key={"id": {"S": "retrievalConfig"}}
+        )
+
+        item = response.get("Item")
+        if not item:
+            logger.warning("retrievalConfig not found in DynamoDB, using defaults")
+            return default_config
+
+        deserializer = TypeDeserializer()
+        config = {k: deserializer.deserialize(v) for k, v in item.items()}
+
+        # Remove the 'id' field
+        config.pop("id", None)
+
+        logger.info(f"Loaded retrieval config from DynamoDB: {config}")
+        return config
+    except Exception as e:
+        logger.error(f"Error loading retrieval config from DynamoDB: {e}", exc_info=True)
+        return default_config
 
 
 def process_event(event: dict) -> RetrieveJob:
@@ -67,6 +109,7 @@ def process_retrieve_results(results: dict) -> DocumentResource:
                 document_id=document_id,
                 title=meta["doc_id"],
                 source=meta["source_url"],
+                source_id=meta.get("source_id"),
                 content=result["content"]["text"],
             )
         )
@@ -83,9 +126,13 @@ def retrieve_documents(query: str) -> DocumentResource:
         logger.error("RAG knowledge base ID is not set; returning no documents.")
         return DocumentResource(documents=[])
 
+    # Load retrieval config from DynamoDB
+    config = get_retrieval_config()
+    num_results = config.get("numRAGResults", 10)
+
     retrieval_config = {
         "vectorSearchConfiguration": {
-            "numberOfResults": NUM_RAG_RESULTS,
+            "numberOfResults": int(num_results),  # Convert Decimal to int for Bedrock API
             "overrideSearchType": "SEMANTIC",
         }
     }

@@ -4,7 +4,8 @@ export const SourceDocumentSchema = z.object({
   documentId: z.string(),
   title: z.string(),
   content: z.string(),
-  source: z.string().optional(),
+  source: z.string().nullable().optional(),
+  sourceId: z.string().nullable().optional(),
 });
 
 export const DocumentsContentSchema = z.object({

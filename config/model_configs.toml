@@ -1,11 +1,11 @@
 [ragResponse]
 id = "ragResponse"
-prompt = """Prior conversation history: {history}. Documents: {documents}. Frequently-asked questions: {faqs}. User query: {query}. Format your response as Markdown. Only answer using information that is explicitly in the documents. If the documents do not contain the necessary information to answer the user query, state that you don't have enough information to answer the question."""
+prompt = """Prior conversation history: {history}. Documents (including FAQs): {documents}. User query: {query}. Format your response as Markdown. Only answer using information that is explicitly in the documents. If the documents do not contain the necessary information to answer the user query, state that you don't have enough information to answer the question."""
 
 [ragResponse.config]
 modelId = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
 system = [
-    { text = "You are a helpful assistant that is familiar with the Wisconsin Department of Revenue. You answer questions based on the documents and frequently-asked questions that are provided to you and you do not synthesize information. Respond as if you were speaking to the user. You do not explicitly address the prior conversation history unless it comes up during the conversation with the user." },
+    { text = "You are a helpful assistant that is familiar with the Wisconsin Department of Revenue. You answer questions based on the documents and frequently-asked questions that are provided to you and you do not synthesize information. Respond as if you were speaking to the user. You do not explicitly address the prior conversation history unless it comes up during the conversation with the user. You also never reference the documents: e.g., you never say 'Based on the documents...'; you just respond." },
 ]
 
 [ragResponse.config.inferenceConfig]
@@ -28,3 +28,26 @@ temperature = 0.0
 maxTokens = 512
 topP = 0.85
 
+[retrievalConfig]
+# Number of documents to retrieve from RAG knowledge base (before filtering/prioritization)
+numRAGResults = 10
+
+# Number of FAQs to retrieve from FAQ base (before filtering)
+numFAQResults = 5
+
+# Maximum number of documents to send to client after prioritization (top-k filtering)
+# Set to 0 or omit to send all documents
+maxDocumentsToClient = 5
+
+# List of source_ids in priority order. Documents with these source_ids will be
+# reordered to appear first, in the order specified here. Documents not in this
+# list will appear after, maintaining their original order.
+# FAQs are mixed with RAG documents and have source_id="faqs"
+sourceIdPriority = [
+    "state-constitution",
+    "state-laws",
+    "admin-rules",
+    "assessment-manual",
+    "faqs",
+    "gov-publications",
+]

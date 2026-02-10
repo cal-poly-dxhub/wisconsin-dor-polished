@@ -64,11 +64,13 @@ export class MessagesStack extends cdk.NestedStack {
         SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
         WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
         FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBase.knowledgeBaseId,
+        MODEL_CONFIG_TABLE_NAME: this.modelConfigTable.tableName,
       },
     });
 
     // Grant DynamoDB read permissions to classifier function
     props.sessionsTable.grantReadData(this.classifierFunction);
+    this.modelConfigTable.grantReadData(this.classifierFunction);
 
     // Grant Bedrock permissions for classifier function
     this.classifierFunction.addToRolePolicy(
@@ -85,6 +87,15 @@ export class MessagesStack extends cdk.NestedStack {
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['bedrock-agent-runtime:Retrieve', 'bedrock:Retrieve'],
+        resources: ['*'],
+      })
+    );
+
+    // Grant API Gateway Management API permissions for WebSocket error reporting
+    this.classifierFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['execute-api:ManageConnections'],
         resources: ['*'],
       })
     );
@@ -114,8 +125,12 @@ export class MessagesStack extends cdk.NestedStack {
       environment: {
         WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
         RAG_KNOWLEDGE_BASE_ID: props.ragKnowledgeBase.knowledgeBaseId,
+        MODEL_CONFIG_TABLE_NAME: this.modelConfigTable.tableName,
       },
     });
+
+    // Grant DynamoDB read permissions to retrieval function
+    this.modelConfigTable.grantReadData(retrievalHandler);
 
     // Grant Bedrock permissions for retrieval function
     retrievalHandler.addToRolePolicy(
@@ -126,51 +141,8 @@ export class MessagesStack extends cdk.NestedStack {
       })
     );
 
-    // Resource Streaming Lambda (accepts StreamResourcesJob)
-    const resourceStreamingHandler = new lambda.Function(
-      this,
-      'ResourceStreamingFunction',
-      {
-        runtime: lambda.Runtime.PYTHON_3_12,
-        handler: 'main.handler',
-        code: lambda.Code.fromAsset('bundle/resource_streaming', {
-          bundling: {
-            image: lambda.Runtime.PYTHON_3_12.bundlingImage,
-            command: [
-              'bash',
-              '-c',
-              [
-                'pip install --platform manylinux2014_x86_64 --only-binary=:all: -r requirements.txt -t /asset-output',
-                'cp -r . /asset-output',
-              ].join(' && '),
-            ],
-          },
-        }),
-        layers: [props.stepFunctionTypesLayer, props.websocketUtilsLayer],
-        description:
-          'Resource streaming Lambda for sending resources via WebSocket',
-        timeout: cdk.Duration.seconds(30),
-        memorySize: 256,
-        environment: {
-          SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
-          WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
-        },
-      }
-    );
-
-    // Grant DynamoDB read permissions to resource streaming function
-    props.sessionsTable.grantReadData(resourceStreamingHandler);
-
-    // Grant API Gateway Management API permissions for sending WebSocket messages
-    resourceStreamingHandler.addToRolePolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: ['execute-api:ManageConnections'],
-        resources: ['*'],
-      })
-    );
-
     // Response Streaming Lambda (accepts GenerateResponseJob)
+    // This lambda now handles both resource streaming AND response generation
     const streamingHandler = new lambda.Function(
       this,
       'ResponseStreamingFunction',
@@ -192,7 +164,7 @@ export class MessagesStack extends cdk.NestedStack {
         }),
         layers: [props.stepFunctionTypesLayer, props.websocketUtilsLayer],
         description:
-          'Response streaming Lambda for streaming generated answers via WebSocket',
+          'Streaming Lambda for mixing/filtering documents, sending resources via WebSocket, and streaming LLM responses',
         timeout: cdk.Duration.seconds(60),
         memorySize: 512,
         environment: {
@@ -244,6 +216,7 @@ export class MessagesStack extends cdk.NestedStack {
       outputPath: '$.Payload',
     });
 
+    // Single streaming task that handles both resource and response streaming
     const streamingTaskFaq = new tasks.LambdaInvoke(this, 'StreamingTaskFaq', {
       lambdaFunction: streamingHandler,
       outputPath: '$.Payload',
@@ -254,7 +227,7 @@ export class MessagesStack extends cdk.NestedStack {
       outputPath: '$.Payload',
     });
 
-    // Check if response streaming was successful
+    // Check if streaming was successful
     const checkStreamingSuccessFaq = new sfn.Choice(
       this,
       'CheckStreamingSuccessFaq'
@@ -262,8 +235,8 @@ export class MessagesStack extends cdk.NestedStack {
       .when(
         sfn.Condition.booleanEquals('$.successful', false),
         new sfn.Fail(this, 'StreamingFailedFaq', {
-          error: 'Response streaming failed for FAQ',
-          cause: 'The response streaming lambda returned successful=false',
+          error: 'Streaming failed for FAQ',
+          cause: 'The streaming lambda returned successful=false',
         })
       )
       .otherwise(new sfn.Pass(this, 'StreamingSuccessFaq'));
@@ -275,68 +248,11 @@ export class MessagesStack extends cdk.NestedStack {
       .when(
         sfn.Condition.booleanEquals('$.successful', false),
         new sfn.Fail(this, 'StreamingFailedRag', {
-          error: 'Response streaming failed for RAG',
-          cause: 'The response streaming lambda returned successful=false',
+          error: 'Streaming failed for RAG',
+          cause: 'The streaming lambda returned successful=false',
         })
       )
       .otherwise(new sfn.Pass(this, 'StreamingSuccessRag'));
-
-    const resourceStreamingTaskFaq = new tasks.LambdaInvoke(
-      this,
-      'ResourceStreamingTaskFaq',
-      {
-        lambdaFunction: resourceStreamingHandler,
-        outputPath: '$.Payload',
-      }
-    );
-
-    const resourceStreamingTaskRag = new tasks.LambdaInvoke(
-      this,
-      'ResourceStreamingTaskRag',
-      {
-        lambdaFunction: resourceStreamingHandler,
-        outputPath: '$.Payload',
-      }
-    );
-
-    // Check if resource streaming was successful
-    const checkResourceStreamingSuccessFaq = new sfn.Choice(
-      this,
-      'CheckResourceStreamingSuccessFaq'
-    )
-      .when(
-        sfn.Condition.booleanEquals('$.successful', false),
-        new sfn.Fail(this, 'ResourceStreamingFailedFaq', {
-          error: 'Resource streaming failed for FAQ',
-          cause: 'The resource streaming lambda returned successful=false',
-        })
-      )
-      .otherwise(new sfn.Pass(this, 'ResourceStreamingSuccessFaq'));
-
-    const checkResourceStreamingSuccessRag = new sfn.Choice(
-      this,
-      'CheckResourceStreamingSuccessRag'
-    )
-      .when(
-        sfn.Condition.booleanEquals('$.successful', false),
-        new sfn.Fail(this, 'ResourceStreamingFailedRag', {
-          error: 'Resource streaming failed for RAG',
-          cause: 'The resource streaming lambda returned successful=false',
-        })
-      )
-      .otherwise(new sfn.Pass(this, 'ResourceStreamingSuccessRag'));
-
-    // Pass state to select stream_documents_job for resource streaming (FAQ)
-    const selectResourceStreamingJobFaq = new sfn.Pass(
-      this,
-      'SelectResourceStreamingJobFaq',
-      {
-        parameters: {
-          'job.$': '$.stream_documents_job',
-        },
-        outputPath: '$.job',
-      }
-    );
 
     // Pass state to select generate_response_job for streaming (FAQ)
     const selectGenerateResponseJobFaq = new sfn.Pass(
@@ -345,17 +261,6 @@ export class MessagesStack extends cdk.NestedStack {
       {
         parameters: {
           'job.$': '$.generate_response_job',
-        },
-        outputPath: '$.job',
-      }
-    );
-
-    const selectResourceStreamingJobRag = new sfn.Pass(
-      this,
-      'SelectResourceStreamingJobRag',
-      {
-        parameters: {
-          'job.$': '$.stream_documents_job',
         },
         outputPath: '$.job',
       }
@@ -379,56 +284,17 @@ export class MessagesStack extends cdk.NestedStack {
       outputPath: '$.job',
     });
 
-    // Check all parallel execution results for success
-    const checkAllParallelResults = new sfn.Choice(
-      this,
-      'CheckAllParallelResults'
-    )
-      .when(
-        sfn.Condition.and(
-          sfn.Condition.booleanEquals('$[0].successful', true),
-          sfn.Condition.booleanEquals('$[1].successful', true)
-        ),
-        new sfn.Pass(this, 'AllParallelTasksSuccessful')
-      )
-      .otherwise(
-        new sfn.Fail(this, 'ParallelTasksFailed', {
-          error: 'One or more parallel tasks failed',
-          cause:
-            'At least one of the parallel execution branches returned successful=false',
-        })
-      );
+    // FAQ branch: directly stream response (streaming lambda handles both docs and response)
+    const faqBranch = selectGenerateResponseJobFaq
+      .next(streamingTaskFaq)
+      .next(checkStreamingSuccessFaq);
 
-    // If an FAQ was found, generate a response directly.
-    // If RAG, retrieve documents before response generation.
-    const faqBranch = new sfn.Parallel(this, 'ParallelResourceAndStreaming')
-      .branch(
-        selectResourceStreamingJobFaq
-          .next(resourceStreamingTaskFaq)
-          .next(checkResourceStreamingSuccessFaq)
-      )
-      .branch(
-        selectGenerateResponseJobFaq
-          .next(streamingTaskFaq)
-          .next(checkStreamingSuccessFaq)
-      )
-      .next(checkAllParallelResults);
-
-    const ragBranch = selectRetrieveJob.next(
-      retrievalTaskRag.next(
-        new sfn.Parallel(this, 'ParallelRagStreaming')
-          .branch(
-            selectResourceStreamingJobRag
-              .next(resourceStreamingTaskRag)
-              .next(checkResourceStreamingSuccessRag)
-          )
-          .branch(
-            selectGenerateResponseJobRag
-              .next(streamingTaskRag)
-              .next(checkStreamingSuccessRag)
-          )
-      )
-    );
+    // RAG branch: retrieve documents first, then stream (streaming lambda handles both docs and response)
+    const ragBranch = selectRetrieveJob
+      .next(retrievalTaskRag)
+      .next(selectGenerateResponseJobRag)
+      .next(streamingTaskRag)
+      .next(checkStreamingSuccessRag);
 
     // Add error handling for when query_class is null (validation errors)
     const errorChoice = new sfn.Choice(this, 'BranchOnQueryClass')
@@ -490,14 +356,9 @@ export class MessagesStack extends cdk.NestedStack {
       description: 'ARN of the Retrieval Lambda function',
     });
 
-    new cdk.CfnOutput(this, 'ResourceStreamingFunctionArn', {
-      value: resourceStreamingHandler.functionArn,
-      description: 'ARN of the Resource Streaming Lambda function',
-    });
-
     new cdk.CfnOutput(this, 'StreamingFunctionArn', {
       value: streamingHandler.functionArn,
-      description: 'ARN of the Response Streaming Lambda function',
+      description: 'ARN of the Streaming Lambda function (handles both resource and response streaming)',
     });
 
     new cdk.CfnOutput(this, 'ChatStateMachineArn', {
