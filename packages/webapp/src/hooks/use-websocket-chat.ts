@@ -7,7 +7,7 @@
 import { useCallback, useMemo, useEffect } from 'react';
 import { useValidatedWebSocket } from './use-validated-websocket';
 import { useChatStore } from '../stores/chat-store';
-import type { MessageUnion } from '@messages/websocket-interface';
+import type { MessageUnion, SourceDocument } from '@messages/websocket-interface';
 import type { ConnectionState, Query } from '../stores/types';
 import { ChatError } from '@/components/errors/chat-error';
 import { useChatError } from '@/components/errors/use-chat-error';
@@ -53,14 +53,14 @@ export function useWebSocketChat(
    * @param document - Document with sourceId="faqs"
    * @returns FAQ object or null if parsing fails
    */
-  const parseFAQFromDocument = useCallback((document: any) => {
+  const parseFAQFromDocument = useCallback((document: SourceDocument) => {
     try {
       // Parse the content to extract question and answer
       const content = document.content || '';
       const lines = content.split('\n');
 
       let question = '';
-      let answerLines: string[] = [];
+      const answerLines: string[] = [];
       let foundAnswer = false;
 
       for (const line of lines) {
@@ -99,7 +99,10 @@ export function useWebSocketChat(
         if ('responseType' in message) {
           switch (message.responseType) {
             case 'documents':
-              console.log('Documents received from server:', message.content.documents);
+              console.log(
+                'Documents received from server:',
+                message.content.documents
+              );
               updateQueryResources(
                 message.queryId,
                 message.content.documents.map(document => {
@@ -113,7 +116,10 @@ export function useWebSocketChat(
                       };
                     }
                     // If parsing fails, fall through to document type
-                    console.warn('FAQ parsing failed, treating as document:', document);
+                    console.warn(
+                      'FAQ parsing failed, treating as document:',
+                      document
+                    );
                   }
 
                   // Regular document
