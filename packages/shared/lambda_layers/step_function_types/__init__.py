@@ -20,7 +20,6 @@ from .models import (
     MessageRequest,
     RAGDocument,
     RetrieveJob,
-    StreamResourcesJob,
     UserQuery,
 )
 
@@ -34,7 +33,6 @@ __all__ = [
     "DocumentResource",
     "GenerateResponseJob",
     "RetrieveJob",
-    "StreamResourcesJob",
     "MessageProcessingErrorResponse",
     "ClassifierResult",
     # Errors

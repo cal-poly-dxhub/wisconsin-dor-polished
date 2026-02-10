@@ -59,10 +59,6 @@ dest = "retrieval"
 sources = ["./packages/messages/lambdas/retrieval"]
 
 [[bundles]]
-dest = "resource_streaming"
-sources = ["./packages/messages/lambdas/resource_streaming"]
-
-[[bundles]]
 dest = "streaming"
 sources = ["./packages/messages/lambdas/streaming"]
 

@@ -272,10 +272,6 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "toml" },
 ]
-resource-streaming = [
-    { name = "boto3" },
-    { name = "pydantic" },
-]
 retrieval = [
     { name = "boto3" },
     { name = "pydantic" },
@@ -313,10 +309,6 @@ dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.1.0" },
     { name = "toml", specifier = ">=0.10.2" },
-]
-resource-streaming = [
-    { name = "boto3", specifier = ">=1.40.7" },
-    { name = "pydantic", specifier = ">=2.11.7" },
 ]
 retrieval = [
     { name = "boto3", specifier = ">=1.40.7" },

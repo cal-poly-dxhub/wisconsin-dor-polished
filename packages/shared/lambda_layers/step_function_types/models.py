@@ -88,38 +88,22 @@ class RetrieveJob(BaseModel):
     session_id: str
 
 
-# Job passed to the document streaming lambda
-class StreamResourcesJob(BaseModel):
-    query_id: str
-    session_id: str
-    faqs: FAQResource | None = Field(default=None)
-    documents: DocumentResource | None = Field(default=None)
-
-
-# Either a response generation job with a streaming job for FAQs or
-# a plan retrieval job for queries classified as RAG. Differentiate
-# based on the query_class field.
+# Either a response generation job or a retrieval job for queries
+# classified as RAG. Differentiate based on the query_class field.
 class ClassifierResult(BaseModel):
     successful: bool
     faqs: FAQResource | None = Field(default=None)
     query_class: Literal["faq", "rag"] | None = None
-    stream_documents_job: StreamResourcesJob | None = None
     generate_response_job: GenerateResponseJob | None = None
     retrieve_job: RetrieveJob | None = None
 
 
-# Retrieving documents causes document streaming and
-# response generation jobs
+# Retrieving documents produces a response generation job
 class RetrieveResult(BaseModel):
     successful: bool
-    stream_documents_job: StreamResourcesJob | None = None
     generate_response_job: GenerateResponseJob | None = None
 
 
-# Terminal states
-class StreamResourcesResult(BaseModel):
-    successful: bool
-
-
+# Terminal state
 class GenerateResponseResult(BaseModel):
     successful: bool

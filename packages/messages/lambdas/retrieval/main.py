@@ -17,7 +17,6 @@ from step_function_types.models import (
     RAGDocument,
     RetrieveJob,
     RetrieveResult,
-    StreamResourcesJob,
 )
 
 logger = logging.getLogger()
@@ -168,12 +167,6 @@ def handler(event: dict, context) -> dict:
                 documents=docs,
                 faqs=job.faqs,
             ),
-            stream_documents_job=StreamResourcesJob(
-                query_id=job.query_id,
-                session_id=job.session_id,
-                faqs=job.faqs,
-                documents=docs,
-            ),
         )
 
         return result.model_dump()
@@ -185,5 +178,4 @@ def handler(event: dict, context) -> dict:
         return RetrieveResult(
             successful=False,
             generate_response_job=None,
-            stream_documents_job=None,
         ).model_dump()
