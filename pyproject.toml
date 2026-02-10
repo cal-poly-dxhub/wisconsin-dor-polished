@@ -64,7 +64,7 @@ dev = [
 websocket = ["pydantic>=2.11.7"]
 websocket-utils = ["pydantic>=2.11.7"]
 classifier = ["boto3>=1.40.7", "pydantic>=2.11.7"]
-streaming = ["boto3>=1.40.7", "pydantic>=2.11.7"]
+streaming = ["boto3>=1.40.7", "pydantic>=2.11.7", "baml-py==0.218.1"]
 retrieval = ["boto3>=1.40.7", "pydantic>=2.11.7"]
 
 [tool.ruff.lint.isort]

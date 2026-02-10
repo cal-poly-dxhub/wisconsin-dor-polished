@@ -25,6 +25,21 @@ wheels = [
 ]
 
 [[package]]
+name = "baml-py"
+version = "0.218.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/58/91be8c46360e801479488f46475b3e893f0fa8884a503766f5e7814fb0c5/baml_py-0.218.1-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:5cb79998996834216b0401f80cf6ba20b524d894692004f877d5f66f8dc11867", size = 21763432, upload-time = "2026-01-27T19:39:53.554Z" },
+    { url = "https://files.pythonhosted.org/packages/52/e7/e56b5e443f48289498da95a7de984f1f7eb3ba32341198c576b7a88f6ea5/baml_py-0.218.1-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:6af7b47202d4203f1b03ed44ce8d99685d5aa02652aee6f304aad1792e65b3b3", size = 20677897, upload-time = "2026-01-27T19:39:56.914Z" },
+    { url = "https://files.pythonhosted.org/packages/59/d6/bc00800ad066a25447defa9d78e213f92af91114eb640e992f9348c61425/baml_py-0.218.1-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:78e06ab75aeae784591b77ba058b2b2196640348de52800d604968acf96a67a5", size = 24334816, upload-time = "2026-01-27T19:39:59.889Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/c9/e50f59a1857d57f53f354dab114e0c511e22ed43807362284dbdcb53154d/baml_py-0.218.1-cp38-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:64181571f52d5e0c10cd91ebae1fa9dfe297fcff0dcb5e36b095b8ef2c0f350b", size = 23826701, upload-time = "2026-01-27T19:40:02.953Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/9f/25dae1c1dd52e5a260aa812b4b4599725d4b15cfc3e16eb5e115e627a61f/baml_py-0.218.1-cp38-abi3-musllinux_1_1_aarch64.whl", hash = "sha256:72a447ba2c181bf9d2118d27a705ab43906b01dd1c9ba6c202c3c7a3a1c5c96e", size = 24217757, upload-time = "2026-01-27T19:40:06.209Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/24/07417df4feca33a074629f58d240646d4870d1391e4311a79d12b106a2ef/baml_py-0.218.1-cp38-abi3-musllinux_1_1_x86_64.whl", hash = "sha256:4343d60ec58fbdcef1c870444a8cf41d540f80da6079bb9bce8de484d7b9705a", size = 24615303, upload-time = "2026-01-27T19:40:09.3Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/d1/6429ed91f044b8f69a5f73c26ac47e9853b296e4f4800dd69d28e10a4a6b/baml_py-0.218.1-cp38-abi3-win_amd64.whl", hash = "sha256:a45f667acff4c253226168a5450f334fa99fc2693dd40fc31d8c2a4cf46cba58", size = 21966147, upload-time = "2026-01-27T19:40:12.595Z" },
+    { url = "https://files.pythonhosted.org/packages/92/28/8b81c8543654155a2ec10a26f6495b6595699024390b0e7340f56be6a83a/baml_py-0.218.1-cp38-abi3-win_arm64.whl", hash = "sha256:593d500c892e98916771dd8d55cdc562acb11ce7f13d8c048ba7df903a047e62", size = 20437606, upload-time = "2026-01-27T19:40:15.323Z" },
+]
+
+[[package]]
 name = "boto3"
 version = "1.40.7"
 source = { registry = "https://pypi.org/simple" }
@@ -280,6 +295,7 @@ step-function-types = [
     { name = "pydantic" },
 ]
 streaming = [
+    { name = "baml-py" },
     { name = "boto3" },
     { name = "pydantic" },
 ]
@@ -316,6 +332,7 @@ retrieval = [
 ]
 step-function-types = [{ name = "pydantic", specifier = ">=2.11.7" }]
 streaming = [
+    { name = "baml-py", specifier = "==0.218.1" },
     { name = "boto3", specifier = ">=1.40.7" },
     { name = "pydantic", specifier = ">=2.11.7" },
 ]

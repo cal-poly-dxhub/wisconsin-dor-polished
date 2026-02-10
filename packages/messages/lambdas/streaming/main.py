@@ -8,7 +8,8 @@ from typing import Any
 
 import boto3
 import pydantic
-from bedrock_utils import ModelConfig, call_bedrock_converse, get_model_config_from_dynamo
+from baml_client import b
+from baml_client.types import ChatTurn, Document
 from boto3.dynamodb.types import TypeDeserializer
 from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
@@ -99,11 +100,7 @@ def get_retrieval_config() -> dict:
     Returns:
         Dictionary with retrieval config values, or defaults if not found
     """
-    default_config = {
-        "numRAGResults": 10,
-        "numFAQResults": 5,
-        "sourceIdPriority": []
-    }
+    default_config = {"numRAGResults": 10, "numFAQResults": 5, "sourceIdPriority": []}
 
     if not model_config_table_name:
         logger.warning("MODEL_CONFIG_TABLE_NAME not set, using defaults")
@@ -111,8 +108,7 @@ def get_retrieval_config() -> dict:
 
     try:
         response = dynamodb_client.get_item(
-            TableName=model_config_table_name,
-            Key={"id": {"S": "retrievalConfig"}}
+            TableName=model_config_table_name, Key={"id": {"S": "retrievalConfig"}}
         )
 
         item = response.get("Item")
@@ -211,11 +207,13 @@ def mix_and_filter_documents(
                 other_docs.append(doc)
 
         # Sort prioritized documents by their priority index
-        prioritized_docs.sort(key=lambda doc: priority_map.get(doc.source_id, float('inf')))
+        prioritized_docs.sort(key=lambda doc: priority_map.get(doc.source_id, float("inf")))
 
         # Combine: prioritized documents first, followed by others
         reordered = prioritized_docs + other_docs
-        logger.info(f"Reordered {len(all_documents)} documents: {len(prioritized_docs)} prioritized, {len(other_docs)} others")
+        logger.info(
+            f"Reordered {len(all_documents)} documents: {len(prioritized_docs)} prioritized, {len(other_docs)} others"
+        )
     else:
         # No priority configured, keep original order
         reordered = all_documents
@@ -283,7 +281,7 @@ async def generate_response_async(
     documents: DocumentResource,
 ) -> AsyncGenerator[str]:
     """
-    Generate response using mixed and filtered documents.
+    Generate response using mixed and filtered documents via BAML.
 
     Args:
         query: User query
@@ -298,37 +296,47 @@ async def generate_response_async(
     n_docs = len(documents.documents) if documents else 0
     logger.info(f"Generating response for {n_docs} documents.")
 
-    config: ModelConfig = get_model_config_from_dynamo("ragResponse")
+    # Convert chat history to BAML ChatTurn objects
+    history_baml = [ChatTurn(query=item["query"], answer=item["answer"]) for item in chat_history]
 
-    history_text = (
-        "\n".join([f"User: {item['query']}\nAssistant: {item['answer']}" for item in chat_history])
-        if chat_history
-        else "No prior conversation history."
+    # Convert documents to BAML Document objects
+    documents_baml = [
+        Document(
+            document_id=doc.document_id,
+            title=doc.title,
+            content=doc.content,
+            source=doc.source,
+            source_id=doc.source_id,
+        )
+        for doc in (documents.documents if documents else [])
+    ]
+
+    logger.info(
+        f"Calling BAML GenerateRAGResponse with {len(history_baml)} history items and {len(documents_baml)} documents"
     )
 
-    documents_text = (
-        "\n".join([d.model_dump_json() for d in documents.documents])
-        if documents and documents.documents
-        else "No documents available."
-    )
-
-    # Update prompt format - no separate faqs field needed
-    text = config.prompt.format(
-        history=history_text,
-        documents=documents_text,
+    # Stream response from BAML
+    stream = b.stream.GenerateRAGResponse(
+        history=history_baml,
+        documents=documents_baml,
         query=query,
     )
 
-    logger.info(f"Generating response using config: {config}")
-    response = call_bedrock_converse(text, config)
+    # Track what we've already sent to avoid duplication
+    # BAML streams return cumulative text, not deltas
+    previous_length = 0
+    full_answer = ""
 
-    fragments = []
-    async for fragment in response:
-        fragments.append(fragment)
-        yield fragment
+    async for fragment in stream:
+        if fragment:
+            full_answer = fragment  # This is the full text so far
+            # Only yield the new portion
+            if len(full_answer) > previous_length:
+                new_content = full_answer[previous_length:]
+                previous_length = len(full_answer)
+                yield new_content
 
-    answer = "".join(fragments)
-    log_chat_history(session_id, query_id, query, answer, documents)
+    log_chat_history(session_id, query_id, query, full_answer, documents)
 
 
 async def _stream_message_async(
@@ -369,7 +377,9 @@ async def _process_and_stream_async(
     # Mix FAQs and documents, apply priority reordering, and filter
     mixed_documents = mix_and_filter_documents(job.faqs, job.documents, config)
 
-    logger.info(f"Mixed and filtered to {len(mixed_documents.documents)} documents for query {job.query_id}")
+    logger.info(
+        f"Mixed and filtered to {len(mixed_documents.documents)} documents for query {job.query_id}"
+    )
 
     # Stream documents to client
     await stream_documents_to_client(ws_connect, job.query_id, mixed_documents)

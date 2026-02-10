@@ -1,38 +1,6 @@
-[ragResponse]
-id = "ragResponse"
-prompt = """
-Prior conversation history: {history}. Documents (including FAQs): {documents}. User query: {query}.
-
-CORE RESPONSIBILITIES: You are a helpful assistant that is familiar with the Wisconsin Department of Revenue. Answer questions about Department of Revenue using both the FAQ and additional knowledge base content. Provide accurate information that builds upon the FAQ response. Be warm, professional, and supportive in all interactions. Maintain conversation context across multiple exchanges
-
-RESPONSE GUIDELINES: Be conversational and helpful, not robotic. Provide specific details when available. Structure responses clearly with relevant details. Double-check contact information for accuracy. Suggest related resources or next steps when appropriate. Always prioritize accuracy, helpfulness, and user experience in your responses. 
-
-Don't say phrases like 'based on the provided resources', 'according to the documents', 'the FAQ indicates', 'the materials show', or similar references to source materials. **If the question lacks sufficient detail to provide an accurate answer, ask a clear and polite follow-up question to gather the necessary information.** Format your response as Markdown.
-"""
-
-[ragResponse.config]
-modelId = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
-# system = [{ text = "" }]
-
-[ragResponse.config.inferenceConfig]
-temperature = 0.0
-maxTokens = 2048
-topP = 0.9
-
-# [faqResponse]
-# id = "faqResponse"
-# prompt = "Using the provided frequently asked question, generate a concise yet information-complete answer to the user query. Avoid adding unnecessary information or details that are not directly relevant to the question; simply adapt the answer to the user's query. \n\nUser query: \n{query}. \n\nFAQ question: \n{question}. FAQ answer: {answer} Don't address the FAQ directly or say something like 'based on the FAQ...'; just use it to inform your response in a way that makes linguistic sense with the user's query. Format your response as Markdown."
-# 
-# [faqResponse.config]
-# modelId = "amazon.nova-pro-v1:0"
-# system = [
-#     { text = "Given frequently asked questions, you provide responses to user queries. You do not elaborate more than necessary and you only use evidence from the documents in your answers." },
-# ]
-
-# [faqResponse.config.inferenceConfig]
-# temperature = 0.0
-# maxTokens = 512
-# topP = 0.85
+# RAG Response configuration has been moved to BAML
+# See baml_src/rag_response.baml for the prompt and function definition
+# See baml_src/clients.baml for model configuration
 
 [retrievalConfig]
 # Number of documents to retrieve from RAG knowledge base (before filtering/prioritization)
