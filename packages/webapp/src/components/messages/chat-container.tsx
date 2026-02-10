@@ -60,7 +60,7 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
           container.removeEventListener('scroll', handleScroll);
         };
       } else {
-        return () => {};
+        return () => { };
       }
     }, [handleScroll]);
 
@@ -84,13 +84,12 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
             }
             containerRef.current = node;
           }}
-          className={`scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 h-full overflow-y-auto ${
-            variant === 'borderless' || variant === 'narrow'
-              ? 'bg-transparent'
-              : variant === 'wide'
+          className={`scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 h-full overflow-y-auto ${variant === 'borderless' || variant === 'narrow'
+            ? 'bg-transparent'
+            : variant === 'wide'
               ? 'bg-card overflow-hidden rounded-lg border shadow-sm'
               : 'bg-card overflow-hidden rounded-lg border shadow-sm'
-          }`}
+            }`}
         >
           <div className="h-[50%]"></div>
           <div className="space-y-10 py-[5%] pt-[10%] pr-[4%] pl-[4%]">

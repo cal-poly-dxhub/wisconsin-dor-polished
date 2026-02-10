@@ -329,9 +329,6 @@ export function DocumentCard({
   const handleSourceClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (document.sourceUrl) {
-        window.open(document.sourceUrl, '_blank', 'noopener,noreferrer');
-      }
       onSourceClick?.(document);
     },
     [document, onSourceClick]
