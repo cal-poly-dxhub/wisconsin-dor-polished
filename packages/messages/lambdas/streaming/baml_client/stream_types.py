@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (3)
+# Generated classes (4)
 # #########################################################################
 
 class ChatTurn(BaseModel):
@@ -36,6 +36,10 @@ class Document(BaseModel):
     content: typing.Optional[str] = None
     source: typing.Optional[str] = None
     source_id: typing.Optional[str] = None
+
+class RAGResponse(BaseModel):
+    answer: typing.Optional[str] = Field(default=None, description='The conversational answer to the user\'s question, formatted as Markdown')
+    relevant_document_ids: typing.List[str] = Field(description='List of document_id values for documents that were directly relevant and used to answer the question')
 
 class Resume(BaseModel):
     name: typing.Optional[str] = None

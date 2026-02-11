@@ -110,7 +110,7 @@ class BamlSyncClient:
             return typing.cast(types.Resume, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def GenerateRAGResponse(self, history: typing.List["types.ChatTurn"],documents: typing.List["types.Document"],query: str,
         baml_options: BamlCallOptions = {},
-    ) -> str:
+    ) -> types.RAGResponse:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             __stream__ = self.stream.GenerateRAGResponse(history=history,documents=documents,query=query,
@@ -121,7 +121,7 @@ class BamlSyncClient:
             __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="GenerateRAGResponse", args={
                 "history": history,"documents": documents,"query": query,
             })
-            return typing.cast(str, __result__.cast_to(types, types, stream_types, False, __runtime__))
+            return typing.cast(types.RAGResponse, __result__.cast_to(types, types, stream_types, False, __runtime__))
     
 
 
@@ -145,14 +145,14 @@ class BamlStreamClient:
         )
     def GenerateRAGResponse(self, history: typing.List["types.ChatTurn"],documents: typing.List["types.Document"],query: str,
         baml_options: BamlCallOptions = {},
-    ) -> baml_py.BamlSyncStream[str, str]:
+    ) -> baml_py.BamlSyncStream[stream_types.RAGResponse, types.RAGResponse]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="GenerateRAGResponse", args={
             "history": history,"documents": documents,"query": query,
         })
-        return baml_py.BamlSyncStream[str, str](
+        return baml_py.BamlSyncStream[stream_types.RAGResponse, types.RAGResponse](
           __result__,
-          lambda x: typing.cast(str, x.cast_to(types, types, stream_types, True, __runtime__)),
-          lambda x: typing.cast(str, x.cast_to(types, types, stream_types, False, __runtime__)),
+          lambda x: typing.cast(stream_types.RAGResponse, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.RAGResponse, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
     

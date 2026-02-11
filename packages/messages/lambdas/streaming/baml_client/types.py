@@ -41,7 +41,7 @@ def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
 # #########################################################################
 
 # #########################################################################
-# Generated classes (3)
+# Generated classes (4)
 # #########################################################################
 
 class ChatTurn(BaseModel):
@@ -54,6 +54,10 @@ class Document(BaseModel):
     content: str
     source: typing.Optional[str] = None
     source_id: typing.Optional[str] = None
+
+class RAGResponse(BaseModel):
+    answer: str = Field(description='The conversational answer to the user\'s question, formatted as Markdown')
+    relevant_document_ids: typing.List[str] = Field(description='List of document_id values for documents that were directly relevant and used to answer the question')
 
 class Resume(BaseModel):
     name: str

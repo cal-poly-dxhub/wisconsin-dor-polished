@@ -9,7 +9,7 @@ from typing import Any
 import boto3
 import pydantic
 from baml_client import b
-from baml_client.types import ChatTurn, Document
+from baml_client.types import ChatTurn, Document, RAGResponse
 from boto3.dynamodb.types import TypeDeserializer
 from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
@@ -273,70 +273,88 @@ async def stream_documents_to_client(
     logger.info(f"Streamed {len(source_documents)} documents to client")
 
 
-async def generate_response_async(
-    query: str,
-    session_id: str,
-    query_id: str,
-    chat_history: list[dict[str, str]],
-    documents: DocumentResource,
-) -> AsyncGenerator[str]:
-    """
-    Generate response using mixed and filtered documents via BAML.
+class ResponseGenerator:
+    """Wrapper for streaming response that captures relevant document IDs."""
 
-    Args:
-        query: User query
-        session_id: Session ID
-        query_id: Query ID
-        chat_history: Chat history
-        documents: DocumentResource with mixed FAQs and RAG documents
+    def __init__(self):
+        self.relevant_document_ids: list[str] = []
 
-    Yields:
-        Response fragments
-    """
-    n_docs = len(documents.documents) if documents else 0
-    logger.info(f"Generating response for {n_docs} documents.")
+    async def generate(
+        self,
+        query: str,
+        session_id: str,
+        query_id: str,
+        chat_history: list[dict[str, str]],
+        documents: DocumentResource,
+    ) -> AsyncGenerator[str]:
+        """
+        Generate response using mixed and filtered documents via BAML.
 
-    # Convert chat history to BAML ChatTurn objects
-    history_baml = [ChatTurn(query=item["query"], answer=item["answer"]) for item in chat_history]
+        Args:
+            query: User query
+            session_id: Session ID
+            query_id: Query ID
+            chat_history: Chat history
+            documents: DocumentResource with mixed FAQs and RAG documents
 
-    # Convert documents to BAML Document objects
-    documents_baml = [
-        Document(
-            document_id=doc.document_id,
-            title=doc.title,
-            content=doc.content,
-            source=doc.source,
-            source_id=doc.source_id,
+        Yields:
+            Answer fragments
+
+        Side effect:
+            Sets self.relevant_document_ids after streaming completes
+        """
+        n_docs = len(documents.documents) if documents else 0
+        logger.info(f"Generating response for {n_docs} documents.")
+
+        # Convert chat history to BAML ChatTurn objects
+        history_baml = [ChatTurn(query=item["query"], answer=item["answer"]) for item in chat_history]
+
+        # Convert documents to BAML Document objects
+        documents_baml = [
+            Document(
+                document_id=doc.document_id,
+                title=doc.title,
+                content=doc.content,
+                source=doc.source,
+                source_id=doc.source_id,
+            )
+            for doc in (documents.documents if documents else [])
+        ]
+
+        logger.info(
+            f"Calling BAML GenerateRAGResponse with {len(history_baml)} history items and {len(documents_baml)} documents"
         )
-        for doc in (documents.documents if documents else [])
-    ]
 
-    logger.info(
-        f"Calling BAML GenerateRAGResponse with {len(history_baml)} history items and {len(documents_baml)} documents"
-    )
+        # Stream response from BAML
+        stream = b.stream.GenerateRAGResponse(
+            history=history_baml,
+            documents=documents_baml,
+            query=query,
+        )
 
-    # Stream response from BAML
-    stream = b.stream.GenerateRAGResponse(
-        history=history_baml,
-        documents=documents_baml,
-        query=query,
-    )
+        # Track what we've already sent to avoid duplication
+        # BAML streams return cumulative RAGResponse objects
+        previous_length = 0
+        full_answer = ""
 
-    # Track what we've already sent to avoid duplication
-    # BAML streams return cumulative text, not deltas
-    previous_length = 0
-    full_answer = ""
+        async for partial_response in stream:
+            if partial_response and partial_response.answer:
+                current_answer = partial_response.answer
+                # Only yield the new portion of the answer
+                if len(current_answer) > previous_length:
+                    new_content = current_answer[previous_length:]
+                    previous_length = len(current_answer)
+                    full_answer = current_answer
+                    yield new_content
 
-    async for fragment in stream:
-        if fragment:
-            full_answer = fragment  # This is the full text so far
-            # Only yield the new portion
-            if len(full_answer) > previous_length:
-                new_content = full_answer[previous_length:]
-                previous_length = len(full_answer)
-                yield new_content
+                # Update relevant_document_ids from latest response
+                if partial_response.relevant_document_ids:
+                    self.relevant_document_ids = partial_response.relevant_document_ids
 
-    log_chat_history(session_id, query_id, query, full_answer, documents)
+        log_chat_history(session_id, query_id, query, full_answer, documents)
+        logger.info(
+            f"Identified {len(self.relevant_document_ids)} relevant documents: {self.relevant_document_ids}"
+        )
 
 
 async def _stream_message_async(
@@ -364,7 +382,7 @@ async def _process_and_stream_async(
     chat_history: list[dict[str, str]],
 ):
     """
-    Mix and filter documents, stream them to client, then generate and stream response.
+    Generate and stream response, then stream only relevant documents to client.
 
     Args:
         job: GenerateResponseJob containing query, FAQs, and documents
@@ -381,11 +399,9 @@ async def _process_and_stream_async(
         f"Mixed and filtered to {len(mixed_documents.documents)} documents for query {job.query_id}"
     )
 
-    # Stream documents to client
-    await stream_documents_to_client(ws_connect, job.query_id, mixed_documents)
-
-    # Generate response using the same mixed documents
-    response = generate_response_async(
+    # Create response generator that will capture relevant document IDs
+    response_gen = ResponseGenerator()
+    response_stream = response_gen.generate(
         job.query,
         job.session_id,
         job.query_id,
@@ -393,8 +409,29 @@ async def _process_and_stream_async(
         mixed_documents,
     )
 
-    # Stream response to client
-    await _stream_message_async(ws_connect, response, job.query_id)
+    # Stream answer to client
+    await _stream_message_async(ws_connect, response_stream, job.query_id)
+
+    # After streaming completes, filter documents to only relevant ones
+    relevant_doc_ids = set(response_gen.relevant_document_ids)
+
+    if relevant_doc_ids:
+        relevant_documents = DocumentResource(
+            documents=[
+                doc for doc in mixed_documents.documents
+                if doc.document_id in relevant_doc_ids
+            ]
+        )
+        logger.info(
+            f"Filtered to {len(relevant_documents.documents)} relevant documents from {len(mixed_documents.documents)} total"
+        )
+    else:
+        # If no relevant documents identified, send all (fallback)
+        logger.warning("No relevant documents identified by model, sending all documents")
+        relevant_documents = mixed_documents
+
+    # Stream filtered documents to client
+    await stream_documents_to_client(ws_connect, job.query_id, relevant_documents)
 
 
 def handler(event: dict, context) -> dict[str, Any]:

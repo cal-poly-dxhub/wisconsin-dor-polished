@@ -32,9 +32,9 @@ class LlmResponseParser:
 
     def GenerateRAGResponse(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> str:
+    ) -> types.RAGResponse:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="GenerateRAGResponse", llm_response=llm_response, mode="request")
-        return typing.cast(str, __result__)
+        return typing.cast(types.RAGResponse, __result__)
 
     
 
@@ -52,8 +52,8 @@ class LlmStreamParser:
 
     def GenerateRAGResponse(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> str:
+    ) -> stream_types.RAGResponse:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="GenerateRAGResponse", llm_response=llm_response, mode="stream")
-        return typing.cast(str, __result__)
+        return typing.cast(stream_types.RAGResponse, __result__)
 
     

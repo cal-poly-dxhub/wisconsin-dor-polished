@@ -22,6 +22,9 @@ type_map = {
     "types.Document": types.Document,
     "stream_types.Document": stream_types.Document,
 
+    "types.RAGResponse": types.RAGResponse,
+    "stream_types.RAGResponse": stream_types.RAGResponse,
+
     "types.Resume": types.Resume,
     "stream_types.Resume": stream_types.Resume,
 
