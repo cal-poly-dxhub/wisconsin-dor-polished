@@ -16,7 +16,7 @@ const getLayoutClasses = (isNarrowLayout: boolean) => {
     'grid gap-6 thin-scrollbar scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50';
 
   if (isNarrowLayout) {
-    return `${baseClasses} grid-flow-col auto-cols-[minmax(20rem,1fr)] overflow-x-auto overflow-y-hidden py-4 px-2 relative`;
+    return `${baseClasses} grid-flow-col auto-cols-[20rem] overflow-x-auto overflow-y-hidden py-4 px-2 relative`;
   }
 
   return `${baseClasses} grid-cols-1 min-h-0 overflow-x-hidden overflow-y-auto py-3 pr-4 content-start relative`;
