@@ -120,6 +120,15 @@
   list-style-type: lower-roman;
 }
 
+/* Fix list marker alignment issue caused by flowtoken's inline-block spans */
+.markdown-container li > span {
+  vertical-align: top;
+}
+
+.markdown-container li p {
+  margin-top: 0;
+}
+
 /* Links */
 .markdown-container a {
   color: hsl(var(--primary));
