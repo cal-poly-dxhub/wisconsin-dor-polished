@@ -344,6 +344,18 @@ class ResponseGenerator:
                 if len(current_answer) > previous_length:
                     new_content = current_answer[previous_length:]
                     previous_length = len(current_answer)
+
+                    # Defer streaming of backslashes to the next streaming chunk. It's possible
+                    # that newlines' `\` and `n` characters are split across chunks in the
+                    # model streaming output, causing the client to interpret newlines as
+                    # backslashes. partial_response.answer in the next iteration finalizes
+                    # the state of this character.
+                    # FIXME: it should not be possible for the model to split a newline like this,
+                    # but a fix is likely a larger structural change.
+                    if new_content[-1] == '\\':
+                        new_content = new_content[:-1] # Trim the newline from this chunk
+                        previous_length -= 1 # Adjust previous_length accordingly
+
                     full_answer = current_answer
                     yield new_content
 
