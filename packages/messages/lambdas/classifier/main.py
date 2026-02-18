@@ -17,7 +17,7 @@ from step_function_types.models import (
 
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
-faq_kb_id = os.environ.get("FAQ_KNOWLEDGE_BASE_ID")
+kb_id = os.environ.get("KNOWLEDGE_BASE_ID")
 model_config_table_name = os.environ.get("MODEL_CONFIG_TABLE_NAME")
 
 bedrock_ar = boto3.client("bedrock-agent-runtime")
@@ -105,6 +105,19 @@ def parse_qa_document(document: str) -> dict | None:
             answer_idx = i
             break
 
+    # Handle single-line format: "Q: ... A: ..."
+    if question_idx is not None and answer_idx is None:
+        q_line = lines[question_idx]
+        a_marker = " A: "
+        a_pos = q_line.find(a_marker)
+        if a_pos != -1:
+            lines = (
+                lines[:question_idx]
+                + [q_line[:a_pos], "A: " + q_line[a_pos + len(a_marker):]]
+                + lines[question_idx + 1:]
+            )
+            answer_idx = question_idx + 1
+
     # Validate that we found both Q and A
     if question_idx is None or answer_idx is None:
         logger.error(f"Invalid Q&A document format - missing Q: or A: prefix: {document[:100]}...")
@@ -136,6 +149,7 @@ def process_faq_results(results: dict) -> FAQResource:
         faq_id = content_hash[:7]
         qa = parse_qa_document(result["content"]["text"])
         if not qa:
+            logger.error(f"Bedrock retrieve result for invalid Q&A document: {result}")
             continue
         question = qa["q"]
         answer = qa["a"]
@@ -150,8 +164,8 @@ def process_faq_results(results: dict) -> FAQResource:
 
 
 def try_match_faq(query: str) -> FAQResource | None:
-    if not faq_kb_id:
-        logger.error("FAQ knowledge base ID is not set; returning no FAQ resources.")
+    if not kb_id:
+        logger.error("KNOWLEDGE_BASE_ID is not set; returning no FAQ resources.")
         return None
 
     # Load retrieval config from DynamoDB
@@ -162,11 +176,17 @@ def try_match_faq(query: str) -> FAQResource | None:
         "vectorSearchConfiguration": {
             "numberOfResults": int(num_results),  # Convert Decimal to int for Bedrock API
             "overrideSearchType": "SEMANTIC",
+            "filter": {
+                "equals": {
+                    "key": "document_type",
+                    "value": "FAQ",
+                }
+            },
         }
     }
 
     response = bedrock_ar.retrieve(
-        knowledgeBaseId=faq_kb_id,
+        knowledgeBaseId=kb_id,
         retrievalQuery={"text": query},
         retrievalConfiguration=retrieval_config,
     )
@@ -184,6 +204,8 @@ def handler(event: dict, context) -> dict:
         session_id = user_query.session_id
         logger.info(f"Received user query: {user_query.model_dump()}")
         faq_resources = try_match_faq(user_query.query)
+        faq_count = len(faq_resources.faqs) if faq_resources else 0
+        logger.info(f"Sending {faq_count} FAQ(s) to next stage: {[f.model_dump() for f in faq_resources.faqs] if faq_resources else []}")
 
         # Trigger a retrieval job using FAQs
         return ClassifierResult(

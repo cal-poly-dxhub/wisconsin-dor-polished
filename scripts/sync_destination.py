@@ -7,8 +7,9 @@ from botocore.exceptions import ClientError
 
 FAQ_SOURCE_BUCKET = "wis-faq-bucket"
 RAG_SOURCE_BUCKET = "wis-rag-bucket"
+MERGED_SOURCE_BUCKET = "wis-documents-bucket-a15b5d40"
 SOURCE_ACCOUNT_ID = "285396213403"
-CDK_STACK_NAME = "WisconsinBotStack"
+CDK_STACK_NAME = "WisconsinBotStackMergedRag"
 DEFAULT_ROLE_NAME = "CrossAccountS3SyncRole"
 
 
@@ -62,6 +63,11 @@ def main():
         help=f"Name of the SOURCE RAG S3 bucket (default: {RAG_SOURCE_BUCKET}).",
     )
     parser.add_argument(
+        "--merged-source-bucket",
+        default=MERGED_SOURCE_BUCKET,
+        help=f"Name of the SOURCE MERGED S3 bucket (default: {MERGED_SOURCE_BUCKET}).",
+    )
+    parser.add_argument(
         "--rag-dest-bucket",
         help="Name of the DESTINATION RAG S3 bucket (default: read from CDK stack output).",
     )
@@ -78,11 +84,12 @@ def main():
     rag_dest_bucket = args.rag_dest_bucket or get_bucket_from_cdk_output(
         "WisconsinBot-RagBucketName"
     )
+    documents_dest_bucket = get_bucket_from_cdk_output("WisconsinBot-DocumentsBucketName")
 
     iam = boto3.client("iam", region_name=get_region())
 
-    source_buckets = [args.faq_source_bucket, args.rag_source_bucket]
-    dest_buckets = [faq_dest_bucket, rag_dest_bucket]
+    source_buckets = [args.faq_source_bucket, args.rag_source_bucket, args.merged_source_bucket]
+    dest_buckets = [faq_dest_bucket, rag_dest_bucket, documents_dest_bucket]
 
     trust_policy = {
         "Version": "2012-10-17",
@@ -151,6 +158,12 @@ def main():
         PolicyDocument=json.dumps(policy_doc),
     )
     print("Done.\n")
+
+    print("Buckets granted permissions:")
+    for b in source_buckets:
+        print(f"  [source] arn:aws:s3:::{b}")
+    for b in dest_buckets:
+        print(f"  [dest]   arn:aws:s3:::{b}")
 
     sts = boto3.client("sts", region_name=get_region())
     acct_id = sts.get_caller_identity()["Account"]

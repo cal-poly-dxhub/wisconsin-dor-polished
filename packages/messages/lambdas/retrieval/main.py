@@ -21,7 +21,7 @@ from step_function_types.models import (
 
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
-rag_kb_id = os.environ.get("RAG_KNOWLEDGE_BASE_ID")
+kb_id = os.environ.get("KNOWLEDGE_BASE_ID")
 model_config_table_name = os.environ.get("MODEL_CONFIG_TABLE_NAME")
 
 bedrock_ar = boto3.client("bedrock-agent-runtime")
@@ -121,8 +121,8 @@ def retrieve_documents(query: str) -> DocumentResource:
     Retrieves documents from the knowledge base based on the query.
     """
 
-    if not rag_kb_id:
-        logger.error("RAG knowledge base ID is not set; returning no documents.")
+    if not kb_id:
+        logger.error("KNOWLEDGE_BASE_ID is not set; returning no documents.")
         return DocumentResource(documents=[])
 
     # Load retrieval config from DynamoDB
@@ -133,11 +133,17 @@ def retrieve_documents(query: str) -> DocumentResource:
         "vectorSearchConfiguration": {
             "numberOfResults": int(num_results),  # Convert Decimal to int for Bedrock API
             "overrideSearchType": "SEMANTIC",
+            "filter": {
+                "equals": {
+                    "key": "document_type",
+                    "value": "RAG",
+                }
+            },
         }
     }
 
     response = bedrock_ar.retrieve(
-        knowledgeBaseId=rag_kb_id,
+        knowledgeBaseId=kb_id,
         retrievalQuery={"text": query},
         retrievalConfiguration=retrieval_config,
     )
@@ -158,6 +164,12 @@ def handler(event: dict, context) -> dict:
     try:
         job = process_event(event)
         docs = retrieve_documents(job.query)
+        faq_count = len(job.faqs.faqs) if job.faqs else 0
+        doc_count = len(docs.documents) if docs.documents else 0
+        logger.info(f"Sending {faq_count} FAQ(s) and {doc_count} document(s) to next stage.")
+        logger.info(f"FAQs: {[f.model_dump() for f in job.faqs.faqs] if job.faqs else []}")
+        logger.info(f"Documents: {[d.model_dump() for d in docs.documents] if docs.documents else []}")
+
         result = RetrieveResult(
             successful=True,
             generate_response_job=GenerateResponseJob(

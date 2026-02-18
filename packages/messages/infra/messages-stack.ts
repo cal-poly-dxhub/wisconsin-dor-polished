@@ -7,15 +7,13 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
-import { bedrock } from '@cdklabs/generative-ai-cdk-constructs';
 
 export interface MessagesStackProps extends cdk.StackProps {
   stepFunctionTypesLayer: lambda.LayerVersion;
   websocketUtilsLayer: lambda.LayerVersion;
   sessionsTable: cdk.aws_dynamodb.ITable;
   websocketCallbackUrl: string;
-  faqKnowledgeBase: bedrock.VectorKnowledgeBase;
-  ragKnowledgeBase: bedrock.VectorKnowledgeBase;
+  knowledgeBaseId: string;
   chatHistoryTable: dynamodb.Table;
 }
 
@@ -68,7 +66,7 @@ export class MessagesStack extends cdk.NestedStack {
       environment: {
         SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
         WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
-        FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBase.knowledgeBaseId,
+        KNOWLEDGE_BASE_ID: props.knowledgeBaseId,
         MODEL_CONFIG_TABLE_NAME: this.modelConfigTable.tableName,
       },
     });
@@ -129,7 +127,7 @@ export class MessagesStack extends cdk.NestedStack {
       memorySize: 256,
       environment: {
         WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
-        RAG_KNOWLEDGE_BASE_ID: props.ragKnowledgeBase.knowledgeBaseId,
+        KNOWLEDGE_BASE_ID: props.knowledgeBaseId,
         MODEL_CONFIG_TABLE_NAME: this.modelConfigTable.tableName,
       },
     });

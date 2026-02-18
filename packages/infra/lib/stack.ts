@@ -40,8 +40,7 @@ export class WisconsinBotStack extends cdk.Stack {
       websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
       sessionsTable: sessionsStack.sessionsTable,
       websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
-      faqKnowledgeBase: knowledgeBaseStack.faqKnowledgeBase,
-      ragKnowledgeBase: knowledgeBaseStack.ragKnowledgeBase,
+      knowledgeBaseId: knowledgeBaseStack.knowledgeBaseId,
       chatHistoryTable: sessionsStack.chatHistoryTable,
     });
 
@@ -96,15 +95,21 @@ export class WisconsinBotStack extends cdk.Stack {
       description: 'URL of the web application',
     });
 
+    new cdk.CfnOutput(this, 'DocumentsBucketName', {
+      value: knowledgeBaseStack.documentsBucketName,
+      description: 'S3 bucket for Wisconsin documents (knowledge base data source)',
+      exportName: 'WisconsinBot-DocumentsBucketName',
+    });
+
     new cdk.CfnOutput(this, 'FaqBucketName', {
       value: knowledgeBaseStack.faqBucketName,
-      description: 'S3 bucket for FAQ documents',
+      description: 'Legacy FAQ S3 bucket (retained, not connected to KB)',
       exportName: 'WisconsinBot-FaqBucketName',
     });
 
     new cdk.CfnOutput(this, 'RagBucketName', {
       value: knowledgeBaseStack.ragBucketName,
-      description: 'S3 bucket for RAG documents',
+      description: 'Legacy RAG S3 bucket (retained, not connected to KB)',
       exportName: 'WisconsinBot-RagBucketName',
     });
 
