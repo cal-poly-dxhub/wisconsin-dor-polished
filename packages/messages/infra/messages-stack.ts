@@ -27,6 +27,11 @@ export class MessagesStack extends cdk.NestedStack {
   constructor(scope: Construct, id: string, props: MessagesStackProps) {
     super(scope, id, props);
 
+    const uid = cdk.Fn.select(
+      0,
+      cdk.Fn.split('-', cdk.Fn.select(2, cdk.Fn.split('/', this.stackId)))
+    );
+
     // Model Configuration Table
     this.modelConfigTable = new dynamodb.Table(this, 'ModelConfigTable', {
       partitionKey: {
@@ -315,12 +320,12 @@ export class MessagesStack extends cdk.NestedStack {
       'ChatStateMachine',
       {
         definition,
-        stateMachineName: 'ChatStreamingStateMachine',
+        stateMachineName: cdk.Fn.join('-', ['ChatStreamingStateMachine', uid]),
         timeout: cdk.Duration.minutes(5),
         tracingEnabled: true, // Enable X-Ray tracing for better observability
         logs: {
           destination: new cdk.aws_logs.LogGroup(this, 'StateMachineLogs', {
-            logGroupName: `/aws/states/ChatStreamingStateMachine-${crypto.randomUUID()}`,
+            logGroupName: cdk.Fn.join('-', ['/aws/states/ChatStreamingStateMachine', uid]),
             retention: cdk.aws_logs.RetentionDays.ONE_WEEK,
           }),
           level: sfn.LogLevel.ALL,

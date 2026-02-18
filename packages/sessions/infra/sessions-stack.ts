@@ -26,8 +26,13 @@ export class SessionsStack extends cdk.NestedStack {
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
 
+    const uid = cdk.Fn.select(
+      0,
+      cdk.Fn.split('-', cdk.Fn.select(2, cdk.Fn.split('/', this.stackId)))
+    );
+
     this.userPool = new cognito.UserPool(this, 'UserPool', {
-      userPoolName: 'wisconsin-user-pool',
+      userPoolName: cdk.Fn.join('-', ['wisconsin-user-pool', uid]),
       selfSignUpEnabled: true,
       signInAliases: {
         email: true,
@@ -276,7 +281,7 @@ export class SessionsStack extends cdk.NestedStack {
       this,
       'WebSocketExecutionLogs',
       {
-        logGroupName: `/aws/apigateway/websocket-execution-logs`,
+        logGroupName: cdk.Fn.join('-', ['/aws/apigateway/websocket-execution-logs', uid]),
         retention: logs.RetentionDays.ONE_WEEK,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }

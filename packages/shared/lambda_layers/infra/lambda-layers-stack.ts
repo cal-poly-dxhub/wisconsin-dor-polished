@@ -9,6 +9,11 @@ export class LambdaLayersStack extends cdk.NestedStack {
   constructor(scope: Construct, id: string, props?: cdk.NestedStackProps) {
     super(scope, id, props);
 
+    const uid = cdk.Fn.select(
+      0,
+      cdk.Fn.split('-', cdk.Fn.select(2, cdk.Fn.split('/', this.stackId)))
+    );
+
     this.stepFunctionTypesLayer = new lambda.LayerVersion(
       this,
       'StepFunctionTypesLayer',
@@ -29,7 +34,7 @@ export class LambdaLayersStack extends cdk.NestedStack {
         compatibleRuntimes: [lambda.Runtime.PYTHON_3_12],
         description:
           'Shared types for step functions - contains Pydantic models',
-        layerVersionName: 'wisconsin-bot-step-function-types',
+        layerVersionName: cdk.Fn.join('-', ['wisconsin-bot-step-function-types', uid]),
       }
     );
 
@@ -53,7 +58,7 @@ export class LambdaLayersStack extends cdk.NestedStack {
         compatibleRuntimes: [lambda.Runtime.PYTHON_3_12],
         description:
           'Shared WebSocket utilities - contains WebSocket server and models',
-        layerVersionName: 'wisconsin-bot-websocket-utils',
+        layerVersionName: cdk.Fn.join('-', ['wisconsin-bot-websocket-utils', uid]),
       }
     );
 
