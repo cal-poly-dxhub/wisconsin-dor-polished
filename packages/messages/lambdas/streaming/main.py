@@ -197,22 +197,30 @@ def mix_and_filter_documents(
         priority_map = {source_id: idx for idx, source_id in enumerate(source_id_priority)}
 
         # Separate documents into prioritized and non-prioritized groups
+        # Preserve original index to maintain relevance order within each source
         prioritized_docs = []
         other_docs = []
 
-        for doc in all_documents:
+        for original_idx, doc in enumerate(all_documents):
             if doc.source_id and doc.source_id in priority_map:
-                prioritized_docs.append(doc)
+                prioritized_docs.append((original_idx, doc))
             else:
-                other_docs.append(doc)
+                other_docs.append((original_idx, doc))
 
-        # Sort prioritized documents by their priority index
-        prioritized_docs.sort(key=lambda doc: priority_map.get(doc.source_id, float("inf")))
+        # Sort prioritized documents by (priority index, original index)
+        # This ensures documents are ordered by source priority first,
+        # then by retrieval relevance (original order) within each source
+        prioritized_docs.sort(
+            key=lambda item: (
+                priority_map.get(item[1].source_id, float("inf")),
+                item[0],  # Preserve original order within same source_id
+            )
+        )
 
-        # Combine: prioritized documents first, followed by others
-        reordered = prioritized_docs + other_docs
+        # Extract documents from tuples and combine
+        reordered = [doc for _, doc in prioritized_docs] + [doc for _, doc in other_docs]
         logger.info(
-            f"Reordered {len(all_documents)} documents: {len(prioritized_docs)} prioritized, {len(other_docs)} others"
+            f"Reordered {len(all_documents)} documents by source priority: {len(prioritized_docs)} prioritized, {len(other_docs)} others"
         )
     else:
         # No priority configured, keep original order
@@ -286,6 +294,7 @@ class ResponseGenerator:
         query_id: str,
         chat_history: list[dict[str, str]],
         documents: DocumentResource,
+        source_id_priority: list[str],
     ) -> AsyncGenerator[str]:
         """
         Generate response using mixed and filtered documents via BAML.
@@ -330,6 +339,7 @@ class ResponseGenerator:
             history=history_baml,
             documents=documents_baml,
             query=query,
+            source_id_priority=source_id_priority,
         )
 
         # Track what we've already sent to avoid duplication
@@ -412,6 +422,7 @@ async def _process_and_stream_async(
     )
 
     # Create response generator that will capture relevant document IDs
+    source_id_priority = config.get("sourceIdPriority", [])
     response_gen = ResponseGenerator()
     response_stream = response_gen.generate(
         job.query,
@@ -419,6 +430,7 @@ async def _process_and_stream_async(
         job.query_id,
         chat_history,
         mixed_documents,
+        source_id_priority,
     )
 
     # Stream answer to client
@@ -435,7 +447,8 @@ async def _process_and_stream_async(
             ]
         )
         logger.info(
-            f"Filtered to {len(relevant_documents.documents)} relevant documents from {len(mixed_documents.documents)} total"
+            f"Filtered to {len(relevant_documents.documents)} relevant documents from {len(mixed_documents.documents)} total. "
+            f"Order by source_id: {[doc.source_id for doc in relevant_documents.documents]}"
         )
     else:
         # If no relevant documents identified, send all (fallback)

@@ -108,18 +108,18 @@ class BamlSyncClient:
                 "resume": resume,
             })
             return typing.cast(types.Resume, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    def GenerateRAGResponse(self, history: typing.List["types.ChatTurn"],documents: typing.List["types.Document"],query: str,
+    def GenerateRAGResponse(self, history: typing.List["types.ChatTurn"],documents: typing.List["types.Document"],query: str,source_id_priority: typing.List[str],
         baml_options: BamlCallOptions = {},
     ) -> types.RAGResponse:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
-            __stream__ = self.stream.GenerateRAGResponse(history=history,documents=documents,query=query,
+            __stream__ = self.stream.GenerateRAGResponse(history=history,documents=documents,query=query,source_id_priority=source_id_priority,
                 baml_options=baml_options)
             return __stream__.get_final_response()
         else:
             # Original non-streaming code
             __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="GenerateRAGResponse", args={
-                "history": history,"documents": documents,"query": query,
+                "history": history,"documents": documents,"query": query,"source_id_priority": source_id_priority,
             })
             return typing.cast(types.RAGResponse, __result__.cast_to(types, types, stream_types, False, __runtime__))
     
@@ -143,11 +143,11 @@ class BamlStreamClient:
           lambda x: typing.cast(types.Resume, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def GenerateRAGResponse(self, history: typing.List["types.ChatTurn"],documents: typing.List["types.Document"],query: str,
+    def GenerateRAGResponse(self, history: typing.List["types.ChatTurn"],documents: typing.List["types.Document"],query: str,source_id_priority: typing.List[str],
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.RAGResponse, types.RAGResponse]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="GenerateRAGResponse", args={
-            "history": history,"documents": documents,"query": query,
+            "history": history,"documents": documents,"query": query,"source_id_priority": source_id_priority,
         })
         return baml_py.BamlSyncStream[stream_types.RAGResponse, types.RAGResponse](
           __result__,
@@ -170,11 +170,11 @@ class BamlHttpRequestClient:
             "resume": resume,
         }, mode="request")
         return __result__
-    def GenerateRAGResponse(self, history: typing.List["types.ChatTurn"],documents: typing.List["types.Document"],query: str,
+    def GenerateRAGResponse(self, history: typing.List["types.ChatTurn"],documents: typing.List["types.Document"],query: str,source_id_priority: typing.List[str],
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="GenerateRAGResponse", args={
-            "history": history,"documents": documents,"query": query,
+            "history": history,"documents": documents,"query": query,"source_id_priority": source_id_priority,
         }, mode="request")
         return __result__
     
@@ -192,11 +192,11 @@ class BamlHttpStreamRequestClient:
             "resume": resume,
         }, mode="stream")
         return __result__
-    def GenerateRAGResponse(self, history: typing.List["types.ChatTurn"],documents: typing.List["types.Document"],query: str,
+    def GenerateRAGResponse(self, history: typing.List["types.ChatTurn"],documents: typing.List["types.Document"],query: str,source_id_priority: typing.List[str],
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="GenerateRAGResponse", args={
-            "history": history,"documents": documents,"query": query,
+            "history": history,"documents": documents,"query": query,"source_id_priority": source_id_priority,
         }, mode="stream")
         return __result__
     

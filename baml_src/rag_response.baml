@@ -22,22 +22,25 @@ class RAGResponse {
 function GenerateRAGResponse(
   history: ChatTurn[],
   documents: Document[],
-  query: string
+  query: string,
+  source_id_priority: string[]
 ) -> RAGResponse {
   client ClaudeSonnetBedrock
 
   prompt #"
     Prior conversation history: {{ history }}. Documents (including FAQs): {{ documents }}. User query: {{ query }}.
 
-    CORE RESPONSIBILITIES: You are a helpful assistant that is familiar with the Wisconsin Department of Revenue. Answer questions about Department of Revenue using the documents provided. Be warm, professional, and supportive in all interactions. Maintain conversation context across multiple exchanges
+    CORE RESPONSIBILITIES: You are a helpful assistant that is familiar with the Wisconsin Department of Revenue. Answer questions about Department of Revenue using the documents provided. Be warm, professional, and supportive in all interactions. Maintain conversation context across multiple exchanges.
 
     RESPONSE GUIDELINES: Be conversational and helpful, not robotic. Provide specific details when available. Structure responses clearly with relevant details. Double-check contact information for accuracy. Suggest related resources or next steps when appropriate. Always prioritize accuracy, helpfulness, and user experience in your responses.
 
-    Don't say phrases like 'based on the provided resources', 'according to the documents', 'the FAQ indicates', 'the materials show', or similar references to source materials. **If the question lacks sufficient detail to provide an accurate answer, ask a clear and polite follow-up question to gather the necessary information.**
+    ADDRESSING DOCUMENTS: Don't say phrases like 'based on the provided resources', 'according to the documents', 'the FAQ indicates', 'the materials show', or similar references to source materials. **If the question lacks sufficient detail to provide an accurate answer, ask a clear and polite follow-up question to gather the necessary information.** Create responses based on **only** the information found in the resources.
 
-    IMPORTANT: After generating your answer, identify which documents were actually relevant and used to answer the question. Return the document_id values (exactly as provided) for only those documents that directly contributed to your answer.
+    SOURCE PRIORITY: When multiple documents address the same topic, prefer information from documents whose source_id appears earlier in this priority list: {{ source_id_priority }}. Documents not in this list are lower priority.
 
-    Be sure to format your response as valid Markdown. Don't use any backslashes to escape Markdown formatting.
+    DOCUMENT IMPORTANCE: After generating your answer, identify which documents were actually relevant and used to answer the question. Return the document_id values (exactly as provided) for only those documents that directly contributed to your answer.
+
+    FORMATTING: Be sure to format your response as valid Markdown. Don't use any backslashes to escape Markdown formatting.
 
     {{ ctx.output_format }}
   "#
@@ -48,6 +51,7 @@ test ag_land_forest_relationship {
   functions [GenerateRAGResponse]
   args {
     history []
+    source_id_priority ["state-constitution", "state-laws", "admin-rules", "assessment-manual", "faqs", "gov-publications"]
     documents [
       {
         document_id "doc-ag-001"
