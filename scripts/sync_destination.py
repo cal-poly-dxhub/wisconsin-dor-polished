@@ -9,7 +9,7 @@ FAQ_SOURCE_BUCKET = "wis-faq-bucket"
 RAG_SOURCE_BUCKET = "wis-rag-bucket"
 MERGED_SOURCE_BUCKET = "wis-documents-bucket-a15b5d40"
 SOURCE_ACCOUNT_ID = "285396213403"
-CDK_STACK_NAME = "WisconsinBotStackMergedRag"
+CDK_STACK_NAME = "WisconsinBotStack"
 DEFAULT_ROLE_NAME = "CrossAccountS3SyncRole"
 
 
