@@ -56,7 +56,7 @@ class Document(BaseModel):
     source_id: typing.Optional[str] = None
 
 class RAGResponse(BaseModel):
-    answer: str = Field(description='The conversational answer to the user\'s question, formatted as Markdown')
+    answer: str = Field(description='The conversational answer to the user\'s question')
     relevant_document_ids: typing.List[str] = Field(description='List of document_id values for documents that were directly relevant and used to answer the question')
 
 class Resume(BaseModel):
