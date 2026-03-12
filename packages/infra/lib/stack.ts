@@ -40,6 +40,7 @@ export class WisconsinBotStack extends cdk.Stack {
       websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
       sessionsTable: sessionsStack.sessionsTable,
       websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
+      // Using metadata-filtered KB (only doc_id and document_type are filterable)
       knowledgeBaseId: knowledgeBaseStack.knowledgeBaseId,
       chatHistoryTable: sessionsStack.chatHistoryTable,
     });

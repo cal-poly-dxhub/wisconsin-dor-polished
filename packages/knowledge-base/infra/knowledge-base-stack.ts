@@ -59,19 +59,33 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
     });
     vectorBucket.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
 
-    const vectorIndex = new s3vectors.CfnIndex(this, 'WisDorVectorIndex', {
+    // A vector index with a complete unfilterable metadata list
+    // Fields are filterable by default. Only doc_id and document_type should be filterable.
+    // All other fields are specified as non-filterable below.
+    const vectorIndexMetadataFiltered = new s3vectors.CfnIndex(this, 'WisDorVectorIndexMetadataFiltered', {
       vectorBucketArn: vectorBucket.attrVectorBucketArn,
-      indexName: cdk.Fn.join('-', ['wis-vector-index', uid]),
+      indexName: cdk.Fn.join('-', ['wis-vector-index-metadata-filtered', uid]),
       dataType: 'float32',
       dimension: 1024,
       distanceMetric: 'cosine',
+      metadataConfiguration: {
+        nonFilterableMetadataKeys: [
+          'AMAZON_BEDROCK_TEXT',
+          'AMAZON_BEDROCK_METADATA',
+          'source',
+          'source_url',
+          'chunk_index',
+          'total_chunks',
+          'source_id',
+        ],
+      },
     });
-    vectorIndex.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+    vectorIndexMetadataFiltered.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
 
     // ===========================================================
-    // IAM service role for the Bedrock knowledge base.
+    // IAM service role for metadata-filtered knowledge base
     // ===========================================================
-    const kbRole = new iam.Role(this, 'KnowledgeBaseRole', {
+    const kbRoleFiltered = new iam.Role(this, 'KnowledgeBaseRoleFiltered', {
       assumedBy: new iam.ServicePrincipal('bedrock.amazonaws.com', {
         conditions: {
           StringEquals: { 'aws:SourceAccount': cdk.Aws.ACCOUNT_ID },
@@ -89,7 +103,7 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
                 's3vectors:DeleteVectors',
                 's3vectors:QueryVectors',
               ],
-              resources: [vectorIndex.attrIndexArn],
+              resources: [vectorIndexMetadataFiltered.attrIndexArn],
             }),
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
@@ -112,11 +126,11 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
     });
 
     // ===========================================================
-    // Bedrock Knowledge Base (L1) backed by S3 Vectors.
+    // Bedrock Knowledge Base with metadata-filtered index
     // ===========================================================
-    const knowledgeBase = new bedrockL1.CfnKnowledgeBase(this, 'WisDorKnowledgeBase', {
-      name: cdk.Fn.join('-', ['wis-kb', uid]),
-      roleArn: kbRole.roleArn,
+    const knowledgeBaseFiltered = new bedrockL1.CfnKnowledgeBase(this, 'WisDorKnowledgeBaseFiltered', {
+      name: cdk.Fn.join('-', ['wis-kb-metadata-filtered', uid]),
+      roleArn: kbRoleFiltered.roleArn,
       knowledgeBaseConfiguration: {
         type: 'VECTOR',
         vectorKnowledgeBaseConfiguration: {
@@ -131,17 +145,17 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
       storageConfiguration: {
         type: 'S3_VECTORS',
         s3VectorsConfiguration: {
-          indexArn: vectorIndex.attrIndexArn,
+          indexArn: vectorIndexMetadataFiltered.attrIndexArn,
         },
       },
     });
 
     // ===========================================================
-    // S3 data source: documents bucket → knowledge base.
+    // S3 data source for metadata-filtered knowledge base
     // ===========================================================
-    const dataSource = new bedrockL1.CfnDataSource(this, 'WisDorDataSource', {
-      knowledgeBaseId: knowledgeBase.attrKnowledgeBaseId,
-      name: cdk.Fn.join('-', ['wis-docs', uid]),
+    const dataSourceFiltered = new bedrockL1.CfnDataSource(this, 'WisDorDataSourceFiltered', {
+      knowledgeBaseId: knowledgeBaseFiltered.attrKnowledgeBaseId,
+      name: cdk.Fn.join('-', ['wis-docs-metadata-filtered', uid]),
       dataSourceConfiguration: {
         type: 'S3',
         s3Configuration: {
@@ -150,9 +164,9 @@ export class KnowledgeBaseStack extends cdk.NestedStack {
       },
     });
 
-    this.knowledgeBaseId = knowledgeBase.attrKnowledgeBaseId;
+    this.knowledgeBaseId = knowledgeBaseFiltered.attrKnowledgeBaseId;
     this.documentsBucketName = documentsBucket.bucketName;
-    this.dataSourceId = dataSource.attrDataSourceId;
+    this.dataSourceId = dataSourceFiltered.attrDataSourceId;
 
     // ===========================================================
     // Outputs
