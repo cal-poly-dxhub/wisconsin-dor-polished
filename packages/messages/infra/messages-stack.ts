@@ -103,6 +103,18 @@ export class MessagesStack extends cdk.NestedStack {
       })
     );
 
+    // Grant AWS Marketplace permissions
+    this.classifierFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'aws-marketplace:ViewSubscriptions',
+          'aws-marketplace:Subscribe',
+        ],
+        resources: ['*'],
+      })
+    );
+
     // Retrieval Lambda (accepts RetrieveJob)
     const retrievalHandler = new lambda.Function(this, 'RetrievalFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
@@ -140,6 +152,18 @@ export class MessagesStack extends cdk.NestedStack {
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['bedrock-agent-runtime:Retrieve', 'bedrock:Retrieve'],
+        resources: ['*'],
+      })
+    );
+
+    // Grant AWS Marketplace permissions
+    retrievalHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'aws-marketplace:ViewSubscriptions',
+          'aws-marketplace:Subscribe',
+        ],
         resources: ['*'],
       })
     );
@@ -200,6 +224,18 @@ export class MessagesStack extends cdk.NestedStack {
         actions: [
           'bedrock:InvokeModel',
           'bedrock:InvokeModelWithResponseStream',
+        ],
+        resources: ['*'],
+      })
+    );
+
+    // Grant AWS Marketplace permissions
+    streamingHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'aws-marketplace:ViewSubscriptions',
+          'aws-marketplace:Subscribe',
         ],
         resources: ['*'],
       })
