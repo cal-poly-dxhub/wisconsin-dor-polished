@@ -1,0 +1,94 @@
+# scripts/graphrag/ingest_config.yaml
+# GraphRAG ingestion pipeline configuration for Wisconsin DOR
+
+# --- Chunking ---
+chunk_size: 2000
+chunk_overlap: 200
+large_doc_threshold: 10000
+max_split_sections: 15
+
+# --- Semantic Thresholds ---
+semantic_similarity_threshold: 0.55
+semantic_batch_size: 15
+
+# --- Concurrency ---
+concurrency:
+  file_extraction: 5
+  chunk_embedding: 10
+  vector_upserts: 20
+  doc_embedding: 10
+  semantic_llm: 5
+
+# --- Document Types -> Graph Node Labels ---
+doc_types:
+  constitution:       Constitution
+  statute:            Statute
+  admin_rule:         AdminRule
+  assessment_manual:  AssessmentManual
+  faq_page:           FAQ
+  guide:              Guide
+  advisory:           Advisory
+  template:           Template
+
+# --- Framework Definitions (ordered by legal precedence) ---
+frameworks:
+  - id: FW-CONSTITUTION
+    title: "Wisconsin State Constitution"
+    authority_level: 1
+
+  - id: FW-STATUTES
+    title: "Wisconsin Statutes"
+    authority_level: 2
+    parent: FW-CONSTITUTION
+
+  - id: FW-ADMIN-RULES
+    title: "Administrative Rules (Tax Chapters)"
+    authority_level: 3
+    parent: FW-STATUTES
+
+  - id: FW-WPAM
+    title: "Wisconsin Property Assessment Manual"
+    authority_level: 4
+    parent: FW-ADMIN-RULES
+
+  - id: FW-FAQ
+    title: "Property Tax Common Questions"
+    authority_level: 5
+    parent: FW-WPAM
+
+  - id: FW-GOV-PUBS
+    title: "Government Publications & Guides"
+    authority_level: 6
+    parent: FW-WPAM
+
+# --- Source-to-Framework Mapping ---
+source_to_framework:
+  "raw/constitution-":           FW-CONSTITUTION
+  "raw/statutes-":               FW-STATUTES
+  "raw/admin_rules-":            FW-ADMIN-RULES
+  "raw/wpam-":                   FW-WPAM
+  "raw/faq_pages-":              FW-FAQ
+  "raw/gov_publications-":       FW-GOV-PUBS
+  "raw/complex_inquiry_pages-":  FW-GOV-PUBS
+
+# --- Statute Section Families ---
+statute_families:
+  - code: "CH-17"
+    title: "Resignations, Vacancies, Removals"
+  - code: "CH-70"
+    title: "General Property Taxes"
+  - code: "CH-73"
+    title: "Revenue - General Provisions"
+  - code: "CH-74"
+    title: "Property Tax Collection"
+  - code: "CH-75"
+    title: "Land Sold for Taxes"
+  - code: "CH-76"
+    title: "Taxation of Certain Utilities"
+  - code: "CH-77"
+    title: "Taxation of Forest Croplands"
+
+# --- AWS ---
+bedrock_embed_model: "amazon.titan-embed-text-v2:0"
+bedrock_llm_model: "us.anthropic.claude-sonnet-4-20250514"
+embed_dimension: 1024
