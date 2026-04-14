@@ -17,12 +17,16 @@ export interface MessagesStackProps extends cdk.StackProps {
   faqKnowledgeBase: bedrock.VectorKnowledgeBase;
   ragKnowledgeBase: bedrock.VectorKnowledgeBase;
   chatHistoryTable: dynamodb.Table;
+  /** When true, disable this stack's EventBridge rule (traffic goes to GraphRAG instead). */
+  useGraphRAG?: boolean;
 }
 
 export class MessagesStack extends cdk.NestedStack {
   public readonly classifierFunction: lambda.Function;
   public readonly classifierStateMachine: sfn.StateMachine;
   public readonly modelConfigTable: dynamodb.Table;
+  public readonly responseStreamingFunction: lambda.Function;
+  public readonly resourceStreamingFunction: lambda.Function;
 
   constructor(scope: Construct, id: string, props: MessagesStackProps) {
     super(scope, id, props);
@@ -229,6 +233,10 @@ export class MessagesStack extends cdk.NestedStack {
         resources: ['*'],
       })
     );
+
+    // Expose streaming Lambdas for GraphRAG stack to reuse
+    this.responseStreamingFunction = streamingHandler;
+    this.resourceStreamingFunction = resourceStreamingHandler;
 
     // Step Function Tasks
     const classifierTask = new tasks.LambdaInvoke(this, 'ClassifierTask', {
@@ -471,6 +479,7 @@ export class MessagesStack extends cdk.NestedStack {
           source: ['wisconsin-dor.chat-api'],
           detailType: ['ChatMessageReceived'],
         },
+        enabled: props.useGraphRAG !== true,
       }
     );
 

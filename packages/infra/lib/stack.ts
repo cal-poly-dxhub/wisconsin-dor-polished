@@ -4,6 +4,8 @@ import { SessionsStack } from '../../sessions/infra/sessions-stack';
 import { MessagesStack } from '../../messages/infra/messages-stack';
 import { LambdaLayersStack } from '../../shared/lambda_layers/infra/lambda-layers-stack';
 import { KnowledgeBaseStack } from '../../knowledge-base/infra/knowledge-base-stack';
+import { GraphRAGStack } from '../../graphrag/infra/graphrag-stack';
+import { GraphRAGMessagesStack } from '../../graphrag/infra/graphrag-messages-stack';
 import { CloudWatchIam } from '../../cloudwatch-iam/infra/cloudwatch-iam';
 import { WebAppStack } from '../../webapp/infra/webapp-stack';
 
@@ -33,6 +35,9 @@ export class WisconsinBotStack extends cdk.Stack {
       }
     );
 
+    // GraphRAG feature flag: mutually exclusive EventBridge rules
+    const USE_GRAPHRAG = this.node.tryGetContext('useGraphRAG') === 'true';
+
     const messagesStack = new MessagesStack(this, 'WisconsinMessagesStack', {
       description:
         'Stack providing messaging services (classifier and workflows).',
@@ -43,7 +48,32 @@ export class WisconsinBotStack extends cdk.Stack {
       faqKnowledgeBase: knowledgeBaseStack.faqKnowledgeBase,
       ragKnowledgeBase: knowledgeBaseStack.ragKnowledgeBase,
       chatHistoryTable: sessionsStack.chatHistoryTable,
+      useGraphRAG: USE_GRAPHRAG,
     });
+
+    // GraphRAG Backend (NEW, deployed alongside existing)
+    const graphRAGStack = new GraphRAGStack(this, 'WisconsinGraphRAGStack', {
+      description:
+        'Stack providing GraphRAG services (Neptune Analytics + S3).',
+    });
+
+    const graphRAGMessagesStack = new GraphRAGMessagesStack(
+      this,
+      'WisconsinGraphRAGMessagesStack',
+      {
+        description:
+          'GraphRAG messaging services (agentic retrieval + state machine).',
+        stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
+        websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
+        sessionsTable: sessionsStack.sessionsTable,
+        websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
+        neptuneGraphId: graphRAGStack.neptuneGraphId,
+        neptuneGraphEndpoint: graphRAGStack.neptuneGraphEndpoint,
+        responseStreamingFunction: messagesStack.responseStreamingFunction,
+        resourceStreamingFunction: messagesStack.resourceStreamingFunction,
+        enabled: USE_GRAPHRAG,
+      }
+    );
 
     const cloudWatchIam = new CloudWatchIam(this, 'WisconsinCloudWatchIam', {
       resetCloudWatchIamRole: RESET_ClOUDWATCH_IAM_ROLE,
@@ -112,6 +142,31 @@ export class WisconsinBotStack extends cdk.Stack {
       value: messagesStack.modelConfigTable.tableName,
       description: 'Name of the Model Configuration DynamoDB table',
       exportName: 'WisconsinBot-ModelConfigTableName',
+    });
+
+    // GraphRAG outputs
+    new cdk.CfnOutput(this, 'GraphRAGRawBucketName', {
+      value: graphRAGStack.rawBucketName,
+      description: 'S3 bucket for GraphRAG raw documents',
+      exportName: 'WisconsinBot-GraphRAGRawBucketName',
+    });
+
+    new cdk.CfnOutput(this, 'GraphRAGWorkBucketName', {
+      value: graphRAGStack.workBucketName,
+      description: 'S3 bucket for GraphRAG work data',
+      exportName: 'WisconsinBot-GraphRAGWorkBucketName',
+    });
+
+    new cdk.CfnOutput(this, 'GraphRAGNeptuneGraphId', {
+      value: graphRAGStack.neptuneGraphId,
+      description: 'Neptune Analytics Graph ID',
+      exportName: 'WisconsinBot-NeptuneGraphId',
+    });
+
+    new cdk.CfnOutput(this, 'GraphRAGStateMachineArn', {
+      value: graphRAGMessagesStack.graphragStateMachine.stateMachineArn,
+      description: 'ARN of the GraphRAG Step Functions state machine',
+      exportName: 'WisconsinBot-GraphRAGStateMachineArn',
     });
   }
 }
