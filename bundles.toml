@@ -66,3 +66,7 @@ sources = ["./packages/messages/lambdas/resource_streaming"]
 dest = "streaming"
 sources = ["./packages/messages/lambdas/streaming"]
 
+[[bundles]]
+dest = "agentic_retrieval"
+sources = ["./packages/graphrag/lambdas/agentic_retrieval"]
+
