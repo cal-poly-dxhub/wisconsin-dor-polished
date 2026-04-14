@@ -8,6 +8,10 @@ import sys
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+pydantic = pytest.importorskip("pydantic", reason="pydantic required for agentic retrieval tests")
+
 # Mock Lambda layer dependencies before importing main
 sys.modules["step_function_types"] = MagicMock()
 sys.modules["step_function_types.errors"] = MagicMock()
@@ -19,7 +23,6 @@ sys.modules["websocket_utils.utils"] = MagicMock()
 # Set up realistic mock models
 from unittest.mock import PropertyMock
 from types import SimpleNamespace
-import pydantic
 
 
 class MockUserQuery(pydantic.BaseModel):
