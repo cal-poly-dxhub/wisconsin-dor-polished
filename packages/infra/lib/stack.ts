@@ -170,5 +170,23 @@ export class WisconsinBotStack extends cdk.Stack {
       description: 'ARN of the GraphRAG Step Functions state machine',
       exportName: 'WisconsinBot-GraphRAGStateMachineArn',
     });
+
+    new cdk.CfnOutput(this, 'GraphRAGFaqKnowledgeBaseId', {
+      value: graphRAGStack.faqKnowledgeBaseId,
+      description: 'FAQ Bedrock Knowledge Base ID (GraphRAG)',
+      exportName: 'WisconsinBot-GraphRAGFaqKnowledgeBaseId',
+    });
+
+    new cdk.CfnOutput(this, 'GraphRAGFaqBucketName', {
+      value: graphRAGStack.faqBucketName,
+      description: 'S3 bucket for FAQ documents (GraphRAG)',
+      exportName: 'WisconsinBot-GraphRAGFaqBucketName',
+    });
+
+    new cdk.CfnOutput(this, 'GraphRAGFaqDataSourceId', {
+      value: graphRAGStack.faqDataSourceId,
+      description: 'FAQ Bedrock KB Data Source ID (GraphRAG)',
+      exportName: 'WisconsinBot-GraphRAGFaqDataSourceId',
+    });
   }
 }
