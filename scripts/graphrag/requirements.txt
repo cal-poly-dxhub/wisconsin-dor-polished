@@ -1,6 +1,13 @@
 boto3>=1.35.0
+botocore>=1.35.0
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 pydantic>=2.0.0
 pyyaml>=6.0.0
+certifi
+# PDF processing (used by pdf_chunking/)
 PyMuPDF
+amazon-textract-textractor
+pdfplumber
+pdf2image
+Pillow

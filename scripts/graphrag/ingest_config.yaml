@@ -111,5 +111,5 @@ statute_families:
 
 # --- AWS ---
 bedrock_embed_model: "amazon.titan-embed-text-v2:0"
-bedrock_llm_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+bedrock_llm_model: "us.anthropic.claude-sonnet-4-6"
 embed_dimension: 1024

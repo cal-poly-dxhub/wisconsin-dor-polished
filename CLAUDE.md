@@ -41,10 +41,31 @@ cd packages/webapp
 bun dev                        # local dev server (Next.js + Turbopack)
 ```
 
-### GraphRAG Scripts
+### GraphRAG Ingestion Pipeline
 ```bash
-uv run scripts/graphrag/embed.py       # embed documents for Neptune
-uv run scripts/graphrag/load.py        # load graph into Neptune
+# Requires venv with deps: uv venv .venv && uv pip install -r scripts/graphrag/requirements.txt
+# Always set SSL certs (Python 3.14 on macOS needs this):
+export CERT=$(.venv/bin/python3 -c "import certifi; print(certifi.where())")
+
+# Phase 1: Upload local docs to S3
+AWS_REGION=us-east-1 AWS_PROFILE=wisco .venv/bin/python3 scripts/graphrag/upload_local_docs.py \
+  --bucket wis-raw-bucket-c8e69250 --profile wisco --region us-east-1
+
+# Phase 2: Extract + classify (PyMuPDF first, Textract fallback, LLM classification)
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=wisco .venv/bin/python3 scripts/graphrag/extract.py \
+  --raw-bucket wis-raw-bucket-c8e69250 --work-bucket wis-work-bucket-c8e69250 \
+  --config scripts/graphrag/ingest_config.yaml --max-workers 3
+
+# Phase 3: Embed chunks with Titan Embed v2
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=wisco .venv/bin/python3 scripts/graphrag/embed.py \
+  --work-bucket wis-work-bucket-c8e69250 --config scripts/graphrag/ingest_config.yaml
+
+# Phase 4: Load into Neptune graph (11 sub-phases)
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=wisco .venv/bin/python3 scripts/graphrag/load.py \
+  --work-bucket wis-work-bucket-c8e69250 --graph-id g-ndvl4j73v4 \
+  --config scripts/graphrag/ingest_config.yaml
+
+# FAQ sync
 ./scripts/graphrag/sync_faq_bucket.sh  # sync FAQ files + trigger KB ingestion
 ```
 
@@ -82,6 +103,29 @@ Both paths share the same ResponseStreaming and ResourceStreaming Lambdas from `
 
 Responses stream to the frontend via API Gateway WebSocket. The `websocket_utils` layer provides connection management. Lambdas need `WEBSOCKET_CALLBACK_URL` and `SESSIONS_TABLE_NAME` env vars.
 
+### GraphRAG Data Model
+
+Neptune Analytics graph (`g-ndvl4j73v4` in us-east-1) with 1024-dim vectors and IAM auth.
+
+**Node types:** Framework → Document → Chunk (with vector embeddings), Topic nodes for semantic grouping.
+
+**Authority hierarchy (9 levels, by legal precedence):**
+Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM (5) → FAQs (6) → Gov Pubs (7) → IAAO (8) → USPAP (9)
+
+**Edge types:** CITES, IMPLEMENTS, SUPERSEDES, PART_OF (statute hierarchy), HAS_CHUNK, TAGGED_WITH
+
+**S3 bucket structure:** `raw/{category}-{clean-name}/{category}-{clean-name}.pdf` + `.metadata.json`
+
+**Ingestion config:** `scripts/graphrag/ingest_config.yaml` — defines frameworks, doc types, chunking params, source-to-framework mappings.
+
+### PDF Processing Pipeline (`pdf_chunking/`)
+
+PyMuPDF-first extraction with Textract fallback. `pdfChunker.py` routes by source type (`CHUNKER_BY_SOURCE` dict) to strategy-specific chunking (statute, wpam, general). Each chunk gets `start_page`/`end_page` metadata for citation linking. Quality gate in `pymupdf_extractor.py` (`extraction_looks_good()`) triggers Textract fallback.
+
+### Citation Support
+
+Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeline. At query time, `agentic_retrieval/main.py` generates presigned S3 URLs with `#page=N` fragments so users get direct links to specific PDF pages. Case law is metadata stubs with Google Scholar links (no full opinion text).
+
 ## Key Conventions
 
 - **Python Lambdas use Pydantic v2** for input validation and serialization. Models use `BaseModel` with `model_validate()` / `model_dump()`.
@@ -89,6 +133,9 @@ Responses stream to the frontend via API Gateway WebSocket. The `websocket_utils
 - **Lambda bundling** — Python deps are installed during CDK synth via Docker bundling (pip install in bundling image). Each Lambda has its own `requirements.txt`.
 - **CDK context flags** — `useGraphRAG`, `stackName`, `domainName`, `hostedZoneName`, `hostedZoneId` are passed via `-c` flag.
 - **Embedding model** — Titan Embed Text V2 (1024 dimensions) used throughout for both Bedrock KBs and Neptune vector search.
+- **Bedrock model IDs** — Inference profiles require the full format: `us.anthropic.claude-sonnet-4-6` (not bare model IDs or old `-v1:0` suffix forms). Check `aws bedrock list-inference-profiles` for valid IDs.
+- **Region in scripts** — `scripts/graphrag/*.py` use `os.environ.get("AWS_REGION", "us-east-1")` for boto3 clients. Always set `AWS_REGION` explicitly when running locally.
+- **SSL certs on macOS** — Set `AWS_CA_BUNDLE` to the certifi cert path when running ingestion scripts. Without this, Python 3.13+/3.14 may fail with `SSLError: [Errno 2] No such file or directory` after ~200 S3 calls.
 
 ## Deployment
 

@@ -10,6 +10,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 s3 = boto3.client("s3")
-bedrock = boto3.client("bedrock-runtime", region_name="us-west-2")
+bedrock = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
 
 def load_config(config_path: str) -> dict:

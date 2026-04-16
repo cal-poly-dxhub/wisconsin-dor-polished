@@ -44,15 +44,19 @@ class NeptuneClient:
         return []
 
     def vector_search(self, embedding: list[float], top_k: int = 10) -> list[dict]:
-        """Search for similar chunks using Neptune's vector index."""
+        """Search for similar chunks using Neptune's vector index.
+
+        Neptune Analytics does not support parameterization inside CALL
+        procedures, so the embedding and topK are inlined into the query.
+        """
+        embedding_literal = "[" + ",".join(str(v) for v in embedding) + "]"
         results = self.query(
-            "CALL neptune.algo.vectors.topKByEmbedding($embedding, {topK: $topK}) "
+            f"CALL neptune.algo.vectors.topKByEmbedding({embedding_literal}, {{topK: {top_k}}}) "
             "YIELD node, score "
             "RETURN node.id AS chunk_id, node.text AS text, node.doc_id AS doc_id, "
             "node.source_url AS source_url, node.s3_key AS s3_key, "
             "node.start_page AS start_page, node.end_page AS end_page, "
             "node.heading AS heading, node.subheading AS subheading, score",
-            {"embedding": embedding, "topK": top_k},
         )
         return results
 
@@ -98,12 +102,12 @@ class NeptuneClient:
     def get_authority_chain(self, node_id: str, max_depth: int = 5) -> list[dict]:
         """Trace the governance hierarchy from a node up to the root framework."""
         results = self.query(
-            "MATCH p=(d {id: $id})-[:PART_OF|BELONGS_TO|DERIVED_FROM*1..$depth]->(root) "
+            f"MATCH p=(d {{id: $id}})-[:PART_OF|BELONGS_TO|DERIVED_FROM*1..{max_depth}]->(root) "
             "WHERE NOT (root)-[:PART_OF|BELONGS_TO|DERIVED_FROM]->() "
             "UNWIND nodes(p) AS node "
             "RETURN DISTINCT node.id AS id, node.title AS title, "
             "node.authority_level AS authority_level, labels(node) AS labels",
-            {"id": node_id, "depth": max_depth},
+            {"id": node_id},
         )
         return results
 
