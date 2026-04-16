@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 class NeptuneClient:
     """Client for Neptune Analytics OpenCypher + vector search."""
 
-    def __init__(self, graph_id: str | None = None, region: str = "us-west-2"):
+    def __init__(self, graph_id: str | None = None, region: str | None = None):
         self.graph_id = graph_id or os.environ.get("NEPTUNE_GRAPH_ID", "")
-        self.client = boto3.client("neptune-graph", region_name=region)
+        self.client = boto3.client("neptune-graph", region_name=region or os.environ.get("AWS_REGION", "us-east-1"))
 
     def query(self, cypher: str, parameters: dict | None = None, max_retries: int = 3) -> list[dict]:
         """Execute an OpenCypher query with retries."""

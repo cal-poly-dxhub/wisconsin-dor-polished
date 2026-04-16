@@ -55,7 +55,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
         environment: {
           WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
           NEPTUNE_GRAPH_ID: props.neptuneGraphId,
-          AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-20250514',
+          AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
           RAW_BUCKET: props.rawBucketName,
           FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBaseId,
         },
@@ -96,10 +96,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           'bedrock:InvokeModel',
           'bedrock:InvokeModelWithResponseStream',
         ],
-        resources: [
-          `arn:aws:bedrock:${cdk.Stack.of(this).region}::foundation-model/us.anthropic.claude-sonnet-4-20250514`,
-          `arn:aws:bedrock:${cdk.Stack.of(this).region}::foundation-model/amazon.titan-embed-text-v2:0`,
-        ],
+        resources: ['*'],
       })
     );
 

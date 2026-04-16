@@ -13,8 +13,9 @@ from neptune_client import NeptuneClient
 
 logger = logging.getLogger(__name__)
 
-bedrock = boto3.client("bedrock-runtime", region_name="us-west-2")
-bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name="us-east-1")
+REGION = os.environ.get("AWS_REGION", "us-east-1")
+bedrock = boto3.client("bedrock-runtime", region_name=REGION)
+bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=REGION)
 
 FAQ_KNOWLEDGE_BASE_ID = os.environ.get("FAQ_KNOWLEDGE_BASE_ID", "")
 

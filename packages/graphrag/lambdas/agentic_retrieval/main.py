@@ -36,8 +36,9 @@ MAX_TURNS = 10
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
 
-bedrock = boto3.client("bedrock-runtime", region_name="us-west-2")
-s3_client = boto3.client("s3", region_name="us-west-2")
+REGION = os.environ.get("AWS_REGION", "us-east-1")
+bedrock = boto3.client("bedrock-runtime", region_name=REGION)
+s3_client = boto3.client("s3", region_name=REGION)
 neptune = NeptuneClient()
 
 RAW_BUCKET = os.environ.get("RAW_BUCKET", "")
@@ -69,7 +70,7 @@ NEVER:
 
 When you have enough information, call the 'answer' tool with your complete response in Markdown format."""
 
-AGENTIC_MODEL_ID = os.environ.get("AGENTIC_MODEL_ID", "us.anthropic.claude-sonnet-4-20250514")
+AGENTIC_MODEL_ID = os.environ.get("AGENTIC_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 
 
 def process_event(event: dict) -> UserQuery:
