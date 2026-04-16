@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as neptune from 'aws-cdk-lib/aws-neptunegraph';
+import { bedrock } from '@cdklabs/generative-ai-cdk-constructs';
 import { Construct } from 'constructs';
 
 export class GraphRAGStack extends cdk.NestedStack {
@@ -8,6 +9,9 @@ export class GraphRAGStack extends cdk.NestedStack {
   public readonly workBucketName: string;
   public readonly neptuneGraphId: string;
   public readonly neptuneGraphEndpoint: string;
+  public readonly faqKnowledgeBaseId: string;
+  public readonly faqBucketName: string;
+  public readonly faqDataSourceId: string;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -29,6 +33,26 @@ export class GraphRAGStack extends cdk.NestedStack {
       autoDeleteObjects: true,
     });
 
+    const faqBucket = new s3.Bucket(this, 'WisDorFaqGraphRAG', {
+      bucketName: cdk.Fn.join('-', ['wis-faq-bucket-graphrag', uid]),
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
+    });
+
+    const faqKb = new bedrock.VectorKnowledgeBase(this, 'WisDorFaqKbGraphRAG', {
+      name: 'wis-faq-graphrag',
+      embeddingsModel: bedrock.BedrockFoundationModel.TITAN_EMBED_TEXT_V2_1024,
+      instruction:
+        'Use this knowledge base to answer frequently asked questions about Wisconsin DOR property assessment and taxation.',
+    });
+
+    const faqDataSource = new bedrock.S3DataSource(this, 'WisDorFaqDataSourceGraphRAG', {
+      bucket: faqBucket,
+      knowledgeBase: faqKb,
+      dataSourceName: 'faq-docs-graphrag',
+      chunkingStrategy: bedrock.ChunkingStrategy.NONE,
+    });
+
     // publicConnectivity: true so Lambdas can reach it via IAM auth
     // without VPC configuration (no existing VPC in this project)
     const graph = new neptune.CfnGraph(this, 'WisDorGraph', {
@@ -46,6 +70,9 @@ export class GraphRAGStack extends cdk.NestedStack {
     this.workBucketName = workBucket.bucketName;
     this.neptuneGraphId = graph.attrGraphId;
     this.neptuneGraphEndpoint = graph.attrEndpoint;
+    this.faqKnowledgeBaseId = faqKb.knowledgeBaseId;
+    this.faqBucketName = faqBucket.bucketName;
+    this.faqDataSourceId = faqDataSource.dataSourceId;
 
     new cdk.CfnOutput(this, 'RawBucketName', {
       value: rawBucket.bucketName,
@@ -62,6 +89,18 @@ export class GraphRAGStack extends cdk.NestedStack {
     new cdk.CfnOutput(this, 'NeptuneGraphEndpoint', {
       value: graph.attrEndpoint,
       description: 'Neptune Analytics Graph Endpoint',
+    });
+    new cdk.CfnOutput(this, 'FaqKnowledgeBaseId', {
+      value: faqKb.knowledgeBaseId,
+      description: 'FAQ Bedrock Knowledge Base ID (GraphRAG)',
+    });
+    new cdk.CfnOutput(this, 'FaqBucketNameGraphRAG', {
+      value: faqBucket.bucketName,
+      description: 'S3 bucket for FAQ documents (GraphRAG)',
+    });
+    new cdk.CfnOutput(this, 'FaqDataSourceId', {
+      value: faqDataSource.dataSourceId,
+      description: 'FAQ Bedrock KB Data Source ID (GraphRAG)',
     });
   }
 }

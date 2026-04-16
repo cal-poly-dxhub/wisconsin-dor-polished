@@ -38,6 +38,7 @@
       "name": "@wisconsin-bot/graphrag",
       "version": "1.0.0",
       "dependencies": {
+        "@cdklabs/generative-ai-cdk-constructs": "^0.1.312",
         "aws-cdk-lib": "^2.233.0",
         "constructs": "^10.0.0",
       },
