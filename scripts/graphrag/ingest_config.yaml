@@ -23,12 +23,15 @@ concurrency:
 doc_types:
   constitution:       Constitution
   statute:            Statute
+  case_law:           CaseLaw
   admin_rule:         AdminRule
   assessment_manual:  AssessmentManual
   faq_page:           FAQ
   guide:              Guide
   advisory:           Advisory
   template:           Template
+  iaao_standard:      IAOStandard
+  uspap_standard:     USPAPStandard
 
 # --- Framework Definitions (ordered by legal precedence) ---
 frameworks:
@@ -41,35 +44,53 @@ frameworks:
     authority_level: 2
     parent: FW-CONSTITUTION
 
+  - id: FW-CASE-LAW
+    title: "Wisconsin Case Law"
+    authority_level: 3
+    parent: FW-STATUTES
+
   - id: FW-ADMIN-RULES
     title: "Administrative Rules (Tax Chapters)"
-    authority_level: 3
+    authority_level: 4
     parent: FW-STATUTES
 
   - id: FW-WPAM
     title: "Wisconsin Property Assessment Manual"
-    authority_level: 4
+    authority_level: 5
     parent: FW-ADMIN-RULES
 
   - id: FW-FAQ
     title: "Property Tax Common Questions"
-    authority_level: 5
+    authority_level: 6
     parent: FW-WPAM
 
   - id: FW-GOV-PUBS
     title: "Government Publications & Guides"
-    authority_level: 6
+    authority_level: 7
     parent: FW-WPAM
+
+  - id: FW-IAAO
+    title: "IAAO Standards"
+    authority_level: 8
+    parent: FW-GOV-PUBS
+
+  - id: FW-USPAP
+    title: "USPAP Standards"
+    authority_level: 9
+    parent: FW-GOV-PUBS
 
 # --- Source-to-Framework Mapping ---
 source_to_framework:
   "raw/constitution-":           FW-CONSTITUTION
   "raw/statutes-":               FW-STATUTES
+  "raw/case-law-":               FW-CASE-LAW
   "raw/admin_rules-":            FW-ADMIN-RULES
   "raw/wpam-":                   FW-WPAM
   "raw/faq_pages-":              FW-FAQ
   "raw/gov_publications-":       FW-GOV-PUBS
   "raw/complex_inquiry_pages-":  FW-GOV-PUBS
+  "raw/iaao-":                   FW-IAAO
+  "raw/uspap-":                  FW-USPAP
 
 # --- Statute Section Families ---
 statute_families:
@@ -90,5 +111,5 @@ statute_families:
 
 # --- AWS ---
 bedrock_embed_model: "amazon.titan-embed-text-v2:0"
-bedrock_llm_model: "us.anthropic.claude-sonnet-4-20250514"
+bedrock_llm_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
 embed_dimension: 1024
