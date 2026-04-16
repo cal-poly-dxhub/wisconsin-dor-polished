@@ -7,7 +7,7 @@ set -euo pipefail
 # Usage: ./scripts/graphrag/sync_faq_bucket.sh [--profile PROFILE] [--stack-name STACK_NAME]
 
 PROFILE="${AWS_PROFILE:-wisco}"
-STACK_NAME="WisconsinBotStack"
+STACK_NAME="WisconsinBotGraphRAG"
 SOURCE_BUCKET="wis-faq-bucket"
 SOURCE_REGION="us-west-2"
 TARGET_REGION="us-east-1"
@@ -31,10 +31,9 @@ get_output() {
     --output text
 }
 
-# The nested stack outputs are flattened with prefixed keys in the root stack
-TARGET_BUCKET=$(get_output "WisconsinGraphRAGStackFaqBucketNameGraphRAG")
-FAQ_KB_ID=$(get_output "WisconsinGraphRAGStackFaqKnowledgeBaseId")
-FAQ_DS_ID=$(get_output "WisconsinGraphRAGStackFaqDataSourceId")
+TARGET_BUCKET=$(get_output "GraphRAGFaqBucketName")
+FAQ_KB_ID=$(get_output "GraphRAGFaqKnowledgeBaseId")
+FAQ_DS_ID=$(get_output "GraphRAGFaqDataSourceId")
 
 if [[ -z "$TARGET_BUCKET" || -z "$FAQ_KB_ID" || -z "$FAQ_DS_ID" ]]; then
   echo "ERROR: Could not find required stack outputs. Ensure the stack is deployed with FAQ resources."
