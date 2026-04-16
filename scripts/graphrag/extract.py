@@ -75,6 +75,35 @@ def classify_document(text: str, model_id: str) -> dict:
     return json.loads(result_text)
 
 
+STATUTE_REF_PATTERN = re.compile(
+    r"(?:s+s?\.\s*|Wis\.?\s*Stat\.?\s*(?:[Ss]ec\.?\s*)?)"
+    r"(\d+\.\d+[A-Za-z\-]*(?:\s*\(\d+[a-z]?\))*)",
+)
+ADMIN_REF_PATTERN = re.compile(r"(Tax\s+\d+\.\d+[^ ,;\n]*)")
+BARE_SECTION_PATTERN = re.compile(r"(?<!\d)(\d{2,3}\.\d{2,4}[A-Za-z\-]*)(?!\d)")
+
+
+def extract_chunk_citations(text: str) -> dict:
+    """Extract statute and admin-rule references from a chunk's text via regex."""
+    statute_refs = set()
+    for m in STATUTE_REF_PATTERN.finditer(text):
+        statute_refs.add(m.group(1).strip())
+    for m in BARE_SECTION_PATTERN.finditer(text):
+        ref = m.group(1)
+        chapter = ref.split(".")[0]
+        if chapter.isdigit() and 17 <= int(chapter) <= 77:
+            statute_refs.add(ref)
+
+    admin_refs = set()
+    for m in ADMIN_REF_PATTERN.finditer(text):
+        admin_refs.add(m.group(1).strip())
+
+    return {
+        "statute_refs": sorted(statute_refs),
+        "admin_rule_refs": sorted(admin_refs),
+    }
+
+
 def extract_text_from_s3(bucket: str, key: str) -> str:
     """Read text content from S3."""
     obj = s3.get_object(Bucket=bucket, Key=key)
@@ -148,6 +177,11 @@ def process_document(doc: dict, raw_bucket: str, work_bucket: str, config: dict)
                         "end_page": None,
                     },
                 })
+
+        for chunk in chunks:
+            citations = extract_chunk_citations(chunk["text"])
+            chunk["metadata"]["statute_refs"] = citations["statute_refs"]
+            chunk["metadata"]["admin_rule_refs"] = citations["admin_rule_refs"]
 
         llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-20250514")
         classification = classify_document(full_text, llm_model)
