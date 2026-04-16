@@ -73,6 +73,7 @@ export class WisconsinBotStack extends cdk.Stack {
         responseStreamingFunction: messagesStack.responseStreamingFunction,
         resourceStreamingFunction: messagesStack.resourceStreamingFunction,
         enabled: USE_GRAPHRAG,
+        faqKnowledgeBaseId: graphRAGStack.faqKnowledgeBaseId,
       }
     );
 

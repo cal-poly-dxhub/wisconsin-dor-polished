@@ -18,6 +18,7 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   responseStreamingFunction: lambda.IFunction;
   resourceStreamingFunction: lambda.IFunction;
   enabled: boolean;
+  faqKnowledgeBaseId: string;
 }
 
 export class GraphRAGMessagesStack extends cdk.NestedStack {
@@ -56,6 +57,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           NEPTUNE_GRAPH_ID: props.neptuneGraphId,
           AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-20250514',
           RAW_BUCKET: props.rawBucketName,
+          FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBaseId,
         },
       }
     );
@@ -97,6 +99,17 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
         resources: [
           `arn:aws:bedrock:${cdk.Stack.of(this).region}::foundation-model/us.anthropic.claude-sonnet-4-20250514`,
           `arn:aws:bedrock:${cdk.Stack.of(this).region}::foundation-model/amazon.titan-embed-text-v2:0`,
+        ],
+      })
+    );
+
+    // Bedrock KB Retrieve permissions for FAQ search
+    agenticRetrievalHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['bedrock:Retrieve'],
+        resources: [
+          `arn:aws:bedrock:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:knowledge-base/*`,
         ],
       })
     );
