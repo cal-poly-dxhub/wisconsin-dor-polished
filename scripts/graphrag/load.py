@@ -334,20 +334,28 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
     total_chunks = 0
     for doc in documents:
         doc_id = doc["doc_id"]
+        s3_key = doc.get("s3_key", "")
         for i, chunk in enumerate(doc.get("chunks", [])):
             chunk_id = f"{doc_id}_chunk_{i:04d}"
-            preview = chunk["text"][:200]
+            meta = chunk.get("metadata", {})
+            start_page = meta.get("start_page")
+            end_page = meta.get("end_page")
 
             execute_query(client, graph_id,
                 "MERGE (c:Chunk {id: $id}) "
-                "SET c.text = $preview, c.doc_id = $doc_id, "
-                "c.source_url = $source_url, c.chunk_index = $idx",
+                "SET c.text = $text, c.doc_id = $doc_id, "
+                "c.source_url = $source_url, c.chunk_index = $idx, "
+                "c.s3_key = $s3_key, c.start_page = $start_page, "
+                "c.end_page = $end_page",
                 {
                     "id": chunk_id,
-                    "preview": preview,
+                    "text": chunk["text"],
                     "doc_id": doc_id,
-                    "source_url": chunk.get("metadata", {}).get("source_url", ""),
+                    "source_url": meta.get("source_url", ""),
                     "idx": i,
+                    "s3_key": meta.get("source", s3_key),
+                    "start_page": start_page,
+                    "end_page": end_page,
                 },
             )
 

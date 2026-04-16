@@ -14,6 +14,7 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   websocketCallbackUrl: string;
   neptuneGraphId: string;
   neptuneGraphEndpoint: string;
+  rawBucketName: string;
   responseStreamingFunction: lambda.IFunction;
   resourceStreamingFunction: lambda.IFunction;
   enabled: boolean;
@@ -54,6 +55,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
           NEPTUNE_GRAPH_ID: props.neptuneGraphId,
           AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-20250514',
+          RAW_BUCKET: props.rawBucketName,
         },
       }
     );
@@ -69,6 +71,17 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
         ],
         resources: [
           `arn:aws:neptune-graph:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:graph/${props.neptuneGraphId}`,
+        ],
+      })
+    );
+
+    // S3 read permissions for presigned URL generation on raw documents
+    agenticRetrievalHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['s3:GetObject'],
+        resources: [
+          `arn:aws:s3:::${props.rawBucketName}/*`,
         ],
       })
     );

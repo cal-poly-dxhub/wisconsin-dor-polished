@@ -705,7 +705,8 @@ def process_pdf_from_s3(
         # Add text chunks
         for out_idx, (raw_idx,chunk) in enumerate(cleaned_text_chunks):
             start_page = raw_chunks[raw_idx]["metadata"].get("start_page", 1)
-                
+            end_page = raw_chunks[raw_idx]["metadata"].get("end_page", start_page)
+
             all_chunks.append({
                 "chunk_id": f"{doc_id}_final_{out_idx}",
                 "text": chunk,
@@ -715,7 +716,9 @@ def process_pdf_from_s3(
                     "source_url": f"{document_url}#page={start_page}" if start_page else document_url,
                     "chunk_index": out_idx,
                     "total_chunks": total_chunks,
-                    "source_id": source_id
+                    "source_id": source_id,
+                    "start_page": start_page,
+                    "end_page": end_page,
                 },
             })
 

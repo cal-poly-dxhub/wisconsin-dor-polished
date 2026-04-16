@@ -49,7 +49,8 @@ class NeptuneClient:
             "CALL neptune.algo.vectors.topKByEmbedding($embedding, {topK: $topK}) "
             "YIELD node, score "
             "RETURN node.id AS chunk_id, node.text AS text, node.doc_id AS doc_id, "
-            "node.source_url AS source_url, score",
+            "node.source_url AS source_url, node.s3_key AS s3_key, "
+            "node.start_page AS start_page, node.end_page AS end_page, score",
             {"embedding": embedding, "topK": top_k},
         )
         return results
@@ -59,7 +60,8 @@ class NeptuneClient:
         results = self.query(
             "MATCH (d {id: $id}) "
             "RETURN d.id AS id, d.title AS title, d.summary AS summary, "
-            "d.source_url AS source_url, d.doc_type AS doc_type, "
+            "d.source_url AS source_url, d.source_key AS s3_key, "
+            "d.doc_type AS doc_type, "
             "d.authority_level AS authority_level, labels(d) AS labels",
             {"id": doc_id},
         )

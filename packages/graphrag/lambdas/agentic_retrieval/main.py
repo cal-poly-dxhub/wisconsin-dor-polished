@@ -37,7 +37,11 @@ logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
 
 bedrock = boto3.client("bedrock-runtime", region_name="us-west-2")
+s3_client = boto3.client("s3", region_name="us-west-2")
 neptune = NeptuneClient()
+
+RAW_BUCKET = os.environ.get("RAW_BUCKET", "")
+PRESIGNED_URL_EXPIRY = int(os.environ.get("PRESIGNED_URL_EXPIRY", "3600"))
 
 SYSTEM_PROMPT = """You are a Wisconsin Department of Revenue property tax assistant. Answer questions about property assessment, taxation, statutes, administrative rules, and procedures using the provided tools.
 
@@ -149,6 +153,35 @@ def run_agentic_loop(query: str) -> tuple[str, list[str], list[RAGDocument]]:
     return answer, list(all_doc_ids), rag_docs
 
 
+def _generate_source_url(chunk: dict, doc_info: dict | None) -> str:
+    """Generate the best available source URL for a chunk.
+
+    For PDFs in S3: presigned URL with #page=N fragment.
+    For web pages: original source_url (gov website link).
+    """
+    s3_key = chunk.get("s3_key") or (doc_info or {}).get("s3_key") or ""
+    start_page = chunk.get("start_page")
+
+    if RAW_BUCKET and s3_key and s3_key.endswith(".pdf"):
+        try:
+            presigned = s3_client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": RAW_BUCKET, "Key": s3_key},
+                ExpiresIn=PRESIGNED_URL_EXPIRY,
+            )
+            if start_page:
+                return f"{presigned}#page={start_page}"
+            return presigned
+        except Exception:
+            logger.warning(f"Failed to generate presigned URL for {s3_key}", exc_info=True)
+
+    source_url = chunk.get("source_url", "")
+    if source_url:
+        return source_url
+
+    return (doc_info or {}).get("source_url", "")
+
+
 def _build_rag_documents(chunks: list[dict], doc_ids: set[str]) -> list[RAGDocument]:
     """Build RAGDocument list from collected chunks."""
     docs_by_id: dict[str, RAGDocument] = {}
@@ -156,18 +189,18 @@ def _build_rag_documents(chunks: list[dict], doc_ids: set[str]) -> list[RAGDocum
     for chunk in chunks:
         doc_id = chunk.get("doc_id", "unknown")
         chunk_text = chunk.get("text", "")
-        source_url = chunk.get("source_url", "")
 
         if doc_id not in docs_by_id:
             doc_info = neptune.get_document(doc_id)
             title = doc_info["title"] if doc_info else doc_id
             content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
+            source = _generate_source_url(chunk, doc_info)
 
             docs_by_id[doc_id] = RAGDocument(
                 document_id=f"{doc_id}-{content_hash}",
                 title=title,
                 content=chunk_text,
-                source=source_url,
+                source=source,
             )
         else:
             existing = docs_by_id[doc_id]
@@ -175,7 +208,7 @@ def _build_rag_documents(chunks: list[dict], doc_ids: set[str]) -> list[RAGDocum
                 document_id=existing.document_id,
                 title=existing.title,
                 content=existing.content + "\n\n" + chunk_text,
-                source=existing.source or source_url,
+                source=existing.source or _generate_source_url(chunk, None),
             )
 
     return list(docs_by_id.values())

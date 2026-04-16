@@ -69,6 +69,7 @@ export class WisconsinBotStack extends cdk.Stack {
         websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
         neptuneGraphId: graphRAGStack.neptuneGraphId,
         neptuneGraphEndpoint: graphRAGStack.neptuneGraphEndpoint,
+        rawBucketName: graphRAGStack.rawBucketName,
         responseStreamingFunction: messagesStack.responseStreamingFunction,
         resourceStreamingFunction: messagesStack.resourceStreamingFunction,
         enabled: USE_GRAPHRAG,

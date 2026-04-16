@@ -141,8 +141,11 @@ def process_document(doc: dict, raw_bucket: str, work_bucket: str, config: dict)
                     "text": chunk_text,
                     "metadata": {
                         "doc_id": doc_id,
+                        "source": key,
                         "source_url": metadata.get("source_url", "n/a"),
                         "chunk_index": len(chunks),
+                        "start_page": None,
+                        "end_page": None,
                     },
                 })
 
