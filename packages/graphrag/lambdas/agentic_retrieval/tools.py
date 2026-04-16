@@ -5,6 +5,7 @@ Maps Neptune capabilities to Bedrock Converse tool_use format.
 
 import json
 import logging
+import os
 
 import boto3
 
@@ -13,8 +14,39 @@ from neptune_client import NeptuneClient
 logger = logging.getLogger(__name__)
 
 bedrock = boto3.client("bedrock-runtime", region_name="us-west-2")
+bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name="us-east-1")
+
+FAQ_KNOWLEDGE_BASE_ID = os.environ.get("FAQ_KNOWLEDGE_BASE_ID", "")
 
 TOOL_DEFINITIONS = [
+    {
+        "toolSpec": {
+            "name": "faq_search",
+            "description": (
+                "Search frequently asked questions about Wisconsin DOR property "
+                "assessment and taxation. Returns Q&A pairs ranked by relevance. "
+                "Always try this FIRST before vector_search — if a FAQ adequately "
+                "answers the user's question, use it directly via the answer tool."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query to find relevant FAQs",
+                        },
+                        "top_k": {
+                            "type": "integer",
+                            "description": "Number of FAQ results to return (default: 5, max: 10)",
+                            "default": 5,
+                        },
+                    },
+                    "required": ["query"],
+                }
+            },
+        }
+    },
     {
         "toolSpec": {
             "name": "vector_search",
@@ -193,7 +225,28 @@ def embed_query(query: str, model_id: str = "amazon.titan-embed-text-v2:0") -> l
 def execute_tool(tool_name: str, tool_input: dict, neptune: NeptuneClient) -> dict:
     """Execute a tool call and return the result."""
 
-    if tool_name == "vector_search":
+    if tool_name == "faq_search":
+        if not FAQ_KNOWLEDGE_BASE_ID:
+            return {"error": "FAQ knowledge base not configured"}
+        top_k = min(tool_input.get("top_k", 5), 10)
+        response = bedrock_agent_runtime.retrieve(
+            knowledgeBaseId=FAQ_KNOWLEDGE_BASE_ID,
+            retrievalQuery={"text": tool_input["query"]},
+            retrievalConfiguration={
+                "vectorSearchConfiguration": {
+                    "numberOfResults": top_k,
+                    "overrideSearchType": "SEMANTIC",
+                }
+            },
+        )
+        faqs = []
+        for result in response.get("retrievalResults", []):
+            text = result.get("content", {}).get("text", "")
+            score = result.get("score", 0.0)
+            faqs.append({"text": text, "score": score})
+        return {"faqs": faqs, "count": len(faqs)}
+
+    elif tool_name == "vector_search":
         embedding = embed_query(tool_input["query"])
         top_k = min(tool_input.get("top_k", 10), 20)
         results = neptune.vector_search(embedding, top_k=top_k)
