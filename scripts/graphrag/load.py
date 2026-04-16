@@ -329,9 +329,10 @@ def phase_6_7_hierarchy(client, graph_id: str, documents: list[dict]):
 
 
 def phase_8_chunks(client, graph_id: str, documents: list[dict]):
-    logger.info("Phase 8: Creating chunk nodes...")
+    logger.info("Phase 8: Creating chunk nodes with headings + chunk-level CITES edges...")
 
     total_chunks = 0
+    cite_edges = 0
     for doc in documents:
         doc_id = doc["doc_id"]
         s3_key = doc.get("s3_key", "")
@@ -346,7 +347,8 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
                 "SET c.text = $text, c.doc_id = $doc_id, "
                 "c.source_url = $source_url, c.chunk_index = $idx, "
                 "c.s3_key = $s3_key, c.start_page = $start_page, "
-                "c.end_page = $end_page",
+                "c.end_page = $end_page, "
+                "c.heading = $heading, c.subheading = $subheading",
                 {
                     "id": chunk_id,
                     "text": chunk["text"],
@@ -356,6 +358,8 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
                     "s3_key": meta.get("source", s3_key),
                     "start_page": start_page,
                     "end_page": end_page,
+                    "heading": meta.get("heading", ""),
+                    "subheading": meta.get("subheading", ""),
                 },
             )
 
@@ -364,9 +368,36 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
                 "MERGE (c)-[:EXTRACTED_FROM]->(d)",
                 {"chunk_id": chunk_id, "doc_id": doc_id},
             )
+
+            for ref in meta.get("statute_refs", []):
+                stub_id = f"WIS-STAT-{ref}"
+                execute_query(client, graph_id,
+                    "MERGE (s:Statute {id: $id}) ON CREATE SET s.title = $title, s.stub = true",
+                    {"id": stub_id, "title": f"Wis. Stat. {ref}"},
+                )
+                execute_query(client, graph_id,
+                    "MATCH (c:Chunk {id: $chunk_id}), (s:Statute {id: $stub_id}) "
+                    "MERGE (c)-[:CITES]->(s)",
+                    {"chunk_id": chunk_id, "stub_id": stub_id},
+                )
+                cite_edges += 1
+
+            for ref in meta.get("admin_rule_refs", []):
+                stub_id = f"ADMIN-{ref.replace(' ', '-')}"
+                execute_query(client, graph_id,
+                    "MERGE (r:AdminRule {id: $id}) ON CREATE SET r.title = $title, r.stub = true",
+                    {"id": stub_id, "title": ref},
+                )
+                execute_query(client, graph_id,
+                    "MATCH (c:Chunk {id: $chunk_id}), (r:AdminRule {id: $stub_id}) "
+                    "MERGE (c)-[:CITES]->(r)",
+                    {"chunk_id": chunk_id, "stub_id": stub_id},
+                )
+                cite_edges += 1
+
             total_chunks += 1
 
-    logger.info(f"  Created {total_chunks} chunk nodes")
+    logger.info(f"  Created {total_chunks} chunk nodes, {cite_edges} chunk-level CITES edges")
 
 
 def phase_9_stub_resolution(client, graph_id: str):

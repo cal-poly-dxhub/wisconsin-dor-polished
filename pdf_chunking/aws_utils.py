@@ -68,6 +68,15 @@ def download_from_s3(s3, s3_path, local_path):
     s3.download_file(s3_bucket, s3_key, local_path)
 
 
+def download_pdf_from_s3(s3_client, bucket_name: str, s3_key: str) -> str:
+    """Download a PDF from S3 to a local temp path and return the local path."""
+    os.makedirs("/tmp/pdf", exist_ok=True)
+    file_stem = os.path.splitext(os.path.basename(s3_key))[0]
+    local_path = f"/tmp/pdf/{file_stem}.pdf"
+    s3_client.download_file(bucket_name, s3_key, local_path)
+    return local_path
+
+
 def delete_s3_prefix(s3, bucket_name, prefix):
     """Deletes all objects under a given prefix in an S3 bucket."""
     try:

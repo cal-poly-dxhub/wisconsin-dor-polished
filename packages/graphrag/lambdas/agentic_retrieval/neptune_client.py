@@ -50,7 +50,8 @@ class NeptuneClient:
             "YIELD node, score "
             "RETURN node.id AS chunk_id, node.text AS text, node.doc_id AS doc_id, "
             "node.source_url AS source_url, node.s3_key AS s3_key, "
-            "node.start_page AS start_page, node.end_page AS end_page, score",
+            "node.start_page AS start_page, node.end_page AS end_page, "
+            "node.heading AS heading, node.subheading AS subheading, score",
             {"embedding": embedding, "topK": top_k},
         )
         return results

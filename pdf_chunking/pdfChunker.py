@@ -9,6 +9,11 @@ from typing import List, Dict, Tuple, Any
 from textractor.data.text_linearization_config import TextLinearizationConfig
 from pdf_chunking.aws_utils import *
 from pdf_chunking.table_tools import *
+from pdf_chunking.pymupdf_extractor import (
+    extract_with_pymupdf,
+    extract_raw_text_with_pymupdf,
+    extraction_looks_good,
+)
 from pdf2image import convert_from_path
 from PIL import Image
 from pdf_chunking.flowchart_tools import extract_flowcharts_from_document
@@ -39,7 +44,16 @@ def ensure_bucket_exists(s3_client, bucket_name: str):
         )
 
 ensure_bucket_exists(s3, MEDIA_BUCKET_NAME)
-       
+
+CHUNKER_BY_SOURCE = {
+    "state-laws": "statute",
+    "admin-rules": "statute",
+    "assessment-manual": "wpam",
+}
+
+def get_chunking_strategy(source_id: str) -> str:
+    return CHUNKER_BY_SOURCE.get(source_id, "general")
+
 def encode_image_to_base64(img: Image.Image) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -497,7 +511,7 @@ def parse_s3_uri(s3_uri):
 
     return bucket_name, file_key
 
-def extract_clean_plaintext(doc_chunks, doc_id=None):
+def extract_clean_plaintext(doc_chunks, doc_id=None, is_statute=False):
     all_cleaned_content = []
     removed_chunks = []
 
@@ -512,7 +526,6 @@ def extract_clean_plaintext(doc_chunks, doc_id=None):
             print("⚠️ clean_line failed on line:", repr(line))
             return ""
 
-    
     def looks_like_index(text: str) -> bool:
         """Detect statute chapter headers/index pages that should be removed."""
         short = len(text.split()) < 15
@@ -535,7 +548,7 @@ def extract_clean_plaintext(doc_chunks, doc_id=None):
         word_count = sum(len(l.split()) for l in lines)
         sentence_count = sum(1 for l in lines if l.endswith((".", "?", "!")))
 
-        if looks_like_index(text):
+        if not is_statute and looks_like_index(text):
             removed_chunks.append({"text": text, "reason": "index/title"})
             continue
 
@@ -591,7 +604,8 @@ def extract_raw_text_from_document(document) -> str:
 
 def extract_raw_text_from_pdf_s3(bucket_name: str, s3_file_path: str) -> str:
     """
-    Extract raw text from a PDF in S3 as a fallback when filtered chunking fails.
+    Extract raw text from a PDF in S3.
+    Tries PyMuPDF first, falls back to Textract.
 
     Args:
         bucket_name (str): The S3 bucket name.
@@ -600,9 +614,21 @@ def extract_raw_text_from_pdf_s3(bucket_name: str, s3_file_path: str) -> str:
     Returns:
         str: Raw text content from the PDF
     """
-    s3_uri = f"s3://{bucket_name}/{s3_file_path}"
     print(f"Extracting raw text from {os.path.basename(s3_file_path)}")
+    local_pdf_path = download_pdf_from_s3(s3, bucket_name, s3_file_path)
 
+    # Try PyMuPDF first
+    try:
+        raw_text = extract_raw_text_with_pymupdf(local_pdf_path)
+        if raw_text and len(raw_text.split()) >= 10:
+            print(f"Extracted raw text with PyMuPDF from {os.path.basename(s3_file_path)} successfully.")
+            return raw_text
+        print("PyMuPDF raw text insufficient, falling back to Textract...")
+    except Exception as e:
+        print(f"PyMuPDF raw text extraction failed ({e}), falling back to Textract...")
+
+    # Textract fallback
+    s3_uri = f"s3://{bucket_name}/{s3_file_path}"
     if not MEDIA_BUCKET_NAME:
         raise ValueError("MEDIA_BUCKET_NAME environment variable is not set.")
 
@@ -613,10 +639,9 @@ def extract_raw_text_from_pdf_s3(bucket_name: str, s3_file_path: str) -> str:
         )
         raw_text = extract_raw_text_from_document(document)
 
-        print(f"Extracted raw text from {os.path.basename(s3_file_path)} successfully.")
+        print(f"Extracted raw text from {os.path.basename(s3_file_path)} with Textract fallback.")
         return raw_text
     finally:
-        # Clean up Textract output from the media bucket
         if textract_output_path:
             media_bucket, prefix = parse_s3_uri(textract_output_path)
             print("fallback-->deleting Textract output from s3")
@@ -629,44 +654,71 @@ def process_pdf_from_s3(
     """
     Processes a PDF from S3 and returns a list of cleaned text + flowchart chunks.
 
+    Uses PyMuPDF as the primary extraction engine; falls back to Textract when
+    PyMuPDF fails or produces insufficient output.
+
     Args:
         bucket_name (str): The S3 bucket name.
         s3_file_path (str): The object key for the PDF file.
         document_url (str, optional): The source URL of the document. Defaults to "n/a".
+        source_id (str, optional): The source identifier for routing. Defaults to "n/a".
 
     Returns:
         list: A list of cleaned text + flowchart chunks (dicts).
     """
-    s3_uri = f"s3://{bucket_name}/{s3_file_path}"
     doc_id = os.path.basename(s3_file_path)
-    is_statute = "wi" in doc_id.lower()
-    print(f"Processing {doc_id}")
+    strategy = get_chunking_strategy(source_id)
+    is_statute = strategy == "statute"
+    print(f"Processing {doc_id} (strategy={strategy}, source_id={source_id})")
 
-    if not MEDIA_BUCKET_NAME:
-        raise ValueError("MEDIA_BUCKET_NAME environment variable is not set.")
+    # --- Download PDF locally (shared by both extraction paths) ---
+    local_pdf_path = download_pdf_from_s3(s3, bucket_name, s3_file_path)
 
-    
+    # --- Try PyMuPDF extraction first ---
+    header_split = None
+    line_page_mapping = None
+    flowchart_chunks = []
     textract_output_path = None
+    used_textract = False
+
     try:
-        # --- Extract with Textract ---
-        document, local_pdf_path, textract_output_path = extract_textract_data(
-            s3, s3_uri, bucket_name, MEDIA_BUCKET_NAME
-        )
+        header_split, line_page_mapping = extract_with_pymupdf(local_pdf_path, is_statute)
+        if not extraction_looks_good(header_split, line_page_mapping):
+            print(f"PyMuPDF quality gate failed for {doc_id}, falling back to Textract...")
+            header_split = None
+    except Exception as e:
+        print(f"PyMuPDF extraction failed for {doc_id} ({e}), falling back to Textract...")
 
-        # --- Convert to header-split + page mapping (and flowcharts) ---
-        header_split, line_page_mapping, flowchart_chunks = process_document(document, local_pdf_path)
+    # --- Textract fallback ---
+    if header_split is None:
+        if not MEDIA_BUCKET_NAME:
+            raise ValueError("MEDIA_BUCKET_NAME environment variable is not set.")
 
+        s3_uri = f"s3://{bucket_name}/{s3_file_path}"
+        try:
+            document, local_pdf_path, textract_output_path = extract_textract_data(
+                s3, s3_uri, bucket_name, MEDIA_BUCKET_NAME
+            )
+            header_split, line_page_mapping, flowchart_chunks = process_document(document, local_pdf_path)
+            used_textract = True
+            print(f"Using Textract fallback for {doc_id}")
+        except Exception:
+            if textract_output_path:
+                media_bucket, prefix = parse_s3_uri(textract_output_path)
+                delete_s3_prefix(s3, media_bucket, prefix)
+            raise
+
+    try:
         # --- Run chunking ---
-        if is_statute:
+        if strategy == "statute":
             raw_chunks = chunk_document_statute(header_split, s3_file_path, bucket_name, line_page_mapping)
-        elif "wpam" in doc_id.lower():
+        elif strategy == "wpam":
             raw_chunks = chunk_document_wpam(header_split, s3_file_path, bucket_name, line_page_mapping)
         else:
             raw_chunks = chunk_document(header_split, s3_file_path, bucket_name, line_page_mapping)
 
         chunk_logs_dir = get_chunk_logs_dir()
         if chunk_logs_dir:
-            # Save raw chunks
             raw_chunks_dir = os.path.join(chunk_logs_dir, "raw_chunks")
             os.makedirs(raw_chunks_dir, exist_ok=True)
             raw_chunks_path = os.path.join(
@@ -683,9 +735,10 @@ def process_pdf_from_s3(
             print(f"✅ Saved raw chunks to {raw_chunks_path}")
 
         # --- Clean text chunks ---
-        cleaned_text_chunks, removed_chunks = extract_clean_plaintext(raw_chunks, doc_id=doc_id)
+        cleaned_text_chunks, removed_chunks = extract_clean_plaintext(
+            raw_chunks, doc_id=doc_id, is_statute=is_statute
+        )
 
-                # --- Save removed chunks (for debugging/QA) ---
         if chunk_logs_dir:
             removed_chunks_dir = os.path.join(chunk_logs_dir, "removed")
             os.makedirs(removed_chunks_dir, exist_ok=True)
@@ -697,15 +750,14 @@ def process_pdf_from_s3(
                     f.write(json.dumps(chunk, indent=2) + "\n")
             print(f"✅ Saved {len(removed_chunks)} removed chunks to {removed_chunks_path}")
 
-
         # --- Merge cleaned chunks + flowcharts ---
         all_chunks = []
         total_chunks = len(cleaned_text_chunks) + len(flowchart_chunks)
 
-        # Add text chunks
-        for out_idx, (raw_idx,chunk) in enumerate(cleaned_text_chunks):
-            start_page = raw_chunks[raw_idx]["metadata"].get("start_page", 1)
-            end_page = raw_chunks[raw_idx]["metadata"].get("end_page", start_page)
+        for out_idx, (raw_idx, chunk) in enumerate(cleaned_text_chunks):
+            raw_meta = raw_chunks[raw_idx]["metadata"]
+            start_page = raw_meta.get("start_page", 1)
+            end_page = raw_meta.get("end_page", start_page)
 
             all_chunks.append({
                 "chunk_id": f"{doc_id}_final_{out_idx}",
@@ -719,10 +771,11 @@ def process_pdf_from_s3(
                     "source_id": source_id,
                     "start_page": start_page,
                     "end_page": end_page,
+                    "heading": raw_meta.get("heading", ""),
+                    "subheading": raw_meta.get("subheading", ""),
                 },
             })
 
-        # Add flowchart chunks
         for idx, fc in enumerate(flowchart_chunks, start=len(cleaned_text_chunks)):
             all_chunks.append({
                 "chunk_id": f"{doc_id}_flowchart_{idx}",
@@ -737,7 +790,6 @@ def process_pdf_from_s3(
             })
 
         if chunk_logs_dir:
-            # Save cleaned + flowcharts together
             final_chunks_dir = os.path.join(chunk_logs_dir, "final_chunks")
             os.makedirs(final_chunks_dir, exist_ok=True)
             final_chunks_path = os.path.join(
@@ -751,7 +803,6 @@ def process_pdf_from_s3(
         return all_chunks
 
     finally:
-        # Cleanup temporary Textract output
-        if textract_output_path:
+        if used_textract and textract_output_path:
             media_bucket, prefix = parse_s3_uri(textract_output_path)
             delete_s3_prefix(s3, media_bucket, prefix)
