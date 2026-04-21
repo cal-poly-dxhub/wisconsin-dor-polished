@@ -282,8 +282,31 @@ def execute_tool(tool_name: str, tool_input: dict, neptune: NeptuneClient) -> di
     elif tool_name == "vector_search":
         embedding = embed_query(tool_input["query"])
         top_k = min(tool_input.get("top_k", 10), 20)
-        results = neptune.vector_search(embedding, top_k=top_k)
-        return {"chunks": results}
+        chunks = neptune.vector_search(embedding, top_k=top_k)
+
+        # Auto-enrichment: graph neighbors for top-3 distinct parent docs.
+        # From docs/graphrag.md §1: gives the agent graph context for free.
+        graph_context: dict[str, list[dict]] = {}
+        seen: list[str] = []
+        for chunk in chunks:
+            doc_id = chunk.get("doc_id", "")
+            if doc_id and doc_id not in seen:
+                seen.append(doc_id)
+                if len(seen) >= 3:
+                    break
+
+        for doc_id in seen:
+            try:
+                neighbors = neptune.get_neighbors(doc_id)
+                if neighbors:
+                    graph_context[doc_id] = neighbors
+            except Exception:  # noqa: BLE001 — best-effort enrichment
+                logger.warning(
+                    f"auto-enrichment failed for {doc_id}; continuing without neighbors",
+                    exc_info=True,
+                )
+
+        return {"chunks": chunks, "graph_context": graph_context}
 
     elif tool_name == "get_document":
         doc = neptune.get_document(tool_input["doc_id"])
