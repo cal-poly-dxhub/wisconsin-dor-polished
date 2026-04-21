@@ -36,6 +36,7 @@ class MockRAGDocument(pydantic.BaseModel):
     title: str
     content: str
     source: str | None = None
+    discovery_tag: str = "unknown"
 
 
 # Patch the models module to provide real Pydantic models
@@ -92,7 +93,7 @@ def test_build_rag_documents():
                 {"doc_id": "doc-1", "text": "chunk 2 text", "source_url": "http://example.com"},
             ]
 
-            docs = _build_rag_documents(chunks, {"doc-1"})
+            docs = _build_rag_documents(chunks, {"doc-1"}, {})
 
             assert len(docs) == 1
             assert "chunk 1 text" in docs[0].content
