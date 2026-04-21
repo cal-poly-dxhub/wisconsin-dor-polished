@@ -107,3 +107,41 @@ def test_execute_tool_fetch_case_opinion_no_bucket():
         )
 
     assert "error" in result
+
+
+def test_get_document_falls_back_to_vector_search_on_not_found():
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.get_document.return_value = None
+    mock_neptune.vector_search.return_value = [
+        {"chunk_id": "c1", "text": "match", "doc_id": "real-doc-id", "score": 0.8},
+    ]
+
+    with patch("tools.embed_query", return_value=[0.1] * 1024):
+        result = execute_tool(
+            "get_document", {"doc_id": "typo-or-format-mismatch"}, mock_neptune
+        )
+
+    # Fallback kicked in; returns a suggestion result, not a bare error
+    assert "fallback_matches" in result
+    assert len(result["fallback_matches"]) == 1
+    assert result["fallback_matches"][0]["doc_id"] == "real-doc-id"
+    # Original error context still present
+    assert result.get("error", "").startswith("Document")
+
+
+def test_get_document_no_fallback_matches_returns_error():
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.get_document.return_value = None
+    mock_neptune.vector_search.return_value = []
+
+    with patch("tools.embed_query", return_value=[0.1] * 1024):
+        result = execute_tool(
+            "get_document", {"doc_id": "nonsense"}, mock_neptune
+        )
+
+    assert "error" in result
+    assert result.get("fallback_matches", []) == []

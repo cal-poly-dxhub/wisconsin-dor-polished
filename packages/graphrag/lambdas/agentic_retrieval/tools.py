@@ -312,7 +312,17 @@ def execute_tool(tool_name: str, tool_input: dict, neptune: NeptuneClient) -> di
         doc = neptune.get_document(tool_input["doc_id"])
         if doc:
             return {"document": doc}
-        return {"error": f"Document '{tool_input['doc_id']}' not found"}
+        # Fallback: vector search on the ID string itself. Handles typos
+        # and format mismatches (e.g., user capitalization differences).
+        try:
+            embedding = embed_query(tool_input["doc_id"])
+            matches = neptune.vector_search(embedding, top_k=5)
+        except Exception:  # noqa: BLE001
+            matches = []
+        return {
+            "error": f"Document '{tool_input['doc_id']}' not found",
+            "fallback_matches": matches,
+        }
 
     elif tool_name == "get_neighbors":
         neighbors = neptune.get_neighbors(
