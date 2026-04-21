@@ -60,15 +60,25 @@ def embed_text(text: str, model_id: str, dimension: int = 1024, max_retries: int
 
 
 def load_extracted_docs(work_bucket: str) -> list[dict]:
-    """Load all extracted document JSONs from the work bucket."""
-    docs = []
+    """Load all extracted document JSONs from the work bucket in parallel."""
+    keys: list[str] = []
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=work_bucket, Prefix="extracted/"):
         for obj in page.get("Contents", []):
             key = obj["Key"]
             if key.endswith(".json") and key != "extracted/manifest.json":
-                data = json.loads(s3.get_object(Bucket=work_bucket, Key=key)["Body"].read())
-                docs.append(data)
+                keys.append(key)
+    logger.info(f"Found {len(keys)} extracted JSONs; downloading in parallel...")
+
+    def fetch(key: str) -> dict:
+        return json.loads(s3.get_object(Bucket=work_bucket, Key=key)["Body"].read())
+
+    docs: list[dict] = []
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        for i, doc in enumerate(pool.map(fetch, keys), start=1):
+            docs.append(doc)
+            if i % 500 == 0 or i == len(keys):
+                logger.info(f"  Loaded {i}/{len(keys)} extracted JSONs")
     return docs
 
 
