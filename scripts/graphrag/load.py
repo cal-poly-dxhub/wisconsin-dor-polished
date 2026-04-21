@@ -58,13 +58,23 @@ def execute_query(client, graph_id: str, query: str, parameters: dict | None = N
     if parameters:
         kwargs["parameters"] = parameters
 
-    for attempt in range(6):
+    for attempt in range(8):
         try:
             return client.execute_query(**kwargs)
         except Exception as e:
-            if "ThrottlingException" in str(type(e).__name__) and attempt < 5:
-                wait = min(30, 2 ** attempt)
-                logger.warning(f"Neptune throttled, retrying in {wait}s...")
+            # Neptune Analytics signals throttling via ThrottlingException OR via
+            # UnprocessableException with message "Retry for SDK query requests is
+            # suppressed, please resubmit the query."
+            name = type(e).__name__
+            msg = str(e)
+            is_throttle = (
+                "ThrottlingException" in name
+                or "resubmit the query" in msg
+                or "retry is suppressed" in msg.lower()
+            )
+            if is_throttle and attempt < 7:
+                wait = min(60, 2 ** attempt)
+                logger.warning(f"Neptune throttled ({name}), retrying in {wait}s...")
                 time.sleep(wait)
             else:
                 raise
@@ -157,6 +167,8 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
             {"doc_id": doc["doc_id"], "fw_id": fw_id},
         )
         count += 1
+        if count % 200 == 0:
+            logger.info(f"  Phase 2 progress: {count}/{len(documents)} document nodes")
 
     logger.info(f"  Created {count} document nodes")
 
