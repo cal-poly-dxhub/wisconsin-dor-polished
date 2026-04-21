@@ -4,7 +4,7 @@
  * on receipt of message fragments from the server).
  */
 
-import { useCallback, useMemo, useEffect } from 'react';
+import { useCallback, useMemo, useEffect, useRef } from 'react';
 import { useValidatedWebSocket } from './use-validated-websocket';
 import { useChatStore } from '../stores/chat-store';
 import type { MessageUnion } from '@messages/websocket-interface';
@@ -42,6 +42,10 @@ export function useWebSocketChat(
   const addQuery = useChatStore(state => state.addQuery);
   const setCurrentQueryId = useChatStore(state => state.setCurrentQueryId);
   const setSessionId = useChatStore(state => state.setSessionId);
+  const replaceQueryId = useChatStore(state => state.replaceQueryId);
+
+  // Track the pending optimistic ID so handleSuccessfulSend can replace it
+  const pendingQueryIdRef = useRef<string | null>(null);
 
   // Define UI actions for each message type
   const messageHandler = useCallback(
@@ -120,24 +124,16 @@ export function useWebSocketChat(
     ]
   );
 
-  // Store new query; set current query ID in UI store
+  // Replace optimistic query ID with the real one from the server
   const handleSuccessfulSend = useCallback(
-    (queryId: string, message: string) => {
-      const query: Query = {
-        query: message,
-        queryId,
-        type: 'outbound',
-        timestamp: new Date().toISOString(),
-        status: 'sent',
-        response: {
-          type: 'stream',
-          content: '',
-        },
-      };
-      addQuery(query);
-      setCurrentQueryId(queryId);
+    (queryId: string, _message: string) => {
+      const pendingId = pendingQueryIdRef.current;
+      if (pendingId) {
+        replaceQueryId(pendingId, queryId);
+        pendingQueryIdRef.current = null;
+      }
     },
-    [addQuery, setCurrentQueryId]
+    [replaceQueryId]
   );
 
   // Create memoized WebSocket options
@@ -169,11 +165,36 @@ export function useWebSocketChat(
     setSessionId(sessionId);
   }, [sessionId, setSessionId]);
 
+  // Wrap sendMessage to optimistically add the query to the store immediately
+  const optimisticSendMessage = useCallback(
+    async (message: string) => {
+      const optimisticId = `pending-${Date.now()}`;
+      pendingQueryIdRef.current = optimisticId;
+
+      const query: Query = {
+        query: message,
+        queryId: optimisticId,
+        type: 'outbound',
+        timestamp: new Date().toISOString(),
+        status: 'pending',
+        response: {
+          type: 'stream',
+          content: '',
+        },
+      };
+      addQuery(query);
+      setCurrentQueryId(optimisticId);
+
+      await sendMessage(message);
+    },
+    [sendMessage, addQuery, setCurrentQueryId]
+  );
+
   return {
     connectionState,
     isConnected,
     disconnect: close,
     reconnect,
-    sendMessage,
+    sendMessage: optimisticSendMessage,
   };
 }

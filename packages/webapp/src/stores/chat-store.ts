@@ -53,6 +53,18 @@ export const useChatStore = create<ChatStore>()(
         state.queryOrder.push(query.queryId);
       }),
 
+    replaceQueryId: (oldId: string, newId: string) =>
+      set(state => {
+        const query = state.queries[oldId];
+        if (!query) return;
+        query.queryId = newId;
+        state.queries[newId] = query;
+        delete state.queries[oldId];
+        const idx = state.queryOrder.indexOf(oldId);
+        if (idx !== -1) state.queryOrder[idx] = newId;
+        if (state.currentQueryId === oldId) state.currentQueryId = newId;
+      }),
+
     updateQueryResponse: (queryId: string, content: string) =>
       set(state => {
         if (state.queries[queryId]) {

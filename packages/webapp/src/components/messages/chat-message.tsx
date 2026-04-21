@@ -8,6 +8,7 @@ import { useChatStore } from '@/stores/chat-store';
 import { useMemo, useRef, useState } from 'react';
 
 import { DocumentList } from '../documents/document-list/document-list';
+import { LoadingStrip } from './loading-grid';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import type { ResourceItem } from '@/stores/types';
 
@@ -271,8 +272,8 @@ export function ChatMessage({
       data-message-observe
       data-message-id={queryId}
       animate={{
-        scale: selected ? 1 : 0.95,
-        opacity: selected ? 1 : 0.25,
+        scale: 1,
+        opacity: 1,
       }}
       transition={{
         duration: 0.2,
@@ -285,8 +286,18 @@ export function ChatMessage({
           {/* Query Paragraph */}
           <p className={`chat-query mb-2`}>{query}</p>
 
+          {/* Divider */}
+          <hr className="border-foreground/10 my-4" />
+
           {/* Response Paragraph */}
           {memoizedResponse}
+
+          {/* Loading indicator while waiting for response */}
+          {!response && !streamingComplete && (
+            <div className="chat-response-aligned">
+              <LoadingStrip />
+            </div>
+          )}
 
           {/* Info icon with hover card displaying chat information */}
           <MessageOptionsBar
