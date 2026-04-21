@@ -71,14 +71,24 @@ def execute_query(client, graph_id: str, query: str, parameters: dict | None = N
 
 
 def load_embedded_docs(work_bucket: str) -> list[dict]:
-    docs = []
+    keys: list[str] = []
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=work_bucket, Prefix="embedded/"):
         for obj in page.get("Contents", []):
             key = obj["Key"]
             if key.endswith(".json"):
-                data = json.loads(s3.get_object(Bucket=work_bucket, Key=key)["Body"].read())
-                docs.append(data)
+                keys.append(key)
+    logger.info(f"Found {len(keys)} embedded JSONs; downloading in parallel...")
+
+    def fetch(key: str) -> dict:
+        return json.loads(s3.get_object(Bucket=work_bucket, Key=key)["Body"].read())
+
+    docs: list[dict] = []
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        for i, doc in enumerate(pool.map(fetch, keys), start=1):
+            docs.append(doc)
+            if i % 500 == 0 or i == len(keys):
+                logger.info(f"  Loaded {i}/{len(keys)} embedded JSONs")
     return docs
 
 
