@@ -39,6 +39,8 @@ export interface Document {
   title: string;
   content: string;
   source?: string;
+  authorityLevel?: number;
+  discoveryTag?: string;
 }
 
 export interface DocumentsContent {
@@ -109,6 +111,7 @@ export interface ChatStore {
   setSessionId: (sessionId: string | null) => void;
 
   addQuery: (query: Query) => void;
+  replaceQueryId: (oldId: string, newId: string) => void;
   updateQueryStatus: (queryId: string, status: QueryStatus) => void;
   updateQueryResponse: (queryId: string, content: string) => void;
   appendQueryResponse: (queryId: string, fragment: string) => void;

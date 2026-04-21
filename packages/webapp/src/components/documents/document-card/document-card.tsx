@@ -12,6 +12,8 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ExternalLink, FileText, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
+import { AuthorityBadge } from './authority-badge';
+import { DiscoveryBadge } from './discovery-badge';
 import { DocumentBadge } from './document-badge';
 
 export interface Document {
@@ -20,6 +22,13 @@ export interface Document {
   content: string;
   source?: string;
   sourceUrl?: string;
+  authorityLevel?: number;
+  discoveryTag?:
+    | 'vector-search'
+    | 'graph-neighbor'
+    | 'fetched'
+    | 'framework-list'
+    | 'unknown';
 }
 
 const documentCardVariants = cva(
@@ -200,6 +209,15 @@ export function DocumentCardCompact({
         </CardHeader>
 
         <CardContent className="pt-0">
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {document.authorityLevel !== undefined && (
+              <AuthorityBadge authorityLevel={document.authorityLevel} size="sm" />
+            )}
+            {document.discoveryTag && document.discoveryTag !== 'unknown' && (
+              <DiscoveryBadge tag={document.discoveryTag} size="sm" />
+            )}
+          </div>
+
           {document.source && (
             <DocumentBadge
               source={document.source}
@@ -264,15 +282,23 @@ function DocumentCardModal({
                 variant="modal"
               />
 
-              <div className="flex items-center gap-2">
-                {document.source && (
-                  <DocumentBadge
-                    source={document.source}
-                    sourceUrl={document.sourceUrl}
-                    onSourceClick={onSourceClick}
-                    size="md"
-                  />
-                )}
+              <div className="flex items-start gap-2">
+                <div className="flex flex-col items-end gap-1.5">
+                  {document.authorityLevel !== undefined && (
+                    <AuthorityBadge authorityLevel={document.authorityLevel} size="md" />
+                  )}
+                  {document.discoveryTag && document.discoveryTag !== 'unknown' && (
+                    <DiscoveryBadge tag={document.discoveryTag} size="md" />
+                  )}
+                  {document.source && (
+                    <DocumentBadge
+                      source={document.source}
+                      sourceUrl={document.sourceUrl}
+                      onSourceClick={onSourceClick}
+                      size="md"
+                    />
+                  )}
+                </div>
 
                 <Button
                   variant="ghost"
