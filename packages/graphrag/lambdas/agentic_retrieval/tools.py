@@ -9,6 +9,7 @@ import os
 
 import boto3
 
+from case_opinion import fetch_case_opinion
 from neptune_client import NeptuneClient
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ bedrock = boto3.client("bedrock-runtime", region_name=REGION)
 bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=REGION)
 
 FAQ_KNOWLEDGE_BASE_ID = os.environ.get("FAQ_KNOWLEDGE_BASE_ID", "")
+RAW_BUCKET = os.environ.get("RAW_BUCKET", "")
 
 TOOL_DEFINITIONS = [
     {
@@ -181,6 +183,36 @@ TOOL_DEFINITIONS = [
     },
     {
         "toolSpec": {
+            "name": "fetch_case_opinion",
+            "description": (
+                "Fetch the full text of a Wisconsin court opinion by citation. "
+                "Use this ONLY when the user's question requires the court's "
+                "actual analysis or holding — not for simple questions answered "
+                "by the case name alone. Case-law stubs in the graph include the "
+                "citation you need (e.g., '109 Wis. 2d 290'). Returns opinion "
+                "text if available in our S3 archive, otherwise returns a "
+                "Google Scholar search URL the user can follow."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "citation": {
+                            "type": "string",
+                            "description": (
+                                "Legal citation exactly as it appears on the "
+                                "CaseLaw stub, e.g. '109 Wis. 2d 290' or '2000 "
+                                "WI App 182'."
+                            ),
+                        }
+                    },
+                    "required": ["citation"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
             "name": "answer",
             "description": (
                 "Provide the final answer to the user's question with citations. "
@@ -274,6 +306,12 @@ def execute_tool(tool_name: str, tool_input: dict, neptune: NeptuneClient) -> di
     elif tool_name == "list_framework_docs":
         docs = neptune.list_framework_docs(tool_input["framework_id"])
         return {"documents": docs}
+
+    elif tool_name == "fetch_case_opinion":
+        if not RAW_BUCKET:
+            return {"error": "Raw bucket not configured"}
+        citation = tool_input.get("citation", "")
+        return fetch_case_opinion(citation, raw_bucket=RAW_BUCKET)
 
     elif tool_name == "answer":
         return tool_input

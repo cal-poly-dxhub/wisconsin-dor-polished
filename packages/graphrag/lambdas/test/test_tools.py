@@ -61,3 +61,49 @@ def test_execute_tool_unknown_tool():
     result = execute_tool("nonexistent", {}, mock_neptune)
 
     assert "error" in result
+
+
+def test_execute_tool_fetch_case_opinion_success():
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+
+    with patch("tools.fetch_case_opinion") as mock_fetch, \
+         patch("tools.RAW_BUCKET", "test-bucket"):
+        mock_fetch.return_value = {
+            "found": True,
+            "citation": "109 Wis. 2d 290",
+            "text": "CORROON v. HOSCH opinion body",
+            "scholar_url": "http://scholar.google.com/scholar?q=109+Wis+2d+290",
+        }
+        result = execute_tool(
+            "fetch_case_opinion",
+            {"citation": "109 Wis. 2d 290"},
+            mock_neptune,
+        )
+
+    assert result["found"] is True
+    assert "CORROON" in result["text"]
+    mock_fetch.assert_called_once()
+
+
+def test_fetch_case_opinion_tool_in_definitions():
+    from tools import TOOL_DEFINITIONS
+
+    names = {t["toolSpec"]["name"] for t in TOOL_DEFINITIONS}
+    assert "fetch_case_opinion" in names
+
+
+def test_execute_tool_fetch_case_opinion_no_bucket():
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+
+    with patch("tools.RAW_BUCKET", ""):
+        result = execute_tool(
+            "fetch_case_opinion",
+            {"citation": "109 Wis. 2d 290"},
+            mock_neptune,
+        )
+
+    assert "error" in result
