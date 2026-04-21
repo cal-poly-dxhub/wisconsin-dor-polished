@@ -91,11 +91,25 @@ def embed_chunks(doc: dict, model_id: str, dimension: int) -> dict:
     return doc
 
 
+def list_already_embedded(bucket: str) -> set[str]:
+    """Return set of doc_ids that already have embedding output in the work bucket."""
+    embedded = set()
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix="embedded/"):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if key.endswith(".json"):
+                doc_id = key.removeprefix("embedded/").removesuffix(".json")
+                embedded.add(doc_id)
+    return embedded
+
+
 def main():
     parser = argparse.ArgumentParser(description="Embed documents and chunks for GraphRAG")
     parser.add_argument("--work-bucket", required=True)
     parser.add_argument("--config", default="scripts/graphrag/ingest_config.yaml")
     parser.add_argument("--max-workers", type=int, default=5)
+    parser.add_argument("--force", action="store_true", help="Re-embed all documents, ignoring cache")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -103,7 +117,13 @@ def main():
     dimension = config.get("embed_dimension", 1024)
 
     docs = load_extracted_docs(args.work_bucket)
-    logger.info(f"Loaded {len(docs)} documents to embed")
+    logger.info(f"Loaded {len(docs)} extracted documents")
+
+    if not args.force:
+        already_done = list_already_embedded(args.work_bucket)
+        before = len(docs)
+        docs = [d for d in docs if d["doc_id"] not in already_done]
+        logger.info(f"Skipping {before - len(docs)} already-embedded documents, {len(docs)} remaining")
 
     total_chunks = sum(len(d.get("chunks", [])) for d in docs)
     logger.info(f"Total chunks to embed: {total_chunks}")

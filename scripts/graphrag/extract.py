@@ -230,18 +230,38 @@ def deduplicate(documents: list[dict]) -> list[dict]:
     return list(by_id.values())
 
 
+def list_already_extracted(bucket: str) -> set[str]:
+    """Return set of doc_ids that already have extraction output in the work bucket."""
+    extracted = set()
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix="extracted/"):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if key.endswith(".json") and key != "extracted/manifest.json":
+                doc_id = key.removeprefix("extracted/").removesuffix(".json")
+                extracted.add(doc_id)
+    return extracted
+
+
 def main():
     parser = argparse.ArgumentParser(description="Extract and classify documents for GraphRAG")
     parser.add_argument("--raw-bucket", required=True, help="S3 bucket with raw documents")
     parser.add_argument("--work-bucket", required=True, help="S3 bucket for intermediate cache")
     parser.add_argument("--config", default="scripts/graphrag/ingest_config.yaml")
     parser.add_argument("--max-workers", type=int, default=3)
+    parser.add_argument("--force", action="store_true", help="Re-extract all documents, ignoring cache")
     args = parser.parse_args()
 
     config = load_config(args.config)
 
     docs = list_documents(args.raw_bucket, "raw/")
-    logger.info(f"Found {len(docs)} documents to process")
+    logger.info(f"Found {len(docs)} documents in raw bucket")
+
+    if not args.force:
+        already_done = list_already_extracted(args.work_bucket)
+        before = len(docs)
+        docs = [d for d in docs if d["doc_id"] not in already_done]
+        logger.info(f"Skipping {before - len(docs)} already-extracted documents, {len(docs)} remaining")
 
     results = []
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
