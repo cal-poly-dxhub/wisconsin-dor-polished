@@ -5,6 +5,9 @@ export const SourceDocumentSchema = z.object({
   title: z.string(),
   content: z.string(),
   source: z.string().optional(),
+  sourceUrl: z.string().optional(),
+  discoveryTag: z.string().optional(),
+  authorityLevel: z.number().optional(),
 });
 
 export const DocumentsContentSchema = z.object({

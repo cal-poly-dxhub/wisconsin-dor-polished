@@ -40,6 +40,7 @@ export interface Document {
   title: string;
   content: string;
   source?: string;
+  sourceUrl?: string;
   authorityLevel?: number;
   discoveryTag?: string;
 }
