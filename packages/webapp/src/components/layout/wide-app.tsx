@@ -26,16 +26,14 @@ export function WideApp() {
       <div className="flex justify-center">
         <div className="grid h-screen grid-cols-[minmax(0,64rem)_400px] gap-6 p-32">
           {/* Chat Container - Main Content Area */}
-          <div className="relative min-h-0">
-            <ChatContainer variant="wide" />
-
-            {/* Overlaid Chat Input */}
-            <div className="absolute bottom-12 left-1/2 z-20 w-3/4 max-w-2xl -translate-x-1/2 transform">
-              <ChatInput
-                placeholder="Ask me anything."
-                onSendMessage={sendMessage}
-              />
+          <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+            <div className="min-h-0 flex-1">
+              <ChatContainer variant="wide" />
             </div>
+            <ChatInput
+              placeholder="Ask a Wisconsin tax or revenue question..."
+              onSendMessage={sendMessage}
+            />
           </div>
 
           {/* Documents List - Sidebar */}

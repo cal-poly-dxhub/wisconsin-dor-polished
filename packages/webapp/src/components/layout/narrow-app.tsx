@@ -17,16 +17,14 @@ export function NarrowApp() {
     <>
       <ShaderBackground />
       <div className="h-screen w-full p-4">
-        <div className="relative h-full w-full">
-          <ChatContainer variant="narrow" />
-
-          {/* Overlaid Chat Input */}
-          <div className="absolute bottom-24 left-1/2 z-20 w-3/4 max-w-2xl -translate-x-1/2 transform">
-            <ChatInput
-              placeholder="Type your message..."
-              onSendMessage={sendMessage}
-            />
+        <div className="flex h-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="min-h-0 flex-1">
+            <ChatContainer variant="narrow" />
           </div>
+          <ChatInput
+            placeholder="Ask a Wisconsin tax or revenue question..."
+            onSendMessage={sendMessage}
+          />
         </div>
       </div>
       <Toaster />
