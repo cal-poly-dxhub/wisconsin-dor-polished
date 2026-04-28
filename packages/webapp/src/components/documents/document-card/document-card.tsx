@@ -28,6 +28,7 @@ export interface Document {
     | 'graph-neighbor'
     | 'fetched'
     | 'framework-list'
+    | 'opinion-fetched'
     | 'unknown';
 }
 

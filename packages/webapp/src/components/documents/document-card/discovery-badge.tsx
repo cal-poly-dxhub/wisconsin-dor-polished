@@ -6,6 +6,7 @@ export type DiscoveryTag =
   | 'graph-neighbor'
   | 'fetched'
   | 'framework-list'
+  | 'opinion-fetched'
   | 'unknown';
 
 interface DiscoveryBadgeProps {
@@ -33,6 +34,11 @@ const TAG_META: Record<DiscoveryTag, { label: string; tone: string; description:
     label: 'From framework list',
     tone: 'border-slate-300 text-slate-800 dark:border-slate-700 dark:text-slate-200',
     description: 'Part of the authority framework the agent browsed',
+  },
+  'opinion-fetched': {
+    label: 'Court opinion',
+    tone: 'border-amber-300 text-amber-800 dark:border-amber-700 dark:text-amber-200',
+    description: 'Full court opinion the agent pulled for this citation',
   },
   unknown: {
     label: 'Source',

@@ -36,6 +36,7 @@ class MockRAGDocument(pydantic.BaseModel):
     title: str
     content: str
     source: str | None = None
+    source_url: str | None = None
     discovery_tag: str = "unknown"
 
 

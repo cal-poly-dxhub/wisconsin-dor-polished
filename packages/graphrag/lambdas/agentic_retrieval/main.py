@@ -19,6 +19,7 @@ from typing import Any
 
 import boto3
 import pydantic
+from case_opinion import citation_to_raw_slug
 from neptune_client import NeptuneClient
 from prompt import SYSTEM_PROMPT
 from step_function_types.errors import ValidationError, report_error
@@ -79,6 +80,10 @@ def run_agentic_loop(query: str) -> tuple[str, list[str], list[RAGDocument]]:
     all_doc_ids: set[str] = set()
     all_chunks: list[dict] = []
     discovery: dict[str, str] = {}  # doc_id -> tag
+    # citation -> fetched-opinion payload. Keyed by the stub doc_id we'd
+    # otherwise emit, so _build_rag_documents can replace the stub with the
+    # richer opinion card.
+    fetched_opinions: dict[str, dict] = {}
 
     tool_config = {"tools": TOOL_DEFINITIONS}
 
@@ -166,13 +171,28 @@ def run_agentic_loop(query: str) -> tuple[str, list[str], list[RAGDocument]]:
                         all_doc_ids.add(d["id"])
                         discovery.setdefault(d["id"], "framework-list")
 
+            if tool_name == "fetch_case_opinion" and result.get("found"):
+                citation = result.get("citation", "")
+                if citation:
+                    stub_doc_id = citation_to_raw_slug(citation)
+                    fetched_opinions[stub_doc_id] = {
+                        "citation": citation,
+                        "raw_key": result.get("raw_key", ""),
+                        "text": result.get("text", ""),
+                        "scholar_url": result.get("scholar_url", ""),
+                    }
+                    all_doc_ids.add(stub_doc_id)
+                    discovery[stub_doc_id] = "opinion-fetched"
+
             if tool_name == "answer":
                 answer = result.get("response", "")
                 cited = result.get("cited_doc_ids", [])
                 all_doc_ids.update(cited)
                 for cid in cited:
                     discovery.setdefault(cid, "fetched")
-                rag_docs = _build_rag_documents(all_chunks, all_doc_ids, discovery)
+                rag_docs = _build_rag_documents(
+                    all_chunks, all_doc_ids, discovery, fetched_opinions
+                )
                 return answer, list(all_doc_ids), rag_docs
 
             tool_results.append({
@@ -203,7 +223,9 @@ def run_agentic_loop(query: str) -> tuple[str, list[str], list[RAGDocument]]:
                 "of search steps. Please try rephrasing your question."
             )
 
-    rag_docs = _build_rag_documents(all_chunks, all_doc_ids, discovery)
+    rag_docs = _build_rag_documents(
+        all_chunks, all_doc_ids, discovery, fetched_opinions
+    )
     return answer, list(all_doc_ids), rag_docs
 
 
@@ -241,13 +263,73 @@ def _generate_source_links(chunk: dict, doc_info: dict | None) -> tuple[str, str
     return display_label, clickable_url
 
 
+_CASE_LAW_STUB_PREFIX = "case-law-"
+
+
+def _is_case_law_stub(doc_id: str) -> bool:
+    """True when a doc_id is a case-law citation stub.
+
+    Stubs are produced by upload_local_docs.make_doc_id("case-law", citation),
+    which is the exact inverse of citation_to_raw_slug used by fetch_case_opinion.
+    Prefix check is sufficient and avoids an extra Neptune round-trip.
+    """
+    return doc_id.startswith(_CASE_LAW_STUB_PREFIX)
+
+
+def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
+    """Build a RAGDocument for a fetched full court opinion.
+
+    Supersedes the one-chunk case-law stub card for this citation. Links
+    directly to the opinion .txt in S3 via presigned URL; falls back to
+    Google Scholar when S3 presigning fails.
+    """
+    citation = payload.get("citation", "")
+    raw_key = payload.get("raw_key", "")
+    opinion_text = payload.get("text", "")
+    scholar_url = payload.get("scholar_url", "")
+
+    doc_info = neptune.get_document(stub_doc_id) or {}
+    title = doc_info.get("title") or citation or stub_doc_id
+    content_hash = hashlib.sha256(stub_doc_id.encode()).hexdigest()[:7]
+
+    clickable_url = ""
+    if RAW_BUCKET and raw_key:
+        try:
+            clickable_url = s3_client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": RAW_BUCKET, "Key": raw_key},
+                ExpiresIn=PRESIGNED_URL_EXPIRY,
+            )
+        except Exception:
+            logger.warning(f"Failed to presign opinion URL for {raw_key}", exc_info=True)
+    if not clickable_url:
+        clickable_url = scholar_url
+
+    return RAGDocument(
+        document_id=f"{stub_doc_id}-{content_hash}",
+        title=title,
+        content=opinion_text,
+        source=citation or title,
+        source_url=clickable_url,
+        discovery_tag="opinion-fetched",
+    )
+
+
 def _build_rag_documents(
     chunks: list[dict],
     doc_ids: set[str],
     discovery: dict[str, str] | None = None,
+    fetched_opinions: dict[str, dict] | None = None,
 ) -> list[RAGDocument]:
-    """Build RAGDocument list from collected chunks, tagged by how discovered."""
+    """Build RAGDocument list from collected chunks, tagged by how discovered.
+
+    When the agent called fetch_case_opinion, the fetched opinion supersedes
+    the one-chunk case-law stub for that citation, and other case-law stubs
+    that came in as graph/framework noise are suppressed — the agent is
+    clearly working on a specific case, not surveying the case-law corpus.
+    """
     discovery = discovery or {}
+    fetched_opinions = fetched_opinions or {}
     docs_by_id: dict[str, RAGDocument] = {}
 
     for chunk in chunks:
@@ -303,6 +385,21 @@ def _build_rag_documents(
             source_url=source_url,
             discovery_tag=tag,
         )
+
+    if fetched_opinions:
+        # Replace stub cards for fetched citations with richer opinion cards,
+        # and drop other case-law stubs that leaked in as graph/framework noise.
+        for stub_doc_id, payload in fetched_opinions.items():
+            docs_by_id[stub_doc_id] = _build_opinion_card(stub_doc_id, payload)
+
+        fetched_ids = set(fetched_opinions.keys())
+        noise_tags = {"graph-neighbor", "framework-list"}
+        docs_by_id = {
+            doc_id: rag_doc
+            for doc_id, rag_doc in docs_by_id.items()
+            if doc_id in fetched_ids
+            or not (_is_case_law_stub(doc_id) and rag_doc.discovery_tag in noise_tags)
+        }
 
     return list(docs_by_id.values())
 
