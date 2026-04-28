@@ -121,6 +121,7 @@ export interface ChatStore {
   setQueryError: (queryId: string, error: QueryError) => void;
   clearQueryError: (queryId: string) => void;
   incrementQueryRetry: (queryId: string) => void;
+  setThinkingDuration: (queryId: string, duration: number) => void;
   getQuery: (queryId: string) => Query | undefined;
 
   addError: (error: ChatError) => void;

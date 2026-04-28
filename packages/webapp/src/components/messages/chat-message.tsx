@@ -264,7 +264,7 @@ export function ChatMessage({
       setThinkingSeconds(final);
       thinkingStartRef.current = null;
       // Persist to store
-      useChatStore.getState().queries[queryId] && (useChatStore.getState().queries[queryId].thinkingDuration = final);
+      useChatStore.getState().setThinkingDuration(queryId, final);
     }
   }, [status, queryId]);
 

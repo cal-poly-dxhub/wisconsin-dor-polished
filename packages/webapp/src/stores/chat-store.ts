@@ -120,6 +120,13 @@ export const useChatStore = create<ChatStore>()(
         }
       }),
 
+    setThinkingDuration: (queryId: string, duration: number) =>
+      set(state => {
+        if (state.queries[queryId]) {
+          state.queries[queryId].thinkingDuration = duration;
+        }
+      }),
+
     // Error and UI management
     addError: (error: ChatError) =>
       set(state => {
