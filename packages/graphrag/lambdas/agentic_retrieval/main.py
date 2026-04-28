@@ -20,8 +20,8 @@ from typing import Any
 import boto3
 import pydantic
 from neptune_client import NeptuneClient
-from step_function_types.errors import ValidationError, report_error
 from prompt import SYSTEM_PROMPT
+from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
     DocumentResource,
     RAGDocument,
@@ -46,7 +46,10 @@ AGENTIC_MODEL_ID = os.environ.get("AGENTIC_MODEL_ID", "us.anthropic.claude-sonne
 
 
 def process_event(event: dict) -> UserQuery:
-    """Parse input event. Receives clean {query, query_id, session_id} from EventBridge $.detail extraction."""
+    """Parse input event.
+
+    Receives a clean {query, query_id, session_id} from EventBridge $.detail extraction.
+    """
     try:
         return UserQuery.model_validate(event)
     except pydantic.ValidationError as e:
@@ -72,9 +75,13 @@ def run_agentic_loop(query: str) -> tuple[str, list[str], list[RAGDocument]]:
 
         # Turn-8 warning injection (docs/graphrag.md §7)
         if turn == 7:
+            warning = (
+                "You are running low on turns. Call the answer tool NOW with your "
+                "best answer from the context gathered so far."
+            )
             messages.append({
                 "role": "user",
-                "content": [{"text": "You are running low on turns. Call the answer tool NOW with your best answer from the context gathered so far."}],
+                "content": [{"text": warning}],
             })
 
         response = bedrock.converse(
@@ -176,21 +183,28 @@ def run_agentic_loop(query: str) -> tuple[str, list[str], list[RAGDocument]]:
         if last_text:
             answer = last_text + "\n\n_(Response incomplete: turn budget reached)_"
         else:
-            answer = "I was unable to find a complete answer within the allowed number of search steps. Please try rephrasing your question."
+            answer = (
+                "I was unable to find a complete answer within the allowed number "
+                "of search steps. Please try rephrasing your question."
+            )
 
     rag_docs = _build_rag_documents(all_chunks, all_doc_ids, discovery)
     return answer, list(all_doc_ids), rag_docs
 
 
-def _generate_source_url(chunk: dict, doc_info: dict | None) -> str:
-    """Generate the best available source URL for a chunk.
+def _generate_source_links(chunk: dict, doc_info: dict | None) -> tuple[str, str]:
+    """Return (display_label, clickable_url) for a chunk.
 
-    For PDFs in S3: presigned URL with #page=N fragment.
-    For web pages: original source_url (gov website link).
+    - clickable_url: presigned S3 URL with #page=N when a PDF is in S3; otherwise the
+      original source_url from Neptune (gov website link); otherwise empty.
+    - display_label: the gov source_url as a short label, or the doc title, or "".
+      Used as the badge text so users don't see a raw presigned URL.
     """
     s3_key = chunk.get("s3_key") or (doc_info or {}).get("s3_key") or ""
     start_page = chunk.get("start_page")
+    gov_source_url = chunk.get("source_url") or (doc_info or {}).get("source_url") or ""
 
+    clickable_url = ""
     if RAW_BUCKET and s3_key and s3_key.endswith(".pdf"):
         try:
             presigned = s3_client.generate_presigned_url(
@@ -198,17 +212,18 @@ def _generate_source_url(chunk: dict, doc_info: dict | None) -> str:
                 Params={"Bucket": RAW_BUCKET, "Key": s3_key},
                 ExpiresIn=PRESIGNED_URL_EXPIRY,
             )
-            if start_page:
-                return f"{presigned}#page={start_page}"
-            return presigned
+            # Always include #page so the browser opens the cited page; default to 1
+            # when start_page is missing so the fragment form stays consistent.
+            page = start_page if start_page else 1
+            clickable_url = f"{presigned}#page={page}"
         except Exception:
             logger.warning(f"Failed to generate presigned URL for {s3_key}", exc_info=True)
 
-    source_url = chunk.get("source_url", "")
-    if source_url:
-        return source_url
+    if not clickable_url:
+        clickable_url = gov_source_url
 
-    return (doc_info or {}).get("source_url", "")
+    display_label = gov_source_url or (doc_info or {}).get("title", "")
+    return display_label, clickable_url
 
 
 def _build_rag_documents(
@@ -229,22 +244,25 @@ def _build_rag_documents(
             doc_info = neptune.get_document(doc_id)
             title = doc_info["title"] if doc_info else doc_id
             content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
-            source = _generate_source_url(chunk, doc_info)
+            source, source_url = _generate_source_links(chunk, doc_info)
 
             docs_by_id[doc_id] = RAGDocument(
                 document_id=f"{doc_id}-{content_hash}",
                 title=title,
                 content=chunk_text,
                 source=source,
+                source_url=source_url,
                 discovery_tag=tag,
             )
         else:
             existing = docs_by_id[doc_id]
+            fallback_source, fallback_url = _generate_source_links(chunk, None)
             docs_by_id[doc_id] = RAGDocument(
                 document_id=existing.document_id,
                 title=existing.title,
                 content=existing.content + "\n\n" + chunk_text,
-                source=existing.source or _generate_source_url(chunk, None),
+                source=existing.source or fallback_source,
+                source_url=existing.source_url or fallback_url,
                 discovery_tag=existing.discovery_tag,
             )
 
@@ -255,11 +273,13 @@ def _build_rag_documents(
             continue
         content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
         tag = discovery.get(doc_id, "unknown")
+        source, source_url = _generate_source_links({}, doc_info)
         docs_by_id[doc_id] = RAGDocument(
             document_id=f"{doc_id}-{content_hash}",
             title=doc_info.get("title", doc_id),
             content=doc_info.get("summary", ""),
-            source=_generate_source_url({}, doc_info),
+            source=source,
+            source_url=source_url,
             discovery_tag=tag,
         )
 
