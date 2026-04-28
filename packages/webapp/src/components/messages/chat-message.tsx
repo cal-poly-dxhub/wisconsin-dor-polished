@@ -252,20 +252,22 @@ export function ChatMessage({
   useEffect(() => {
     if (status === 'pending' || status === 'sending') {
       thinkingStartRef.current = Date.now();
-      setThinkingSeconds(0);
       const interval = setInterval(() => {
         if (thinkingStartRef.current) {
           setThinkingSeconds(Math.floor((Date.now() - thinkingStartRef.current) / 1000));
         }
       }, 1000);
       return () => clearInterval(interval);
-    } else if (thinkingStartRef.current) {
-      const final = Math.floor((Date.now() - thinkingStartRef.current) / 1000);
-      setThinkingSeconds(final);
-      thinkingStartRef.current = null;
-      // Persist to store
-      useChatStore.getState().setThinkingDuration(queryId, final);
     }
+    if (thinkingStartRef.current) {
+      const final = Math.floor((Date.now() - thinkingStartRef.current) / 1000);
+      thinkingStartRef.current = null;
+      queueMicrotask(() => {
+        setThinkingSeconds(final);
+        useChatStore.getState().setThinkingDuration(queryId, final);
+      });
+    }
+    return undefined;
   }, [status, queryId]);
 
   const displaySeconds = storedDuration ?? thinkingSeconds;
