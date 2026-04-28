@@ -5,12 +5,13 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Info, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useAssignFeedback } from '@/hooks/api/chat';
 import { useChatStore } from '@/stores/chat-store';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DocumentList } from '../documents/document-list/document-list';
 import { LoadingStrip } from './loading-grid';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import type { ResourceItem } from '@/stores/types';
+import type { QueryStatus } from '@/stores/types';
 
 import 'flowtoken/dist/styles.css';
 import './chat-message.css';
@@ -24,6 +25,7 @@ export interface ChatMessageProps {
   query: string;
   response?: string;
   responseType?: 'stream';
+  status?: QueryStatus;
   timestamp?: string;
   className?: string;
   streamingComplete?: boolean;
@@ -233,6 +235,7 @@ export function ChatMessage({
   query,
   response,
   responseType = 'stream',
+  status,
   timestamp,
   className,
   streamingComplete,
@@ -241,6 +244,46 @@ export function ChatMessage({
 }: ChatMessageProps) {
   const messageRef = useRef<HTMLDivElement>(null);
   const breakpoint = useBreakpoint();
+
+  // Thinking timer: starts on pending, stops when streaming begins
+  const [thinkingSeconds, setThinkingSeconds] = useState(0);
+  const thinkingStartRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (status === 'pending' || status === 'sending') {
+      thinkingStartRef.current = Date.now();
+      setThinkingSeconds(0);
+      const interval = setInterval(() => {
+        if (thinkingStartRef.current) {
+          setThinkingSeconds(Math.floor((Date.now() - thinkingStartRef.current) / 1000));
+        }
+      }, 1000);
+      return () => clearInterval(interval);
+    } else if (thinkingStartRef.current) {
+      // Freeze the final value
+      setThinkingSeconds(Math.floor((Date.now() - thinkingStartRef.current) / 1000));
+      thinkingStartRef.current = null;
+    }
+  }, [status]);
+
+  const isThinking = status === 'pending' || status === 'sending';
+  const isStreaming = status === 'streaming';
+  const showThinkingLabel = isThinking || thinkingSeconds > 0;
+  const hasResources = (items?.length ?? 0) > 0;
+  const [stepsOpen, setStepsOpen] = useState(true);
+
+  // Derive current step
+  const steps = useMemo(() => {
+    const s: { label: string; done: boolean }[] = [];
+    const searchDone = hasResources || isStreaming || streamingComplete === true;
+    s.push({ label: searchDone ? 'Searched knowledge base' : 'Searching knowledge base...', done: searchDone });
+    if (hasResources) {
+      s.push({ label: `Found ${items!.length} source${items!.length === 1 ? '' : 's'}`, done: true });
+    }
+    const genDone = isStreaming || streamingComplete === true;
+    s.push({ label: genDone ? 'Generated response' : 'Generating response...', done: genDone });
+    return s;
+  }, [hasResources, items, isStreaming, streamingComplete]);
 
   const memoizedResponse = useMemo(() => {
     if (!response) return null;
@@ -259,7 +302,7 @@ export function ChatMessage({
   }, [response, responseType, streamingComplete, items, breakpoint]);
 
   const containerClassName = useMemo(
-    () => `pl-4 font-sans ${className || ''}`,
+    () => `font-sans ${className || ''}`,
     [className]
   );
 
@@ -283,11 +326,64 @@ export function ChatMessage({
       {/* Message Content */}
       <div style={{ pointerEvents: selected ? 'auto' : 'none' }}>
         <div className={messageContentClassName}>
-          {/* Query Paragraph */}
-          <p className={`chat-query mb-2`}>{query}</p>
+          {/* User Query - right-aligned bubble */}
+          <div className="flex justify-end mb-4">
+            <p className="chat-query rounded-2xl bg-muted px-4 py-2.5 text-sm inline-block max-w-[80%]">
+              {query}
+            </p>
+          </div>
 
-          {/* Divider */}
-          <hr className="border-foreground/10 my-4" />
+          {/* Thinking label with collapsible steps */}
+          {showThinkingLabel && (
+            <div className="mb-4" style={{ fontSize: 'clamp(0.9rem, 1vw + 0.5rem, 1.05rem)' }}>
+              <button
+                onClick={() => setStepsOpen(prev => !prev)}
+                className="flex items-center gap-1.5 text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+              >
+                <span className={isThinking ? 'thinking-shimmer' : ''}>
+                  {isThinking
+                    ? `Thinking for ${thinkingSeconds}s...`
+                    : `Thought for ${thinkingSeconds}s`}
+                </span>
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  className={`transition-transform duration-200 ${stepsOpen ? 'rotate-90' : ''}`}
+                >
+                  <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+              <AnimatePresence>
+                {stepsOpen && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.15, ease: [0.4, 0, 0.2, 1] }}
+                    className="overflow-hidden mt-2 text-muted-foreground"
+                    style={{ fontSize: '0.85em' }}
+                  >
+                    <div className="relative ml-[3.5px] border-l border-muted-foreground/25 space-y-3 py-1">
+                      {steps.map((step, i) => (
+                        <div key={i} className="flex items-center gap-2.5 -ml-[4px]">
+                          <div
+                            className={`h-[7px] w-[7px] shrink-0 rounded-full transition-colors duration-500 ${
+                              step.done
+                                ? 'bg-muted-foreground'
+                                : 'border border-muted-foreground/50 bg-background'
+                            }`}
+                          />
+                          <span>{step.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
 
           {/* Response Paragraph */}
           {memoizedResponse}

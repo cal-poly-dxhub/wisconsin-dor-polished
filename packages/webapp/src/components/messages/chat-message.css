@@ -1,7 +1,7 @@
 /* Chat message styling utilities */
 .chat-query {
   font-weight: 500;
-  font-size: 1.25rem;
+  font-size: clamp(0.9rem, 1vw + 0.5rem, 1.05rem);
   color: hsl(var(--foreground));
 }
 
@@ -20,8 +20,8 @@
   font-family: '42 Dot Sans', Arial, Helvetica, sans-serif;
   color: hsl(var(--foreground));
   background: transparent;
-  line-height: 1.8;
-  font-size: 1rem;
+  line-height: 1.5;
+  font-size: clamp(0.9rem, 1vw + 0.5rem, 1.05rem);
   font-weight: 200;
 }
 
@@ -40,6 +40,10 @@
   color: hsl(var(--foreground));
 }
 
+.markdown-container > :first-child {
+  margin-top: 0.25em;
+}
+
 .markdown-container h1 { font-size: 2.2rem; }
 .markdown-container h2 { font-size: 1.7rem; }
 .markdown-container h3 { font-size: 1.3rem; }
@@ -51,7 +55,7 @@
 .markdown-container p {
   margin-top: 0.5em;
   margin-bottom: 0.5em;
-  font-size: 1.125rem;
+  font-size: inherit;
   font-weight: 100 !important;
 }
 
@@ -87,8 +91,8 @@
 
 .markdown-container li {
   margin-bottom: 0.4em;
-  line-height: 1.8;
-  font-size: 1.125rem;
+  line-height: 1.5;
+  font-size: inherit;
   font-weight: 200 !important;
   display: list-item;
   list-style-position: outside;
@@ -164,3 +168,37 @@
   background: var(--muted);
   font-weight: 500;
 } 
+
+/* Thinking shimmer - wave pulse across text */
+.thinking-shimmer {
+  background: linear-gradient(
+    90deg,
+    oklch(0.556 0 0) 0%,
+    oklch(0.85 0 0) 50%,
+    oklch(0.556 0 0) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+.dark .thinking-shimmer {
+  background: linear-gradient(
+    90deg,
+    oklch(0.708 0 0) 0%,
+    oklch(0.95 0 0) 50%,
+    oklch(0.708 0 0) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
