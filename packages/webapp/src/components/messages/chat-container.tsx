@@ -18,19 +18,24 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
     const setSelectedMessageId = setCurrentQueryId;
 
     const containerRef = useRef<HTMLDivElement>(null);
+    const userScrolledUpRef = useRef(false);
 
     // Track the center-most message using scroll events (without auto-centering)
     const handleScroll = useCallback(() => {
       if (!containerRef.current) return;
 
-      const containerRect = containerRef.current.getBoundingClientRect();
+      // Detect if user has scrolled away from the bottom
+      const el = containerRef.current;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+      userScrolledUpRef.current = !atBottom;
+
+      const containerRect = el.getBoundingClientRect();
       const containerCenter = containerRect.top + containerRect.height / 2;
 
       let closestToCenter: { id: string; distance: number } | null = null;
       let closestDistance = Infinity;
 
-      // Get ALL message elements
-      const allMessageElements = containerRef.current.querySelectorAll(
+      const allMessageElements = el.querySelectorAll(
         '[data-message-observe]'
       );
 
@@ -73,6 +78,17 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
       handleScroll();
     }, [handleScroll, orderedQueries.length]);
 
+    // Auto-scroll to bottom during streaming unless user scrolled up
+    const currentQuery = currentQueryId ? queries[currentQueryId] : null;
+    const streamContent = currentQuery?.response?.content;
+    const queryStatus = currentQuery?.status;
+    const isActive = queryStatus === 'streaming' || queryStatus === 'pending' || queryStatus === 'completed';
+
+    useEffect(() => {
+      if (!containerRef.current || !isActive || userScrolledUpRef.current) return;
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }, [streamContent, queryStatus, isActive]);
+
     return (
       <div className="relative h-full w-full">
         <div
@@ -85,10 +101,8 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
             containerRef.current = node;
           }}
           className={`scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 h-full overflow-y-auto ${
-            variant === 'borderless' || variant === 'narrow'
+            variant === 'borderless' || variant === 'narrow' || variant === 'wide'
               ? 'bg-transparent'
-              : variant === 'wide'
-              ? 'bg-card overflow-hidden rounded-lg border shadow-sm'
               : 'bg-card overflow-hidden rounded-lg border shadow-sm'
           }`}
         >
@@ -100,6 +114,7 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
                 query={query.query}
                 response={query.response.content || ''}
                 responseType="stream"
+                status={query.status}
                 timestamp={query.timestamp}
                 streamingComplete={query.status === 'completed'}
                 selected={query.queryId === selectedMessageId}
