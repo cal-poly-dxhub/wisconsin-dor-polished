@@ -8,7 +8,6 @@ import { useChatStore } from '@/stores/chat-store';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DocumentList } from '../documents/document-list/document-list';
-import { LoadingStrip } from './loading-grid';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import type { ResourceItem } from '@/stores/types';
 import type { QueryStatus } from '@/stores/types';
@@ -248,6 +247,7 @@ export function ChatMessage({
   // Thinking timer: starts on pending, stops when streaming begins
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const thinkingStartRef = useRef<number | null>(null);
+  const storedDuration = useChatStore(s => s.queries[queryId]?.thinkingDuration);
 
   useEffect(() => {
     if (status === 'pending' || status === 'sending') {
@@ -260,15 +260,20 @@ export function ChatMessage({
       }, 1000);
       return () => clearInterval(interval);
     } else if (thinkingStartRef.current) {
-      // Freeze the final value
-      setThinkingSeconds(Math.floor((Date.now() - thinkingStartRef.current) / 1000));
+      const final = Math.floor((Date.now() - thinkingStartRef.current) / 1000);
+      setThinkingSeconds(final);
       thinkingStartRef.current = null;
+      // Persist to store
+      useChatStore.getState().queries[queryId] && (useChatStore.getState().queries[queryId].thinkingDuration = final);
     }
-  }, [status]);
+  }, [status, queryId]);
+
+  const displaySeconds = storedDuration ?? thinkingSeconds;
 
   const isThinking = status === 'pending' || status === 'sending';
   const isStreaming = status === 'streaming';
-  const showThinkingLabel = isThinking || thinkingSeconds > 0;
+  const hasCompleted = status === 'streaming' || status === 'completed';
+  const showThinkingLabel = isThinking || hasCompleted;
   const hasResources = (items?.length ?? 0) > 0;
   const [stepsOpen, setStepsOpen] = useState(true);
 
@@ -343,7 +348,9 @@ export function ChatMessage({
                 <span className={isThinking ? 'thinking-shimmer' : ''}>
                   {isThinking
                     ? `Thinking for ${thinkingSeconds}s...`
-                    : `Thought for ${thinkingSeconds}s`}
+                    : displaySeconds > 0
+                      ? `Thought for ${displaySeconds}s`
+                      : 'Thought'}
                 </span>
                 <svg
                   width="12"
@@ -387,13 +394,6 @@ export function ChatMessage({
 
           {/* Response Paragraph */}
           {memoizedResponse}
-
-          {/* Loading indicator while waiting for response */}
-          {!response && !streamingComplete && (
-            <div className="chat-response-aligned">
-              <LoadingStrip />
-            </div>
-          )}
 
           {/* Info icon with hover card displaying chat information */}
           <MessageOptionsBar

@@ -21,6 +21,7 @@ export interface Query {
   error?: QueryError;
 
   retryCount?: number;
+  thinkingDuration?: number;
 }
 
 export interface QueryError {
