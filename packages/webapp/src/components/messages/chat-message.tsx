@@ -1,6 +1,5 @@
 'use client';
 
-import { AnimatedMarkdown } from 'flowtoken';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Info, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useAssignFeedback } from '@/hooks/api/chat';
@@ -12,8 +11,8 @@ import { useBreakpoint } from '@/hooks/use-breakpoint';
 import type { ResourceItem } from '@/stores/types';
 import type { QueryStatus } from '@/stores/types';
 
-import 'flowtoken/dist/styles.css';
 import './chat-message.css';
+import AnimatedMarkdown from './animated-markdown';
 import { Button } from '../ui/button';
 import { ButtonGroup } from '../ui/button-group';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
@@ -68,13 +67,7 @@ export function StreamResponse({
   return (
     <div className={`chat-response font-sans ${className || ''}`}>
       <div className="markdown-container">
-        <AnimatedMarkdown
-          content={content}
-          animation={streamingComplete ? 'none' : 'blurAndSharpen'}
-          animationDuration={streamingComplete ? '0s' : '1s'}
-          animationTimingFunction="ease"
-          sep="word"
-        />
+        <AnimatedMarkdown content={content} animate={!streamingComplete} />
       </div>
     </div>
   );
@@ -94,13 +87,7 @@ export function DocumentsStreamResponse({
       </div>
 
       <div className="markdown-container">
-        <AnimatedMarkdown
-          content={content}
-          animation={streamingComplete ? 'none' : 'blurAndSharpen'}
-          animationDuration={streamingComplete ? '0s' : '1s'}
-          animationTimingFunction="ease"
-          sep="word"
-        />
+        <AnimatedMarkdown content={content} animate={!streamingComplete} />
       </div>
     </div>
   );
