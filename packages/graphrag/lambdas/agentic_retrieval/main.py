@@ -31,6 +31,18 @@ from tools import TOOL_DEFINITIONS, execute_tool
 
 MAX_TURNS = 10
 
+# Neptune node labels that aren't user-citable documents. Graph traversals
+# return these alongside Document nodes (Chunks link back via EXTRACTED_FROM,
+# Topics via TAGGED_WITH, Frameworks via BELONGS_TO). They have no title or
+# summary so they can't satisfy the RAGDocument schema downstream.
+_NON_DOCUMENT_LABELS = frozenset({"Chunk", "Topic", "Framework"})
+
+
+def _is_document_neighbor(neighbor: dict) -> bool:
+    """True when this neighbor node represents a citable document."""
+    labels = neighbor.get("labels") or []
+    return not any(label in _NON_DOCUMENT_LABELS for label in labels)
+
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
 
@@ -129,13 +141,16 @@ def run_agentic_loop(query: str) -> tuple[str, list[str], list[RAGDocument]]:
                         all_doc_ids.add(doc_id)
                         discovery.setdefault(doc_id, "vector-search")
                     all_chunks.append(chunk)
-                for neighbor_doc_id in result.get("graph_context", {}):
-                    all_doc_ids.add(neighbor_doc_id)
-                    discovery.setdefault(neighbor_doc_id, "graph-neighbor")
+                for neighbors in result.get("graph_context", {}).values():
+                    for neighbor in neighbors:
+                        neighbor_id = neighbor.get("id")
+                        if neighbor_id and _is_document_neighbor(neighbor):
+                            all_doc_ids.add(neighbor_id)
+                            discovery.setdefault(neighbor_id, "graph-neighbor")
 
             if tool_name == "get_neighbors" and "neighbors" in result:
                 for n in result["neighbors"]:
-                    if n.get("id"):
+                    if n.get("id") and _is_document_neighbor(n):
                         all_doc_ids.add(n["id"])
                         discovery.setdefault(n["id"], "graph-neighbor")
 
@@ -237,12 +252,12 @@ def _build_rag_documents(
 
     for chunk in chunks:
         doc_id = chunk.get("doc_id", "unknown")
-        chunk_text = chunk.get("text", "")
+        chunk_text = chunk.get("text") or ""
         tag = discovery.get(doc_id, "unknown")
 
         if doc_id not in docs_by_id:
             doc_info = neptune.get_document(doc_id)
-            title = doc_info["title"] if doc_info else doc_id
+            title = (doc_info.get("title") if doc_info else None) or doc_id
             content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
             source, source_url = _generate_source_links(chunk, doc_info)
 
@@ -266,18 +281,24 @@ def _build_rag_documents(
                 discovery_tag=existing.discovery_tag,
             )
 
-    # Include cited docs that had no chunks (e.g., fetched-only)
+    # Include cited docs that had no chunks (e.g., fetched-only).
+    # Skip any node that isn't a real document: get_document matches on id
+    # only, so a Chunk/Topic/Framework id would otherwise come back with
+    # None title/summary and fail RAGDocument validation.
     for doc_id in doc_ids - docs_by_id.keys():
         doc_info = neptune.get_document(doc_id)
         if not doc_info:
+            continue
+        labels = doc_info.get("labels") or []
+        if any(label in _NON_DOCUMENT_LABELS for label in labels):
             continue
         content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
         tag = discovery.get(doc_id, "unknown")
         source, source_url = _generate_source_links({}, doc_info)
         docs_by_id[doc_id] = RAGDocument(
             document_id=f"{doc_id}-{content_hash}",
-            title=doc_info.get("title", doc_id),
-            content=doc_info.get("summary", ""),
+            title=doc_info.get("title") or doc_id,
+            content=doc_info.get("summary") or "",
             source=source,
             source_url=source_url,
             discovery_tag=tag,
