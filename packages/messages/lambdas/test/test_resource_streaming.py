@@ -8,11 +8,18 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared", "lambda_layers")
 )
 
-from resource_streaming.main import handler
+from resource_streaming.main import (
+    _MAX_DOC_CONTENT_BYTES,
+    _WS_FRAME_BUDGET_BYTES,
+    _batch_documents_for_ws,
+    _truncate_doc_content,
+    handler,
+)
 from step_function_types.errors import UnknownResourceType
 from step_function_types.models import (
     StreamResourcesResult,
 )
+from websocket_utils.models import SourceDocument
 
 
 class TestResourceStreamingHandler:
@@ -248,3 +255,67 @@ class TestResourceStreamingHandler:
         # Verify error response structure
         stream_result = StreamResourcesResult(**result)
         assert stream_result.successful is True
+
+
+class TestDocumentBatching:
+    def _doc(self, idx: int, content_len: int) -> SourceDocument:
+        return SourceDocument(
+            document_id=f"doc-{idx:03d}",
+            title=f"Document {idx}",
+            content="x" * content_len,
+            source=None,
+            source_url=None,
+            discovery_tag="vector-search",
+        )
+
+    def test_batches_all_docs_in_one_frame_when_under_budget(self):
+        docs = [self._doc(i, 1000) for i in range(5)]
+        batches = _batch_documents_for_ws(docs, query_id="q-1")
+
+        assert len(batches) == 1
+        assert len(batches[0].content.documents) == 5
+
+    def test_splits_into_multiple_frames_when_over_budget(self):
+        docs = [self._doc(i, 50_000) for i in range(3)]
+        batches = _batch_documents_for_ws(docs, query_id="q-2")
+
+        assert len(batches) >= 2
+        total_docs = sum(len(b.content.documents) for b in batches)
+        assert total_docs == 3
+
+        for batch in batches:
+            frame_bytes = len(batch.model_dump_json(by_alias=True).encode("utf-8"))
+            assert frame_bytes < 128_000
+
+    def test_oversize_single_doc_is_truncated(self):
+        docs = [self._doc(0, _MAX_DOC_CONTENT_BYTES * 2)]
+        batches = _batch_documents_for_ws(docs, query_id="q-3")
+
+        assert len(batches) == 1
+        doc = batches[0].content.documents[0]
+        assert len(doc.content.encode("utf-8")) <= _MAX_DOC_CONTENT_BYTES + 100
+        assert "truncated" in doc.content
+
+    def test_every_batch_stays_under_ws_budget(self):
+        # Realistic failing case from prod: one 48 KB doc + ten ~7 KB docs ~= 133 KB.
+        docs = [self._doc(0, 48_000)] + [self._doc(i + 1, 7_000) for i in range(10)]
+        batches = _batch_documents_for_ws(docs, query_id="q-4")
+
+        assert len(batches) >= 2
+        for batch in batches:
+            payload_bytes = len(batch.model_dump_json(by_alias=True).encode("utf-8"))
+            assert payload_bytes <= _WS_FRAME_BUDGET_BYTES + 1_000
+
+    def test_truncate_doc_content_preserves_short_docs(self):
+        doc = SourceDocument(
+            document_id="d",
+            title="t",
+            content="short",
+            source=None,
+            source_url=None,
+            discovery_tag="",
+        )
+        assert _truncate_doc_content(doc) is doc
+
+    def test_empty_docs_list_produces_no_batches(self):
+        assert _batch_documents_for_ws([], query_id="q-5") == []

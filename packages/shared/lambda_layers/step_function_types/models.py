@@ -61,6 +61,7 @@ class RAGDocument(BaseModel):
     title: str
     content: str
     source: str | None = Field(default=None)
+    source_url: str | None = Field(default=None)
     discovery_tag: str = Field(default="unknown")
 
 
