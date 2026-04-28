@@ -32,7 +32,15 @@ class NeptuneClient:
         for attempt in range(max_retries):
             try:
                 response = self.client.execute_query(**kwargs)
-                return response.get("results", [])
+                # Neptune-graph returns results as a streaming body, not a pre-parsed dict.
+                payload = response.get("payload")
+                if payload is None:
+                    return response.get("results", [])
+                raw = payload.read()
+                if not raw:
+                    return []
+                parsed = json.loads(raw)
+                return parsed.get("results", [])
             except Exception as e:
                 if attempt < max_retries - 1 and "Throttling" in str(e):
                     wait = min(30, 2 ** attempt)

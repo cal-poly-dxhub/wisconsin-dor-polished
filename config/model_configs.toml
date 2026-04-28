@@ -3,22 +3,21 @@ id = "ragResponse"
 prompt = """Prior conversation history: {history}. Documents: {documents}. Frequently-asked questions: {faqs}. User query: {query}. Format your response as Markdown. Only answer using information that is explicitly in the documents. If the documents do not contain the necessary information to answer the user query, state that you don't have enough information to answer the question."""
 
 [ragResponse.config]
-modelId = "amazon.titan-embed-text-v2:0"
+modelId = "us.anthropic.claude-sonnet-4-6"
 system = [
     { text = "You are a helpful assistant that is familiar with the Wisconsin Department of Revenue. You answer questions based on the documents and frequently-asked questions that are provided to you and you do not synthesize information. Respond as if you were speaking to the user. You do not explicitly address the prior conversation history unless it comes up during the conversation with the user." },
 ]
 
 [ragResponse.config.inferenceConfig]
 temperature = 0.0
-maxTokens = 512
-topP = 0.85
+maxTokens = 2048
 
 [faqResponse]
 id = "faqResponse"
 prompt = """Using the provided frequently asked question, generate a concise yet information-complete answer to the user query. Avoid adding unnecessary information or details that are not directly relevant to the question; simply adapt the answer to the user's query. \n\nUser query: \n{query}. \n\nFAQ question: \n{question}. FAQ answer: {answer} Don't address the FAQ directly or say something like "based on the FAQ..."; just use it to inform your response in a way that makes linguistic sense with the user's query. Format your response as Markdown."""
 
 [faqResponse.config]
-modelId = "amazon.nova-pro-v1:0"
+modelId = "us.amazon.nova-pro-v1:0"
 system = [
     { text = "Given frequently asked questions, you provide responses to user queries. You do not elaborate more than necessary and you only use evidence from the documents in your answers." },
 ]

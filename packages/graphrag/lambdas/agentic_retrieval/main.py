@@ -24,10 +24,7 @@ from step_function_types.errors import ValidationError, report_error
 from prompt import SYSTEM_PROMPT
 from step_function_types.models import (
     DocumentResource,
-    GenerateResponseJob,
     RAGDocument,
-    RetrieveResult,
-    StreamResourcesJob,
     UserQuery,
 )
 from tools import TOOL_DEFINITIONS, execute_tool
@@ -284,33 +281,23 @@ def handler(event: dict, context) -> dict[str, Any]:
         answer, cited_doc_ids, rag_documents = run_agentic_loop(user_query.query)
 
         documents = DocumentResource(documents=rag_documents)
+        logger.info(f"Returning {len(rag_documents)} docs to Step Functions")
 
-        result = RetrieveResult(
-            successful=True,
-            generate_response_job=GenerateResponseJob(
-                query=user_query.query,
-                query_id=user_query.query_id,
-                session_id=user_query.session_id,
-                documents=documents,
-                faqs=None,
-            ),
-            stream_documents_job=StreamResourcesJob(
-                query_id=user_query.query_id,
-                session_id=user_query.session_id,
-                faqs=None,
-                documents=documents,
-            ),
-        )
-
-        return result.model_dump()
+        # Return a flat payload; Step Functions Pass states build both
+        # generate_response_job and stream_documents_job from shared fields
+        # to avoid duplicating documents (keeps payload under 256KB limit).
+        return {
+            "successful": True,
+            "query": user_query.query,
+            "query_id": user_query.query_id,
+            "session_id": user_query.session_id,
+            "faqs": None,
+            "documents": documents.model_dump(),
+        }
 
     except Exception as e:
         logger.error(f"Agentic retrieval failed: {e}", exc_info=True)
         if session_id:
             asyncio.run(report_error(e, session_id=session_id))
 
-        return RetrieveResult(
-            successful=False,
-            generate_response_job=None,
-            stream_documents_job=None,
-        ).model_dump()
+        return {"successful": False}

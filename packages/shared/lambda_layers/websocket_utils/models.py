@@ -38,6 +38,7 @@ class SourceDocument(WebSocketMessage):
     title: str
     content: str
     source: str | None = None
+    discovery_tag: str = "unknown"
 
 
 class DocumentsContent(WebSocketMessage):

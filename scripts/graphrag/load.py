@@ -37,7 +37,17 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 s3 = boto3.client("s3")
-bedrock = boto3.client("bedrock-runtime", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+# Tighter timeouts so Phase 5/11 LLM calls don't hang indefinitely on a stalled socket.
+_bedrock_cfg = boto3.session.Config(
+    read_timeout=180,
+    connect_timeout=30,
+    retries={"max_attempts": 5, "mode": "adaptive"},
+)
+bedrock = boto3.client(
+    "bedrock-runtime",
+    region_name=os.environ.get("AWS_REGION", "us-east-1"),
+    config=_bedrock_cfg,
+)
 
 
 def load_config(config_path: str) -> dict:
@@ -173,52 +183,139 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
     logger.info(f"  Created {count} document nodes")
 
 
-def phase_3_cross_references(client, graph_id: str, documents: list[dict]):
-    logger.info("Phase 3: Creating cross-reference edges (CITES + IMPLEMENTS)...")
+PHASE_3_BATCH_SIZE = 50
+PHASE_3_MAX_PAIRS_PER_FLUSH = 400
 
+
+def _pair_count(doc: dict) -> int:
+    return (
+        len(doc.get("statute_refs", []))
+        + len(doc.get("implements_refs", []))
+        + len(doc.get("admin_rule_refs", []))
+    )
+
+
+def _flush_phase_3_batch(client, graph_id: str, batch: list[dict]) -> tuple[int, int]:
+    """Write one batch of doc-level cross-references using UNWIND.
+
+    Returns (edges_created, stubs_created) counts.
+    """
+    if not batch:
+        return 0, 0
+
+    edges = 0
+    stubs = 0
+
+    # 1. Statute stubs used by either CITES or IMPLEMENTS.
+    statute_refs = sorted({
+        ref
+        for b in batch
+        for ref in list(b["statute_refs"]) + list(b["implements_refs"])
+    })
+    if statute_refs:
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MERGE (s:Statute {id: row.id}) "
+            "ON CREATE SET s.title = row.title, s.stub = true",
+            {"rows": [{"id": f"WIS-STAT-{r}", "title": f"Wis. Stat. {r}"} for r in statute_refs]},
+        )
+        stubs += len(statute_refs)
+
+    # 2. doc -CITES-> Statute
+    cite_statute_pairs = [
+        {"doc_id": b["doc_id"], "stub_id": f"WIS-STAT-{ref}"}
+        for b in batch for ref in b["statute_refs"]
+    ]
+    if cite_statute_pairs:
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (d {id: row.doc_id}), (s:Statute {id: row.stub_id}) "
+            "MERGE (d)-[:CITES]->(s)",
+            {"rows": cite_statute_pairs},
+        )
+        edges += len(cite_statute_pairs)
+
+    # 3. doc -IMPLEMENTS-> Statute
+    impl_pairs = [
+        {"doc_id": b["doc_id"], "stub_id": f"WIS-STAT-{ref}"}
+        for b in batch for ref in b["implements_refs"]
+    ]
+    if impl_pairs:
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (d {id: row.doc_id}), (s:Statute {id: row.stub_id}) "
+            "MERGE (d)-[:IMPLEMENTS]->(s)",
+            {"rows": impl_pairs},
+        )
+        edges += len(impl_pairs)
+
+    # 4. AdminRule stubs + doc -CITES-> AdminRule
+    admin_refs = sorted({ref for b in batch for ref in b["admin_rule_refs"]})
+    if admin_refs:
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MERGE (r:AdminRule {id: row.id}) "
+            "ON CREATE SET r.title = row.title, r.stub = true",
+            {"rows": [{"id": f"ADMIN-{r.replace(' ', '-')}", "title": r} for r in admin_refs]},
+        )
+        stubs += len(admin_refs)
+
+        cite_admin_pairs = [
+            {"doc_id": b["doc_id"], "stub_id": f"ADMIN-{ref.replace(' ', '-')}"}
+            for b in batch for ref in b["admin_rule_refs"]
+        ]
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (d {id: row.doc_id}), (r:AdminRule {id: row.stub_id}) "
+            "MERGE (d)-[:CITES]->(r)",
+            {"rows": cite_admin_pairs},
+        )
+        edges += len(cite_admin_pairs)
+
+    return edges, stubs
+
+
+def phase_3_cross_references(client, graph_id: str, documents: list[dict]):
+    logger.info(
+        f"Phase 3: Creating cross-reference edges (CITES + IMPLEMENTS) "
+        f"(batch size {PHASE_3_BATCH_SIZE})..."
+    )
+
+    batch: list[dict] = []
+    batch_pairs = 0
     edges_created = 0
     stubs_created = 0
+    docs_processed = 0
 
     for doc in documents:
-        doc_id = doc["doc_id"]
+        entry = {
+            "doc_id": doc["doc_id"],
+            "statute_refs": doc.get("statute_refs", []) or [],
+            "implements_refs": doc.get("implements_refs", []) or [],
+            "admin_rule_refs": doc.get("admin_rule_refs", []) or [],
+        }
+        pairs = _pair_count(entry)
 
-        for ref in doc.get("statute_refs", []):
-            stub_id = f"WIS-STAT-{ref}"
-            execute_query(client, graph_id,
-                "MERGE (s:Statute {id: $id}) ON CREATE SET s.title = $title, s.stub = true",
-                {"id": stub_id, "title": f"Wis. Stat. {ref}"},
+        # Flush before adding if this doc alone would blow the pair cap.
+        if batch and (len(batch) >= PHASE_3_BATCH_SIZE or batch_pairs + pairs > PHASE_3_MAX_PAIRS_PER_FLUSH):
+            e, s = _flush_phase_3_batch(client, graph_id, batch)
+            edges_created += e
+            stubs_created += s
+            batch = []
+            batch_pairs = 0
+            logger.info(
+                f"  Phase 3 progress: {docs_processed}/{len(documents)} docs, "
+                f"{edges_created} edges, {stubs_created} stubs"
             )
-            stubs_created += 1
-            execute_query(client, graph_id,
-                "MATCH (d {id: $doc_id}), (s:Statute {id: $stub_id}) MERGE (d)-[:CITES]->(s)",
-                {"doc_id": doc_id, "stub_id": stub_id},
-            )
-            edges_created += 1
 
-        for ref in doc.get("implements_refs", []):
-            stub_id = f"WIS-STAT-{ref}"
-            execute_query(client, graph_id,
-                "MERGE (s:Statute {id: $id}) ON CREATE SET s.title = $title, s.stub = true",
-                {"id": stub_id, "title": f"Wis. Stat. {ref}"},
-            )
-            execute_query(client, graph_id,
-                "MATCH (d {id: $doc_id}), (s:Statute {id: $stub_id}) MERGE (d)-[:IMPLEMENTS]->(s)",
-                {"doc_id": doc_id, "stub_id": stub_id},
-            )
-            edges_created += 1
+        batch.append(entry)
+        batch_pairs += pairs
+        docs_processed += 1
 
-        for ref in doc.get("admin_rule_refs", []):
-            stub_id = f"ADMIN-{ref.replace(' ', '-')}"
-            execute_query(client, graph_id,
-                "MERGE (r:AdminRule {id: $id}) ON CREATE SET r.title = $title, r.stub = true",
-                {"id": stub_id, "title": ref},
-            )
-            stubs_created += 1
-            execute_query(client, graph_id,
-                "MATCH (d {id: $doc_id}), (r:AdminRule {id: $stub_id}) MERGE (d)-[:CITES]->(r)",
-                {"doc_id": doc_id, "stub_id": stub_id},
-            )
-            edges_created += 1
+    if batch:
+        e, s = _flush_phase_3_batch(client, graph_id, batch)
+        edges_created += e
+        stubs_created += s
 
     logger.info(f"  Created {edges_created} cross-reference edges, {stubs_created} stubs")
 
@@ -277,8 +374,10 @@ def phase_5_topic_merging(client, graph_id: str, documents: list[dict], config: 
     canonical_map = {}
     llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-20250514")
 
-    for i in range(0, len(all_topics), batch_size):
+    total_batches = (len(all_topics) + batch_size - 1) // batch_size
+    for batch_i, i in enumerate(range(0, len(all_topics), batch_size), start=1):
         batch = all_topics[i : i + batch_size]
+        logger.info(f"  Phase 5 LLM call {batch_i}/{total_batches} ({len(batch)} topics)...")
         prompt = (
             "Given these raw topic labels from Wisconsin DOR property tax documents, "
             "merge synonyms into canonical names. Return JSON only:\n"
@@ -306,21 +405,48 @@ def phase_5_topic_merging(client, graph_id: str, documents: list[dict], config: 
             logger.warning(f"  Failed to parse LLM topic response for batch {i}")
 
     canonical_topics = set(canonical_map.values())
-    for topic in canonical_topics:
-        execute_query(client, graph_id,
-            "MERGE (t:Topic {id: $id}) SET t.title = $title",
-            {"id": topic.lower().replace(" ", "-"), "title": topic},
-        )
 
+    # Batch-MERGE all Topic nodes in one UNWIND.
+    if canonical_topics:
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MERGE (t:Topic {id: row.id}) SET t.title = row.title",
+            {"rows": [
+                {"id": topic.lower().replace(" ", "-"), "title": topic}
+                for topic in sorted(canonical_topics)
+            ]},
+        )
+    logger.info(f"  Merged {len(canonical_topics)} Topic nodes")
+
+    # Build all (doc_id, topic_id) pairs, deduped.
+    pairs: list[dict] = []
+    seen: set[tuple[str, str]] = set()
     for doc in documents:
+        doc_id = doc["doc_id"]
         for raw_topic in doc.get("topics", []):
             canonical = canonical_map.get(raw_topic.strip().lower(), raw_topic.strip())
             topic_id = canonical.lower().replace(" ", "-")
-            execute_query(client, graph_id,
-                "MATCH (d {id: $doc_id}), (t:Topic {id: $topic_id}) "
-                "MERGE (d)-[:COVERS_TOPIC]->(t)",
-                {"doc_id": doc["doc_id"], "topic_id": topic_id},
-            )
+            key = (doc_id, topic_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append({"doc_id": doc_id, "topic_id": topic_id})
+
+    logger.info(f"  {len(pairs)} doc→topic edges to create")
+
+    # UNWIND-batch COVERS_TOPIC edges. Cap pair count per flush to avoid Neptune OOM.
+    flush_cap = 400
+    written = 0
+    for start in range(0, len(pairs), flush_cap):
+        chunk = pairs[start : start + flush_cap]
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (d {id: row.doc_id}), (t:Topic {id: row.topic_id}) "
+            "MERGE (d)-[:COVERS_TOPIC]->(t)",
+            {"rows": chunk},
+        )
+        written += len(chunk)
+        logger.info(f"  Phase 5 edges: {written}/{len(pairs)}")
 
     logger.info(f"  Created {len(canonical_topics)} canonical topics from {len(all_topics)} raw topics")
 
@@ -328,14 +454,22 @@ def phase_5_topic_merging(client, graph_id: str, documents: list[dict], config: 
 def phase_6_7_hierarchy(client, graph_id: str, documents: list[dict]):
     logger.info("Phase 6-7: Sub-document links + universal hierarchy...")
 
-    for doc in documents:
-        parent_id = doc.get("_parent_id")
-        if parent_id:
-            execute_query(client, graph_id,
-                "MATCH (parent {id: $parent_id}), (child {id: $child_id}) "
-                "MERGE (parent)-[:HAS_SUBSECTION]->(child)",
-                {"parent_id": parent_id, "child_id": doc["doc_id"]},
-            )
+    pairs = [
+        {"parent_id": doc["_parent_id"], "child_id": doc["doc_id"]}
+        for doc in documents
+        if doc.get("_parent_id")
+    ]
+    logger.info(f"  {len(pairs)} HAS_SUBSECTION links")
+
+    flush_cap = 400
+    for start in range(0, len(pairs), flush_cap):
+        chunk = pairs[start : start + flush_cap]
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (parent {id: row.parent_id}), (child {id: row.child_id}) "
+            "MERGE (parent)-[:HAS_SUBSECTION]->(child)",
+            {"rows": chunk},
+        )
 
     execute_query(client, graph_id,
         "MATCH (s:Statute) WHERE s.stub = true AND NOT (s)-[:BELONGS_TO]->() "
@@ -351,74 +485,148 @@ def phase_6_7_hierarchy(client, graph_id: str, documents: list[dict]):
     logger.info("  Hierarchy links complete")
 
 
-def phase_8_chunks(client, graph_id: str, documents: list[dict]):
-    logger.info("Phase 8: Creating chunk nodes with headings + chunk-level CITES edges...")
+PHASE_8_BATCH_SIZE = 50
+PHASE_8_MAX_PAIRS_PER_FLUSH = 400
 
+
+def _chunk_pair_count(entry: dict) -> int:
+    return len(entry.get("statute_refs", [])) + len(entry.get("admin_rule_refs", []))
+
+
+def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
+    """Write one batch of chunks using UNWIND for ~10x throughput vs per-chunk queries.
+
+    Returns count of CITES edges created in the batch.
+    """
+    if not batch:
+        return 0
+
+    # 1. Chunk nodes (single UNWIND MERGE, sets all scalar props).
+    execute_query(client, graph_id,
+        "UNWIND $rows AS row "
+        "MERGE (c:Chunk {id: row.id}) "
+        "SET c.text = row.text, c.doc_id = row.doc_id, "
+        "c.source_url = row.source_url, c.chunk_index = row.idx, "
+        "c.s3_key = row.s3_key, c.start_page = row.start_page, "
+        "c.end_page = row.end_page, c.heading = row.heading, "
+        "c.subheading = row.subheading",
+        {"rows": [
+            {
+                "id": b["chunk_id"],
+                "text": b["text"],
+                "doc_id": b["doc_id"],
+                "source_url": b["source_url"],
+                "idx": b["idx"],
+                "s3_key": b["s3_key"],
+                "start_page": b["start_page"],
+                "end_page": b["end_page"],
+                "heading": b["heading"],
+                "subheading": b["subheading"],
+            } for b in batch
+        ]},
+    )
+
+    # 2. EXTRACTED_FROM edges (batch MATCH+MERGE).
+    execute_query(client, graph_id,
+        "UNWIND $rows AS row "
+        "MATCH (c:Chunk {id: row.chunk_id}), (d {id: row.doc_id}) "
+        "MERGE (c)-[:EXTRACTED_FROM]->(d)",
+        {"rows": [{"chunk_id": b["chunk_id"], "doc_id": b["doc_id"]} for b in batch]},
+    )
+
+    cite_edges = 0
+
+    # 3. Statute stubs + chunk CITES Statute (two UNWINDs).
+    statute_refs = sorted({ref for b in batch for ref in b["statute_refs"]})
+    if statute_refs:
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MERGE (s:Statute {id: row.id}) "
+            "ON CREATE SET s.title = row.title, s.stub = true",
+            {"rows": [{"id": f"WIS-STAT-{r}", "title": f"Wis. Stat. {r}"} for r in statute_refs]},
+        )
+        cite_pairs = [
+            {"chunk_id": b["chunk_id"], "stub_id": f"WIS-STAT-{ref}"}
+            for b in batch for ref in b["statute_refs"]
+        ]
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (c:Chunk {id: row.chunk_id}), (s:Statute {id: row.stub_id}) "
+            "MERGE (c)-[:CITES]->(s)",
+            {"rows": cite_pairs},
+        )
+        cite_edges += len(cite_pairs)
+
+    # 4. AdminRule stubs + chunk CITES AdminRule.
+    admin_refs = sorted({ref for b in batch for ref in b["admin_rule_refs"]})
+    if admin_refs:
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MERGE (r:AdminRule {id: row.id}) "
+            "ON CREATE SET r.title = row.title, r.stub = true",
+            {"rows": [{"id": f"ADMIN-{r.replace(' ', '-')}", "title": r} for r in admin_refs]},
+        )
+        cite_pairs = [
+            {"chunk_id": b["chunk_id"], "stub_id": f"ADMIN-{ref.replace(' ', '-')}"}
+            for b in batch for ref in b["admin_rule_refs"]
+        ]
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (c:Chunk {id: row.chunk_id}), (r:AdminRule {id: row.stub_id}) "
+            "MERGE (c)-[:CITES]->(r)",
+            {"rows": cite_pairs},
+        )
+        cite_edges += len(cite_pairs)
+
+    return cite_edges
+
+
+def phase_8_chunks(client, graph_id: str, documents: list[dict]):
+    logger.info(
+        f"Phase 8: Creating chunk nodes with headings + chunk-level CITES edges "
+        f"(batch size {PHASE_8_BATCH_SIZE})..."
+    )
+
+    batch: list[dict] = []
+    batch_pairs = 0
     total_chunks = 0
     cite_edges = 0
+
     for doc in documents:
         doc_id = doc["doc_id"]
         s3_key = doc.get("s3_key", "")
         for i, chunk in enumerate(doc.get("chunks", [])):
-            chunk_id = f"{doc_id}_chunk_{i:04d}"
             meta = chunk.get("metadata", {})
-            start_page = meta.get("start_page")
-            end_page = meta.get("end_page")
+            entry = {
+                "chunk_id": f"{doc_id}_chunk_{i:04d}",
+                "text": chunk["text"],
+                "doc_id": doc_id,
+                "source_url": meta.get("source_url", ""),
+                "idx": i,
+                "s3_key": meta.get("source", s3_key),
+                "start_page": meta.get("start_page"),
+                "end_page": meta.get("end_page"),
+                "heading": meta.get("heading", ""),
+                "subheading": meta.get("subheading", ""),
+                "statute_refs": meta.get("statute_refs", []),
+                "admin_rule_refs": meta.get("admin_rule_refs", []),
+            }
+            pairs = _chunk_pair_count(entry)
 
-            execute_query(client, graph_id,
-                "MERGE (c:Chunk {id: $id}) "
-                "SET c.text = $text, c.doc_id = $doc_id, "
-                "c.source_url = $source_url, c.chunk_index = $idx, "
-                "c.s3_key = $s3_key, c.start_page = $start_page, "
-                "c.end_page = $end_page, "
-                "c.heading = $heading, c.subheading = $subheading",
-                {
-                    "id": chunk_id,
-                    "text": chunk["text"],
-                    "doc_id": doc_id,
-                    "source_url": meta.get("source_url", ""),
-                    "idx": i,
-                    "s3_key": meta.get("source", s3_key),
-                    "start_page": start_page,
-                    "end_page": end_page,
-                    "heading": meta.get("heading", ""),
-                    "subheading": meta.get("subheading", ""),
-                },
-            )
+            # Flush BEFORE adding if this chunk alone would blow the pair cap.
+            if batch and (len(batch) >= PHASE_8_BATCH_SIZE or batch_pairs + pairs > PHASE_8_MAX_PAIRS_PER_FLUSH):
+                cite_edges += _flush_phase_8_batch(client, graph_id, batch)
+                batch = []
+                batch_pairs = 0
+                if total_chunks % 1000 == 0:
+                    logger.info(f"  Phase 8 progress: {total_chunks} chunks, {cite_edges} CITES edges")
 
-            execute_query(client, graph_id,
-                "MATCH (c:Chunk {id: $chunk_id}), (d {id: $doc_id}) "
-                "MERGE (c)-[:EXTRACTED_FROM]->(d)",
-                {"chunk_id": chunk_id, "doc_id": doc_id},
-            )
-
-            for ref in meta.get("statute_refs", []):
-                stub_id = f"WIS-STAT-{ref}"
-                execute_query(client, graph_id,
-                    "MERGE (s:Statute {id: $id}) ON CREATE SET s.title = $title, s.stub = true",
-                    {"id": stub_id, "title": f"Wis. Stat. {ref}"},
-                )
-                execute_query(client, graph_id,
-                    "MATCH (c:Chunk {id: $chunk_id}), (s:Statute {id: $stub_id}) "
-                    "MERGE (c)-[:CITES]->(s)",
-                    {"chunk_id": chunk_id, "stub_id": stub_id},
-                )
-                cite_edges += 1
-
-            for ref in meta.get("admin_rule_refs", []):
-                stub_id = f"ADMIN-{ref.replace(' ', '-')}"
-                execute_query(client, graph_id,
-                    "MERGE (r:AdminRule {id: $id}) ON CREATE SET r.title = $title, r.stub = true",
-                    {"id": stub_id, "title": ref},
-                )
-                execute_query(client, graph_id,
-                    "MATCH (c:Chunk {id: $chunk_id}), (r:AdminRule {id: $stub_id}) "
-                    "MERGE (c)-[:CITES]->(r)",
-                    {"chunk_id": chunk_id, "stub_id": stub_id},
-                )
-                cite_edges += 1
-
+            batch.append(entry)
+            batch_pairs += pairs
             total_chunks += 1
+
+    if batch:
+        cite_edges += _flush_phase_8_batch(client, graph_id, batch)
 
     logger.info(f"  Created {total_chunks} chunk nodes, {cite_edges} chunk-level CITES edges")
 
@@ -429,54 +637,81 @@ def phase_9_stub_resolution(client, graph_id: str):
     result = execute_query(client, graph_id,
         "MATCH (s) WHERE s.stub = true RETURN s.id AS id, labels(s) AS labels"
     )
-
     stubs = result.get("results", [])
-    resolved = 0
+    logger.info(f"  {len(stubs)} stubs to consider")
+
+    # Build candidate (stub_id, real_id) pairs from stub IDs matching WIS-STAT-{chapter}.
+    candidates = []
     for stub in stubs:
         stub_id = stub["id"]
-        match = re.match(r"WIS-STAT-(\d+)", stub_id)
-        if match:
-            chapter = match.group(1)
-            real_id = f"statutes-wi-statute-ch{chapter}"
-            result = execute_query(client, graph_id,
-                "MATCH (real {id: $real_id}) WHERE real.stub IS NULL RETURN real.id AS id",
-                {"real_id": real_id},
-            )
-            if result.get("results"):
-                execute_query(client, graph_id,
-                    "MATCH (s {id: $stub_id})<-[r]-(citing) "
-                    "MATCH (real {id: $real_id}) "
-                    "FOREACH (x IN CASE WHEN real IS NOT NULL THEN [1] ELSE [] END | "
-                    "  MERGE (citing)-[:CITES]->(real))",
-                    {"stub_id": stub_id, "real_id": real_id},
-                )
-                resolved += 1
+        m = re.match(r"WIS-STAT-(\d+)", stub_id)
+        if m:
+            candidates.append({"stub_id": stub_id, "real_id": f"statutes-wi-statute-ch{m.group(1)}"})
 
-    logger.info(f"  Resolved {resolved}/{len(stubs)} stubs")
+    if not candidates:
+        logger.info("  No resolvable candidates")
+        return
+
+    logger.info(f"  {len(candidates)} resolvable candidate pairs")
+
+    # Re-point CITES and IMPLEMENTS edges from stub → real (if real exists and is not itself a stub).
+    # Two UNWINDs per batch (one per edge type). Chunked to stay under per-query memory.
+    flush_cap = 200
+    for edge_type in ("CITES", "IMPLEMENTS"):
+        for start in range(0, len(candidates), flush_cap):
+            chunk = candidates[start : start + flush_cap]
+            execute_query(client, graph_id,
+                "UNWIND $rows AS row "
+                "MATCH (real {id: row.real_id}) WHERE real.stub IS NULL "
+                "MATCH (s {id: row.stub_id})<-[:" + edge_type + "]-(citing) "
+                "MERGE (citing)-[:" + edge_type + "]->(real)",
+                {"rows": chunk},
+            )
+        logger.info(f"  Phase 9 {edge_type}: re-pointed {len(candidates)} candidate stubs")
+
+    logger.info(f"  Processed {len(candidates)}/{len(stubs)} candidate stubs (no-op if real nodes absent)")
+
+
+PHASE_10_WORKERS = 8
+
+
+def _upsert_vector(client, graph_id: str, chunk_id: str, embedding: list[float]) -> None:
+    # Neptune's vector upsert is a CALL procedure — cannot UNWIND a batch.
+    # Inline the embedding literal to avoid parameterized-CALL limits.
+    embedding_literal = "[" + ",".join(str(v) for v in embedding) + "]"
+    execute_query(client, graph_id,
+        f"MATCH (c:Chunk {{id: $id}}) "
+        f"CALL neptune.algo.vectors.upsert(c, {embedding_literal}) "
+        f"RETURN c.id",
+        {"id": chunk_id},
+    )
 
 
 def phase_10_vectors(client, graph_id: str, documents: list[dict]):
-    logger.info("Phase 10: Upserting chunk vectors...")
+    logger.info(f"Phase 10: Upserting chunk vectors (parallel workers={PHASE_10_WORKERS})...")
 
-    total = 0
+    jobs: list[tuple[str, list[float]]] = []
     for doc in documents:
         doc_id = doc["doc_id"]
         for i, chunk in enumerate(doc.get("chunks", [])):
             embedding = chunk.get("embedding")
             if not embedding:
                 continue
+            jobs.append((f"{doc_id}_chunk_{i:04d}", embedding))
 
-            chunk_id = f"{doc_id}_chunk_{i:04d}"
+    logger.info(f"  {len(jobs)} vectors to upsert")
 
-            execute_query(client, graph_id,
-                "MATCH (c:Chunk {id: $id}) "
-                "CALL neptune.algo.vectors.upsert(c, $embedding)",
-                {"id": chunk_id, "embedding": embedding},
-            )
+    total = 0
+    with ThreadPoolExecutor(max_workers=PHASE_10_WORKERS) as pool:
+        futures = [
+            pool.submit(_upsert_vector, client, graph_id, cid, emb)
+            for cid, emb in jobs
+        ]
+        for fut in as_completed(futures):
+            fut.result()
             total += 1
-
-            if total % 500 == 0:
-                logger.info(f"  Upserted {total} vectors...")
+            if total % 500 == 0 or total == len(jobs):
+                logger.info(f"  Upserted {total}/{len(jobs)} vectors...")
 
     logger.info(f"  Upserted {total} chunk vectors")
 
@@ -488,6 +723,101 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+
+PHASE_11_LLM_WORKERS = 8
+PHASE_11_ALLOWED_TYPES = {"RELATED_TO", "SUPPLEMENTS", "SUPERSEDES", "CONFLICTS_WITH"}
+
+
+def _extract_json_array(text: str) -> list:
+    """Extract a JSON array from LLM output that may be wrapped in prose or markdown fences."""
+    # Strip markdown fences first
+    stripped = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.MULTILINE)
+    stripped = re.sub(r"```\s*$", "", stripped.strip(), flags=re.MULTILINE)
+    # Find the first top-level JSON array
+    m = re.search(r"\[.*\]", stripped, re.DOTALL)
+    if not m:
+        raise ValueError(f"no JSON array found in response (first 200 chars): {text[:200]!r}")
+    return json.loads(m.group(0))
+
+
+def _llm_classify_semantic_batch(
+    batch: list[tuple[dict, dict, float]],
+    llm_model: str,
+) -> list[dict]:
+    """Run one LLM batch and return list of edge specs.
+
+    Each edge spec: {"a_id", "b_id", "type", "sim", "reason"}.
+    Raises on failure — caller logs + moves on.
+    """
+    pairs_text = "\n".join([
+        f"Pair {k+1}: Doc A = '{a['title']}' (type={a['doc_type']}), "
+        f"Doc B = '{b['title']}' (type={b['doc_type']}), similarity={sim:.3f}"
+        for k, (a, b, sim) in enumerate(batch)
+    ])
+    prompt = (
+        "For each pair of Wisconsin DOR documents below, determine if they are meaningfully related. "
+        "For each pair, return: {\"pair\": N, \"related\": true/false, "
+        "\"type\": \"RELATED_TO\"|\"SUPPLEMENTS\"|\"SUPERSEDES\"|\"CONFLICTS_WITH\", "
+        "\"reason\": \"brief explanation\"}\n\n"
+        "Return ONLY a JSON array, no prose. Consider the Wisconsin legal hierarchy: "
+        "Constitution > Statutes > Admin Rules > WPAM > FAQs > Guides.\n\n"
+        f"Pairs:\n{pairs_text}"
+    )
+    response = bedrock.converse(
+        modelId=llm_model,
+        messages=[{"role": "user", "content": [{"text": prompt}]}],
+        inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+    )
+    result_text = response["output"]["message"]["content"][0]["text"]
+    results = _extract_json_array(result_text)
+    if not isinstance(results, list):
+        results = [results]
+
+    edges = []
+    for item in results:
+        pair_idx = item.get("pair", 0) - 1
+        if not (0 <= pair_idx < len(batch)) or not item.get("related"):
+            continue
+        doc_a, doc_b, sim = batch[pair_idx]
+        edge_type = item.get("type", "RELATED_TO")
+        if edge_type not in PHASE_11_ALLOWED_TYPES:
+            edge_type = "RELATED_TO"
+        edges.append({
+            "a_id": doc_a["doc_id"],
+            "b_id": doc_b["doc_id"],
+            "type": edge_type,
+            "sim": sim,
+            "reason": item.get("reason", ""),
+        })
+    return edges
+
+
+def _flush_semantic_edges(client, graph_id: str, edges: list[dict]) -> int:
+    """Write a chunk of semantic edges, grouped by edge type (one UNWIND per type)."""
+    if not edges:
+        return 0
+    by_type: dict[str, list[dict]] = {}
+    for e in edges:
+        by_type.setdefault(e["type"], []).append({
+            "a_id": e["a_id"],
+            "b_id": e["b_id"],
+            "sim": e["sim"],
+            "reason": e["reason"],
+        })
+    written = 0
+    for edge_type, rows in by_type.items():
+        # Edge type is injected as a label (can't be parameterized in Cypher)
+        # but rows are validated against PHASE_11_ALLOWED_TYPES above.
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (a {id: row.a_id}), (b {id: row.b_id}) "
+            f"MERGE (a)-[r:{edge_type}]->(b) "
+            "SET r.similarity = row.sim, r.reason = row.reason",
+            {"rows": rows},
+        )
+        written += len(rows)
+    return written
 
 
 def phase_11_semantic_edges(client, graph_id: str, documents: list[dict], config: dict):
@@ -511,59 +841,44 @@ def phase_11_semantic_edges(client, graph_id: str, documents: list[dict], config
 
     logger.info(f"  {len(candidates)} candidate pairs above {threshold} threshold")
 
+    # Slice candidates into LLM-sized batches.
+    batches = [candidates[i : i + batch_size] for i in range(0, len(candidates), batch_size)]
+    logger.info(f"  {len(batches)} LLM batches, {PHASE_11_LLM_WORKERS} parallel workers")
+
     edges_created = 0
-    for batch_start in range(0, len(candidates), batch_size):
-        batch = candidates[batch_start : batch_start + batch_size]
+    batches_done = 0
+    pending_edges: list[dict] = []
+    flush_cap = 200
 
-        pairs_text = "\n".join([
-            f"Pair {k+1}: Doc A = '{a['title']}' (type={a['doc_type']}), "
-            f"Doc B = '{b['title']}' (type={b['doc_type']}), similarity={sim:.3f}"
-            for k, (a, b, sim) in enumerate(batch)
-        ])
+    with ThreadPoolExecutor(max_workers=PHASE_11_LLM_WORKERS) as pool:
+        future_to_idx = {
+            pool.submit(_llm_classify_semantic_batch, batch, llm_model): bi
+            for bi, batch in enumerate(batches)
+        }
+        for fut in as_completed(future_to_idx):
+            bi = future_to_idx[fut]
+            try:
+                edges = fut.result()
+                pending_edges.extend(edges)
+            except Exception as e:
+                logger.warning(f"  Batch {bi} failed: {e}")
 
-        prompt = (
-            "For each pair of Wisconsin DOR documents below, determine if they are meaningfully related. "
-            "For each pair, return: {\"pair\": N, \"related\": true/false, "
-            "\"type\": \"RELATED_TO\"|\"SUPPLEMENTS\"|\"SUPERSEDES\"|\"CONFLICTS_WITH\", "
-            "\"reason\": \"brief explanation\"}\n\n"
-            "Return a JSON array. Consider the Wisconsin legal hierarchy: "
-            "Constitution > Statutes > Admin Rules > WPAM > FAQs > Guides.\n\n"
-            f"Pairs:\n{pairs_text}"
-        )
+            batches_done += 1
 
-        try:
-            response = bedrock.converse(
-                modelId=llm_model,
-                messages=[{"role": "user", "content": [{"text": prompt}]}],
-                inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
-            )
+            if len(pending_edges) >= flush_cap:
+                written = _flush_semantic_edges(client, graph_id, pending_edges)
+                edges_created += written
+                pending_edges = []
 
-            result_text = response["output"]["message"]["content"][0]["text"]
-            result_text = re.sub(r"^```(?:json)?\n?", "", result_text.strip())
-            result_text = re.sub(r"\n?```$", "", result_text.strip())
-            results = json.loads(result_text)
+            if batches_done % 20 == 0 or batches_done == len(batches):
+                logger.info(
+                    f"  Phase 11 progress: {batches_done}/{len(batches)} batches, "
+                    f"{edges_created} edges written"
+                )
 
-            if not isinstance(results, list):
-                results = [results]
-
-            for item in results:
-                pair_idx = item.get("pair", 0) - 1
-                if 0 <= pair_idx < len(batch) and item.get("related"):
-                    doc_a, doc_b, sim = batch[pair_idx]
-                    edge_type = item.get("type", "RELATED_TO")
-                    reason = item.get("reason", "")
-
-                    execute_query(client, graph_id,
-                        f"MATCH (a {{id: $a_id}}), (b {{id: $b_id}}) "
-                        f"MERGE (a)-[r:{edge_type}]->(b) "
-                        f"SET r.similarity = $sim, r.reason = $reason",
-                        {"a_id": doc_a["doc_id"], "b_id": doc_b["doc_id"],
-                         "sim": sim, "reason": reason},
-                    )
-                    edges_created += 1
-
-        except Exception as e:
-            logger.warning(f"  Semantic edge batch failed: {e}")
+    if pending_edges:
+        written = _flush_semantic_edges(client, graph_id, pending_edges)
+        edges_created += written
 
     logger.info(f"  Created {edges_created} semantic edges")
 
@@ -574,6 +889,7 @@ def main():
     parser.add_argument("--graph-id", required=True, help="Neptune Analytics graph identifier")
     parser.add_argument("--config", default="scripts/graphrag/ingest_config.yaml")
     parser.add_argument("--start-phase", type=int, default=1, help="Resume from specific phase")
+    parser.add_argument("--stop-after-phase", type=int, default=None, help="Exit cleanly after this phase completes")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -600,6 +916,9 @@ def main():
             continue
         logger.info(f"\n{'='*60}\nPhase {phase_num}: {name}\n{'='*60}")
         fn()
+        if args.stop_after_phase is not None and phase_num >= args.stop_after_phase:
+            logger.info(f"Stopping after Phase {phase_num} per --stop-after-phase.")
+            return
 
     logger.info("\nGraph loading complete!")
 

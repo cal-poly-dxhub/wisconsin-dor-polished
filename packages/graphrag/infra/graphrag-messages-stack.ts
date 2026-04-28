@@ -121,21 +121,34 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
       }
     );
 
+    // Build StreamResourcesJob from the flat AgenticRetrieval output.
+    // Shape: { query_id, session_id, faqs, documents }
     const selectResourceStreamingJob = new sfn.Pass(
       this,
       'SelectResourceStreamingJob',
       {
-        parameters: { 'job.$': '$.stream_documents_job' },
-        outputPath: '$.job',
+        parameters: {
+          'query_id.$': '$.query_id',
+          'session_id.$': '$.session_id',
+          'faqs.$': '$.faqs',
+          'documents.$': '$.documents',
+        },
       }
     );
 
+    // Build GenerateResponseJob from the flat AgenticRetrieval output.
+    // Shape: { query, query_id, session_id, faqs, documents }
     const selectGenerateResponseJob = new sfn.Pass(
       this,
       'SelectGenerateResponseJob',
       {
-        parameters: { 'job.$': '$.generate_response_job' },
-        outputPath: '$.job',
+        parameters: {
+          'query.$': '$.query',
+          'query_id.$': '$.query_id',
+          'session_id.$': '$.session_id',
+          'faqs.$': '$.faqs',
+          'documents.$': '$.documents',
+        },
       }
     );
 

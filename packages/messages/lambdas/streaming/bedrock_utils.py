@@ -126,7 +126,7 @@ def get_model_config_from_dynamo(config_id: str) -> ModelConfig:
 
 
 async def call_bedrock_converse(
-    query: str, model_config: ModelConfig, region: str = "us-west-2"
+    query: str, model_config: ModelConfig, region: str | None = None
 ) -> AsyncGenerator[str]:
     """
     Call Bedrock Converse API with streaming using ModelConfig.
@@ -134,13 +134,14 @@ async def call_bedrock_converse(
     Args:
         query: The user's query/message
         model_config: The ModelConfig containing Bedrock configuration
-        region: AWS region for Bedrock client (default: us-west-2)
+        region: AWS region for Bedrock client (defaults to AWS_REGION env or us-east-1)
 
     Yields:
         str: Text fragments from the streaming response
     """
 
     logger.info(f"Calling Bedrock Converse API with query: {query}")
+    region = region or os.environ.get("AWS_REGION", "us-east-1")
     bedrock_client = boto3.client("bedrock-runtime", region_name=region)
 
     conversation_request: dict = {
