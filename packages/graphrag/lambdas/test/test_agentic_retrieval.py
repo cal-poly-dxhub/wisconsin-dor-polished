@@ -165,3 +165,96 @@ def test_collapse_case_law_leaves_distinct_cases_alone():
 
         merged = _collapse_case_law_by_title(docs)
         assert len(merged) == 2
+
+
+def test_collapse_case_law_merges_divergent_suffixes():
+    """LLM classifier sometimes gives parallel citations of the same decision
+    different descriptive suffixes after an em-dash. They should still merge."""
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        from main import _collapse_case_law_by_title
+
+        docs = {
+            "case-law-657-n-w-2d-112": MockRAGDocument(
+                document_id="case-law-657-n-w-2d-112-aaa",
+                title=(
+                    "Fee and Fogarty v. Town of Florence Board of Review – "
+                    "Court of Appeals Decision on Agricultural Land Classification"
+                ),
+                content="nw2d host",
+                discovery_tag="vector-search",
+            ),
+            "case-law-259-wis-2d-868": MockRAGDocument(
+                document_id="case-law-259-wis-2d-868-bbb",
+                title=(
+                    "Fee and Fogarty v. Town of Florence Board of Review – "
+                    "Property Tax Assessment Appeal (Agricultural Classification)"
+                ),
+                content="wis2d host",
+                discovery_tag="vector-search",
+            ),
+        }
+
+        merged = _collapse_case_law_by_title(docs)
+        assert len(merged) == 1
+        only = next(iter(merged.values()))
+        assert "nw2d host" in only.content
+        assert "wis2d host" in only.content
+
+
+def test_collapse_case_law_does_not_overmerge_same_name_different_year():
+    """Two decisions with the same case name but different years (different
+    cases with reused party names) must not collapse."""
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        from main import _collapse_case_law_by_title
+
+        docs = {
+            "case-law-2001": MockRAGDocument(
+                document_id="case-law-2001-x",
+                title="Smith v. Jones, 2001 WI 10",
+                content="older",
+                discovery_tag="vector-search",
+            ),
+            "case-law-2015": MockRAGDocument(
+                document_id="case-law-2015-y",
+                title="Smith v. Jones, 2015 WI 50",
+                content="newer",
+                discovery_tag="vector-search",
+            ),
+        }
+
+        merged = _collapse_case_law_by_title(docs)
+        assert len(merged) == 2
+
+
+def test_collapse_case_law_yearless_doc_joins_dominant_year_bucket():
+    """When one parallel citation has a year and the other lost it during
+    ingest, the yearless doc attaches to the dominant year bucket."""
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        from main import _collapse_case_law_by_title
+
+        docs = {
+            "case-law-with-year": MockRAGDocument(
+                document_id="case-law-with-year-x",
+                title="Thoma v. Village of Slinger, 2018 WI 45",
+                content="yearful",
+                discovery_tag="vector-search",
+            ),
+            "case-law-no-year": MockRAGDocument(
+                document_id="case-law-no-year-y",
+                title="Thoma v. Village of Slinger",
+                content="yearless",
+                discovery_tag="graph-neighbor",
+            ),
+        }
+
+        merged = _collapse_case_law_by_title(docs)
+        assert len(merged) == 1
+        only = next(iter(merged.values()))
+        assert "yearful" in only.content
+        assert "yearless" in only.content

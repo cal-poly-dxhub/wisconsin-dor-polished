@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import boto3
@@ -289,14 +290,44 @@ _DISCOVERY_TAG_PRIORITY = [
 ]
 
 
-def _normalize_title(title: str) -> str:
-    """Canonical key for title-based merging of case-law stubs.
+# Separators that introduce a non-case-name suffix in LLM-classified titles:
+# em-dash, en-dash, colon, or " - ". Also a comma followed by a 4-digit
+# year (matches reporter citations like ", 2022 WI 17"). Everything before
+# the earliest match is the canonical case name.
+_CASE_NAME_SUFFIX_RE = re.compile(
+    r"\s*(?:[–—:]|-\s)|,\s*(?=\d{4}\b)"
+)
 
-    Case and whitespace variance only; punctuation is preserved because
-    case names hinge on it ("In re X." vs "In re X" are still the same
-    case but "State v. A" vs "State v. B" aren't).
+# 4-digit year appearing anywhere in the title. Used alongside the case
+# name to disambiguate reused names (e.g., "Smith v. Jones" in 2001 vs 2015).
+_YEAR_RE = re.compile(r"\b(\d{4})\b")
+
+
+def _extract_case_name(title: str) -> str:
+    """Canonical case-name portion of a title, lowercased and whitespace-collapsed.
+
+    Cuts at the first case-name/suffix separator so descriptive tails
+    written by the LLM classifier don't defeat the merge:
+      "Fee and Fogarty v. Town of Florence Board of Review – Court of ..."
+      "Fee and Fogarty v. Town of Florence Board of Review – Property ..."
+    both reduce to "fee and fogarty v. town of florence board of review".
     """
-    return " ".join(title.lower().split())
+    match = _CASE_NAME_SUFFIX_RE.search(title)
+    core = title[: match.start()] if match else title
+    return " ".join(core.lower().split())
+
+
+def _extract_year(title: str) -> str | None:
+    """First 4-digit year in the title, or None if absent.
+
+    Used alongside the case name to avoid over-merging reused names
+    decided in different years. A title without a year is treated as
+    compatible with any year (the LLM classifier sometimes drops the
+    citation suffix, so one citation's title may have a year and its
+    parallel citation's title may not).
+    """
+    match = _YEAR_RE.search(title)
+    return match.group(1) if match else None
 
 
 def _collapse_case_law_by_title(
@@ -313,18 +344,51 @@ def _collapse_case_law_by_title(
     Non-case-law documents and stubs with unique titles pass through
     untouched.
     """
-    by_title: dict[str, list[tuple[str, RAGDocument]]] = {}
+    # Bucket by case-name core, then subdivide by year. A bucket with no
+    # year contributes to every year-bucket for the same case name, which
+    # handles the case where one ingest got "Case, 2018 WI 45" but a
+    # parallel citation's title lost the year suffix.
+    by_name: dict[str, dict[str | None, list[tuple[str, RAGDocument]]]] = {}
     passthrough: dict[str, RAGDocument] = {}
 
     for doc_id, rag_doc in docs_by_id.items():
         if not _is_case_law_stub(doc_id):
             passthrough[doc_id] = rag_doc
             continue
-        key = _normalize_title(rag_doc.title)
-        by_title.setdefault(key, []).append((doc_id, rag_doc))
+        name_key = _extract_case_name(rag_doc.title)
+        year_key = _extract_year(rag_doc.title)
+        by_name.setdefault(name_key, {}).setdefault(year_key, []).append(
+            (doc_id, rag_doc)
+        )
+
+    # Resolve each case-name's year buckets into final groups. Rules:
+    # - Docs with a specific year merge only with other docs of that year
+    #   or docs with no year at all.
+    # - Docs with no year attach to the "most popular" year bucket for
+    #   that case name so they don't form a parallel untagged group that
+    #   stays un-merged.
+    groups: list[list[tuple[str, RAGDocument]]] = []
+    for year_buckets in by_name.values():
+        yearless = year_buckets.pop(None, [])
+        if not year_buckets:
+            # Every doc for this case name lacks a year → single group.
+            if yearless:
+                groups.append(yearless)
+            continue
+
+        # Attach yearless docs to the largest year bucket. Ties resolved
+        # by lexicographic year (stable — deterministic across runs).
+        dominant_year = max(
+            year_buckets.keys(),
+            key=lambda y: (len(year_buckets[y]), y),
+        )
+        year_buckets[dominant_year].extend(yearless)
+
+        for bucket in year_buckets.values():
+            groups.append(bucket)
 
     merged: dict[str, RAGDocument] = dict(passthrough)
-    for group in by_title.values():
+    for group in groups:
         if len(group) == 1:
             doc_id, rag_doc = group[0]
             merged[doc_id] = rag_doc
