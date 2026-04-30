@@ -256,6 +256,36 @@ def _summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
     return {"tool_name": tool_name, "status": "ok", "result_keys": sorted(result.keys())}
 
 
+def _build_tool_call_summary(tool_name: str, tool_input: dict) -> str:
+    """Short prose describing a tool call for the UI trace.
+
+    Returns an empty string for unknown tools — the UI then shows just
+    the verb, which is still informative.
+    """
+    if tool_name in ("vector_search", "faq_search", "refine_query"):
+        query = tool_input.get("query", "")
+        return f'"{query}"' if query else ""
+    if tool_name == "get_neighbors":
+        doc_id = tool_input.get("doc_id", "")
+        return f"doc {doc_id}" if doc_id else ""
+    if tool_name == "get_document":
+        doc_id = tool_input.get("doc_id", "")
+        return doc_id
+    if tool_name == "get_authority_chain":
+        doc_id = tool_input.get("doc_id", "")
+        return f"doc {doc_id}" if doc_id else ""
+    if tool_name == "list_framework_docs":
+        framework = tool_input.get("framework_name", "")
+        return framework
+    if tool_name == "fetch_case_opinion":
+        citation = tool_input.get("citation", "")
+        return citation
+    if tool_name == "answer":
+        cited = tool_input.get("cited_doc_ids", []) or []
+        return f"with {len(cited)} cited doc(s)"
+    return ""
+
+
 def _discovery_summary(discovery: dict[str, str]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for tag in discovery.values():
@@ -684,7 +714,7 @@ def run_agentic_loop(
                 discovered_doc_count=len(all_doc_ids),
                 chunk_count=len(all_chunks),
                 discovery=_discovery_summary(discovery),
-                **_summarize_tool_result(tool_name, result),
+                tool_result_summary=_summarize_tool_result(tool_name, result),
             )
 
             if tool_name == "answer":

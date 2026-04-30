@@ -230,6 +230,77 @@ def test_collapse_case_law_does_not_overmerge_same_name_different_year():
         assert len(merged) == 2
 
 
+def test_get_chat_history_returns_empty_when_unconfigured():
+    """Without CHAT_HISTORY_TABLE_NAME set, history loading must not blow up;
+    it returns [] so the agent falls back to no-history behavior."""
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        with patch.dict(os.environ, {}, clear=False):
+            import main
+            main.CHAT_HISTORY_TABLE = ""
+            assert main.get_chat_history("sess-1") == []
+
+
+def test_get_chat_history_reads_from_gsi():
+    """The loader must use the sessionIdKey GSI so it picks up prior turns
+    ordered oldest → newest by timestamp."""
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        import main
+
+        mock_table = MagicMock()
+        mock_table.query.return_value = {
+            "Items": [
+                {"query": "q1", "answer": "a1", "timestamp": "2025-01-01"},
+                {"query": "q2", "answer": "a2", "timestamp": "2025-01-02"},
+            ]
+        }
+        mock_resource = MagicMock()
+        mock_resource.Table.return_value = mock_table
+
+        with patch.object(main, "dynamodb_resource", mock_resource), \
+             patch.object(main, "CHAT_HISTORY_TABLE", "SomeTable"):
+            history = main.get_chat_history("sess-1")
+
+        assert len(history) == 2
+        assert history[0] == {"query": "q1", "answer": "a1"}
+        assert history[1] == {"query": "q2", "answer": "a2"}
+        # Must query the GSI — a table scan or primary-key query would
+        # return the wrong records.
+        kwargs = mock_table.query.call_args.kwargs
+        assert kwargs["IndexName"] == "sessionIdKey"
+        assert kwargs["ScanIndexForward"] is True
+
+
+def test_get_chat_history_caps_at_max_turns():
+    """Long sessions must not blow out the context window — the loader
+    keeps only the last MAX_HISTORY_TURNS."""
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        import main
+
+        items = [
+            {"query": f"q{i}", "answer": f"a{i}", "timestamp": f"2025-01-{i:02d}"}
+            for i in range(1, 11)
+        ]
+        mock_table = MagicMock()
+        mock_table.query.return_value = {"Items": items}
+        mock_resource = MagicMock()
+        mock_resource.Table.return_value = mock_table
+
+        with patch.object(main, "dynamodb_resource", mock_resource), \
+             patch.object(main, "CHAT_HISTORY_TABLE", "SomeTable"), \
+             patch.object(main, "MAX_HISTORY_TURNS", 3):
+            history = main.get_chat_history("sess-1")
+
+        assert len(history) == 3
+        # Newest three, ordered oldest-first.
+        assert [h["query"] for h in history] == ["q8", "q9", "q10"]
+
+
 def test_collapse_case_law_yearless_doc_joins_dominant_year_bucket():
     """When one parallel citation has a year and the other lost it during
     ingest, the yearless doc attaches to the dominant year bucket."""
@@ -258,3 +329,53 @@ def test_collapse_case_law_yearless_doc_joins_dominant_year_bucket():
         only = next(iter(merged.values()))
         assert "yearful" in only.content
         assert "yearless" in only.content
+
+
+def test_build_tool_call_summary_vector_search():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_call_summary
+
+    assert _build_tool_call_summary(
+        "vector_search", {"query": "ag use value"}
+    ) == '"ag use value"'
+
+
+def test_build_tool_call_summary_get_neighbors():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_call_summary
+
+    assert _build_tool_call_summary(
+        "get_neighbors", {"doc_id": "stat-70-32"}
+    ) == "doc stat-70-32"
+
+
+def test_build_tool_call_summary_faq_search():
+    from main import _build_tool_call_summary
+    assert _build_tool_call_summary(
+        "faq_search", {"query": "what is TID"}
+    ) == '"what is TID"'
+
+
+def test_build_tool_call_summary_answer():
+    from main import _build_tool_call_summary
+    assert _build_tool_call_summary(
+        "answer",
+        {"response": "Use value...", "cited_doc_ids": ["a", "b", "c"]},
+    ) == "with 3 cited doc(s)"
+
+
+def test_build_tool_call_summary_unknown_tool_returns_empty():
+    from main import _build_tool_call_summary
+    assert _build_tool_call_summary("mystery_tool", {"foo": "bar"}) == ""
