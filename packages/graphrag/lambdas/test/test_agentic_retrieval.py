@@ -362,14 +362,30 @@ def test_build_tool_call_summary_get_neighbors():
 
 
 def test_build_tool_call_summary_faq_search():
-    from main import _build_tool_call_summary
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_call_summary
+
     assert _build_tool_call_summary(
         "faq_search", {"query": "what is TID"}
     ) == '"what is TID"'
 
 
 def test_build_tool_call_summary_answer():
-    from main import _build_tool_call_summary
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_call_summary
+
     assert _build_tool_call_summary(
         "answer",
         {"response": "Use value...", "cited_doc_ids": ["a", "b", "c"]},
@@ -377,5 +393,34 @@ def test_build_tool_call_summary_answer():
 
 
 def test_build_tool_call_summary_unknown_tool_returns_empty():
-    from main import _build_tool_call_summary
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_call_summary
+
     assert _build_tool_call_summary("mystery_tool", {"foo": "bar"}) == ""
+
+
+def test_build_tool_call_summary_empty_inputs():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_call_summary
+
+    # Empty query → empty string (not the literal '""')
+    assert _build_tool_call_summary("vector_search", {}) == ""
+    assert _build_tool_call_summary("faq_search", {"query": ""}) == ""
+    # Empty doc_id → empty string (not "doc ")
+    assert _build_tool_call_summary("get_neighbors", {"doc_id": ""}) == ""
+    assert _build_tool_call_summary("get_authority_chain", {}) == ""
+    # Empty cited list → "with 0 cited doc(s)" (count is meaningful here)
+    assert _build_tool_call_summary("answer", {}) == "with 0 cited doc(s)"
+    assert _build_tool_call_summary("answer", {"cited_doc_ids": None}) == "with 0 cited doc(s)"
