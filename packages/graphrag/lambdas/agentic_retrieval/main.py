@@ -276,6 +276,102 @@ def _is_case_law_stub(doc_id: str) -> bool:
     return doc_id.startswith(_CASE_LAW_STUB_PREFIX)
 
 
+# Priority for merging discovery tags across parallel-citation stubs. Earlier
+# = stronger signal. Ensures a title-merged card keeps the most informative
+# provenance (e.g., "opinion-fetched" wins over "vector-search").
+_DISCOVERY_TAG_PRIORITY = [
+    "opinion-fetched",
+    "fetched",
+    "vector-search",
+    "graph-neighbor",
+    "framework-list",
+    "unknown",
+]
+
+
+def _normalize_title(title: str) -> str:
+    """Canonical key for title-based merging of case-law stubs.
+
+    Case and whitespace variance only; punctuation is preserved because
+    case names hinge on it ("In re X." vs "In re X" are still the same
+    case but "State v. A" vs "State v. B" aren't).
+    """
+    return " ".join(title.lower().split())
+
+
+def _collapse_case_law_by_title(
+    docs_by_id: dict[str, RAGDocument],
+) -> dict[str, RAGDocument]:
+    """Merge case-law RAGDocuments that share a normalized title.
+
+    Parallel citations of the same decision (e.g., '401 Wis. 2d 27' and
+    '972 N.W.2d 544') become separate Neptune Document nodes during ingest,
+    so the agent sees them as distinct IDs. The LLM classifier gives them
+    the same title (the case name), which lets us collapse them back into
+    one sidebar card at query time without touching the graph.
+
+    Non-case-law documents and stubs with unique titles pass through
+    untouched.
+    """
+    by_title: dict[str, list[tuple[str, RAGDocument]]] = {}
+    passthrough: dict[str, RAGDocument] = {}
+
+    for doc_id, rag_doc in docs_by_id.items():
+        if not _is_case_law_stub(doc_id):
+            passthrough[doc_id] = rag_doc
+            continue
+        key = _normalize_title(rag_doc.title)
+        by_title.setdefault(key, []).append((doc_id, rag_doc))
+
+    merged: dict[str, RAGDocument] = dict(passthrough)
+    for group in by_title.values():
+        if len(group) == 1:
+            doc_id, rag_doc = group[0]
+            merged[doc_id] = rag_doc
+            continue
+
+        # Pick the best-tagged doc as the card's identity; fall back to the
+        # longest content when tags tie (richer preview wins).
+        def sort_key(item: tuple[str, RAGDocument]) -> tuple[int, int]:
+            _, doc = item
+            tag_rank = (
+                _DISCOVERY_TAG_PRIORITY.index(doc.discovery_tag)
+                if doc.discovery_tag in _DISCOVERY_TAG_PRIORITY
+                else len(_DISCOVERY_TAG_PRIORITY)
+            )
+            return (tag_rank, -len(doc.content or ""))
+
+        group.sort(key=sort_key)
+        primary_id, primary_doc = group[0]
+
+        # Concatenate distinct content chunks; parallel citations often
+        # reference the case from different host PDFs, so merging gives
+        # a richer preview than picking one.
+        seen_texts: set[str] = set()
+        merged_parts: list[str] = []
+        for _, doc in group:
+            text = (doc.content or "").strip()
+            if text and text not in seen_texts:
+                seen_texts.add(text)
+                merged_parts.append(text)
+        merged_content = "\n\n".join(merged_parts)
+
+        merged[primary_id] = RAGDocument(
+            document_id=primary_doc.document_id,
+            title=primary_doc.title,
+            content=merged_content or primary_doc.content,
+            source=primary_doc.source,
+            source_url=primary_doc.source_url,
+            discovery_tag=primary_doc.discovery_tag,
+        )
+        logger.info(
+            f"Collapsed {len(group)} case-law parallel citations into "
+            f"'{primary_doc.title[:60]}' (ids: {[g[0] for g in group]})"
+        )
+
+    return merged
+
+
 def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
     """Build a RAGDocument for a fetched full court opinion.
 
@@ -400,6 +496,8 @@ def _build_rag_documents(
             if doc_id in fetched_ids
             or not (_is_case_law_stub(doc_id) and rag_doc.discovery_tag in noise_tags)
         }
+
+    docs_by_id = _collapse_case_law_by_title(docs_by_id)
 
     return list(docs_by_id.values())
 

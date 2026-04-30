@@ -99,3 +99,69 @@ def test_build_rag_documents():
             assert len(docs) == 1
             assert "chunk 1 text" in docs[0].content
             assert "chunk 2 text" in docs[0].content
+
+
+def test_collapse_case_law_by_title_merges_parallel_citations():
+    """Parallel citations of the same decision (e.g., N.W.2d + Wis.2d) get
+    separate Neptune Document nodes but share a title — we collapse them."""
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        from main import _collapse_case_law_by_title
+
+        docs = {
+            "case-law-972-n-w-2d-544": MockRAGDocument(
+                document_id="case-law-972-n-w-2d-544-abc1234",
+                title="State of Wisconsin ex rel. Nudo Holdings",
+                content="nudo content from n.w.2d host",
+                discovery_tag="vector-search",
+            ),
+            "case-law-401-wis-2d-27": MockRAGDocument(
+                document_id="case-law-401-wis-2d-27-def5678",
+                title="State of Wisconsin ex rel. Nudo Holdings",
+                content="nudo content from wis.2d host",
+                discovery_tag="graph-neighbor",
+            ),
+            "wpam-ch-1": MockRAGDocument(
+                document_id="wpam-ch-1-aaa1111",
+                title="WPAM Chapter 1",
+                content="wpam content",
+                discovery_tag="vector-search",
+            ),
+        }
+
+        merged = _collapse_case_law_by_title(docs)
+
+        assert len(merged) == 2  # two Nudo stubs collapsed, WPAM untouched
+        nudo_cards = [d for d in merged.values() if "Nudo" in d.title]
+        assert len(nudo_cards) == 1
+        # Higher-priority tag wins (vector-search > graph-neighbor)
+        assert nudo_cards[0].discovery_tag == "vector-search"
+        # Both chunks' content concatenated
+        assert "n.w.2d host" in nudo_cards[0].content
+        assert "wis.2d host" in nudo_cards[0].content
+
+
+def test_collapse_case_law_leaves_distinct_cases_alone():
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        from main import _collapse_case_law_by_title
+
+        docs = {
+            "case-law-1": MockRAGDocument(
+                document_id="case-law-1-x",
+                title="Smith v. Jones",
+                content="a",
+                discovery_tag="vector-search",
+            ),
+            "case-law-2": MockRAGDocument(
+                document_id="case-law-2-y",
+                title="Doe v. Roe",
+                content="b",
+                discovery_tag="vector-search",
+            ),
+        }
+
+        merged = _collapse_case_law_by_title(docs)
+        assert len(merged) == 2
