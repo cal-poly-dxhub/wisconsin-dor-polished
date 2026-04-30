@@ -36,6 +36,20 @@ export const FAQMessageSchema = z.object({
   content: FAQContentSchema,
 });
 
+export const TraceContentSchema = z.object({
+  event: z.string(),
+  label: z.string(),
+  status: z.enum(['pending', 'complete', 'error']).default('complete'),
+  toolName: z.string().optional().nullable(),
+  metadata: z.record(z.unknown()).optional().nullable(),
+});
+
+export const TraceMessageSchema = z.object({
+  responseType: z.literal('trace'),
+  queryId: z.string(),
+  content: TraceContentSchema,
+});
+
 export const ErrorContentSchema = z.object({
   error: z.string(),
 });
@@ -65,13 +79,14 @@ export const FragmentMessageSchema = z.object({
 export const MessageUnionSchema = z.discriminatedUnion('responseType', [
   DocumentsMessageSchema,
   FAQMessageSchema,
+  TraceMessageSchema,
   ErrorMessageSchema,
   FragmentMessageSchema,
   AnswerEventTypeSchema,
 ]);
 
 export const WebSocketMessageSchema = z.object({
-  streamId: z.enum(['answer-event', 'answer', 'resources', 'error']),
+  streamId: z.enum(['answer-event', 'answer', 'resources', 'trace', 'error']),
   body: MessageUnionSchema,
 });
 
@@ -81,6 +96,8 @@ export type DocumentsMessage = z.infer<typeof DocumentsMessageSchema>;
 export type FAQ = z.infer<typeof FAQSchema>;
 export type FAQContent = z.infer<typeof FAQContentSchema>;
 export type FAQMessage = z.infer<typeof FAQMessageSchema>;
+export type TraceContent = z.infer<typeof TraceContentSchema>;
+export type TraceMessage = z.infer<typeof TraceMessageSchema>;
 export type ErrorContent = z.infer<typeof ErrorContentSchema>;
 export type ErrorMessage = z.infer<typeof ErrorMessageSchema>;
 export type AnswerEventType = z.infer<typeof AnswerEventTypeSchema>;

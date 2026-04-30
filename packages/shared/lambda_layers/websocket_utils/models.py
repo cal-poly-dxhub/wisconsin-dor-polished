@@ -68,6 +68,20 @@ class FAQMessage(WebSocketMessage):
     content: FAQContent
 
 
+class TraceContent(WebSocketMessage):
+    event: str
+    label: str
+    status: Literal["pending", "complete", "error"] = "complete"
+    tool_name: str | None = None
+    metadata: dict | None = None
+
+
+class TraceMessage(WebSocketMessage):
+    response_type: Literal["trace"] = "trace"
+    query_id: str
+    content: TraceContent
+
+
 class AnswerEventType(WebSocketMessage):
     response_type: Literal["answer-event"] = "answer-event"
     event: Literal["start", "stop"]

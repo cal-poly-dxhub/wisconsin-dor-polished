@@ -22,6 +22,7 @@ from websocket_utils.models import (
     FragmentContent,
     FragmentMessage,
     PlainWebSocketMessage,
+    TraceMessage,
     WebSocketMessage,
 )
 
@@ -73,6 +74,11 @@ class WebSocketServer:
             case AnswerEventType(event="stop"):
                 message = {
                     "streamId": "answer-event",
+                    "body": body.model_dump(by_alias=True),
+                }
+            case TraceMessage():
+                message = {
+                    "streamId": "trace",
                     "body": body.model_dump(by_alias=True),
                 }
             case PlainWebSocketMessage(message=message):
