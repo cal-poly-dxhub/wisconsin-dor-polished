@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any
 
 import boto3
@@ -68,6 +69,198 @@ RAW_BUCKET = os.environ.get("RAW_BUCKET", "")
 PRESIGNED_URL_EXPIRY = int(os.environ.get("PRESIGNED_URL_EXPIRY", "3600"))
 
 AGENTIC_MODEL_ID = os.environ.get("AGENTIC_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+LOG_AGENT_TRACE = os.environ.get("LOG_AGENT_TRACE", "true").lower() == "true"
+LOG_QUERY_TEXT = os.environ.get("LOG_QUERY_TEXT", "true").lower() == "true"
+LOG_MAX_TEXT_CHARS = int(os.environ.get("LOG_MAX_TEXT_CHARS", "500"))
+
+
+def _redact_text(text: str) -> str:
+    """Remove common accidental PII before writing query/tool text to logs."""
+    redacted = re.sub(
+        r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+        "[REDACTED_EMAIL]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    redacted = re.sub(r"\b\d{3}-\d{2}-\d{4}\b", "[REDACTED_SSN]", redacted)
+    redacted = re.sub(
+        r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
+        "[REDACTED_PHONE]",
+        redacted,
+    )
+    return redacted
+
+
+def _truncate_text(value: str, max_chars: int = LOG_MAX_TEXT_CHARS) -> str:
+    text = _redact_text(value)
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + f"...[truncated {len(text) - max_chars} chars]"
+
+
+def _compact_log_value(value: Any, max_chars: int = LOG_MAX_TEXT_CHARS) -> Any:
+    """Bound nested log fields so CloudWatch events stay queryable."""
+    if isinstance(value, str):
+        return _truncate_text(value, max_chars)
+    if isinstance(value, dict):
+        return {str(k): _compact_log_value(v, max_chars) for k, v in value.items()}
+    if isinstance(value, list):
+        compact = [_compact_log_value(v, max_chars) for v in value[:10]]
+        if len(value) > 10:
+            compact.append(f"...[{len(value) - 10} more]")
+        return compact
+    return value
+
+
+def _log_agent_event(event: str, level: int = logging.INFO, **fields: Any) -> None:
+    if not LOG_AGENT_TRACE and level < logging.WARNING:
+        return
+    payload = {
+        "component": "graphrag.agentic_retrieval",
+        "event": event,
+        **fields,
+    }
+    logger.log(
+        level,
+        json.dumps(_compact_log_value(payload), default=str, separators=(",", ":")),
+    )
+
+
+def _query_log_fields(query: str) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "query_hash": hashlib.sha256(query.encode("utf-8")).hexdigest()[:16],
+        "query_chars": len(query),
+    }
+    if LOG_QUERY_TEXT:
+        fields["query_preview"] = _truncate_text(query)
+    return fields
+
+
+def _summarize_assistant_message(message: dict) -> dict[str, Any]:
+    content = message.get("content") or []
+    text_blocks = [block.get("text", "") for block in content if "text" in block]
+    tool_names = [
+        block["toolUse"].get("name", "")
+        for block in content
+        if "toolUse" in block
+    ]
+    return {
+        "content_blocks": len(content),
+        "text_block_count": len(text_blocks),
+        "text_preview": _truncate_text("\n".join(text_blocks)) if text_blocks else "",
+        "tool_use_count": len(tool_names),
+        "tool_names": tool_names,
+    }
+
+
+def _summarize_bedrock_response(response: dict) -> dict[str, Any]:
+    usage = response.get("usage") or {}
+    metrics = response.get("metrics") or {}
+    return {
+        "stop_reason": response.get("stopReason", ""),
+        "input_tokens": usage.get("inputTokens"),
+        "output_tokens": usage.get("outputTokens"),
+        "total_tokens": usage.get("totalTokens"),
+        "model_latency_ms": metrics.get("latencyMs"),
+    }
+
+
+def _summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
+    if "error" in result:
+        return {
+            "tool_name": tool_name,
+            "status": "error",
+            "error": result.get("error"),
+            "fallback_match_count": len(result.get("fallback_matches", [])),
+        }
+
+    if tool_name == "faq_search":
+        scores = [round(faq.get("score", 0.0), 4) for faq in result.get("faqs", [])[:5]]
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "faq_count": result.get("count", 0),
+            "top_scores": scores,
+        }
+
+    if tool_name == "vector_search":
+        chunks = result.get("chunks", [])
+        graph_context = result.get("graph_context", {})
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "chunk_count": len(chunks),
+            "top_doc_ids": [chunk.get("doc_id") for chunk in chunks[:5]],
+            "graph_context_doc_count": len(graph_context),
+            "graph_context_neighbor_count": sum(len(v) for v in graph_context.values()),
+        }
+
+    if tool_name == "get_neighbors":
+        neighbors = result.get("neighbors", [])
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "neighbor_count": len(neighbors),
+            "relationships": sorted({
+                n.get("relationship", "") for n in neighbors if n.get("relationship")
+            }),
+            "neighbor_ids": [n.get("id") for n in neighbors[:10]],
+        }
+
+    if tool_name == "get_document":
+        doc = result.get("document")
+        return {
+            "tool_name": tool_name,
+            "status": "ok" if doc else "miss",
+            "document_id": (doc or {}).get("id"),
+            "document_type": (doc or {}).get("doc_type"),
+            "authority_level": (doc or {}).get("authority_level"),
+        }
+
+    if tool_name == "get_authority_chain":
+        chain = result.get("authority_chain", [])
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "chain_length": len(chain),
+            "chain_ids": [node.get("id") for node in chain[:10]],
+        }
+
+    if tool_name == "list_framework_docs":
+        docs = result.get("documents", [])
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "document_count": len(docs),
+            "document_ids": [doc.get("id") for doc in docs[:10]],
+        }
+
+    if tool_name == "fetch_case_opinion":
+        return {
+            "tool_name": tool_name,
+            "status": "ok" if result.get("found") else "miss",
+            "citation": result.get("citation"),
+            "raw_key": result.get("raw_key", ""),
+            "opinion_chars": len(result.get("text", "")),
+        }
+
+    if tool_name == "answer":
+        return {
+            "tool_name": tool_name,
+            "status": "terminal",
+            "response_chars": len(result.get("response", "")),
+            "cited_doc_count": len(result.get("cited_doc_ids", [])),
+            "cited_doc_ids": result.get("cited_doc_ids", [])[:20],
+        }
+
+    return {"tool_name": tool_name, "status": "ok", "result_keys": sorted(result.keys())}
+
+
+def _discovery_summary(discovery: dict[str, str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for tag in discovery.values():
+        counts[tag] = counts.get(tag, 0) + 1
+    return counts
 
 CHAT_HISTORY_TABLE = os.environ.get("CHAT_HISTORY_TABLE_NAME", "")
 # Cap history passed to Claude. Long histories bloat the context window and
@@ -187,6 +380,10 @@ def _faq_search_direct(query: str) -> dict:
 def run_agentic_loop(
     query: str,
     chat_history: list[dict] | None = None,
+    *,
+    query_id: str = "",
+    session_id: str = "",
+    request_id: str = "",
 ) -> tuple[str, list[str], list[RAGDocument], FAQResource | None]:
     """Run Claude's agentic loop against Neptune.
 
@@ -298,9 +495,33 @@ def run_agentic_loop(
     ])
 
     tool_config = {"tools": TOOL_DEFINITIONS}
+    trace_context = {
+        "query_id": query_id,
+        "session_id": session_id,
+        "request_id": request_id,
+    }
+    loop_started = time.perf_counter()
+
+    _log_agent_event(
+        "agent_loop_start",
+        **trace_context,
+        model_id=AGENTIC_MODEL_ID,
+        max_turns=MAX_TURNS,
+        **_query_log_fields(query),
+    )
 
     for turn in range(MAX_TURNS):
-        logger.info(f"Agentic loop turn {turn + 1}/{MAX_TURNS}")
+        turn_number = turn + 1
+        _log_agent_event(
+            "agent_turn_start",
+            **trace_context,
+            turn=turn_number,
+            max_turns=MAX_TURNS,
+            message_count=len(messages),
+            discovered_doc_count=len(all_doc_ids),
+            chunk_count=len(all_chunks),
+            discovery=_discovery_summary(discovery),
+        )
 
         # Turn-8 warning injection (docs/graphrag.md §7)
         if turn == 7:
@@ -312,18 +533,44 @@ def run_agentic_loop(
                 "role": "user",
                 "content": [{"text": warning}],
             })
+            _log_agent_event(
+                "agent_turn_budget_warning_injected",
+                **trace_context,
+                turn=turn_number,
+            )
 
-        response = bedrock.converse(
-            modelId=AGENTIC_MODEL_ID,
-            messages=messages,
-            system=[{"text": SYSTEM_PROMPT}],
-            toolConfig=tool_config,
-            inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
-        )
+        converse_started = time.perf_counter()
+        try:
+            response = bedrock.converse(
+                modelId=AGENTIC_MODEL_ID,
+                messages=messages,
+                system=[{"text": SYSTEM_PROMPT}],
+                toolConfig=tool_config,
+                inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+            )
+        except Exception as exc:
+            _log_agent_event(
+                "bedrock_converse_error",
+                logging.ERROR,
+                **trace_context,
+                turn=turn_number,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
+        converse_latency_ms = round((time.perf_counter() - converse_started) * 1000)
 
         assistant_message = response["output"]["message"]
         messages.append(assistant_message)
         stop_reason = response.get("stopReason", "")
+        _log_agent_event(
+            "agent_turn_model_response",
+            **trace_context,
+            turn=turn_number,
+            bedrock_latency_ms=converse_latency_ms,
+            **_summarize_bedrock_response(response),
+            assistant=_summarize_assistant_message(assistant_message),
+        )
 
         tool_uses = [
             block for block in assistant_message["content"]
@@ -338,6 +585,13 @@ def run_agentic_loop(
             answer = "\n".join(text_blocks)
             if stop_reason == "max_tokens" and answer:
                 answer = answer + "\n\n_(Response may be incomplete)_"
+            _log_agent_event(
+                "agent_final_text_without_answer_tool",
+                **trace_context,
+                turn=turn_number,
+                stop_reason=stop_reason,
+                answer_chars=len(answer),
+            )
             break
 
         tool_results = []
@@ -347,11 +601,34 @@ def run_agentic_loop(
             tool_input = tool["input"]
             tool_use_id = tool["toolUseId"]
 
-            logger.info(f"  Tool call: {tool_name}({json.dumps(tool_input)[:200]})")
-
-            result = execute_tool(
-                tool_name, tool_input, neptune, chat_history=chat_history
+            _log_agent_event(
+                "agent_tool_call",
+                **trace_context,
+                turn=turn_number,
+                tool_name=tool_name,
+                tool_use_id=tool_use_id,
+                tool_input=tool_input,
             )
+
+            tool_started = time.perf_counter()
+            try:
+                result = execute_tool(
+                    tool_name, tool_input, neptune, chat_history=chat_history
+                )
+            except Exception as exc:
+                _log_agent_event(
+                    "agent_tool_error",
+                    logging.ERROR,
+                    **trace_context,
+                    turn=turn_number,
+                    tool_name=tool_name,
+                    tool_use_id=tool_use_id,
+                    tool_latency_ms=round((time.perf_counter() - tool_started) * 1000),
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+                raise
+            tool_latency_ms = round((time.perf_counter() - tool_started) * 1000)
 
             if tool_name == "vector_search" and "chunks" in result:
                 for chunk in result["chunks"]:
@@ -398,6 +675,18 @@ def run_agentic_loop(
                     all_doc_ids.add(stub_doc_id)
                     discovery[stub_doc_id] = "opinion-fetched"
 
+            _log_agent_event(
+                "agent_tool_result",
+                **trace_context,
+                turn=turn_number,
+                tool_use_id=tool_use_id,
+                tool_latency_ms=tool_latency_ms,
+                discovered_doc_count=len(all_doc_ids),
+                chunk_count=len(all_chunks),
+                discovery=_discovery_summary(discovery),
+                **_summarize_tool_result(tool_name, result),
+            )
+
             if tool_name == "answer":
                 answer = result.get("response", "")
                 cited = set(result.get("cited_doc_ids", []))
@@ -421,6 +710,18 @@ def run_agentic_loop(
                 }
                 rag_docs = _build_rag_documents(
                     cited_chunks, cited, cited_discovery, cited_opinions
+                )
+                _log_agent_event(
+                    "agent_loop_complete",
+                    **trace_context,
+                    terminal_reason="answer_tool",
+                    turns_used=turn_number,
+                    elapsed_ms=round((time.perf_counter() - loop_started) * 1000),
+                    answer_chars=len(answer),
+                    cited_doc_count=len(cited),
+                    discovered_doc_count=len(all_doc_ids),
+                    rag_document_count=len(rag_docs),
+                    discovery=_discovery_summary(cited_discovery),
                 )
                 return answer, list(cited), rag_docs, None
 
@@ -451,9 +752,28 @@ def run_agentic_loop(
                 "I was unable to find a complete answer within the allowed number "
                 "of search steps. Please try rephrasing your question."
             )
+        _log_agent_event(
+            "agent_turn_budget_exhausted",
+            logging.WARNING,
+            **trace_context,
+            answer_chars=len(answer),
+            discovered_doc_count=len(all_doc_ids),
+            chunk_count=len(all_chunks),
+            discovery=_discovery_summary(discovery),
+        )
 
     rag_docs = _build_rag_documents(
         all_chunks, all_doc_ids, discovery, fetched_opinions
+    )
+    _log_agent_event(
+        "agent_loop_complete",
+        **trace_context,
+        terminal_reason="assistant_text_or_fallback",
+        elapsed_ms=round((time.perf_counter() - loop_started) * 1000),
+        answer_chars=len(answer),
+        discovered_doc_count=len(all_doc_ids),
+        rag_document_count=len(rag_docs),
+        discovery=_discovery_summary(discovery),
     )
     return answer, list(all_doc_ids), rag_docs, None
 
@@ -800,23 +1120,38 @@ def handler(event: dict, context) -> dict[str, Any]:
     returns a RetrieveResult compatible with the existing Step Functions flow.
     """
     session_id: str | None = None
+    request_id = getattr(context, "aws_request_id", "") if context else ""
 
     try:
         user_query = process_event(event)
         session_id = user_query.session_id
-        logger.info(f"Agentic retrieval for query: {user_query.query[:200]}")
+        _log_agent_event(
+            "agentic_retrieval_request_received",
+            request_id=request_id,
+            query_id=user_query.query_id,
+            session_id=user_query.session_id,
+            **_query_log_fields(user_query.query),
+        )
 
         chat_history = get_chat_history(session_id)
-
         answer, cited_doc_ids, rag_documents, faq_resource = run_agentic_loop(
             user_query.query,
             chat_history=chat_history,
+            query_id=user_query.query_id,
+            session_id=user_query.session_id,
+            request_id=request_id,
         )
 
         documents = DocumentResource(documents=rag_documents)
-        logger.info(
-            f"Returning {len(rag_documents)} docs and "
-            f"{len(faq_resource.faqs) if faq_resource else 0} FAQs to Step Functions"
+        _log_agent_event(
+            "agentic_retrieval_response_ready",
+            request_id=request_id,
+            query_id=user_query.query_id,
+            session_id=user_query.session_id,
+            answer_chars=len(answer),
+            cited_doc_count=len(cited_doc_ids),
+            rag_document_count=len(rag_documents),
+            faq_count=len(faq_resource.faqs) if faq_resource else 0,
         )
 
         # Return a flat payload; Step Functions Pass states build both
@@ -832,6 +1167,14 @@ def handler(event: dict, context) -> dict[str, Any]:
         }
 
     except Exception as e:
+        _log_agent_event(
+            "agentic_retrieval_failed",
+            logging.ERROR,
+            request_id=request_id,
+            session_id=session_id,
+            error_type=type(e).__name__,
+            error=str(e),
+        )
         logger.error(f"Agentic retrieval failed: {e}", exc_info=True)
         if session_id:
             asyncio.run(report_error(e, session_id=session_id))

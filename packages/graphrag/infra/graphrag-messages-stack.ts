@@ -52,12 +52,21 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           'Agentic retrieval Lambda: Neptune graph + vector search with Claude tool loop',
         timeout: cdk.Duration.seconds(120),
         memorySize: 512,
+        tracing: lambda.Tracing.ACTIVE,
         environment: {
           WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
           NEPTUNE_GRAPH_ID: props.neptuneGraphId,
           AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
           RAW_BUCKET: props.rawBucketName,
           FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBaseId,
+          LOG_LEVEL: 'INFO',
+          LOG_AGENT_TRACE: 'true',
+          LOG_TOOL_TRACE: 'true',
+          LOG_NEPTUNE_TRACE: 'true',
+          LOG_QUERY_TEXT: 'true',
+          LOG_NEPTUNE_QUERY_TEXT: 'true',
+          LOG_MAX_TEXT_CHARS: '500',
+          LOG_MAX_QUERY_CHARS: '1000',
         },
       }
     );
