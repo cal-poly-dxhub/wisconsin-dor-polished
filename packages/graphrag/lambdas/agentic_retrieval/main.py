@@ -286,6 +286,110 @@ def _build_tool_call_summary(tool_name: str, tool_input: dict) -> str:
     return ""
 
 
+def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
+    """Build a UI-friendly summary of a tool result.
+
+    Returns a dict with:
+      - status: 'ok' | 'error' | 'miss' | 'terminal'
+      - summary_text: one-line human-readable string
+      - doc_ids: list of up to 10 document IDs referenced in the result
+      - doc_titles: list aligned with doc_ids (best-effort; empty on failure)
+      - raw: output of _summarize_tool_result (dev-mode payload)
+    """
+    raw = _summarize_tool_result(tool_name, result)
+    status = raw.get("status", "ok")
+    doc_ids: list[str] = []
+    summary_text = ""
+
+    if "error" in result:
+        return {
+            "status": "error",
+            "summary_text": str(result.get("error") or "tool error"),
+            "doc_ids": [],
+            "doc_titles": [],
+            "raw": raw,
+        }
+
+    if tool_name == "vector_search":
+        chunks = result.get("chunks", [])
+        unique_docs = {c.get("doc_id") for c in chunks if c.get("doc_id")}
+        doc_ids = list(unique_docs)[:10]
+        summary_text = (
+            f"Found {len(chunks)} chunks across {len(unique_docs)} doc(s)"
+        )
+
+    elif tool_name == "faq_search":
+        faqs = result.get("faqs", [])
+        top = faqs[0].get("score", 0.0) if faqs else 0.0
+        summary_text = (
+            f"FAQ top score {top:.2f} ({len(faqs)} hit(s))"
+            if faqs
+            else "No FAQ matches"
+        )
+
+    elif tool_name == "get_neighbors":
+        neighbors = result.get("neighbors", [])
+        doc_ids = [n["id"] for n in neighbors if n.get("id")][:10]
+        summary_text = f"Pulled {len(neighbors)} neighbor(s)"
+
+    elif tool_name == "get_document":
+        doc = result.get("document")
+        if doc:
+            doc_ids = [doc.get("id")] if doc.get("id") else []
+            summary_text = f"Fetched {doc.get('doc_type', 'document')} {doc.get('id', '')}"
+        else:
+            summary_text = "Document not found"
+            status = "miss"
+
+    elif tool_name == "get_authority_chain":
+        chain = result.get("authority_chain", [])
+        doc_ids = [n["id"] for n in chain if n.get("id")][:10]
+        summary_text = f"Walked authority chain ({len(chain)} node(s))"
+
+    elif tool_name == "list_framework_docs":
+        docs = result.get("documents", [])
+        doc_ids = [d["id"] for d in docs if d.get("id")][:10]
+        summary_text = f"Listed {len(docs)} framework doc(s)"
+
+    elif tool_name == "fetch_case_opinion":
+        citation = result.get("citation", "")
+        if result.get("found"):
+            summary_text = f"Fetched opinion for {citation}"
+        else:
+            summary_text = f"No opinion found for {citation}"
+            status = "miss"
+
+    elif tool_name == "refine_query":
+        refined = result.get("refined_query", "")
+        summary_text = f'Refined to "{refined}"' if refined else "No refinement"
+
+    elif tool_name == "answer":
+        cited = result.get("cited_doc_ids", []) or []
+        doc_ids = list(cited)[:10]
+        summary_text = f"Answer with {len(cited)} cited doc(s)"
+        status = "terminal"
+
+    else:
+        summary_text = f"{tool_name} complete"
+
+    # Best-effort title resolution. Neptune failures must not break the loop.
+    doc_titles: list[str] = []
+    for doc_id in doc_ids:
+        try:
+            info = neptune.get_document(doc_id)
+            doc_titles.append((info or {}).get("title") or doc_id)
+        except Exception:  # noqa: BLE001
+            doc_titles.append(doc_id)
+
+    return {
+        "status": status,
+        "summary_text": summary_text,
+        "doc_ids": doc_ids,
+        "doc_titles": doc_titles,
+        "raw": raw,
+    }
+
+
 def _discovery_summary(discovery: dict[str, str]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for tag in discovery.values():

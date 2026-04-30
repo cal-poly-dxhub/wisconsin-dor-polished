@@ -424,3 +424,123 @@ def test_build_tool_call_summary_empty_inputs():
     # Empty cited list → "with 0 cited doc(s)" (count is meaningful here)
     assert _build_tool_call_summary("answer", {}) == "with 0 cited doc(s)"
     assert _build_tool_call_summary("answer", {"cited_doc_ids": None}) == "with 0 cited doc(s)"
+
+
+def test_build_tool_result_summary_vector_search_ok():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_result_summary
+
+    result = {
+        "chunks": [
+            {"doc_id": "doc-a", "text": "x"},
+            {"doc_id": "doc-a", "text": "y"},
+            {"doc_id": "doc-b", "text": "z"},
+        ],
+        "graph_context": {"doc-a": [{"id": "doc-c"}]},
+    }
+    s = _build_tool_result_summary("vector_search", result)
+    assert s["status"] == "ok"
+    assert "3 chunks" in s["summary_text"]
+    assert set(s["doc_ids"]) == {"doc-a", "doc-b"}
+    assert isinstance(s["doc_titles"], list)
+    # `raw` is the same dict produced by _summarize_tool_result.
+    assert s["raw"]["tool_name"] == "vector_search"
+    assert s["raw"]["chunk_count"] == 3
+
+
+def test_build_tool_result_summary_get_neighbors():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_result_summary
+    result = {
+        "neighbors": [
+            {"id": "d1", "relationship": "CITES"},
+            {"id": "d2", "relationship": "IMPLEMENTS"},
+        ]
+    }
+    s = _build_tool_result_summary("get_neighbors", result)
+    assert s["status"] == "ok"
+    assert "2 neighbor" in s["summary_text"]
+    assert set(s["doc_ids"]) == {"d1", "d2"}
+
+
+def test_build_tool_result_summary_faq_search_with_scores():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_result_summary
+    result = {
+        "faqs": [
+            {"text": "Q: x\nA: y", "score": 0.84},
+            {"text": "Q: p\nA: q", "score": 0.71},
+        ],
+        "count": 2,
+    }
+    s = _build_tool_result_summary("faq_search", result)
+    assert s["status"] == "ok"
+    assert "top score 0.84" in s["summary_text"]
+    assert s["doc_ids"] == []
+
+
+def test_build_tool_result_summary_error_tool_result():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_result_summary
+    s = _build_tool_result_summary(
+        "get_document", {"error": "not found", "fallback_matches": []}
+    )
+    assert s["status"] == "error"
+    assert "not found" in s["summary_text"]
+
+
+def test_build_tool_result_summary_answer_terminal():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_result_summary
+    s = _build_tool_result_summary(
+        "answer", {"response": "Use value...", "cited_doc_ids": ["a", "b"]}
+    )
+    assert s["status"] == "terminal"
+    assert "2 cited" in s["summary_text"]
+    assert s["doc_ids"] == ["a", "b"]
+
+
+def test_build_tool_result_summary_fetch_opinion_miss():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _build_tool_result_summary
+    s = _build_tool_result_summary(
+        "fetch_case_opinion", {"found": False, "citation": "123 Wis. 2d 45"}
+    )
+    assert s["status"] == "miss"
+    assert "123 Wis. 2d 45" in s["summary_text"]
