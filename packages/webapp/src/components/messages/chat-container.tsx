@@ -130,6 +130,7 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
                 streamingComplete={query.status === 'completed'}
                 selected={query.queryId === selectedMessageId}
                 items={query.resources || []}
+                traceEvents={query.traceEvents || []}
               />
             ))}
           </div>

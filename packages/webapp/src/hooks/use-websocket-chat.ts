@@ -37,6 +37,7 @@ export function useWebSocketChat(
   const updateQueryResources = useChatStore(
     state => state.updateQueryResources
   );
+  const appendQueryTrace = useChatStore(state => state.appendQueryTrace);
   const setQueryError = useChatStore(state => state.setQueryError);
   const setChatState = useChatStore(state => state.setChatState);
   const addQuery = useChatStore(state => state.addQuery);
@@ -75,6 +76,16 @@ export function useWebSocketChat(
 
             case 'fragment':
               appendQueryResponse(message.queryId, message.content.fragment);
+              break;
+
+            case 'trace':
+              appendQueryTrace(message.queryId, {
+                event: message.content.event,
+                label: message.content.label,
+                status: message.content.status,
+                toolName: message.content.toolName,
+                metadata: message.content.metadata,
+              });
               break;
 
             case 'answer-event':
@@ -118,6 +129,7 @@ export function useWebSocketChat(
       updateQueryResources,
       updateQueryStatus,
       appendQueryResponse,
+      appendQueryTrace,
       setChatState,
       setQueryError,
       handleError,

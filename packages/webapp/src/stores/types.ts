@@ -17,6 +17,7 @@ export interface Query {
     content?: string;
   };
   resources?: ResourceItem[];
+  traceEvents?: TraceEvent[];
 
   error?: QueryError;
 
@@ -62,6 +63,14 @@ export interface FAQContent {
 export interface ResourceItem {
   type: 'document' | 'faq';
   data: Document | FAQ;
+}
+
+export interface TraceEvent {
+  event: string;
+  label: string;
+  status: 'pending' | 'complete' | 'error';
+  toolName?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface ChatError {
@@ -118,6 +127,7 @@ export interface ChatStore {
   updateQueryResponse: (queryId: string, content: string) => void;
   appendQueryResponse: (queryId: string, fragment: string) => void;
   updateQueryResources: (queryId: string, resources: ResourceItem[]) => void;
+  appendQueryTrace: (queryId: string, event: TraceEvent) => void;
 
   setQueryError: (queryId: string, error: QueryError) => void;
   clearQueryError: (queryId: string) => void;

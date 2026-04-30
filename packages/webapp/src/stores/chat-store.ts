@@ -10,7 +10,20 @@ import type {
   ResourceItem,
   QueryStatus,
   SessionStatus,
+  TraceEvent,
 } from './types';
+
+function traceStepKey(event: TraceEvent) {
+  const turn = event.metadata?.turn;
+  const turnKey =
+    typeof turn === 'number' || typeof turn === 'string' ? String(turn) : 'initial';
+
+  if (event.toolName) {
+    return `tool:${event.toolName}:${turnKey}`;
+  }
+
+  return `event:${event.event.replace(/_(start|complete)$/, '')}`;
+}
 
 export const useChatStore = create<ChatStore>()(
   immer((set, get) => ({
@@ -86,6 +99,33 @@ export const useChatStore = create<ChatStore>()(
             ...(state.queries[queryId].resources || []),
             ...resources,
           ];
+        }
+      }),
+
+    appendQueryTrace: (queryId, event) =>
+      set(state => {
+        if (state.queries[queryId]) {
+          const traceEvents = state.queries[queryId].traceEvents || [];
+          const incomingKey = traceStepKey(event);
+          let pendingIndex = -1;
+
+          for (let i = traceEvents.length - 1; i >= 0; i -= 1) {
+            if (
+              traceEvents[i].status === 'pending' &&
+              traceStepKey(traceEvents[i]) === incomingKey
+            ) {
+              pendingIndex = i;
+              break;
+            }
+          }
+
+          if (pendingIndex >= 0) {
+            traceEvents[pendingIndex] = event;
+          } else {
+            traceEvents.push(event);
+          }
+
+          state.queries[queryId].traceEvents = traceEvents;
         }
       }),
 

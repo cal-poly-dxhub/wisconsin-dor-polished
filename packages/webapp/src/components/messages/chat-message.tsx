@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DocumentList } from '../documents/document-list/document-list';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
-import type { ResourceItem } from '@/stores/types';
+import type { ResourceItem, TraceEvent } from '@/stores/types';
 import type { QueryStatus } from '@/stores/types';
 
 import './chat-message.css';
@@ -29,6 +29,7 @@ export interface ChatMessageProps {
   streamingComplete?: boolean;
   selected?: boolean;
   items?: ResourceItem[];
+  traceEvents?: TraceEvent[];
 }
 
 interface StreamResponseProps {
@@ -118,6 +119,56 @@ function renderResponse(
   return (
     <StreamResponse content={response} streamingComplete={streamingComplete} />
   );
+}
+
+function formatTraceMetadata(metadata?: Record<string, unknown> | null) {
+  if (!metadata) return '';
+
+  const parts: string[] = [];
+  const addCount = (key: string, singular: string, plural = `${singular}s`) => {
+    const value = metadata[key];
+    if (typeof value === 'number' && value > 0) {
+      parts.push(`${value} ${value === 1 ? singular : plural}`);
+    }
+  };
+
+  addCount('history_turns', 'prior turn');
+  addCount('faq_count', 'FAQ hit');
+  addCount('chunk_count', 'chunk');
+  addCount('neighbor_count', 'neighbor');
+  addCount('document_count', 'document');
+  addCount('chain_length', 'authority step');
+  addCount('cited_doc_count', 'citation');
+  addCount('rag_document_count', 'source');
+
+  if (typeof metadata.top_score === 'number') {
+    parts.push(`top score ${metadata.top_score.toFixed(2)}`);
+  }
+  if (typeof metadata.latency_ms === 'number') {
+    parts.push(`${metadata.latency_ms}ms`);
+  }
+  if (typeof metadata.elapsed_ms === 'number') {
+    parts.push(`${(metadata.elapsed_ms / 1000).toFixed(1)}s`);
+  }
+  if (metadata.refined === true) {
+    parts.push('expanded follow-up');
+  }
+  if (Array.isArray(metadata.tool_names) && metadata.tool_names.length > 0) {
+    parts.push(`tools: ${metadata.tool_names.join(', ')}`);
+  }
+
+  return parts.join(' · ');
+}
+
+function parseTimestampMs(timestamp?: string) {
+  if (!timestamp) return null;
+
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function elapsedSecondsSince(startedAt: number) {
+  return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
 }
 
 function MessageOptionsBar({
@@ -227,48 +278,77 @@ export function ChatMessage({
   streamingComplete,
   selected = true,
   items,
+  traceEvents,
 }: ChatMessageProps) {
   const messageRef = useRef<HTMLDivElement>(null);
   const breakpoint = useBreakpoint();
 
-  // Thinking timer: starts on pending, stops when streaming begins
-  const [thinkingSeconds, setThinkingSeconds] = useState(0);
-  const thinkingStartRef = useRef<number | null>(null);
-  const storedDuration = useChatStore(s => s.queries[queryId]?.thinkingDuration);
-
-  useEffect(() => {
-    if (status === 'pending' || status === 'sending') {
-      thinkingStartRef.current = Date.now();
-      const interval = setInterval(() => {
-        if (thinkingStartRef.current) {
-          setThinkingSeconds(Math.floor((Date.now() - thinkingStartRef.current) / 1000));
-        }
-      }, 1000);
-      return () => clearInterval(interval);
-    }
-    if (thinkingStartRef.current) {
-      const final = Math.floor((Date.now() - thinkingStartRef.current) / 1000);
-      thinkingStartRef.current = null;
-      queueMicrotask(() => {
-        setThinkingSeconds(final);
-        useChatStore.getState().setThinkingDuration(queryId, final);
-      });
-    }
-    return undefined;
-  }, [status, queryId]);
-
-  const displaySeconds = storedDuration ?? thinkingSeconds;
-
-  const isThinking = status === 'pending' || status === 'sending';
+  const isThinking = status === 'pending' || status === 'sending' || status === 'sent';
   const isStreaming = status === 'streaming';
   const hasCompleted = status === 'streaming' || status === 'completed';
   const showThinkingLabel = isThinking || hasCompleted;
   const hasResources = (items?.length ?? 0) > 0;
   const [stepsOpen, setStepsOpen] = useState(true);
 
-  // Derive current step
+  // Thinking timer: starts on pending, stops when streaming begins.
+  // Anchor to the original query timestamp so replacing the optimistic ID
+  // with the server query ID does not restart the visible timer.
+  const [thinkingSeconds, setThinkingSeconds] = useState(() => {
+    if (!isThinking) return 0;
+
+    const startedAt = parseTimestampMs(timestamp);
+    return startedAt ? elapsedSecondsSince(startedAt) : 0;
+  });
+  const thinkingStartRef = useRef<number | null>(null);
+  const storedDuration = useChatStore(s => s.queries[queryId]?.thinkingDuration);
+
+  useEffect(() => {
+    if (isThinking) {
+      const startedAt =
+        thinkingStartRef.current ?? parseTimestampMs(timestamp) ?? Date.now();
+      thinkingStartRef.current = startedAt;
+
+      const updateElapsed = () => {
+        setThinkingSeconds(elapsedSecondsSince(startedAt));
+      };
+
+      updateElapsed();
+      const interval = setInterval(() => {
+        updateElapsed();
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+
+    if (thinkingStartRef.current) {
+      const final = elapsedSecondsSince(thinkingStartRef.current);
+      thinkingStartRef.current = null;
+      setThinkingSeconds(final);
+      if (storedDuration === undefined) {
+        useChatStore.getState().setThinkingDuration(queryId, final);
+      }
+    }
+    return undefined;
+  }, [isThinking, queryId, storedDuration, timestamp]);
+
+  const displaySeconds = storedDuration ?? thinkingSeconds;
+
+  // Use streamed backend trace events when available; otherwise keep the
+  // previous synthetic steps for non-GraphRAG responses after waiting has ended.
   const steps = useMemo(() => {
-    const s: { label: string; done: boolean }[] = [];
+    if (traceEvents && traceEvents.length > 0) {
+      return traceEvents.map(event => ({
+        label: event.label,
+        detail: formatTraceMetadata(event.metadata),
+        done: event.status === 'complete',
+        error: event.status === 'error',
+      }));
+    }
+
+    if (isThinking) {
+      return [];
+    }
+
+    const s: { label: string; done: boolean; detail?: string; error?: boolean }[] = [];
     const searchDone = hasResources || isStreaming || streamingComplete === true;
     s.push({ label: searchDone ? 'Searched knowledge base' : 'Searching knowledge base...', done: searchDone });
     if (hasResources) {
@@ -277,7 +357,7 @@ export function ChatMessage({
     const genDone = isStreaming || streamingComplete === true;
     s.push({ label: genDone ? 'Generated response' : 'Generating response...', done: genDone });
     return s;
-  }, [hasResources, items, isStreaming, streamingComplete]);
+  }, [traceEvents, isThinking, hasResources, items, isStreaming, streamingComplete]);
 
   const memoizedResponse = useMemo(() => {
     if (!response) return null;
@@ -331,8 +411,10 @@ export function ChatMessage({
           {showThinkingLabel && (
             <div className="mb-4" style={{ fontSize: 'clamp(0.9rem, 1vw + 0.5rem, 1.05rem)' }}>
               <button
-                onClick={() => setStepsOpen(prev => !prev)}
-                className="flex items-center gap-1.5 text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+                onClick={steps.length > 0 ? () => setStepsOpen(prev => !prev) : undefined}
+                className={`flex items-center gap-1.5 text-muted-foreground transition-colors ${
+                  steps.length > 0 ? 'cursor-pointer hover:text-foreground' : ''
+                }`}
               >
                 <span className={isThinking ? 'thinking-shimmer' : ''}>
                   {isThinking
@@ -341,18 +423,20 @@ export function ChatMessage({
                       ? `Thought for ${displaySeconds}s`
                       : 'Thought'}
                 </span>
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  className={`transition-transform duration-200 ${stepsOpen ? 'rotate-90' : ''}`}
-                >
-                  <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
+                {steps.length > 0 && (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 12 12"
+                    fill="none"
+                    className={`transition-transform duration-200 ${stepsOpen ? 'rotate-90' : ''}`}
+                  >
+                    <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
               </button>
               <AnimatePresence>
-                {stepsOpen && (
+                {steps.length > 0 && stepsOpen && (
                   <motion.div
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
@@ -363,16 +447,31 @@ export function ChatMessage({
                   >
                     <div className="relative ml-[3.5px] border-l border-muted-foreground/25 space-y-3 py-1">
                       {steps.map((step, i) => (
-                        <div key={i} className="flex items-center gap-2.5 -ml-[4px]">
+                        <motion.div
+                          key={`${step.label}-${i}`}
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.18, ease: 'easeOut' }}
+                          className="flex items-start gap-2.5 -ml-[4px]"
+                        >
                           <div
-                            className={`h-[7px] w-[7px] shrink-0 rounded-full transition-colors duration-500 ${
-                              step.done
-                                ? 'bg-muted-foreground'
-                                : 'border border-muted-foreground/50 bg-background'
+                            className={`mt-[0.45em] h-[7px] w-[7px] shrink-0 rounded-full transition-colors duration-500 ${
+                              step.error
+                                ? 'bg-destructive'
+                                : step.done
+                                  ? 'bg-muted-foreground'
+                                  : 'border border-muted-foreground/50 bg-background'
                             }`}
                           />
-                          <span>{step.label}</span>
-                        </div>
+                          <span>
+                            <span>{step.label}</span>
+                            {step.detail && (
+                              <span className="block text-muted-foreground/70">
+                                {step.detail}
+                              </span>
+                            )}
+                          </span>
+                        </motion.div>
                       ))}
                     </div>
                   </motion.div>
