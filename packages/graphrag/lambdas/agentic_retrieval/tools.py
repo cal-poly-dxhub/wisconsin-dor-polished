@@ -276,7 +276,10 @@ def execute_tool(tool_name: str, tool_input: dict, neptune: NeptuneClient) -> di
         for result in response.get("retrievalResults", []):
             text = result.get("content", {}).get("text", "")
             score = result.get("score", 0.0)
-            faqs.append({"text": text, "score": score})
+            source_uri = (
+                result.get("location", {}).get("s3Location", {}).get("uri", "")
+            )
+            faqs.append({"text": text, "score": score, "source_uri": source_uri})
         return {"faqs": faqs, "count": len(faqs)}
 
     elif tool_name == "vector_search":
