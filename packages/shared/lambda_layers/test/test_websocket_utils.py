@@ -106,16 +106,17 @@ class TestWebSocketServer:
         # Verify the result is returned
         assert result == {"ResponseMetadata": {"HTTPStatusCode": 200}}
 
+    @patch.dict(os.environ, {"WEBSOCKET_CALLBACK_URL": "wss://example/stage"})
+    @patch("websocket_utils.utils.boto3")
+    @pytest.mark.asyncio
+    async def test_send_json_routes_agent_event_message(self, mock_boto3):
+        """Test send_json wraps AgentEventMessage with the agent-trace streamId envelope"""
+        from websocket_utils.utils import WebSocketServer
 
-@patch.dict(os.environ, {"WEBSOCKET_CALLBACK_URL": "wss://example/stage"})
-def test_send_json_routes_agent_event_message():
-    from websocket_utils.utils import WebSocketServer
-    from websocket_utils.models import AgentEventMessage
-
-    with patch("boto3.client") as boto_client:
+        # Setup mock client
         mock_client = MagicMock()
+        mock_boto3.client.return_value = mock_client
         mock_client.post_to_connection.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}}
-        boto_client.return_value = mock_client
 
         server = WebSocketServer(connection_id="conn-1")
         msg = AgentEventMessage(
@@ -126,8 +127,7 @@ def test_send_json_routes_agent_event_message():
             payload={"text": "I need to look this up"},
         )
 
-        import asyncio
-        asyncio.run(server.send_json(msg))
+        await server.send_json(msg)
 
         mock_client.post_to_connection.assert_called_once()
         kwargs = mock_client.post_to_connection.call_args.kwargs
