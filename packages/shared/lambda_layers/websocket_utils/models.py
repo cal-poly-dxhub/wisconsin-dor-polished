@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -104,5 +104,5 @@ class AgentEventMessage(WebSocketMessage):
     turn: int | None = None
     seq: int
     timestamp: int  # epoch ms at emission
-    payload: dict = Field(default_factory=dict)
-    dev_payload: dict = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    dev_payload: dict[str, Any] = Field(default_factory=dict)
