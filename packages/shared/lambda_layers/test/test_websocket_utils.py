@@ -105,3 +105,34 @@ class TestWebSocketServer:
 
         # Verify the result is returned
         assert result == {"ResponseMetadata": {"HTTPStatusCode": 200}}
+
+
+@patch.dict(os.environ, {"WEBSOCKET_CALLBACK_URL": "wss://example/stage"})
+def test_send_json_routes_agent_event_message():
+    from websocket_utils.utils import WebSocketServer
+    from websocket_utils.models import AgentEventMessage
+
+    with patch("boto3.client") as boto_client:
+        mock_client = MagicMock()
+        mock_client.post_to_connection.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}}
+        boto_client.return_value = mock_client
+
+        server = WebSocketServer(connection_id="conn-1")
+        msg = AgentEventMessage(
+            query_id="q-1",
+            kind="reasoning",
+            seq=3,
+            timestamp=1700000000000,
+            payload={"text": "I need to look this up"},
+        )
+
+        import asyncio
+        asyncio.run(server.send_json(msg))
+
+        mock_client.post_to_connection.assert_called_once()
+        kwargs = mock_client.post_to_connection.call_args.kwargs
+        assert kwargs["ConnectionId"] == "conn-1"
+        sent = json.loads(kwargs["Data"])
+        assert sent["streamId"] == "agent-trace"
+        assert sent["body"]["responseType"] == "agent-event"
+        assert sent["body"]["kind"] == "reasoning"
