@@ -13,6 +13,7 @@ from .errors import (
     WebSocketConnectionError,
 )
 from .models import (
+    AgentEventMessage,
     DocumentsContent,
     DocumentsMessage,
     FAQContent,
@@ -21,6 +22,7 @@ from .models import (
 )
 
 __all__ = [
+    "AgentEventMessage",
     "WebSocketMessage",
     "PlainWebSocketMessage",
     "WebSocketServer",

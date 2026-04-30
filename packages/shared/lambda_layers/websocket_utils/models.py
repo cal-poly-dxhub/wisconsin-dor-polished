@@ -82,3 +82,27 @@ class FragmentMessage(WebSocketMessage):
     response_type: Literal["fragment"] = "fragment"
     query_id: str
     content: FragmentContent
+
+
+class AgentEventMessage(WebSocketMessage):
+    """Trace event emitted by the GraphRAG agent loop.
+
+    Delivered to the frontend during the tool loop so the UI can render
+    the agent's chain-of-thought live. Best-effort — the loop must not
+    block on emission failures.
+    """
+
+    response_type: Literal["agent-event"] = "agent-event"
+    query_id: str
+    kind: Literal[
+        "loop_start",
+        "reasoning",
+        "tool_call",
+        "tool_result",
+        "loop_complete",
+    ]
+    turn: int | None = None
+    seq: int
+    timestamp: int  # epoch ms at emission
+    payload: dict = Field(default_factory=dict)
+    dev_payload: dict = Field(default_factory=dict)

@@ -8,6 +8,43 @@ import pytest
 # Add the websocket_utils directory to sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from websocket_utils.models import AgentEventMessage
+
+
+def test_agent_event_message_camelcase_serialization():
+    msg = AgentEventMessage(
+        query_id="q-1",
+        kind="tool_call",
+        turn=2,
+        seq=7,
+        timestamp=1700000000000,
+        payload={"toolName": "vector_search", "summary": '"ag use value"'},
+        dev_payload={"toolInput": {"query": "ag use value"}, "toolUseId": "t-1"},
+    )
+    dumped = msg.model_dump(by_alias=True)
+    assert dumped["responseType"] == "agent-event"
+    assert dumped["queryId"] == "q-1"
+    assert dumped["kind"] == "tool_call"
+    assert dumped["turn"] == 2
+    assert dumped["seq"] == 7
+    assert dumped["timestamp"] == 1700000000000
+    assert dumped["payload"] == {"toolName": "vector_search", "summary": '"ag use value"'}
+    assert dumped["devPayload"] == {"toolInput": {"query": "ag use value"}, "toolUseId": "t-1"}
+
+
+def test_agent_event_message_optional_dev_payload():
+    msg = AgentEventMessage(
+        query_id="q-1",
+        kind="loop_start",
+        seq=1,
+        timestamp=1700000000000,
+        payload={"maxTurns": 10},
+    )
+    dumped = msg.model_dump(by_alias=True)
+    # dev_payload defaults to {} for consistent schema on the wire.
+    assert dumped["devPayload"] == {}
+    assert "turn" in dumped and dumped["turn"] is None
+
 
 class TestWebSocketServer:
     """Test cases for WebSocketServer"""
