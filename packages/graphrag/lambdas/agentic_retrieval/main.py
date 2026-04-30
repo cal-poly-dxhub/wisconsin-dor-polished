@@ -33,6 +33,8 @@ from step_function_types.models import (
     UserQuery,
 )
 from tools import TOOL_DEFINITIONS, execute_tool
+from websocket_utils.models import TraceContent, TraceMessage
+from websocket_utils.utils import WebSocketServer, get_ws_connection_from_session
 
 MAX_TURNS = 10
 
@@ -262,6 +264,119 @@ def _discovery_summary(discovery: dict[str, str]) -> dict[str, int]:
         counts[tag] = counts.get(tag, 0) + 1
     return counts
 
+
+_TOOL_TRACE_LABELS = {
+    "faq_search": "Checked FAQs",
+    "refine_query": "Refined the search question",
+    "vector_search": "Searched the knowledge graph",
+    "get_neighbors": "Explored related authorities",
+    "get_document": "Fetched document details",
+    "get_authority_chain": "Traced authority chain",
+    "list_framework_docs": "Listed framework documents",
+    "fetch_case_opinion": "Fetched court opinion",
+    "answer": "Prepared cited answer",
+}
+
+_TOOL_TRACE_PENDING_LABELS = {
+    "faq_search": "Checking FAQs",
+    "refine_query": "Refining the search question",
+    "vector_search": "Searching the knowledge graph",
+    "get_neighbors": "Exploring related authorities",
+    "get_document": "Fetching document details",
+    "get_authority_chain": "Tracing authority chain",
+    "list_framework_docs": "Listing framework documents",
+    "fetch_case_opinion": "Fetching court opinion",
+    "answer": "Preparing cited answer",
+}
+
+
+def _get_trace_ws(session_id: str) -> WebSocketServer | None:
+    if not session_id:
+        return None
+    try:
+        return get_ws_connection_from_session(session_id)
+    except Exception as exc:  # noqa: BLE001 - trace streaming is best-effort.
+        logger.warning(
+            f"Unable to open WebSocket trace stream for session {session_id}: {exc}",
+            exc_info=True,
+        )
+        return None
+
+
+def _trace_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep UI trace payloads small and free of raw prompts or retrieved text."""
+    if not metadata:
+        return {}
+
+    allowed = {
+        "turn",
+        "max_turns",
+        "history_turns",
+        "faq_count",
+        "top_score",
+        "top_scores",
+        "chunk_count",
+        "neighbor_count",
+        "document_count",
+        "chain_length",
+        "graph_context_doc_count",
+        "graph_context_neighbor_count",
+        "cited_doc_count",
+        "rag_document_count",
+        "elapsed_ms",
+        "latency_ms",
+        "tool_names",
+        "found",
+        "refined",
+    }
+    return {k: v for k, v in metadata.items() if k in allowed and v is not None}
+
+
+def _emit_trace_event(
+    trace_ws: WebSocketServer | None,
+    query_id: str,
+    event: str,
+    label: str,
+    *,
+    status: str = "complete",
+    tool_name: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    if not trace_ws or not query_id:
+        return
+    try:
+        asyncio.run(
+            trace_ws.send_json(
+                TraceMessage(
+                    query_id=query_id,
+                    content=TraceContent(
+                        event=event,
+                        label=label,
+                        status=status,
+                        tool_name=tool_name,
+                        metadata=_trace_metadata(metadata),
+                    ),
+                )
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - never fail retrieval for UI trace.
+        logger.warning(f"Failed to send trace event '{event}': {exc}", exc_info=True)
+
+
+def _tool_trace_label(tool_name: str, result: dict | None = None) -> str:
+    if tool_name == "answer":
+        return "Prepared cited answer"
+    if tool_name == "get_document" and result:
+        doc = result.get("document")
+        return "Fetched document details" if doc else "Checked document details"
+    if tool_name == "fetch_case_opinion" and result:
+        return "Fetched court opinion" if result.get("found") else "Checked court opinion archive"
+    return _TOOL_TRACE_LABELS.get(tool_name, f"Ran {tool_name}")
+
+
+def _tool_trace_pending_label(tool_name: str) -> str:
+    return _TOOL_TRACE_PENDING_LABELS.get(tool_name, f"Running {tool_name}")
+
 CHAT_HISTORY_TABLE = os.environ.get("CHAT_HISTORY_TABLE_NAME", "")
 # Cap history passed to Claude. Long histories bloat the context window and
 # older turns rarely help resolve a current follow-up.
@@ -367,6 +482,24 @@ def _build_faq_resource(faq_results: list[dict]) -> FAQResource | None:
     return FAQResource(faqs=faqs) if faqs else None
 
 
+def _build_cited_faq_resource(
+    faq_results: list[dict],
+    cited_doc_ids: set[str],
+) -> FAQResource | None:
+    """Convert cited FAQ KB chunks into FAQResource for downstream synthesis.
+
+    The agent may cite IDs from the seeded FAQ search result. Those IDs are not
+    Neptune Document nodes, so they would otherwise be dropped from
+    RAGDocument construction and leave ResponseStreaming with no context.
+    """
+    cited_faq_results = [
+        entry
+        for entry in faq_results[:MAX_FAQS]
+        if _faq_id_from_uri(entry.get("source_uri", "")) in cited_doc_ids
+    ]
+    return _build_faq_resource(cited_faq_results)
+
+
 def _faq_search_direct(query: str) -> dict:
     """Run the `faq_search` tool with the user's verbatim query.
 
@@ -384,6 +517,7 @@ def run_agentic_loop(
     query_id: str = "",
     session_id: str = "",
     request_id: str = "",
+    trace_ws: WebSocketServer | None = None,
 ) -> tuple[str, list[str], list[RAGDocument], FAQResource | None]:
     """Run Claude's agentic loop against Neptune.
 
@@ -412,6 +546,14 @@ def run_agentic_loop(
     # richer opinion card.
     fetched_opinions: dict[str, dict] = {}
 
+    _emit_trace_event(
+        trace_ws,
+        query_id,
+        "agent_loop_start",
+        "Planning retrieval",
+        metadata={"history_turns": len(chat_history), "max_turns": MAX_TURNS},
+    )
+
     # Turn 0 refinement: when prior turns exist, the raw query is often a
     # context-dependent follow-up ("what about agriculture") that will match
     # nothing on its own. Rewrite it against history before the FAQ search
@@ -420,10 +562,30 @@ def run_agentic_loop(
     # it just burns a Bedrock call.
     search_query = query
     if chat_history:
+        _emit_trace_event(
+            trace_ws,
+            query_id,
+            "refine_query_start",
+            "Reviewing conversation context",
+            status="pending",
+            tool_name="refine_query",
+            metadata={"history_turns": len(chat_history)},
+        )
         refine_result = execute_tool(
             "refine_query", {"query": query}, neptune, chat_history=chat_history
         )
         refined = refine_result.get("refined_query") or query
+        _emit_trace_event(
+            trace_ws,
+            query_id,
+            "refine_query_complete",
+            "Refined the search question",
+            tool_name="refine_query",
+            metadata={
+                "history_turns": len(chat_history),
+                "refined": refined != query,
+            },
+        )
         if refined and refined != query:
             logger.info(
                 f"Turn-0 refine: '{query[:80]}' -> '{refined[:80]}'"
@@ -431,9 +593,28 @@ def run_agentic_loop(
             search_query = refined
 
     # Turn 0: deterministic FAQ search (using the refined query when we have one).
+    _emit_trace_event(
+        trace_ws,
+        query_id,
+        "faq_search_start",
+        "Checking FAQs",
+        status="pending",
+        tool_name="faq_search",
+    )
     faq_result = _faq_search_direct(search_query)
     faq_entries = faq_result.get("faqs", [])
     top_score = faq_entries[0].get("score", 0.0) if faq_entries else 0.0
+    _emit_trace_event(
+        trace_ws,
+        query_id,
+        "faq_search_complete",
+        "Checked FAQs",
+        tool_name="faq_search",
+        metadata={
+            "faq_count": len(faq_entries),
+            "top_score": round(top_score, 4),
+        },
+    )
     logger.info(
         f"FAQ turn-0: {len(faq_entries)} hits, top_score={top_score:.3f}, "
         f"threshold={FAQ_SCORE_THRESHOLD}"
@@ -445,6 +626,17 @@ def run_agentic_loop(
             logger.info(
                 f"FAQ short-circuit: returning {len(faq_resource.faqs)} FAQ(s) "
                 "without entering agentic loop"
+            )
+            _emit_trace_event(
+                trace_ws,
+                query_id,
+                "faq_short_circuit",
+                "Found a high-confidence FAQ answer",
+                tool_name="faq_search",
+                metadata={
+                    "faq_count": len(faq_resource.faqs),
+                    "top_score": round(top_score, 4),
+                },
             )
             # Empty document list — answer is fully grounded in FAQs.
             return "", [], [], faq_resource
@@ -522,6 +714,13 @@ def run_agentic_loop(
             chunk_count=len(all_chunks),
             discovery=_discovery_summary(discovery),
         )
+        _emit_trace_event(
+            trace_ws,
+            query_id,
+            "agent_turn_start",
+            f"Started retrieval turn {turn_number}",
+            metadata={"turn": turn_number, "max_turns": MAX_TURNS},
+        )
 
         # Turn-8 warning injection (docs/graphrag.md §7)
         if turn == 7:
@@ -537,6 +736,13 @@ def run_agentic_loop(
                 "agent_turn_budget_warning_injected",
                 **trace_context,
                 turn=turn_number,
+            )
+            _emit_trace_event(
+                trace_ws,
+                query_id,
+                "agent_turn_budget_warning_injected",
+                "Narrowing to the best available answer",
+                metadata={"turn": turn_number},
             )
 
         converse_started = time.perf_counter()
@@ -557,6 +763,14 @@ def run_agentic_loop(
                 error_type=type(exc).__name__,
                 error=str(exc),
             )
+            _emit_trace_event(
+                trace_ws,
+                query_id,
+                "bedrock_converse_error",
+                "Model planning failed",
+                status="error",
+                metadata={"turn": turn_number},
+            )
             raise
         converse_latency_ms = round((time.perf_counter() - converse_started) * 1000)
 
@@ -576,6 +790,18 @@ def run_agentic_loop(
             block for block in assistant_message["content"]
             if "toolUse" in block
         ]
+        tool_names = [block["toolUse"].get("name", "") for block in tool_uses]
+        _emit_trace_event(
+            trace_ws,
+            query_id,
+            "agent_turn_model_response",
+            "Selected next retrieval steps" if tool_names else "Drafted answer text",
+            metadata={
+                "turn": turn_number,
+                "latency_ms": converse_latency_ms,
+                "tool_names": tool_names,
+            },
+        )
 
         if not tool_uses:
             text_blocks = [
@@ -591,6 +817,13 @@ def run_agentic_loop(
                 turn=turn_number,
                 stop_reason=stop_reason,
                 answer_chars=len(answer),
+            )
+            _emit_trace_event(
+                trace_ws,
+                query_id,
+                "agent_final_text_without_answer_tool",
+                "Prepared response from gathered context",
+                metadata={"turn": turn_number},
             )
             break
 
@@ -609,6 +842,15 @@ def run_agentic_loop(
                 tool_use_id=tool_use_id,
                 tool_input=tool_input,
             )
+            _emit_trace_event(
+                trace_ws,
+                query_id,
+                "agent_tool_call",
+                _tool_trace_pending_label(tool_name),
+                status="pending",
+                tool_name=tool_name,
+                metadata={"turn": turn_number},
+            )
 
             tool_started = time.perf_counter()
             try:
@@ -626,6 +868,18 @@ def run_agentic_loop(
                     tool_latency_ms=round((time.perf_counter() - tool_started) * 1000),
                     error_type=type(exc).__name__,
                     error=str(exc),
+                )
+                _emit_trace_event(
+                    trace_ws,
+                    query_id,
+                    "agent_tool_error",
+                    f"{_tool_trace_label(tool_name)} failed",
+                    status="error",
+                    tool_name=tool_name,
+                    metadata={
+                        "turn": turn_number,
+                        "latency_ms": round((time.perf_counter() - tool_started) * 1000),
+                    },
                 )
                 raise
             tool_latency_ms = round((time.perf_counter() - tool_started) * 1000)
@@ -675,6 +929,7 @@ def run_agentic_loop(
                     all_doc_ids.add(stub_doc_id)
                     discovery[stub_doc_id] = "opinion-fetched"
 
+            tool_summary = _summarize_tool_result(tool_name, result)
             _log_agent_event(
                 "agent_tool_result",
                 **trace_context,
@@ -682,9 +937,21 @@ def run_agentic_loop(
                 tool_use_id=tool_use_id,
                 tool_latency_ms=tool_latency_ms,
                 discovered_doc_count=len(all_doc_ids),
-                chunk_count=len(all_chunks),
+                accumulated_chunk_count=len(all_chunks),
                 discovery=_discovery_summary(discovery),
-                **_summarize_tool_result(tool_name, result),
+                **tool_summary,
+            )
+            _emit_trace_event(
+                trace_ws,
+                query_id,
+                "agent_tool_result",
+                _tool_trace_label(tool_name, result),
+                tool_name=tool_name,
+                metadata={
+                    "turn": turn_number,
+                    "latency_ms": tool_latency_ms,
+                    **tool_summary,
+                },
             )
 
             if tool_name == "answer":
@@ -711,6 +978,7 @@ def run_agentic_loop(
                 rag_docs = _build_rag_documents(
                     cited_chunks, cited, cited_discovery, cited_opinions
                 )
+                cited_faq_resource = _build_cited_faq_resource(faq_entries, cited)
                 _log_agent_event(
                     "agent_loop_complete",
                     **trace_context,
@@ -721,9 +989,25 @@ def run_agentic_loop(
                     cited_doc_count=len(cited),
                     discovered_doc_count=len(all_doc_ids),
                     rag_document_count=len(rag_docs),
+                    faq_count=len(cited_faq_resource.faqs) if cited_faq_resource else 0,
                     discovery=_discovery_summary(cited_discovery),
                 )
-                return answer, list(cited), rag_docs, None
+                _emit_trace_event(
+                    trace_ws,
+                    query_id,
+                    "agent_loop_complete",
+                    "Finished retrieval plan",
+                    metadata={
+                        "turn": turn_number,
+                        "elapsed_ms": round((time.perf_counter() - loop_started) * 1000),
+                        "cited_doc_count": len(cited),
+                        "rag_document_count": len(rag_docs),
+                        "faq_count": len(cited_faq_resource.faqs)
+                        if cited_faq_resource
+                        else 0,
+                    },
+                )
+                return answer, list(cited), rag_docs, cited_faq_resource
 
             tool_results.append({
                 "toolResult": {
@@ -761,6 +1045,13 @@ def run_agentic_loop(
             chunk_count=len(all_chunks),
             discovery=_discovery_summary(discovery),
         )
+        _emit_trace_event(
+            trace_ws,
+            query_id,
+            "agent_turn_budget_exhausted",
+            "Reached the retrieval turn limit",
+            metadata={"chunk_count": len(all_chunks)},
+        )
 
     rag_docs = _build_rag_documents(
         all_chunks, all_doc_ids, discovery, fetched_opinions
@@ -774,6 +1065,16 @@ def run_agentic_loop(
         discovered_doc_count=len(all_doc_ids),
         rag_document_count=len(rag_docs),
         discovery=_discovery_summary(discovery),
+    )
+    _emit_trace_event(
+        trace_ws,
+        query_id,
+        "agent_loop_complete",
+        "Finished retrieval plan",
+        metadata={
+            "elapsed_ms": round((time.perf_counter() - loop_started) * 1000),
+            "rag_document_count": len(rag_docs),
+        },
     )
     return answer, list(all_doc_ids), rag_docs, None
 
@@ -1120,11 +1421,13 @@ def handler(event: dict, context) -> dict[str, Any]:
     returns a RetrieveResult compatible with the existing Step Functions flow.
     """
     session_id: str | None = None
+    trace_ws: WebSocketServer | None = None
     request_id = getattr(context, "aws_request_id", "") if context else ""
 
     try:
         user_query = process_event(event)
         session_id = user_query.session_id
+        trace_ws = _get_trace_ws(user_query.session_id)
         _log_agent_event(
             "agentic_retrieval_request_received",
             request_id=request_id,
@@ -1132,14 +1435,29 @@ def handler(event: dict, context) -> dict[str, Any]:
             session_id=user_query.session_id,
             **_query_log_fields(user_query.query),
         )
+        _emit_trace_event(
+            trace_ws,
+            user_query.query_id,
+            "agentic_retrieval_request_received",
+            "Received question",
+        )
 
         chat_history = get_chat_history(session_id)
+        if chat_history:
+            _emit_trace_event(
+                trace_ws,
+                user_query.query_id,
+                "chat_history_loaded",
+                "Loaded conversation context",
+                metadata={"history_turns": len(chat_history)},
+            )
         answer, cited_doc_ids, rag_documents, faq_resource = run_agentic_loop(
             user_query.query,
             chat_history=chat_history,
             query_id=user_query.query_id,
             session_id=user_query.session_id,
             request_id=request_id,
+            trace_ws=trace_ws,
         )
 
         documents = DocumentResource(documents=rag_documents)
@@ -1152,6 +1470,17 @@ def handler(event: dict, context) -> dict[str, Any]:
             cited_doc_count=len(cited_doc_ids),
             rag_document_count=len(rag_documents),
             faq_count=len(faq_resource.faqs) if faq_resource else 0,
+        )
+        _emit_trace_event(
+            trace_ws,
+            user_query.query_id,
+            "agentic_retrieval_response_ready",
+            "Starting answer generation",
+            metadata={
+                "cited_doc_count": len(cited_doc_ids),
+                "rag_document_count": len(rag_documents),
+                "faq_count": len(faq_resource.faqs) if faq_resource else 0,
+            },
         )
 
         # Return a flat payload; Step Functions Pass states build both
@@ -1177,6 +1506,13 @@ def handler(event: dict, context) -> dict[str, Any]:
         )
         logger.error(f"Agentic retrieval failed: {e}", exc_info=True)
         if session_id:
+            _emit_trace_event(
+                trace_ws,
+                getattr(locals().get("user_query", None), "query_id", ""),
+                "agentic_retrieval_failed",
+                "Retrieval failed",
+                status="error",
+            )
             asyncio.run(report_error(e, session_id=session_id))
 
         return {"successful": False}

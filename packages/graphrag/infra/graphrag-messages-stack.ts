@@ -11,6 +11,7 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   stepFunctionTypesLayer: lambda.LayerVersion;
   websocketUtilsLayer: lambda.LayerVersion;
   sessionsTable: cdk.aws_dynamodb.ITable;
+  chatHistoryTable: cdk.aws_dynamodb.ITable;
   websocketCallbackUrl: string;
   neptuneGraphId: string;
   neptuneGraphEndpoint: string;
@@ -55,6 +56,8 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
         tracing: lambda.Tracing.ACTIVE,
         environment: {
           WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
+          SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
+          CHAT_HISTORY_TABLE_NAME: props.chatHistoryTable.tableName,
           NEPTUNE_GRAPH_ID: props.neptuneGraphId,
           AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
           RAW_BUCKET: props.rawBucketName,
@@ -69,6 +72,18 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           LOG_MAX_QUERY_CHARS: '1000',
         },
       }
+    );
+
+    // WebSocket progress trace streaming needs the session -> connection lookup.
+    props.sessionsTable.grantReadData(agenticRetrievalHandler);
+    props.chatHistoryTable.grantReadData(agenticRetrievalHandler);
+
+    agenticRetrievalHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['execute-api:ManageConnections'],
+        resources: ['*'],
+      })
     );
 
     // Neptune Analytics permissions (scoped to specific graph)
