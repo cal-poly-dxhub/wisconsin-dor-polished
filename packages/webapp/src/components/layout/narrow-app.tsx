@@ -16,7 +16,7 @@ export function NarrowApp() {
   return (
     <>
       <ShaderBackground />
-      <div className="h-screen w-full p-4">
+      <div className="h-[calc(100vh-4rem)] w-full p-4 pt-2 sm:h-screen sm:pt-4">
         <div className="flex h-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
           <div className="min-h-0 flex-1">
             <ChatContainer variant="narrow" />

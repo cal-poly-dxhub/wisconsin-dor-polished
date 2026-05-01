@@ -10,7 +10,7 @@ import {
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ExternalLink, FileText, X } from 'lucide-react';
+import { Maximize2, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { AuthorityBadge } from './authority-badge';
 import { DiscoveryBadge } from './discovery-badge';
@@ -33,7 +33,7 @@ export interface Document {
 }
 
 const documentCardVariants = cva(
-  'cursor-pointer font-sans transition-shadow duration-200 ease-in-out hover:shadow-lg',
+  'group cursor-pointer font-sans transition-colors duration-200 ease-in-out hover:border-primary/40 hover:shadow-md focus-within:border-primary/50',
   {
     variants: {
       variant: {
@@ -59,34 +59,16 @@ const documentCardVariants = cva(
   }
 );
 
-const documentHeaderVariants = cva('flex min-w-0 flex-1 gap-2', {
-  variants: {
-    variant: {
-      compact: 'items-center',
-      modal: 'items-start pb-2',
-    },
-    size: {
-      sm: 'gap-1.5',
-      md: 'gap-2',
-      lg: 'gap-2.5',
-    },
-  },
-  defaultVariants: {
-    variant: 'compact',
-    size: 'md',
-  },
-});
-
-const iconVariants = cva('text-muted-foreground flex-shrink-0', {
+const documentHeaderVariants = cva('min-w-0 flex-1', {
   variants: {
     variant: {
       compact: '',
-      modal: 'mt-1',
+      modal: 'pb-2',
     },
     size: {
-      sm: 'h-3 w-3',
-      md: 'h-4 w-4',
-      lg: 'h-5 w-5',
+      sm: '',
+      md: '',
+      lg: '',
     },
   },
   defaultVariants: {
@@ -95,10 +77,10 @@ const iconVariants = cva('text-muted-foreground flex-shrink-0', {
   },
 });
 
-const titleVariants = cva('leading-tight opacity-90', {
+const titleVariants = cva('leading-snug opacity-90', {
   variants: {
     variant: {
-      compact: 'line-clamp-1 truncate',
+      compact: 'line-clamp-3',
       modal: 'line-clamp-2',
     },
     size: {
@@ -129,8 +111,12 @@ export function DocumentHeader({
 }: DocumentHeaderProps) {
   return (
     <div className={cn(documentHeaderVariants({ variant, size }))}>
-      <FileText className={cn(iconVariants({ variant, size }))} />
       <div className="min-w-0 flex-1">
+        {variant === 'compact' && documentId && (
+          <div className="text-muted-foreground mb-1 truncate text-[0.65rem] font-medium uppercase tracking-wide">
+            ID: {documentId}
+          </div>
+        )}
         <CardTitle className={cn(titleVariants({ variant, size }))}>
           {title}
         </CardTitle>
@@ -154,6 +140,31 @@ const ANIMATION_CONFIG = {
 } as const;
 
 const CONTENT_PREVIEW_LENGTH = 150;
+
+function getSourceActionLabel(document: Document) {
+  const text = `${document.documentId} ${document.title} ${document.source ?? ''}`.toLowerCase();
+
+  if (text.includes('case-law') || text.includes('case law') || text.includes(' v. ')) {
+    return 'View Case';
+  }
+  if (text.includes('wpam') || text.includes('property assessment manual')) {
+    return 'View WPAM';
+  }
+  if (text.includes('statute') || text.includes('wis. stat') || text.startsWith('statutes-')) {
+    return 'View Statute';
+  }
+  if (text.includes('admin rule') || text.includes('administrative code') || text.startsWith('admin_rules-')) {
+    return 'View Rule';
+  }
+  if (text.includes('faq')) {
+    return 'View FAQ';
+  }
+  if (text.includes('guide') || text.includes('publication') || text.includes('gov_publications')) {
+    return 'View Guide';
+  }
+
+  return 'View Source';
+}
 
 interface DocumentCardCompactProps
   extends VariantProps<typeof documentCardVariants> {
@@ -199,18 +210,32 @@ export function DocumentCardCompact({
         )}
       >
         <CardHeader className="pb-3">
-          <DocumentHeader
-            title={document.title}
-            variant={variant}
-            size={size}
-          />
+          <div className="flex items-start gap-3">
+            <DocumentHeader
+              title={document.title}
+              documentId={document.documentId}
+              variant={variant}
+              size={size}
+            />
+            <button
+              type="button"
+              onClick={event => {
+                event.stopPropagation();
+                onClick();
+              }}
+              className="text-muted-foreground hover:bg-accent hover:text-foreground -mt-1 -mr-1 cursor-pointer rounded-md p-1.5 transition-colors"
+              aria-label="Expand document card"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </button>
+          </div>
           <CardDescription className="line-clamp-2">
             {contentPreview}
           </CardDescription>
         </CardHeader>
 
         <CardContent className="pt-0">
-          <div className="flex flex-wrap gap-1.5 mb-2">
+          <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             {document.authorityLevel !== undefined && (
               <AuthorityBadge authorityLevel={document.authorityLevel} size="sm" />
             )}
@@ -219,20 +244,17 @@ export function DocumentCardCompact({
             )}
           </div>
 
-          {document.source && (
+        </CardContent>
+        {document.source && (
+          <div className="px-6 pb-6">
             <DocumentBadge
-              source={document.source}
+              source={getSourceActionLabel(document)}
               sourceUrl={document.sourceUrl}
               onSourceClick={onSourceClick}
               size="sm"
             />
-          )}
-
-          <div className="text-muted-foreground flex items-center justify-between text-sm">
-            <span>ID: {document.documentId}</span>
-            <ExternalLink className="h-3 w-3" />
           </div>
-        </CardContent>
+        )}
       </Card>
     </motion.div>
   );
@@ -275,42 +297,60 @@ function DocumentCardModal({
         transition={{ ease: 'easeIn', duration: ANIMATION_CONFIG.duration }}
       >
         <Card className="flex h-full flex-col border-0 shadow-none overflow-hidden">
-          <CardHeader className="border-border border-b pb-3 flex-shrink-0">
-            <div className="flex items-start justify-between">
-              <DocumentHeader
-                title={document.title}
-                documentId={document.documentId}
-                variant="modal"
-              />
-
-              <div className="flex items-start gap-2">
-                <div className="flex flex-col items-end gap-1.5">
+          <CardHeader className="border-border border-b pb-4 flex-shrink-0">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-muted-foreground mb-1 truncate text-[0.65rem] font-medium uppercase tracking-wide">
+                  ID: {document.documentId}
+                </div>
+                <DocumentHeader
+                  title={document.title}
+                  variant="modal"
+                />
+                <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
                   {document.authorityLevel !== undefined && (
                     <AuthorityBadge authorityLevel={document.authorityLevel} size="md" />
                   )}
                   {document.discoveryTag && document.discoveryTag !== 'unknown' && (
                     <DiscoveryBadge tag={document.discoveryTag} size="md" />
                   )}
-                  {document.source && (
+                </div>
+                {document.source && (
+                  <div className="mt-3">
                     <DocumentBadge
-                      source={document.source}
+                      source={getSourceActionLabel(document)}
                       sourceUrl={document.sourceUrl}
                       onSourceClick={onSourceClick}
                       size="md"
                     />
-                  )}
-                </div>
+                  </div>
+                )}
+                {document.sourceUrl && (
+                  <details className="mt-2 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer select-none hover:text-foreground">
+                      Show original link
+                    </summary>
+                    <a
+                      href={document.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 block break-all underline-offset-4 hover:text-foreground hover:underline"
+                    >
+                      {document.sourceUrl}
+                    </a>
+                  </details>
+                )}
+            </div>
 
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onClose}
-                  className="h-8 w-8"
-                  aria-label="Close modal"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                className="h-8 w-8 shrink-0 cursor-pointer"
+                aria-label="Close modal"
+              >
+                <X className="h-4 w-4" />
+              </Button>
             </div>
           </CardHeader>
 

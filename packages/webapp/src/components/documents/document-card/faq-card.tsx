@@ -10,7 +10,7 @@ import {
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { AnimatePresence, motion } from 'framer-motion';
-import { HelpCircle, X } from 'lucide-react';
+import { ExternalLink, HelpCircle, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
 
 export interface FAQ {
@@ -20,7 +20,7 @@ export interface FAQ {
 }
 
 const faqCardVariants = cva(
-  'cursor-pointer font-sans transition-shadow duration-200 ease-in-out hover:shadow-lg',
+  'group cursor-pointer font-sans transition-all duration-200 ease-in-out hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-within:border-primary/50',
   {
     variants: {
       variant: {
@@ -188,7 +188,13 @@ export function FAQCardCompact({
         </CardHeader>
 
         <CardContent className="pt-0">
-          <div className="text-muted-foreground text-sm">ID: {faq.faqId}</div>
+          <div className="text-muted-foreground flex items-center justify-between text-sm">
+            <span>ID: {faq.faqId}</span>
+            <span className="inline-flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+              View
+              <ExternalLink className="h-3 w-3" />
+            </span>
+          </div>
         </CardContent>
       </Card>
     </motion.div>

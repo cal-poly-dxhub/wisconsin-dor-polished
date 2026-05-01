@@ -1,5 +1,5 @@
-import { BadgeWithFade } from "@/components/ui/badge-with-fade";
-import { Link } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ExternalLink } from "lucide-react";
 
 interface DocumentBadgeProps {
   source: string;
@@ -15,18 +15,24 @@ export function DocumentBadge({
   size = "sm",
 }: DocumentBadgeProps) {
   const sizeClasses = {
-    sm: "max-w-32 xl:max-w-40 text-xs mb-3",
-    md: "max-w-40 xl:max-w-48",
+    sm: "h-8 text-xs",
+    md: "h-9 text-sm",
   };
 
   return (
-    <BadgeWithFade
-      variant="outline"
-      className={`hover:bg-accent cursor-pointer transition-colors duration-200 ease-in-out ${sourceUrl ? "hover:underline" : ""} ${sizeClasses[size]} `}
+    <button
+      type="button"
+      className={cn(
+        "border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-md border px-3 font-medium transition-colors",
+        sourceUrl ? "cursor-pointer" : "cursor-default opacity-70",
+        sizeClasses[size]
+      )}
       onClick={sourceUrl ? onSourceClick : undefined}
+      disabled={!sourceUrl}
+      aria-label={sourceUrl ? `Open source ${source}` : undefined}
     >
-      {sourceUrl && <Link className="mr-1 h-3 w-3 flex-shrink-0" />}
-      <span className="truncate opacity-90">{source}</span>
-    </BadgeWithFade>
+      <span className="truncate">{source}</span>
+      {sourceUrl && <ExternalLink className="h-3 w-3 flex-shrink-0" />}
+    </button>
   );
 }

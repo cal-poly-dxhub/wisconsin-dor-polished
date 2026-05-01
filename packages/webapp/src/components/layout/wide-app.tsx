@@ -24,21 +24,23 @@ export function WideApp() {
     <>
       <ShaderBackground />
       <div className="flex justify-center">
-        <div className="grid h-screen grid-cols-[minmax(0,64rem)_400px] gap-6 p-32">
-          {/* Chat Container - Main Content Area */}
-          <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
-            <div className="min-h-0 flex-1">
-              <ChatContainer variant="wide" />
+        <div className="h-screen w-full max-w-[calc(66rem+400px)] p-20 pt-24">
+          <div className="grid h-full min-h-0 grid-cols-[minmax(0,66rem)_400px] overflow-hidden rounded-lg border bg-card shadow-sm">
+            {/* Chat Container - Main Content Area */}
+            <div className="flex min-h-0 flex-col overflow-hidden">
+              <div className="min-h-0 flex-1">
+                <ChatContainer variant="wide" />
+              </div>
+              <ChatInput
+                placeholder="Ask a Wisconsin tax or revenue question..."
+                onSendMessage={sendMessage}
+              />
             </div>
-            <ChatInput
-              placeholder="Ask a Wisconsin tax or revenue question..."
-              onSendMessage={sendMessage}
-            />
-          </div>
 
-          {/* Documents List - Sidebar */}
-          <div className="min-h-0">
-            <DocumentList title="Documents" items={items} />
+            {/* Documents List - Sidebar */}
+            <aside className="min-h-0 border-l bg-muted/20 p-5">
+              <DocumentList title="Sources" items={items} />
+            </aside>
           </div>
         </div>
       </div>
