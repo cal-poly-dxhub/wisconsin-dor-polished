@@ -452,6 +452,12 @@ export class MessagesStack extends cdk.NestedStack {
 
     const definition = classifierTask.next(errorChoice);
 
+    // Preserve the currently deployed log group name. This used to include
+    // crypto.randomUUID(), which made every synth propose replacing the
+    // Step Functions log group even when the state machine had not changed.
+    const chatStateMachineLogGroupName =
+      '/aws/states/ChatStreamingStateMachine-2cc2395f-beb2-4a67-aca6-640300f06c9c';
+
     this.classifierStateMachine = new sfn.StateMachine(
       this,
       'ChatStateMachine',
@@ -462,7 +468,7 @@ export class MessagesStack extends cdk.NestedStack {
         tracingEnabled: true, // Enable X-Ray tracing for better observability
         logs: {
           destination: new cdk.aws_logs.LogGroup(this, 'StateMachineLogs', {
-            logGroupName: `/aws/states/ChatStreamingStateMachine-${crypto.randomUUID()}`,
+            logGroupName: chatStateMachineLogGroupName,
             retention: cdk.aws_logs.RetentionDays.ONE_WEEK,
           }),
           level: sfn.LogLevel.ALL,
