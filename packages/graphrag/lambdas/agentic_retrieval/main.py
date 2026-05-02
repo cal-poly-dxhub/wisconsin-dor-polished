@@ -293,7 +293,8 @@ def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
       - status: 'ok' | 'error' | 'miss' | 'terminal'
       - summary_text: one-line human-readable string
       - doc_ids: list of up to 10 document IDs referenced in the result
-      - doc_titles: list aligned with doc_ids (best-effort; empty on failure)
+      - doc_titles: list aligned with doc_ids (each entry is the title or the
+        doc_id on failure, so lengths always match)
       - raw: output of _summarize_tool_result (dev-mode payload)
     """
     raw = _summarize_tool_result(tool_name, result)
@@ -312,10 +313,16 @@ def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
 
     if tool_name == "vector_search":
         chunks = result.get("chunks", [])
-        unique_docs = {c.get("doc_id") for c in chunks if c.get("doc_id")}
-        doc_ids = list(unique_docs)[:10]
+        seen_docs: set[str] = set()
+        ordered_docs: list[str] = []
+        for chunk in chunks:
+            doc_id = chunk.get("doc_id")
+            if doc_id and doc_id not in seen_docs:
+                seen_docs.add(doc_id)
+                ordered_docs.append(doc_id)
+        doc_ids = ordered_docs[:10]
         summary_text = (
-            f"Found {len(chunks)} chunks across {len(unique_docs)} doc(s)"
+            f"Found {len(chunks)} chunks across {len(ordered_docs)} doc(s)"
         )
 
     elif tool_name == "faq_search":
@@ -378,7 +385,12 @@ def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
         try:
             info = neptune.get_document(doc_id)
             doc_titles.append((info or {}).get("title") or doc_id)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "title resolution failed for doc_id=%s: %s",
+                doc_id,
+                type(exc).__name__,
+            )
             doc_titles.append(doc_id)
 
     return {
