@@ -28,9 +28,9 @@ export function UserMenu() {
   const email = session.getIdToken().payload.email as string | undefined;
 
   return (
-    <div className="flex items-center gap-4">
-      {email && <span className="text-sm text-muted-foreground">{email}</span>}
-      <Button variant="secondary" size="default" onClick={handleSignOut}>
+    <div className="flex items-center gap-3">
+      {email && <span className="text-xs text-muted-foreground">{email}</span>}
+      <Button variant="ghost" size="sm" onClick={handleSignOut}>
         Sign out
       </Button>
     </div>

@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Info, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useAssignFeedback } from '@/hooks/api/chat';
 import { useChatStore } from '@/stores/chat-store';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DocumentList } from '../documents/document-list/document-list';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
@@ -267,7 +267,7 @@ function MessageOptionsBar({
   );
 }
 
-export function ChatMessage({
+export const ChatMessage = memo(function ChatMessage({
   queryId,
   query,
   response,
@@ -289,6 +289,14 @@ export function ChatMessage({
   const showThinkingLabel = isThinking || hasCompleted;
   const hasResources = (items?.length ?? 0) > 0;
   const [stepsOpen, setStepsOpen] = useState(true);
+
+  // Collapse thinking steps when LLM starts streaming
+  useEffect(() => {
+    if (isStreaming) {
+      // Use queueMicrotask to avoid synchronous setState in effect
+      queueMicrotask(() => setStepsOpen(false));
+    }
+  }, [isStreaming]);
 
   // Thinking timer: starts on pending, stops when streaming begins.
   // Anchor to the original query timestamp so replacing the optimistic ID
@@ -494,4 +502,4 @@ export function ChatMessage({
       </div>
     </motion.div>
   );
-}
+});

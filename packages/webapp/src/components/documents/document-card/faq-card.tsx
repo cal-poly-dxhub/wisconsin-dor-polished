@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ExternalLink, HelpCircle, X } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 
 export interface FAQ {
   faqId: string;
@@ -270,7 +270,7 @@ interface FAQCardProps {
   className?: string;
 }
 
-export function FAQCard({ faq, className }: FAQCardProps) {
+export const FAQCard = memo(function FAQCard({ faq, className }: FAQCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
 
@@ -314,4 +314,4 @@ export function FAQCard({ faq, className }: FAQCardProps) {
       </AnimatePresence>
     </>
   );
-}
+});

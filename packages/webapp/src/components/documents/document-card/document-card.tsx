@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Maximize2, X } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { AuthorityBadge } from './authority-badge';
 import { DiscoveryBadge } from './discovery-badge';
 import { DocumentBadge } from './document-badge';
@@ -373,7 +373,7 @@ interface DocumentCardProps {
   onSourceClick?: (document: Document) => void;
 }
 
-export function DocumentCard({
+export const DocumentCard = memo(function DocumentCard({
   document,
   className,
   onSourceClick,
@@ -434,4 +434,4 @@ export function DocumentCard({
       </AnimatePresence>
     </>
   );
-}
+});

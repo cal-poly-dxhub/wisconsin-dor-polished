@@ -5,46 +5,43 @@ import { DocumentCard } from '../document-card/document-card';
 import type { FAQ } from '../document-card/faq-card';
 import { FAQCard } from '../document-card/faq-card';
 import type { ResourceItem } from '@/stores/types';
+import { memo, useMemo } from 'react';
 
 interface DocumentListProps {
   items: ResourceItem[];
   title?: string;
 }
 
-const getLayoutClasses = (isNarrowLayout: boolean) => {
-  const baseClasses =
-    'grid gap-6 thin-scrollbar scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50';
-
-  if (isNarrowLayout) {
-    return `${baseClasses} grid-flow-col auto-cols-[minmax(20rem,1fr)] overflow-x-auto overflow-y-hidden py-4 px-2 relative`;
-  }
-
-  return `${baseClasses} grid-cols-1 min-h-0 overflow-x-hidden overflow-y-auto pt-1 pr-2 content-start relative`;
-};
-
-export function DocumentList({ items = [], title }: DocumentListProps) {
+export const DocumentList = memo(function DocumentList({ items = [], title }: DocumentListProps) {
   const breakpoint = useBreakpoint();
   const isVerticalLayout = breakpoint === 'wide';
   const isNarrowLayout = breakpoint === 'narrow';
 
-  const documentCount = items.filter(item => item.type === 'document').length;
-  const faqCount = items.filter(item => item.type === 'faq').length;
-  const hasItems = items.length > 0;
-  const itemCountText = (() => {
+  const { hasItems, itemCountText, layoutClasses } = useMemo(() => {
+    const documentCount = items.filter(item => item.type === 'document').length;
+    const faqCount = items.filter(item => item.type === 'faq').length;
+    const hasItems = items.length > 0;
+
+    let itemCountText: string;
     if (documentCount === 0 && faqCount === 0) {
-      return 'No sources yet';
+      itemCountText = 'No sources yet';
+    } else if (documentCount > 0 && faqCount > 0) {
+      itemCountText = `${documentCount} documents, ${faqCount} FAQs`;
+    } else if (documentCount > 0) {
+      itemCountText = `${documentCount} documents`;
+    } else {
+      itemCountText = `${faqCount} FAQs`;
     }
 
-    if (documentCount > 0 && faqCount > 0) {
-      return `${documentCount} documents, ${faqCount} FAQs`;
-    }
+    const baseClasses =
+      'grid gap-6 thin-scrollbar scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50';
 
-    if (documentCount > 0) {
-      return `${documentCount} documents`;
-    }
+    const layoutClasses = isNarrowLayout
+      ? `${baseClasses} grid-flow-col auto-cols-[minmax(20rem,1fr)] overflow-x-auto overflow-y-hidden py-4 px-2 relative`
+      : `${baseClasses} grid-cols-1 min-h-0 overflow-x-hidden overflow-y-auto pt-1 pr-2 content-start relative`;
 
-    return `${faqCount} FAQs`;
-  })();
+    return { documentCount, faqCount, hasItems, itemCountText, layoutClasses };
+  }, [items, isNarrowLayout]);
 
   return (
     <div className="relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] font-sans">
@@ -60,7 +57,7 @@ export function DocumentList({ items = [], title }: DocumentListProps) {
       )}
 
       <div className="relative flex min-h-0 w-full flex-col overflow-hidden">
-        <div className={`${getLayoutClasses(isNarrowLayout)} min-h-0 flex-1`}>
+        <div className={`${layoutClasses} min-h-0 flex-1`}>
           {!hasItems && (
             <div className="text-muted-foreground flex h-full min-h-40 items-center justify-center rounded-lg border border-dashed p-6 text-center text-sm">
               Sources and FAQs used in an answer will appear here.
@@ -94,4 +91,4 @@ export function DocumentList({ items = [], title }: DocumentListProps) {
       {/* Fade-off effect for horizontal scrolling */}
     </div>
   );
-}
+});
