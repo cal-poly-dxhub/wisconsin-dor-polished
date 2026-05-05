@@ -544,3 +544,113 @@ def test_build_tool_result_summary_fetch_opinion_miss():
     )
     assert s["status"] == "miss"
     assert "123 Wis. 2d 45" in s["summary_text"]
+
+
+def test_emit_trace_sends_agent_event_message():
+    import itertools
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+        "EMIT_AGENT_TRACE": "true",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            # Force re-import so EMIT_AGENT_TRACE module constant picks up env.
+            import importlib, sys
+            if "main" in sys.modules:
+                del sys.modules["main"]
+            import main
+
+    mock_ws = MagicMock()
+    mock_ws.send_json = MagicMock(return_value=None)
+    with patch("main.asyncio.run", side_effect=lambda coro: None) as run_mock:
+        main._emit_trace(
+            mock_ws,
+            itertools.count(1).__next__,
+            query_id="q-1",
+            kind="reasoning",
+            turn=2,
+            payload={"text": "thinking"},
+            dev_payload={"foo": "bar"},
+        )
+        assert run_mock.called
+
+
+def test_emit_trace_noop_when_ws_is_none():
+    import itertools
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+        "EMIT_AGENT_TRACE": "true",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            import sys
+            if "main" in sys.modules:
+                del sys.modules["main"]
+            from main import _emit_trace
+    _emit_trace(
+        None,
+        itertools.count(1).__next__,
+        query_id="q-1",
+        kind="loop_start",
+        payload={"maxTurns": 10},
+    )
+
+
+def test_emit_trace_swallows_ws_exceptions():
+    import itertools
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+        "EMIT_AGENT_TRACE": "true",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            import sys
+            if "main" in sys.modules:
+                del sys.modules["main"]
+            import main
+    mock_ws = MagicMock()
+    with patch("main.asyncio.run", side_effect=RuntimeError("boom")):
+        main._emit_trace(
+            mock_ws,
+            itertools.count(1).__next__,
+            query_id="q-1",
+            kind="reasoning",
+            payload={"text": "x"},
+        )
+
+
+def test_emit_trace_respects_emit_agent_trace_false():
+    import itertools
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+        "EMIT_AGENT_TRACE": "false",
+    }, clear=False):
+        import sys
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            import main
+
+    mock_ws = MagicMock()
+    with patch("main.asyncio.run") as run_mock:
+        main._emit_trace(
+            mock_ws,
+            itertools.count(1).__next__,
+            query_id="q-1",
+            kind="loop_start",
+            payload={"maxTurns": 10},
+        )
+    run_mock.assert_not_called()
+    # Restore default env for downstream tests that re-import main.
+    import sys
+    if "main" in sys.modules:
+        del sys.modules["main"]

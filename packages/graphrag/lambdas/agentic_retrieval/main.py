@@ -12,6 +12,7 @@ Runs Claude's agentic loop with Neptune-backed tools:
 
 import asyncio
 import hashlib
+import itertools
 import json
 import logging
 import os
@@ -72,6 +73,7 @@ AGENTIC_MODEL_ID = os.environ.get("AGENTIC_MODEL_ID", "us.anthropic.claude-sonne
 LOG_AGENT_TRACE = os.environ.get("LOG_AGENT_TRACE", "true").lower() == "true"
 LOG_QUERY_TEXT = os.environ.get("LOG_QUERY_TEXT", "true").lower() == "true"
 LOG_MAX_TEXT_CHARS = int(os.environ.get("LOG_MAX_TEXT_CHARS", "500"))
+EMIT_AGENT_TRACE = os.environ.get("EMIT_AGENT_TRACE", "true").lower() == "true"
 
 
 def _redact_text(text: str) -> str:
@@ -407,6 +409,41 @@ def _discovery_summary(discovery: dict[str, str]) -> dict[str, int]:
     for tag in discovery.values():
         counts[tag] = counts.get(tag, 0) + 1
     return counts
+
+
+def _emit_trace(
+    ws_server,
+    trace_seq,
+    *,
+    query_id: str,
+    kind: str,
+    turn: int | None = None,
+    payload: dict | None = None,
+    dev_payload: dict | None = None,
+) -> None:
+    """Push an AgentEventMessage to the client. Best-effort — never raises.
+
+    ws_server may be None (trace disabled or session lookup failed); in that
+    case this is a no-op. Any WebSocket exception is logged and swallowed so
+    the agentic loop is never blocked by client-side issues.
+    """
+    if not EMIT_AGENT_TRACE or ws_server is None:
+        return
+    try:
+        from websocket_utils.models import AgentEventMessage
+
+        message = AgentEventMessage(
+            query_id=query_id,
+            kind=kind,
+            turn=turn,
+            seq=trace_seq(),
+            timestamp=int(time.time() * 1000),
+            payload=payload or {},
+            dev_payload=_compact_log_value(dev_payload or {}),
+        )
+        asyncio.run(ws_server.send_json(message))
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to emit agent-trace event", exc_info=True)
 
 CHAT_HISTORY_TABLE = os.environ.get("CHAT_HISTORY_TABLE_NAME", "")
 # Cap history passed to Claude. Long histories bloat the context window and
