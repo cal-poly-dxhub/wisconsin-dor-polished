@@ -654,3 +654,125 @@ def test_emit_trace_respects_emit_agent_trace_false():
     import sys
     if "main" in sys.modules:
         del sys.modules["main"]
+
+
+def test_run_agentic_loop_emits_trace_sequence(monkeypatch):
+    """Drive run_agentic_loop through vector_search + answer and assert the
+    WebSocket received reasoning, tool_call, tool_result, loop_complete.
+
+    (loop_start lands in Task 8; this test asserts the subset Task 7 emits.)
+    """
+    import itertools
+    import sys as _sys
+    # Replace the MagicMock'd AgentEventMessage with a real lightweight model so
+    # the test can inspect `.kind`, `.seq`, `.payload` on each emitted event.
+    class FakeAgentEventMessage:
+        def __init__(self, **fields):
+            self.__dict__.update(fields)
+    _sys.modules["websocket_utils.models"].AgentEventMessage = FakeAgentEventMessage
+
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+        "EMIT_AGENT_TRACE": "true",
+    }):
+        if "main" in _sys.modules:
+            del _sys.modules["main"]
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            import main
+
+    # FAQ returns a low-scoring hit so we fall through to the loop.
+    monkeypatch.setattr(main, "_faq_search_direct", lambda q: {
+        "faqs": [{"text": "Q: unrelated\nA: nope", "score": 0.2,
+                  "source_uri": "s3://f/faq_1.txt"}],
+        "count": 1,
+    })
+
+    # Turn 1: vector_search; Turn 2: answer.
+    responses = [
+        {
+            "output": {"message": {"content": [
+                {"text": "I'll search the graph."},
+                {"toolUse": {"toolUseId": "t1", "name": "vector_search",
+                             "input": {"query": "use value"}}},
+            ]}},
+            "stopReason": "tool_use",
+            "usage": {"inputTokens": 10, "outputTokens": 20, "totalTokens": 30},
+            "metrics": {"latencyMs": 100},
+        },
+        {
+            "output": {"message": {"content": [
+                {"toolUse": {"toolUseId": "t2", "name": "answer",
+                             "input": {"response": "Use value is...",
+                                       "cited_doc_ids": ["doc-a"]}}},
+            ]}},
+            "stopReason": "tool_use",
+            "usage": {"inputTokens": 15, "outputTokens": 30, "totalTokens": 45},
+            "metrics": {"latencyMs": 120},
+        },
+    ]
+    main.bedrock.converse = MagicMock(side_effect=responses)
+
+    def fake_execute(name, input_, neptune_client, chat_history=None):
+        if name == "vector_search":
+            return {
+                "chunks": [{"doc_id": "doc-a", "text": "..."}],
+                "graph_context": {},
+            }
+        if name == "answer":
+            return {
+                "response": input_.get("response", ""),
+                "cited_doc_ids": input_.get("cited_doc_ids", []),
+            }
+        return {}
+    monkeypatch.setattr(main, "execute_tool", fake_execute)
+    main.neptune.get_document = MagicMock(return_value=None)
+
+    # Capture emitted messages: intercept asyncio.run(ws.send_json(msg)).
+    sent_messages = []
+
+    def fake_run(coro):
+        coro.close()
+    monkeypatch.setattr(main.asyncio, "run", fake_run)
+
+    mock_ws = MagicMock()
+
+    def capture_send(msg):
+        sent_messages.append(msg)
+        async def _noop():
+            return None
+        return _noop()
+    mock_ws.send_json = capture_send
+
+    main.run_agentic_loop(
+        "what is use value?",
+        query_id="q-1",
+        session_id="s-1",
+        ws_server=mock_ws,
+        trace_seq=itertools.count(1).__next__,
+    )
+
+    kinds = [m.kind for m in sent_messages]
+    assert "reasoning" in kinds
+    assert "tool_call" in kinds
+    assert "tool_result" in kinds
+    assert kinds[-1] == "loop_complete"
+    # seq is monotonically increasing and starts at 1.
+    seqs = [m.seq for m in sent_messages]
+    assert seqs == sorted(seqs)
+    assert seqs[0] == 1
+    # The `answer` tool must NOT produce a tool_result event.
+    answer_tool_results = [
+        m for m in sent_messages
+        if m.kind == "tool_result" and m.payload.get("toolName") == "answer"
+    ]
+    assert answer_tool_results == []
+    # loop_complete carries terminalReason=answer_tool.
+    complete = [m for m in sent_messages if m.kind == "loop_complete"][-1]
+    assert complete.payload["terminalReason"] == "answer_tool"
+    assert complete.payload["citedDocCount"] == 1
+    # Cleanup for downstream re-imports.
+    if "main" in _sys.modules:
+        del _sys.modules["main"]

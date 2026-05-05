@@ -567,6 +567,8 @@ def run_agentic_loop(
     query_id: str = "",
     session_id: str = "",
     request_id: str = "",
+    ws_server=None,
+    trace_seq=None,
 ) -> tuple[str, list[str], list[RAGDocument], FAQResource | None]:
     """Run Claude's agentic loop against Neptune.
 
@@ -587,6 +589,8 @@ def run_agentic_loop(
     short-circuit on FAQs it's a placeholder since downstream re-synthesizes.
     """
     chat_history = chat_history or []
+    if trace_seq is None:
+        trace_seq = itertools.count(1).__next__
     all_doc_ids: set[str] = set()
     all_chunks: list[dict] = []
     discovery: dict[str, str] = {}  # doc_id -> tag
@@ -746,14 +750,24 @@ def run_agentic_loop(
         assistant_message = response["output"]["message"]
         messages.append(assistant_message)
         stop_reason = response.get("stopReason", "")
+        assistant_summary = _summarize_assistant_message(assistant_message)
         _log_agent_event(
             "agent_turn_model_response",
             **trace_context,
             turn=turn_number,
             bedrock_latency_ms=converse_latency_ms,
             **_summarize_bedrock_response(response),
-            assistant=_summarize_assistant_message(assistant_message),
+            assistant=assistant_summary,
         )
+        if assistant_summary["text_preview"]:
+            _emit_trace(
+                ws_server,
+                trace_seq,
+                query_id=query_id,
+                kind="reasoning",
+                turn=turn_number,
+                payload={"text": assistant_summary["text_preview"]},
+            )
 
         tool_uses = [
             block for block in assistant_message["content"]
@@ -791,6 +805,21 @@ def run_agentic_loop(
                 tool_name=tool_name,
                 tool_use_id=tool_use_id,
                 tool_input=tool_input,
+            )
+            _emit_trace(
+                ws_server,
+                trace_seq,
+                query_id=query_id,
+                kind="tool_call",
+                turn=turn_number,
+                payload={
+                    "toolName": tool_name,
+                    "summary": _build_tool_call_summary(tool_name, tool_input),
+                },
+                dev_payload={
+                    "toolInput": tool_input,
+                    "toolUseId": tool_use_id,
+                },
             )
 
             tool_started = time.perf_counter()
@@ -858,6 +887,7 @@ def run_agentic_loop(
                     all_doc_ids.add(stub_doc_id)
                     discovery[stub_doc_id] = "opinion-fetched"
 
+            tool_result_summary = _build_tool_result_summary(tool_name, result)
             _log_agent_event(
                 "agent_tool_result",
                 **trace_context,
@@ -867,8 +897,27 @@ def run_agentic_loop(
                 discovered_doc_count=len(all_doc_ids),
                 chunk_count=len(all_chunks),
                 discovery=_discovery_summary(discovery),
-                tool_result_summary=_summarize_tool_result(tool_name, result),
+                tool_result_summary=tool_result_summary["raw"],
             )
+            if tool_name != "answer":
+                _emit_trace(
+                    ws_server,
+                    trace_seq,
+                    query_id=query_id,
+                    kind="tool_result",
+                    turn=turn_number,
+                    payload={
+                        "toolName": tool_name,
+                        "status": tool_result_summary["status"],
+                        "summary": tool_result_summary["summary_text"],
+                        "docIds": tool_result_summary["doc_ids"],
+                        "docTitles": tool_result_summary["doc_titles"],
+                    },
+                    dev_payload={
+                        "raw": tool_result_summary["raw"],
+                        "toolLatencyMs": tool_latency_ms,
+                    },
+                )
 
             if tool_name == "answer":
                 answer = result.get("response", "")
@@ -905,6 +954,18 @@ def run_agentic_loop(
                     discovered_doc_count=len(all_doc_ids),
                     rag_document_count=len(rag_docs),
                     discovery=_discovery_summary(cited_discovery),
+                )
+                _emit_trace(
+                    ws_server,
+                    trace_seq,
+                    query_id=query_id,
+                    kind="loop_complete",
+                    payload={
+                        "terminalReason": "answer_tool",
+                        "turnsUsed": turn_number,
+                        "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
+                        "citedDocCount": len(cited),
+                    },
                 )
                 return answer, list(cited), rag_docs, None
 
@@ -957,6 +1018,18 @@ def run_agentic_loop(
         discovered_doc_count=len(all_doc_ids),
         rag_document_count=len(rag_docs),
         discovery=_discovery_summary(discovery),
+    )
+    _emit_trace(
+        ws_server,
+        trace_seq,
+        query_id=query_id,
+        kind="loop_complete",
+        payload={
+            "terminalReason": "assistant_text_or_fallback",
+            "turnsUsed": MAX_TURNS,
+            "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
+            "citedDocCount": len(all_doc_ids),
+        },
     )
     return answer, list(all_doc_ids), rag_docs, None
 
