@@ -13,6 +13,15 @@ import type {
   SessionStatus,
 } from './types';
 
+function traceStepKey(event: AgentTraceEvent): string {
+  const turn = event.turn ?? 'initial';
+  const toolName = event.payload.toolName;
+  if (typeof toolName === 'string' && toolName) {
+    return `tool:${toolName}:${turn}`;
+  }
+  return `kind:${event.kind}:${turn}`;
+}
+
 export const useChatStore = create<ChatStore>()(
   immer((set, get) => ({
     // Initial application state
@@ -134,6 +143,18 @@ export const useChatStore = create<ChatStore>()(
         if (!query) return;
         if (!query.agentTrace) query.agentTrace = [];
         if (query.agentTrace.some(e => e.seq === event.seq)) return;
+
+        if (event.kind === 'tool_result') {
+          const key = traceStepKey(event);
+          for (let i = query.agentTrace.length - 1; i >= 0; i -= 1) {
+            if (traceStepKey(query.agentTrace[i]) !== key) continue;
+            if (query.agentTrace[i].payload.status === 'pending') {
+              query.agentTrace[i] = event;
+            }
+            return;
+          }
+        }
+
         query.agentTrace.push(event);
       }),
 
