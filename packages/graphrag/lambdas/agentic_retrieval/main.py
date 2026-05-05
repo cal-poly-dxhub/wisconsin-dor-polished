@@ -298,12 +298,14 @@ def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
       - doc_ids: list of up to 10 document IDs referenced in the result
       - doc_titles: list aligned with doc_ids (each entry is the title or the
         doc_id on failure, so lengths always match)
+      - metadata: camelCase dict of counts/scores for the UI subtitle
       - raw: output of _summarize_tool_result (dev-mode payload)
     """
     raw = _summarize_tool_result(tool_name, result)
     status = raw.get("status", "ok")
     doc_ids: list[str] = []
     summary_text = ""
+    metadata: dict[str, Any] = {}
 
     if "error" in result:
         return {
@@ -311,6 +313,7 @@ def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
             "summary_text": str(result.get("error") or "tool error"),
             "doc_ids": [],
             "doc_titles": [],
+            "metadata": {},
             "raw": raw,
         }
 
@@ -327,6 +330,17 @@ def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
         summary_text = (
             f"Found {len(chunks)} chunks across {len(ordered_docs)} doc(s)"
         )
+        top_score = max(
+            (float(c.get("score", 0.0)) for c in chunks),
+            default=0.0,
+        )
+        graph_context = result.get("graph_context", {}) or {}
+        metadata = {
+            "chunkCount": len(chunks),
+            "docCount": len(ordered_docs),
+            "neighborCount": sum(len(v) for v in graph_context.values()),
+            "topScore": round(top_score, 4),
+        }
 
     elif tool_name == "faq_search":
         faqs = result.get("faqs", [])
@@ -336,48 +350,58 @@ def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
             if faqs
             else "No FAQ matches"
         )
+        metadata = {"faqCount": len(faqs), "topScore": round(float(top), 4)}
 
     elif tool_name == "get_neighbors":
         neighbors = result.get("neighbors", [])
         doc_ids = [n["id"] for n in neighbors if n.get("id")][:10]
         summary_text = f"Pulled {len(neighbors)} neighbor(s)"
+        metadata = {"neighborCount": len(neighbors)}
 
     elif tool_name == "get_document":
         doc = result.get("document")
         if doc:
             doc_ids = [doc.get("id")] if doc.get("id") else []
             summary_text = f"Fetched {doc.get('doc_type', 'document')} {doc.get('id', '')}"
+            metadata = {"documentCount": 1}
         else:
             summary_text = "Document not found"
             status = "miss"
+            metadata = {"documentCount": 0}
 
     elif tool_name == "get_authority_chain":
         chain = result.get("authority_chain", [])
         doc_ids = [n["id"] for n in chain if n.get("id")][:10]
         summary_text = f"Walked authority chain ({len(chain)} node(s))"
+        metadata = {"chainLength": len(chain)}
 
     elif tool_name == "list_framework_docs":
         docs = result.get("documents", [])
         doc_ids = [d["id"] for d in docs if d.get("id")][:10]
         summary_text = f"Listed {len(docs)} framework doc(s)"
+        metadata = {"documentCount": len(docs)}
 
     elif tool_name == "fetch_case_opinion":
         citation = result.get("citation", "")
         if result.get("found"):
             summary_text = f"Fetched opinion for {citation}"
+            metadata = {"opinionChars": len(result.get("text", ""))}
         else:
             summary_text = f"No opinion found for {citation}"
             status = "miss"
+            metadata = {"opinionChars": 0}
 
     elif tool_name == "refine_query":
         refined = result.get("refined_query", "")
         summary_text = f'Refined to "{refined}"' if refined else "No refinement"
+        metadata = {"refined": bool(refined)}
 
     elif tool_name == "answer":
         cited = result.get("cited_doc_ids", []) or []
         doc_ids = list(cited)[:10]
         summary_text = f"Answer with {len(cited)} cited doc(s)"
         status = "terminal"
+        metadata = {"citedDocCount": len(cited)}
 
     else:
         summary_text = f"{tool_name} complete"
@@ -401,6 +425,7 @@ def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
         "summary_text": summary_text,
         "doc_ids": doc_ids,
         "doc_titles": doc_titles,
+        "metadata": metadata,
         "raw": raw,
     }
 
@@ -660,6 +685,7 @@ def run_agentic_loop(
                 "summary": refine_summary["summary_text"],
                 "docIds": refine_summary["doc_ids"],
                 "docTitles": refine_summary["doc_titles"],
+                "metadata": refine_summary["metadata"],
             },
             dev_payload={"raw": refine_summary["raw"]},
         )
@@ -720,6 +746,7 @@ def run_agentic_loop(
             "summary": faq_summary["summary_text"],
             "docIds": faq_summary["doc_ids"],
             "docTitles": faq_summary["doc_titles"],
+            "metadata": faq_summary["metadata"],
         },
         dev_payload={"raw": faq_summary["raw"]},
     )
@@ -997,6 +1024,9 @@ def run_agentic_loop(
                 tool_result_summary=tool_result_summary["raw"],
             )
             if tool_name != "answer":
+                result_metadata = dict(tool_result_summary["metadata"])
+                if tool_latency_ms is not None:
+                    result_metadata["latencyMs"] = tool_latency_ms
                 _emit_trace(
                     ws_server,
                     trace_seq,
@@ -1009,6 +1039,7 @@ def run_agentic_loop(
                         "summary": tool_result_summary["summary_text"],
                         "docIds": tool_result_summary["doc_ids"],
                         "docTitles": tool_result_summary["doc_titles"],
+                        "metadata": result_metadata,
                     },
                     dev_payload={
                         "raw": tool_result_summary["raw"],

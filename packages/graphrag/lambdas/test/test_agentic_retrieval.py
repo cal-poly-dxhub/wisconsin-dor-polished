@@ -438,9 +438,9 @@ def test_build_tool_result_summary_vector_search_ok():
 
     result = {
         "chunks": [
-            {"doc_id": "doc-a", "text": "x"},
-            {"doc_id": "doc-a", "text": "y"},
-            {"doc_id": "doc-b", "text": "z"},
+            {"doc_id": "doc-a", "text": "x", "score": 0.91},
+            {"doc_id": "doc-a", "text": "y", "score": 0.85},
+            {"doc_id": "doc-b", "text": "z", "score": 0.80},
         ],
         "graph_context": {"doc-a": [{"id": "doc-c"}]},
     }
@@ -452,6 +452,11 @@ def test_build_tool_result_summary_vector_search_ok():
     # `raw` is the same dict produced by _summarize_tool_result.
     assert s["raw"]["tool_name"] == "vector_search"
     assert s["raw"]["chunk_count"] == 3
+    # Structured metadata for the UI subtitle.
+    assert s["metadata"]["chunkCount"] == 3
+    assert s["metadata"]["docCount"] == 2
+    assert s["metadata"]["neighborCount"] == 1
+    assert s["metadata"]["topScore"] == pytest.approx(0.91)
 
 
 def test_build_tool_result_summary_get_neighbors():
@@ -473,6 +478,7 @@ def test_build_tool_result_summary_get_neighbors():
     assert s["status"] == "ok"
     assert "2 neighbor" in s["summary_text"]
     assert set(s["doc_ids"]) == {"d1", "d2"}
+    assert s["metadata"]["neighborCount"] == 2
 
 
 def test_build_tool_result_summary_faq_search_with_scores():
@@ -495,6 +501,8 @@ def test_build_tool_result_summary_faq_search_with_scores():
     assert s["status"] == "ok"
     assert "top score 0.84" in s["summary_text"]
     assert s["doc_ids"] == []
+    assert s["metadata"]["faqCount"] == 2
+    assert s["metadata"]["topScore"] == pytest.approx(0.84)
 
 
 def test_build_tool_result_summary_error_tool_result():
@@ -528,6 +536,7 @@ def test_build_tool_result_summary_answer_terminal():
     assert s["status"] == "terminal"
     assert "2 cited" in s["summary_text"]
     assert s["doc_ids"] == ["a", "b"]
+    assert s["metadata"]["citedDocCount"] == 2
 
 
 def test_build_tool_result_summary_fetch_opinion_miss():

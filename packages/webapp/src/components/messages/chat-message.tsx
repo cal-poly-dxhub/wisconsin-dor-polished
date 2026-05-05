@@ -14,12 +14,18 @@ import type { QueryStatus } from '@/stores/types';
 
 import './chat-message.css';
 import AnimatedMarkdown from './animated-markdown';
+import { formatTraceMetadata } from './trace-metadata';
 import { Button } from '../ui/button';
 import { ButtonGroup } from '../ui/button-group';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { FeedbackPopover } from './feedback-popover';
 
-type TraceStep = { label: string; done: boolean; devJson?: string };
+type TraceStep = {
+  label: string;
+  done: boolean;
+  detail?: string;
+  devJson?: string;
+};
 
 const TOOL_VERBS: Record<string, string> = {
   vector_search: 'Searching for',
@@ -78,22 +84,23 @@ function renderTraceStep(
     Object.keys(event.devPayload).length > 0
       ? JSON.stringify(event.devPayload, null, 2)
       : undefined;
+  const detail = formatTraceMetadata(event.payload.metadata);
 
   if (event.kind === 'reasoning') {
     const text = String(event.payload.text ?? '');
-    return text ? { label: text, done: true, devJson } : null;
+    return text ? { label: text, done: true, detail, devJson } : null;
   }
   if (event.kind === 'tool_call') {
     const name = String(event.payload.toolName ?? '');
     const summary = String(event.payload.summary ?? '');
     const label = summary ? `${verbFor(name)} ${summary}` : verbFor(name);
-    return { label, done: false, devJson };
+    return { label, done: false, detail, devJson };
   }
   if (event.kind === 'tool_result') {
     const summary = String(event.payload.summary ?? '');
     const status = String(event.payload.status ?? 'ok');
     const done = status === 'ok' || status === 'terminal';
-    return { label: summary, done, devJson };
+    return { label: summary, done, detail, devJson };
   }
   return null;
 }
@@ -463,15 +470,22 @@ export function ChatMessage({
                     <div className="relative ml-[3.5px] border-l border-muted-foreground/25 space-y-3 py-1">
                       {steps.map((step, i) => (
                         <div key={i} className="flex flex-col gap-1 -ml-[4px]">
-                          <div className="flex items-center gap-2.5">
+                          <div className="flex items-start gap-2.5">
                             <div
-                              className={`h-[7px] w-[7px] shrink-0 rounded-full transition-colors duration-500 ${
+                              className={`mt-[0.45em] h-[7px] w-[7px] shrink-0 rounded-full transition-colors duration-500 ${
                                 step.done
                                   ? 'bg-muted-foreground'
                                   : 'border border-muted-foreground/50 bg-background'
                               }`}
                             />
-                            <span>{step.label}</span>
+                            <span>
+                              <span>{step.label}</span>
+                              {step.detail && (
+                                <span className="block text-muted-foreground/70">
+                                  {step.detail}
+                                </span>
+                              )}
+                            </span>
                           </div>
                           {step.devJson && (
                             <details className="ml-5 text-[0.75em] text-muted-foreground/80">
