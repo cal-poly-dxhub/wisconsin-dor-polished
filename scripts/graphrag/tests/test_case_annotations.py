@@ -137,6 +137,75 @@ def test_leading_breadcrumb_stripped() -> None:
     assert ann.startswith("A benevolent association")
 
 
+def test_page_header_with_semicolon_title_stripped() -> None:
+    """Wisconsin statute page headers use ; between title and category (e.g.
+    '77.52 SALES AND USE TAXES; MANAGED FOREST LANDS'). These leak into
+    annotations that span page breaks — strip them from the start."""
+    raw = (
+        "77.52 SALES AND USE TAXES; MANAGED FOREST LANDS; "
+        "OTHER TAXES AND FEES substantial nexus. "
+        "South Dakota v. Wayfair, Inc., 585 U.S. 162, 138 S. Ct. 2080."
+    )
+    ann = extract_annotation_from_text(raw, "585 U.S. 162")
+    assert ann is not None
+    assert not ann.startswith("77.52")
+    assert not ann.startswith("SALES AND USE TAXES")
+
+
+def test_page_header_with_caps_category_stripped() -> None:
+    """Variant: 'NN.NN COUNTIES' style header at page top."""
+    raw = (
+        "59.40 COUNTIES Removal by the clerk of court of an employee "
+        "was not authorized. Winnebago County v. Employees Ass'n, 196 Wis. 2d 733."
+    )
+    ann = extract_annotation_from_text(raw, "196 Wis. 2d 733")
+    assert ann is not None
+    assert not ann.startswith("59.40")
+    assert not ann.startswith("COUNTIES")
+    assert ann.startswith("Removal by the clerk")
+
+
+def test_extract_case_name_handles_closing_quote_sentence_end() -> None:
+    """Sentence boundaries before a case name can be '."' not just '. '."""
+    text = (
+        'In sub. (13), "time" refers to the "point when something occurs." '
+        "Ortin v. Schuett, 157 Wis. 2d 415."
+    )
+    assert extract_case_name(text, "157 Wis. 2d 415") == "Ortin v. Schuett"
+
+
+def test_leading_signal_phrase_stripped_from_annotation_body() -> None:
+    """'See also Foo v. Bar' at the START of an annotation is a cross-reference
+    stub (prior annotation's text applies). Stripping the signal leaves just
+    the case name, which the LLM fallback threshold will correctly route."""
+    raw = (
+        "Some prior annotation ends. 22-1233.  See also Wisconsin Manufacturers "
+        "& Commerce, Inc. v. Village of Pewaukee, 2024 WI App 23."
+    )
+    ann = extract_annotation_from_text(raw, "2024 WI App 23")
+    assert ann is not None
+    assert not ann.startswith(("See also", "But see", "Cf.", "See,"))
+    assert ann.startswith("Wisconsin Manufacturers")
+
+
+def test_extract_case_name_strips_signal_phrases() -> None:
+    """Annotations beginning with 'But see', 'See also', 'Cf.' etc. should
+    have the signal phrase stripped from the extracted case name."""
+    cases = [
+        ("Affirmed on other grounds. But see Miller v. Zoning Board of Appeals, 2023 WI 46.",
+         "2023 WI 46", "Miller v. Zoning Board of Appeals"),
+        ("Facts differ. See also Smith v. Jones, 100 Wis. 2d 1.",
+         "100 Wis. 2d 1", "Smith v. Jones"),
+        ("Held. Cf. Doe v. Roe, 200 Wis. 2d 2.",
+         "200 Wis. 2d 2", "Doe v. Roe"),
+        ("Background. See, e.g., State v. Brown, 300 Wis. 2d 3.",
+         "300 Wis. 2d 3", "State v. Brown"),
+    ]
+    for text, citation, expected in cases:
+        got = extract_case_name(text, citation)
+        assert got == expected, f"{citation}: got {got!r}, want {expected!r}"
+
+
 # ---------------------------------------------------------------------------
 # PDF-integration tests (skipped when docs/state-laws/ is missing)
 # ---------------------------------------------------------------------------

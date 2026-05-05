@@ -67,19 +67,55 @@ _HISTORY_END_STRICT_RE = re.compile(
 # Looser History: end — any ". " then uppercase, used as a fallback.
 _HISTORY_END_LOOSE_RE = re.compile(r"\.\s+(?=[A-Z])")
 
-# Section heading mid-page: "70.32 Real estate, how assessed. ..." before annotations.
+# Section heading mid-page: "70.32 Real estate, how assessed. ..." — mixed-case
+# title terminated by `.`. Distinct from all-caps page-top headers (see below).
 _SECTION_HEADING_RE = re.compile(
     r"\b\d{2,3}\.\d{2,4}\s+[A-Z][^.]{3,60}\.\s+"
+)
+
+# All-caps page-top header: "77.52 SALES AND USE TAXES; MANAGED FOREST LANDS;"
+# These appear at the top of each PDF page and leak into page-spanning
+# annotations. Requires a run of ALL-CAPS tokens (possibly ; or . separated)
+# ending where the first mixed-case token begins. Non-greedy on the ALL-CAPS
+# run, but anchored on a lookahead so we stop at the first Title-Case word.
+_ALLCAPS_PAGE_HEADER_RE = re.compile(
+    r"\b\d{2,3}\.\d{2,4}\s+"
+    r"(?:[A-Z][A-Z]+(?:\s+[A-Z][A-Z]+)*[;.]?\s+)+"
+    r"(?=[A-Za-z][a-z])"  # stop before any word with lowercase
 )
 
 # " v. " separator — the defining feature of a case name, used when walking
 # backward from a citation to find where the case name starts.
 _V_SEPARATOR = re.compile(r"\s+v\.\s+")
 
+# Sentence boundary for case-name scanning: [.!?] optionally followed by a
+# closing quote / bracket, then whitespace. Wisconsin Statutes use curly quotes
+# (U+201C/U+201D) around quoted terms, so we must match those too.
+_SENTENCE_END_RE = re.compile(r"[.!?][\"'”’)\]]?\s+")
+
+# Legal "signal phrases" (Bluebook R1.2) that precede a citation without being
+# part of the case name itself: "But see", "See, e.g.,", "Cf.", etc. When the
+# extracted case name begins with one of these, strip it.
+_SIGNAL_PHRASE_RE = re.compile(
+    r"^(?:But\s+see|See\s+also|See,?\s+e\.g\.?,?|See\s+generally|See|Cf\.|Accord|Compare|"
+    r"Contra|Contrast)\s+",
+    re.IGNORECASE,
+)
+
 # Boilerplate residue sometimes left at the start of an extracted annotation:
 # "Chapter NN ..." breadcrumb, or a bare section heading like "70.11 Exempt property."
 _LEADING_BREADCRUMB_RE = re.compile(
     r"^(?:Chapter\s+\d+\s*[.-]?\s*|\d{2,3}\.\d{2,4}\s+[A-Z][^.]{3,60}\.\s+|\d+\s+)"
+)
+
+# Bluebook signal phrases at the START of an annotation body. When an annotation
+# begins "See also Foo v. Bar, ..." it is typically a cross-reference stub
+# inherited from the prior annotation — stripping the signal exposes that what
+# remains is just a case name + citation, which the LLM fallback handles better.
+_LEADING_SIGNAL_RE = re.compile(
+    r"^(?:But\s+see|See\s+also|See,?\s+e\.g\.?,?|See\s+generally|See|Cf\.|Accord|"
+    r"Compare|Contra|Contrast)\s+",
+    re.IGNORECASE,
 )
 
 # Default window: annotations are typically 1-4 sentences, ≲800 chars.
@@ -130,6 +166,9 @@ def _find_annotation_start(search_region: str) -> int:
     for m in _SECTION_HEADING_RE.finditer(search_region):
         candidates.append(m.end())
 
+    for m in _ALLCAPS_PAGE_HEADER_RE.finditer(search_region):
+        candidates.append(m.end())
+
     if candidates:
         return max(candidates)
 
@@ -144,9 +183,16 @@ def _strip_leading_breadcrumb(annotation: str) -> str:
     prev = None
     current = annotation
     # Apply repeatedly — a leading breadcrumb may be followed by another.
+    # Also strip all-caps page headers (e.g. "77.52 SALES AND USE TAXES; ...")
+    # and leading Bluebook signal phrases (e.g. "See also ...", "But see ...")
+    # that mark cross-reference stubs rather than standalone annotations.
     while current != prev:
         prev = current
+        match = _ALLCAPS_PAGE_HEADER_RE.match(current)
+        if match:
+            current = current[match.end():]
         current = _LEADING_BREADCRUMB_RE.sub("", current, count=1)
+        current = _LEADING_SIGNAL_RE.sub("", current, count=1)
     return current.strip()
 
 
@@ -186,15 +232,19 @@ def extract_case_name(annotation_with_citation: str, citation: str) -> str | Non
     v_match = v_matches[-1]
 
     # Walk backward from v_match.start() to find where the case name begins.
-    # Boundary: a period followed by whitespace (sentence end), or start of segment.
+    # Boundary: a sentence-ending punctuation (possibly followed by a closing
+    # quote/bracket), or start of segment.
     before_v = segment[:v_match.start()]
-    sentence_ends = list(re.finditer(r"\.\s+", before_v))
+    sentence_ends = list(_SENTENCE_END_RE.finditer(before_v))
     if sentence_ends:
         name_start = sentence_ends[-1].end()
     else:
         name_start = 0
 
     name = segment[name_start:].strip()
+    # Strip Bluebook signal phrases ("But see", "Cf.", etc.) that precede a
+    # cited case but aren't part of the name.
+    name = _SIGNAL_PHRASE_RE.sub("", name).strip()
     # Reject if the captured "name" clearly includes sentence prose, evidenced by
     # characters not permitted in case names (shouldn't happen with our class
     # but defense-in-depth) or by being longer than any reasonable case name.
