@@ -836,3 +836,86 @@ def test_run_agentic_loop_faq_short_circuit_emits_bracketed_pair(monkeypatch):
     # Cleanup for downstream re-imports.
     if "main" in _sys.modules:
         del _sys.modules["main"]
+
+
+def test_handler_attaches_ws_server_when_session_lookup_succeeds(monkeypatch):
+    """The handler should look up the WebSocket connection from session_id and
+    pass the WebSocketServer + a trace_seq counter into run_agentic_loop.
+    """
+    import sys as _sys
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+        "EMIT_AGENT_TRACE": "true",
+        "SESSIONS_TABLE_NAME": "t-sessions",
+        "WEBSOCKET_CALLBACK_URL": "wss://example/stage",
+    }):
+        if "main" in _sys.modules:
+            del _sys.modules["main"]
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            import main
+
+    mock_ws = MagicMock()
+    monkeypatch.setattr(
+        main, "get_ws_connection_from_session", MagicMock(return_value=mock_ws)
+    )
+    monkeypatch.setattr(
+        main,
+        "run_agentic_loop",
+        MagicMock(return_value=("ans", [], [], None)),
+    )
+    monkeypatch.setattr(main, "get_chat_history", lambda sid: [])
+    monkeypatch.setattr(main, "process_event", lambda e: SimpleNamespace(
+        query="q", query_id="q-1", session_id="s-1"
+    ))
+    monkeypatch.setattr(main, "DocumentResource", MagicMock())
+
+    ctx = SimpleNamespace(aws_request_id="r-1")
+    main.handler({"query": "q", "query_id": "q-1", "session_id": "s-1"}, ctx)
+
+    kwargs = main.run_agentic_loop.call_args.kwargs
+    assert kwargs["ws_server"] is mock_ws
+    assert callable(kwargs["trace_seq"])
+    if "main" in _sys.modules:
+        del _sys.modules["main"]
+
+
+def test_handler_runs_with_ws_none_when_session_lookup_fails(monkeypatch):
+    """When the session lookup raises, the handler must fall back to ws_server=None
+    so the retrieval loop still runs (trace emission is best-effort).
+    """
+    import sys as _sys
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+        "EMIT_AGENT_TRACE": "true",
+        "SESSIONS_TABLE_NAME": "t-sessions",
+        "WEBSOCKET_CALLBACK_URL": "wss://example/stage",
+    }):
+        if "main" in _sys.modules:
+            del _sys.modules["main"]
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            import main
+
+    def raise_lookup(sid):
+        raise RuntimeError("no session")
+    monkeypatch.setattr(main, "get_ws_connection_from_session", raise_lookup)
+    monkeypatch.setattr(main, "run_agentic_loop",
+                        MagicMock(return_value=("ans", [], [], None)))
+    monkeypatch.setattr(main, "get_chat_history", lambda sid: [])
+    monkeypatch.setattr(main, "process_event", lambda e: SimpleNamespace(
+        query="q", query_id="q-1", session_id="s-1"
+    ))
+    monkeypatch.setattr(main, "DocumentResource", MagicMock())
+
+    ctx = SimpleNamespace(aws_request_id="r-1")
+    main.handler({"query": "q", "query_id": "q-1", "session_id": "s-1"}, ctx)
+
+    kwargs = main.run_agentic_loop.call_args.kwargs
+    assert kwargs["ws_server"] is None
+    if "main" in _sys.modules:
+        del _sys.modules["main"]

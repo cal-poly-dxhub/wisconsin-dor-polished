@@ -26,6 +26,7 @@ from case_opinion import citation_to_raw_slug
 from neptune_client import NeptuneClient
 from prompt import SYSTEM_PROMPT
 from step_function_types.errors import ValidationError, report_error
+from websocket_utils.utils import get_ws_connection_from_session
 from step_function_types.models import (
     FAQ,
     DocumentResource,
@@ -1411,12 +1412,28 @@ def handler(event: dict, context) -> dict[str, Any]:
         )
 
         chat_history = get_chat_history(session_id)
+
+        ws_server = None
+        if session_id:
+            try:
+                ws_server = get_ws_connection_from_session(session_id)
+            except Exception:  # noqa: BLE001
+                # Trace emission is best-effort; the loop must still run.
+                logger.warning(
+                    "Could not look up WebSocket connection; trace events will be skipped",
+                    exc_info=True,
+                )
+                ws_server = None
+        trace_seq = itertools.count(1).__next__
+
         answer, cited_doc_ids, rag_documents, faq_resource = run_agentic_loop(
             user_query.query,
             chat_history=chat_history,
             query_id=user_query.query_id,
             session_id=user_query.session_id,
             request_id=request_id,
+            ws_server=ws_server,
+            trace_seq=trace_seq,
         )
 
         documents = DocumentResource(documents=rag_documents)
