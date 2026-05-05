@@ -487,10 +487,20 @@ def phase_6_7_hierarchy(client, graph_id: str, documents: list[dict]):
 
 PHASE_8_BATCH_SIZE = 50
 PHASE_8_MAX_PAIRS_PER_FLUSH = 400
+# Chunk text dominates the UNWIND payload memory cost. Case-law opinion
+# chunks can be up to OPINION_CHUNK_SIZE (2000) chars each; 50 of those in
+# one flush sends ~100KB of text through Neptune's per-query memory budget,
+# which deterministically OOMs. Cap cumulative text bytes per flush to keep
+# payloads within the budget.
+PHASE_8_MAX_BYTES_PER_FLUSH = 50_000
 
 
 def _chunk_pair_count(entry: dict) -> int:
     return len(entry.get("statute_refs", [])) + len(entry.get("admin_rule_refs", []))
+
+
+def _chunk_byte_count(entry: dict) -> int:
+    return len(entry.get("text", ""))
 
 
 def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
@@ -589,6 +599,7 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
 
     batch: list[dict] = []
     batch_pairs = 0
+    batch_bytes = 0
     total_chunks = 0
     cite_edges = 0
 
@@ -612,17 +623,24 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
                 "admin_rule_refs": meta.get("admin_rule_refs", []),
             }
             pairs = _chunk_pair_count(entry)
+            byte_len = _chunk_byte_count(entry)
 
-            # Flush BEFORE adding if this chunk alone would blow the pair cap.
-            if batch and (len(batch) >= PHASE_8_BATCH_SIZE or batch_pairs + pairs > PHASE_8_MAX_PAIRS_PER_FLUSH):
+            # Flush BEFORE adding if this chunk would blow any of: count, pair, or byte cap.
+            if batch and (
+                len(batch) >= PHASE_8_BATCH_SIZE
+                or batch_pairs + pairs > PHASE_8_MAX_PAIRS_PER_FLUSH
+                or batch_bytes + byte_len > PHASE_8_MAX_BYTES_PER_FLUSH
+            ):
                 cite_edges += _flush_phase_8_batch(client, graph_id, batch)
                 batch = []
                 batch_pairs = 0
+                batch_bytes = 0
                 if total_chunks % 1000 == 0:
                     logger.info(f"  Phase 8 progress: {total_chunks} chunks, {cite_edges} CITES edges")
 
             batch.append(entry)
             batch_pairs += pairs
+            batch_bytes += byte_len
             total_chunks += 1
 
     if batch:
