@@ -79,6 +79,19 @@ export class SessionsStack extends cdk.NestedStack {
       projectionType: cdk.aws_dynamodb.ProjectionType.ALL,
     });
 
+    this.sessionsTable.addGlobalSecondaryIndex({
+      indexName: 'userIdIndex',
+      partitionKey: {
+        name: 'userId',
+        type: cdk.aws_dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'lastMessageAt',
+        type: cdk.aws_dynamodb.AttributeType.STRING,
+      },
+      projectionType: cdk.aws_dynamodb.ProjectionType.ALL,
+    });
+
     this.chatHistoryTable = new dynamodb.Table(this, 'ChatHistoryTable', {
       partitionKey: {
         name: 'queryId',
@@ -369,8 +382,29 @@ export class SessionsStack extends cdk.NestedStack {
     });
 
     httpApi.addRoutes({
+      path: '/sessions',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/session/{sessionId}',
+      methods: [apigatewayv2.HttpMethod.DELETE],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
       path: '/session/{sessionId}/message',
       methods: [apigatewayv2.HttpMethod.POST],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/session/{sessionId}/history',
+      methods: [apigatewayv2.HttpMethod.GET],
       integration: lambdaIntegration,
       authorizer: authorizer,
     });

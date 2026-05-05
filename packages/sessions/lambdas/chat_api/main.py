@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 import boto3
@@ -147,12 +148,34 @@ def validate_feedback_request(body: dict[str, Any]) -> FeedbackRequest:
         raise ValidationError() from e
 
 
-def create_session() -> str:
+def get_user_id_from_jwt() -> str:
+    """Extract userId from Cognito JWT in request context."""
+    try:
+        claims = router.current_event.request_context.authorizer.jwt.claims
+        user_id = claims.get("sub")
+        if not user_id:
+            raise ValidationError(reason="Missing user ID in JWT claims")
+        return user_id
+    except Exception as e:
+        logger.error(f"Failed to extract user ID from JWT: {e}")
+        raise ValidationError(reason="Invalid authentication token") from e
+
+
+def create_session(user_id: str) -> str:
     """Create a new chat session; return the session ID."""
     session_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
 
     try:
-        dynamodb.put_item(TableName=session_table_name, Item={"sessionId": {"S": session_id}})
+        dynamodb.put_item(
+            TableName=session_table_name,
+            Item={
+                "sessionId": {"S": session_id},
+                "userId": {"S": user_id},
+                "createdAt": {"S": now},
+                "lastMessageAt": {"S": now},
+            },
+        )
     except Exception as e:
         logger.error(f"Failed to create session in DynamoDB: {e}")
         raise SessionCreationError(details={"session_id": session_id, "error": str(e)}) from e
@@ -164,13 +187,93 @@ def create_session() -> str:
 def create_session_handler() -> dict[str, Any]:
     """Create a new chat session."""
     try:
-        session_id = create_session()
+        user_id = get_user_id_from_jwt()
+        session_id = create_session(user_id)
         return create_api_response(201, {"sessionId": session_id})
 
     except ChatAPIError as e:
         return create_api_response(e.status_code, e.to_response())
     except Exception as e:
         logger.error(f"Unexpected error in create_session: {e}")
+        error_response = create_error_body(e)
+        return create_api_response(500, error_response)
+
+
+@app.get("/sessions")
+def list_sessions_handler() -> dict[str, Any]:
+    """List all sessions for the authenticated user, sorted by most recent."""
+    try:
+        user_id = get_user_id_from_jwt()
+
+        response = dynamodb.query(
+            TableName=session_table_name,
+            IndexName="userIdIndex",
+            KeyConditionExpression="userId = :uid",
+            ExpressionAttributeValues={":uid": {"S": user_id}},
+            ScanIndexForward=False,
+            Limit=50,
+        )
+
+        sessions = []
+        for item in response.get("Items", []):
+            sessions.append(
+                {
+                    "sessionId": item["sessionId"]["S"],
+                    "createdAt": item.get("createdAt", {}).get("S"),
+                    "lastMessageAt": item.get("lastMessageAt", {}).get("S"),
+                }
+            )
+
+        return create_api_response(200, {"sessions": sessions})
+
+    except ChatAPIError as e:
+        return create_api_response(e.status_code, e.to_response())
+    except Exception as e:
+        logger.error(f"Unexpected error in list_sessions: {e}")
+        error_response = create_error_body(e)
+        return create_api_response(500, error_response)
+
+
+@app.delete("/session/<session_id>")
+def delete_session_handler(session_id: str) -> dict[str, Any]:
+    """Delete a session and all its chat history."""
+    try:
+        user_id = get_user_id_from_jwt()
+
+        # Verify session exists and belongs to user
+        session_response = dynamodb.get_item(
+            TableName=session_table_name, Key={"sessionId": {"S": session_id}}
+        )
+
+        if "Item" not in session_response:
+            raise SessionNotFoundError(session_id)
+
+        session_user_id = session_response["Item"].get("userId", {}).get("S")
+        if session_user_id != user_id:
+            raise ValidationError(reason="Not authorized to delete this session")
+
+        # Delete all chat history for this session
+        history_response = dynamodb.query(
+            TableName=message_table_name,
+            IndexName="sessionIdKey",
+            KeyConditionExpression="sessionId = :sid",
+            ExpressionAttributeValues={":sid": {"S": session_id}},
+            ProjectionExpression="queryId",
+        )
+
+        for item in history_response.get("Items", []):
+            query_id = item["queryId"]["S"]
+            dynamodb.delete_item(TableName=message_table_name, Key={"queryId": {"S": query_id}})
+
+        # Delete the session itself
+        dynamodb.delete_item(TableName=session_table_name, Key={"sessionId": {"S": session_id}})
+
+        return create_api_response(200, {"message": "Session deleted successfully"})
+
+    except ChatAPIError as e:
+        return create_api_response(e.status_code, e.to_response())
+    except Exception as e:
+        logger.error(f"Unexpected error in delete_session: {e}")
         error_response = create_error_body(e)
         return create_api_response(500, error_response)
 
@@ -199,6 +302,45 @@ def update_query_feedback(session_id: str, feedback_request: FeedbackRequest):
         ) from e
 
 
+@app.get("/session/<session_id>/history")
+def get_session_history_handler(session_id: str) -> dict[str, Any]:
+    """Get chat history for a session."""
+    try:
+        validate_session_exists(session_id)
+
+        response = dynamodb.query(
+            TableName=message_table_name,
+            IndexName="sessionIdKey",
+            KeyConditionExpression="sessionId = :sid",
+            ExpressionAttributeValues={":sid": {"S": session_id}},
+            ScanIndexForward=True,
+        )
+
+        messages = []
+        for item in response.get("Items", []):
+            message = {
+                "queryId": item["queryId"]["S"],
+                "query": item.get("query", {}).get("S", ""),
+                "answer": item.get("answer", {}).get("S", ""),
+                "timestamp": item.get("timestamp", {}).get("S"),
+            }
+
+            # Include resources if present
+            if "resources" in item:
+                message["resources"] = item["resources"]
+
+            messages.append(message)
+
+        return create_api_response(200, {"messages": messages})
+
+    except ChatAPIError as e:
+        return create_api_response(e.status_code, e.to_response())
+    except Exception as e:
+        logger.error(f"Unexpected error in get_session_history: {e}")
+        error_response = create_error_body(e)
+        return create_api_response(500, error_response)
+
+
 @app.post("/session/<session_id>/feedback")
 def feedback_handler(session_id) -> dict[str, Any]:
     """Assign feedback to a particular query."""
@@ -225,6 +367,21 @@ def feedback_handler(session_id) -> dict[str, Any]:
         return create_api_response(500, error_response)
 
 
+def update_session_timestamp(session_id: str) -> None:
+    """Update the lastMessageAt timestamp for a session."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        dynamodb.update_item(
+            TableName=session_table_name,
+            Key={"sessionId": {"S": session_id}},
+            UpdateExpression="SET lastMessageAt = :timestamp",
+            ExpressionAttributeValues={":timestamp": {"S": now}},
+        )
+    except Exception as e:
+        logger.error(f"Failed to update session timestamp: {e}")
+        # Non-critical error, don't raise
+
+
 @app.post("/session/<session_id>/message")
 def send_message_handler(session_id: str) -> dict[str, Any]:
     """Process chat message and emit EventBridge event with session information"""
@@ -239,6 +396,7 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
         logger.info(f"Processing message with query_id {query_id} for session {session_id}")
 
         emit_message_event(session_id, message_request.message, query_id)
+        update_session_timestamp(session_id)
 
         response_body = {
             "message": "Message received and processing started",
