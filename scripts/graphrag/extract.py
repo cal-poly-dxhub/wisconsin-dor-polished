@@ -25,7 +25,6 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from pdf_chunking.pdfChunker import process_pdf_from_s3
-from scripts.graphrag.case_annotations import gather_case_annotations
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -111,186 +110,6 @@ def extract_text_from_s3(bucket: str, key: str) -> str:
     return obj["Body"].read().decode("utf-8", errors="replace")
 
 
-# Case-law annotations live in the Wisconsin Statutes PDFs under docs/state-laws/.
-# The path is relative to the repo root.
-CASE_LAW_STATUTE_PDF_DIR = os.path.join(
-    os.path.dirname(__file__), "../..", "docs", "state-laws"
-)
-
-# Max characters per opinion chunk when splitting a full court opinion .txt.
-OPINION_CHUNK_SIZE = 2000
-OPINION_CHUNK_OVERLAP = 200
-
-# Opinion chunks beyond this count are dropped — opinions running 50k+ chars
-# generate unusably many chunks. The agent can always fetch the full text via
-# fetch_case_opinion for deep reads.
-MAX_OPINION_CHUNKS = 20
-
-# Cases with less than this much total annotation text get an LLM-generated
-# summary fallback. Tuned from observed data: "Affirmed. 2011 WI 4," style
-# stubs are ~20-40 chars; real one-sentence annotations are ~130+ chars.
-MIN_ANNOTATION_TOTAL_CHARS = 100
-
-# LLM-summary fallback context window: how much surrounding statute text to
-# pass in. Broader than the annotation boundary so the LLM can infer the topic
-# of the citing statute section.
-LLM_FALLBACK_CONTEXT_CHARS = 3000
-
-
-CASE_LAW_LLM_PROMPT = """You are summarizing a Wisconsin court case for a property-tax research assistant.
-
-You have LIMITED information about the case:
-- Citation: {citation}
-- Cited in Wisconsin Statutes: {statute_list}
-{opinion_section}
-- Surrounding statute text where the case is cited:
-{statute_context}
-
-Write a 2-3 sentence summary describing:
-1. What the case is (court level inferrable from citation format: "WI App" = Court of Appeals, "WI" = Supreme Court, federal reporters = federal courts)
-2. The legal topic or statutory provision it relates to (based on the citing statute context)
-3. Any holding you can confidently infer from the opinion text or surrounding context
-
-DO NOT speculate about facts or holdings that aren't supported by the text above.
-If you can only identify the topic area without a specific holding, say so honestly.
-
-Return ONLY the summary text, no prefix, no markdown, no JSON."""
-
-
-def _llm_summarize_case(
-    citation: str,
-    statute_list: list[str],
-    opinion_text: str,
-    statute_context: str,
-    model_id: str,
-) -> str | None:
-    """Generate an LLM summary when annotation extraction yields thin content.
-
-    Returns None on LLM failure — caller should fall back to a minimal
-    descriptor rather than crashing the whole extract.
-    """
-    opinion_section = ""
-    if opinion_text:
-        # Truncate to keep tokens bounded; opinions can be 50k+ chars.
-        opinion_section = f"- Opinion text excerpt (first 4000 chars):\n{opinion_text[:4000]}\n"
-
-    prompt = CASE_LAW_LLM_PROMPT.format(
-        citation=citation,
-        statute_list=", ".join(statute_list) if statute_list else "(unknown)",
-        opinion_section=opinion_section,
-        statute_context=statute_context or "(no surrounding statute context available)",
-    )
-
-    try:
-        response = bedrock.converse(
-            modelId=model_id,
-            messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"maxTokens": 300, "temperature": 0.0},
-        )
-        return response["output"]["message"]["content"][0]["text"].strip()
-    except Exception as e:
-        logger.warning(f"  LLM fallback summary failed for {citation}: {e}")
-        return None
-
-
-def _load_statute_context(citing_statutes: list[dict], max_chars: int) -> str:
-    """Return broader surrounding text from citing statute PDFs.
-
-    Unlike annotation extraction (which targets a single editorial paragraph),
-    this grabs ~max_chars of raw text around each cited page — gives the LLM
-    enough context to recognize the legal topic.
-    """
-    import fitz
-
-    parts: list[str] = []
-    per_source_budget = max(max_chars // max(len(citing_statutes), 1), 500)
-
-    for src in citing_statutes:
-        pdf_path = os.path.join(CASE_LAW_STATUTE_PDF_DIR, src["file"])
-        if not os.path.exists(pdf_path):
-            continue
-        pages = src.get("pages", [])
-        if not pages:
-            continue
-        try:
-            doc = fitz.open(pdf_path)
-        except Exception:
-            continue
-        try:
-            for page_1idx in pages[:1]:  # one page per source is enough
-                page_idx = page_1idx - 1
-                if 0 <= page_idx < len(doc):
-                    text = doc[page_idx].get_text()
-                    text = re.sub(r"\s+", " ", text).strip()
-                    parts.append(f"[{src['file']} p{page_1idx}]: {text[:per_source_budget]}")
-        finally:
-            doc.close()
-
-    combined = "\n\n".join(parts)
-    return combined[:max_chars]
-
-
-def _summary_from_annotations(annotations: list[dict], max_chars: int = 600) -> str:
-    """Build a Document-level summary from annotation texts.
-
-    Uses the longest annotation (most informative) as the primary summary. If
-    it's shorter than max_chars, appends additional annotations (separated by
-    " — ") until the cap. Each annotation is already self-contained per the
-    Wisconsin Statutes format.
-    """
-    if not annotations:
-        return ""
-    sorted_anns = sorted(annotations, key=lambda a: -len(a["text"]))
-    summary = sorted_anns[0]["text"]
-    for ann in sorted_anns[1:]:
-        if len(summary) >= max_chars:
-            break
-        if ann["text"] not in summary:
-            summary = summary + " — " + ann["text"]
-    if len(summary) > max_chars:
-        summary = summary[: max_chars - 3].rstrip() + "..."
-    return summary
-
-
-def _chunk_opinion_text(text: str, doc_id: str, s3_key: str) -> list[dict]:
-    """Split a full court-opinion .txt into overlapping windowed chunks."""
-    chunks: list[dict] = []
-    stride = OPINION_CHUNK_SIZE - OPINION_CHUNK_OVERLAP
-    for i in range(0, len(text), stride):
-        chunk_text = text[i : i + OPINION_CHUNK_SIZE]
-        if len(chunk_text.strip()) < 50:
-            continue
-        chunks.append({
-            "text": chunk_text,
-            "metadata": {
-                "doc_id": doc_id,
-                "source": s3_key,
-                "chunk_index": len(chunks) + 1000,  # offset so annotation chunks sort first
-                "start_page": None,
-                "end_page": None,
-                "chunk_kind": "opinion",
-            },
-        })
-        if len(chunks) >= MAX_OPINION_CHUNKS:
-            break
-    return chunks
-
-
-def _select_title(
-    annotations: list[dict], citation_metadata: dict, doc_id: str
-) -> str:
-    """Pick the best title for a case-law document.
-
-    Priority: extracted case_name from any annotation > metadata case_name > citation > doc_id.
-    """
-    for ann in annotations:
-        if ann.get("case_name"):
-            return f"{ann['case_name']}, {citation_metadata.get('citation', '')}".strip(", ")
-    if citation_metadata.get("case_name"):
-        return f"{citation_metadata['case_name']}, {citation_metadata.get('citation', '')}".strip(", ")
-    return citation_metadata.get("citation") or doc_id
-
-
 def _parse_citing_statutes(metadata: dict) -> list[dict]:
     """Decode the citing_statutes metadata attribute.
 
@@ -318,21 +137,24 @@ def _parse_citing_statutes(metadata: dict) -> list[dict]:
 def process_case_law_document(
     doc: dict, raw_bucket: str, metadata: dict, config: dict
 ) -> dict | None:
-    """Build an extraction result for a case-law document from annotations + opinion.
+    """Build a thin-stub extraction result for a case-law document.
 
-    For case-law docs, we bypass the generic LLM classifier entirely. Wisconsin
-    Statutes publishes per-statute annotations for each cited case — short
-    editorial paragraphs describing the holding in the context of the citing
-    statute. These are better grounding than anything Claude could synthesize
-    from a metadata stub.
+    Case-law nodes are citation markers only — never a vector-search entry
+    point. The editorial annotation text for each cited case is already
+    embedded in the citing statute's own PDF text (Wisconsin Statutes
+    Annotated prints annotations directly under the statute section), so
+    there's no benefit to duplicating it here and every reason NOT to give
+    case-law docs their own embeddings: it would let the agent "answer from
+    the case" without ever consulting the contextualizing statute.
 
-    When annotation extraction produces thin content (<MIN_ANNOTATION_TOTAL_CHARS),
-    we fall back to an LLM-generated summary using the opinion text (if present)
-    plus broader statute context as grounding. The resulting chunk is tagged
-    `chunk_kind="llm_summary"` so downstream code can distinguish it from
-    authoritative editorial annotations.
+    The returned record has:
+      - identity fields (id, title, citation, source_url, doc_type, authority_level)
+      - empty `chunks` — no embeddings will be produced, no chunk nodes loaded
+      - empty `summary` — the annotation text lives on the statute's chunks
+      - `citing_statute_refs` — used by load.py to wire Statute -[:CITES]-> CaseLaw edges
 
-    Ordering of chunks: annotations → llm_summary (if any) → opinion chunks.
+    The full opinion text (in S3 `.txt` files) is still reachable by agents
+    via the `fetch_case_opinion` tool; it's just not part of the graph index.
     """
     doc_id = doc["doc_id"]
     key = doc["key"]
@@ -340,118 +162,26 @@ def process_case_law_document(
     citing_statutes = _parse_citing_statutes(metadata)
     citation = metadata.get("citation", "")
 
-    annotations = gather_case_annotations(
-        citation, citing_statutes, CASE_LAW_STATUTE_PDF_DIR
-    ) if citation else []
-
-    # Read opinion text if available (case-law .txt files are court opinions).
-    opinion_text = ""
-    if key.endswith(".txt"):
-        try:
-            opinion_text = extract_text_from_s3(raw_bucket, key)
-        except Exception as e:
-            logger.warning(f"  {doc_id}: failed to read opinion txt: {e}")
-            opinion_text = ""
-
-    # Build annotation chunks — one per citing-statute annotation.
-    chunks: list[dict] = []
-    for i, ann in enumerate(annotations):
-        chunks.append({
-            "text": ann["text"],
-            "metadata": {
-                "doc_id": doc_id,
-                "source": f"raw/{doc_id}/{doc_id}",  # logical source, not on disk
-                "source_url": metadata.get("source_url", ""),
-                "chunk_index": i,
-                "start_page": ann["pages"][0] if ann["pages"] else None,
-                "end_page": ann["pages"][-1] if ann["pages"] else None,
-                "annotated_in": ann["source_file"],
-                "chunk_kind": "annotation",
-            },
-        })
-
-    # Fallback: when annotations are too thin to be useful, generate an LLM
-    # summary from whatever grounded content we have.
-    total_annotation_chars = sum(len(a["text"]) for a in annotations)
-    llm_summary_text: str | None = None
-    used_llm_fallback = False
-
-    if total_annotation_chars < MIN_ANNOTATION_TOTAL_CHARS:
-        used_llm_fallback = True
-        llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-6")
-        statute_list = sorted({src["file"] for src in citing_statutes})
-        statute_context = _load_statute_context(citing_statutes, LLM_FALLBACK_CONTEXT_CHARS)
-
-        llm_summary_text = _llm_summarize_case(
-            citation=citation,
-            statute_list=statute_list,
-            opinion_text=opinion_text,
-            statute_context=statute_context,
-            model_id=llm_model,
-        )
-
-        if llm_summary_text:
-            chunks.append({
-                "text": llm_summary_text,
-                "metadata": {
-                    "doc_id": doc_id,
-                    "source": f"raw/{doc_id}/{doc_id}",
-                    "source_url": metadata.get("source_url", ""),
-                    "chunk_index": 500,  # between annotations (0..N) and opinion (1000..N)
-                    "start_page": None,
-                    "end_page": None,
-                    "chunk_kind": "llm_summary",
-                    "grounded_on": "opinion+statutes" if opinion_text else "statutes",
-                },
-            })
-
-    # Append opinion chunks AFTER annotation + llm_summary chunks.
-    if opinion_text:
-        chunks.extend(_chunk_opinion_text(opinion_text, doc_id, key))
-
-    if not chunks:
-        # Truly nothing: no annotations, LLM failed, no opinion.
-        stub_text = f"Wisconsin case law citation: {citation}. See source link for filings."
-        chunks.append({
-            "text": stub_text,
-            "metadata": {
-                "doc_id": doc_id,
-                "source": key,
-                "source_url": metadata.get("source_url", ""),
-                "chunk_index": 0,
-                "start_page": None,
-                "end_page": None,
-                "chunk_kind": "placeholder",
-            },
-        })
-
-    # Derive statute_refs from citing_statutes metadata (files are named by chapter number).
-    statute_refs = sorted({
-        src["file"].replace(" Document", "").replace(".pdf", "").strip()
-        for src in citing_statutes
-        if src.get("file", "").replace(" Document.pdf", "").replace(".pdf", "").strip().isdigit()
-    })
-
-    title = _select_title(annotations, metadata, doc_id)
-
-    # Summary priority: substantive annotations > LLM fallback > thin annotations > minimal descriptor.
-    # When annotations exist but total content is below the fallback threshold, the LLM summary
-    # is the better document-level signal — the stub annotation becomes supporting context.
-    annotation_summary = _summary_from_annotations(annotations) if annotations else ""
-    if annotation_summary and total_annotation_chars >= MIN_ANNOTATION_TOTAL_CHARS:
-        summary = annotation_summary
-    elif llm_summary_text:
-        summary = llm_summary_text
-    elif annotation_summary:
-        summary = annotation_summary
+    # Title preference: metadata case_name → citation → doc_id. We no longer
+    # run annotation extraction here — that moved to the statute-side derivation
+    # path, since the annotation text belongs ON the statute, not on the case.
+    meta_case_name = metadata.get("case_name", "").strip()
+    if meta_case_name and citation:
+        title = f"{meta_case_name}, {citation}"
+    elif meta_case_name:
+        title = meta_case_name
+    elif citation:
+        title = citation
     else:
-        summary = f"Wisconsin case law citation {citation}."
+        title = doc_id
 
-    # Attach chunk-level citation refs (uses existing extract_chunk_citations helper).
-    for chunk in chunks:
-        refs = extract_chunk_citations(chunk["text"])
-        chunk["metadata"]["statute_refs"] = refs["statute_refs"]
-        chunk["metadata"]["admin_rule_refs"] = refs["admin_rule_refs"]
+    # Statute refs drive the Document-level CITES edge targets in load.py
+    # (statute file "70.pdf" → "70", "706 Document.pdf" → "706").
+    statute_refs = sorted({
+        _statute_file_to_chapter(src["file"])
+        for src in citing_statutes
+        if _statute_file_to_chapter(src.get("file", ""))
+    })
 
     result = {
         "doc_id": doc_id,
@@ -460,24 +190,42 @@ def process_case_law_document(
         "framework_id": metadata.get("framework_id", "FW-CASE-LAW"),
         "authority_level": int(metadata.get("authority_level", 3)),
         "title": title,
-        "summary": summary,
+        "summary": "",  # intentionally empty — annotation lives on the citing statute
+        "citation": citation,
         "statute_refs": statute_refs,
         "admin_rule_refs": [],
         "implements_refs": [],
-        "topics": ["case law"],
+        "topics": [],  # no topic edges either; case-law is not a primary entry point
         "source_url": metadata.get("source_url", ""),
-        "full_text": summary + "\n\n" + "\n\n".join(c["text"] for c in chunks),
-        "chunks": chunks,
+        "full_text": title,  # used only for doc-level embedding; stub nodes don't get one
+        "chunks": [],  # the key Path A change: no chunks, no embeddings
     }
 
-    opinion_chunk_count = sum(1 for c in chunks if c["metadata"].get("chunk_kind") == "opinion")
-    fallback_marker = " [llm-fallback]" if used_llm_fallback else ""
     logger.info(
-        f"  Extracted {doc_id}: {len(annotations)} annotations, "
-        f"{opinion_chunk_count} opinion chunks{fallback_marker}, "
-        f"title={title[:60]}"
+        f"  Extracted {doc_id}: thin case-law stub, title={title[:60]}, "
+        f"cites {len(statute_refs)} statute chapters"
     )
     return result
+
+
+_STATUTE_FILE_CHAPTER_RE = re.compile(r"^(\d+)(?:\s+Document)?\.pdf$", re.IGNORECASE)
+_STATUTE_FILE_DOCUMENT_RE = re.compile(r"^Document\s+(\d+)\.pdf$", re.IGNORECASE)
+
+
+def _statute_file_to_chapter(filename: str) -> str:
+    """Extract the statute chapter number from a citing-statute PDF filename.
+
+    Wisconsin statute PDFs are named inconsistently: "70.pdf", "706 Document.pdf",
+    "Document 76.pdf". This normalizes all three to just the chapter number.
+    Returns empty string when the name doesn't match — callers skip those.
+    """
+    m = _STATUTE_FILE_CHAPTER_RE.match(filename.strip())
+    if m:
+        return m.group(1)
+    m = _STATUTE_FILE_DOCUMENT_RE.match(filename.strip())
+    if m:
+        return m.group(1)
+    return ""
 
 
 def get_metadata(bucket: str, key: str) -> dict:

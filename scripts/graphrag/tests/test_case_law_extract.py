@@ -1,13 +1,16 @@
-"""Tests for the case-law branch of extract.process_document.
+"""Tests for Path A thin-stub case-law extraction.
 
-Validates:
-  - Substantive annotations go in as-is, no LLM call.
-  - Thin annotations (< MIN_ANNOTATION_TOTAL_CHARS) trigger the LLM fallback.
-  - The LLM fallback produces a chunk tagged `chunk_kind="llm_summary"` and
-    uses the LLM output as the Document summary.
-  - LLM failure falls back to citation-only placeholder without crashing.
-  - Title selection prefers the extracted case name over the citation.
-  - Opinion chunks come after annotation and llm_summary chunks.
+Case-law documents are now stored as thin citation markers: no chunks, no
+embeddings, no summary text. The annotation content lives on the citing
+statute's chunks (which already include it inline since Wisconsin Statutes
+Annotated prints annotations directly under statute sections).
+
+These tests validate:
+  - No chunks produced (Path A removes case-law from the vector index)
+  - No embeddings, no topics, no summary populated
+  - Title selection prefers metadata case_name > citation > doc_id
+  - statute_refs normalize across Wisconsin's three naming schemes
+  - No Bedrock calls made (thin stubs never need the LLM)
 
 Importing `scripts.graphrag.extract` transitively imports
 `pdf_chunking.pdfChunker`, which makes a live AWS head_bucket call at module
@@ -27,244 +30,135 @@ _fake_module.process_pdf_from_s3 = MagicMock()
 sys.modules.setdefault("pdf_chunking", MagicMock())
 sys.modules.setdefault("pdf_chunking.pdfChunker", _fake_module)
 
-# Now import extract; its boto3 clients will still be real, but individual
-# tests rebind extract.s3 and extract.bedrock before invoking code paths.
 from scripts.graphrag import extract  # noqa: E402
 
 
-def _mock_clients(opinion_bytes: bytes = b"Opinion text.", llm_response: str | None = "Generated summary."):
-    """Build mock boto3 s3 + bedrock-runtime clients for a single test."""
+def _run(metadata: dict, doc: dict | None = None):
+    """Invoke process_case_law_document with mocked boto clients."""
     mock_s3 = MagicMock()
     mock_s3.head_bucket.return_value = {}
-    mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: opinion_bytes)}
-
     mock_bedrock = MagicMock()
-    if llm_response is not None:
-        mock_bedrock.converse.return_value = {
-            "output": {"message": {"content": [{"text": llm_response}]}}
-        }
-    else:
-        mock_bedrock.converse.side_effect = RuntimeError("LLM unavailable")
-
-    return mock_s3, mock_bedrock
-
-
-def _with_mocked_extract(mock_s3, mock_bedrock, callback):
-    """Run `callback(extract)` with extract's s3 + bedrock clients replaced.
-
-    We patch the module-level client attributes directly because extract.py
-    creates its boto3 clients at import time — patching boto3.client is too
-    late in tests that run after extract has already been imported.
-    """
-    with patch.object(extract, "s3", mock_s3), patch.object(extract, "bedrock", mock_bedrock):
-        return callback(extract)
-
-
-def test_substantive_annotation_skips_llm_fallback() -> None:
-    """Nestle v. DOR has a 650-char annotation; should not trigger LLM."""
-    mock_s3, mock_bedrock = _mock_clients()
-    doc = {
-        "doc_id": "case-law-2009-wi-app-159",
-        "key": "raw/case-law-2009-wi-app-159/case-law-2009-wi-app-159.txt",
-        "size": 35000,
-    }
-    metadata = {
-        "doc_type": "case_law",
-        "citation": "2009 WI App 159",
-        "source_url": "",
-        "citing_statutes": '[{"file": "70.pdf", "pages": [25]}]',
-    }
-    config = {"bedrock_llm_model": "test-model"}
-
-    def run(extract):
-        return extract.process_case_law_document(doc, "bucket", metadata, config)
-
-    result = _with_mocked_extract(mock_s3, mock_bedrock, run)
-
-    assert mock_bedrock.converse.call_count == 0
-    assert result["title"].startswith("Nestle USA")
-    kinds = [c["metadata"].get("chunk_kind") for c in result["chunks"]]
-    assert "llm_summary" not in kinds
-    assert "annotation" in kinds
-
-
-def test_thin_annotation_triggers_llm_fallback() -> None:
-    """'Affirmed. 2011 WI 4,' style short stub triggers LLM."""
-    mock_s3, mock_bedrock = _mock_clients(
-        llm_response="This is a Supreme Court affirmance of the Court of Appeals in a property-tax assessment case."
+    mock_bedrock.converse.side_effect = AssertionError(
+        "Path A must never call Bedrock when building a case-law stub"
     )
-    doc = {
-        "doc_id": "case-law-331-wis-2d-256",
-        "key": "raw/case-law-331-wis-2d-256/case-law-331-wis-2d-256.txt",
-        "size": 500,
-    }
-    metadata = {
-        "doc_type": "case_law",
-        "citation": "331 Wis. 2d 256",
-        "source_url": "",
-        "citing_statutes": '[{"file": "70.pdf", "pages": [25]}]',
+    doc = doc or {
+        "doc_id": "case-law-kollasch-v-adamany",
+        "key": "raw/case-law-kollasch-v-adamany/case-law-kollasch-v-adamany.txt",
+        "size": 9000,
     }
     config = {"bedrock_llm_model": "test-model"}
-
-    def run(extract):
-        return extract.process_case_law_document(doc, "bucket", metadata, config)
-
-    result = _with_mocked_extract(mock_s3, mock_bedrock, run)
-
-    assert mock_bedrock.converse.call_count == 1
-    kinds = [c["metadata"].get("chunk_kind") for c in result["chunks"]]
-    assert "llm_summary" in kinds
-    # Summary should come from LLM, not the tiny annotation
-    assert "Supreme Court" in result["summary"]
+    with patch.object(extract, "s3", mock_s3), patch.object(extract, "bedrock", mock_bedrock):
+        return extract.process_case_law_document(doc, "bucket", metadata, config), mock_bedrock
 
 
-def test_llm_fallback_failure_falls_through() -> None:
-    """When Bedrock throws, we keep the thin annotation as summary, no crash."""
-    mock_s3, mock_bedrock = _mock_clients(llm_response=None)  # LLM raises
-    doc = {
-        "doc_id": "case-law-331-wis-2d-256",
-        "key": "raw/case-law-331-wis-2d-256/case-law-331-wis-2d-256.txt",
-        "size": 500,
-    }
+def test_thin_stub_has_no_chunks_or_summary() -> None:
     metadata = {
         "doc_type": "case_law",
-        "citation": "331 Wis. 2d 256",
-        "source_url": "",
-        "citing_statutes": '[{"file": "70.pdf", "pages": [25]}]',
+        "citation": "104 Wis. 2d 552",
+        "case_name": "Kollasch v. Adamany",
+        "source_url": "https://www.courtlistener.com/opinion/2144662/",
+        "citing_statutes": '[{"file": "77 Document.pdf", "pages": [31]}]',
     }
-    config = {"bedrock_llm_model": "test-model"}
+    result, _ = _run(metadata)
 
-    def run(extract):
-        return extract.process_case_law_document(doc, "bucket", metadata, config)
-
-    result = _with_mocked_extract(mock_s3, mock_bedrock, run)
-
-    # Should not crash; summary falls through to the thin annotation.
-    assert result is not None
-    assert result["summary"]
-    kinds = [c["metadata"].get("chunk_kind") for c in result["chunks"]]
-    assert "llm_summary" not in kinds  # LLM failed; no fallback chunk added
+    assert result["chunks"] == []
+    assert result["summary"] == ""
+    assert result["topics"] == []
 
 
-def test_case_with_no_citing_statutes_uses_citation_summary() -> None:
-    """Malformed/missing citing_statutes metadata still produces a valid record."""
-    mock_s3, mock_bedrock = _mock_clients(llm_response="Unknown case.")
-    doc = {
-        "doc_id": "case-law-orphan-case",
-        "key": "raw/case-law-orphan-case/case-law-orphan-case.json",
-        "size": 200,
-    }
+def test_title_prefers_metadata_case_name() -> None:
     metadata = {
-        "doc_type": "case_law",
+        "citation": "104 Wis. 2d 552",
+        "case_name": "Kollasch v. Adamany",
+        "citing_statutes": "",
+    }
+    result, _ = _run(metadata)
+    assert result["title"] == "Kollasch v. Adamany, 104 Wis. 2d 552"
+
+
+def test_title_falls_back_to_citation() -> None:
+    metadata = {
         "citation": "999 Wis. 2d 999",
-        "source_url": "",
-        "citing_statutes": "",  # missing
+        "citing_statutes": "",
     }
-    config = {"bedrock_llm_model": "test-model"}
-
-    def run(extract):
-        return extract.process_case_law_document(doc, "bucket", metadata, config)
-
-    result = _with_mocked_extract(mock_s3, mock_bedrock, run)
-
-    assert result is not None
-    # With no annotation and no citing statutes, LLM still gets called (zero-char annotation)
-    # but receives empty context. We just need a valid doc to emerge.
+    result, _ = _run(metadata)
     assert result["title"] == "999 Wis. 2d 999"
 
 
-def test_chunk_ordering_annotations_before_llm_before_opinions() -> None:
-    """Verify annotation indices < llm_summary index < opinion indices."""
-    # Long opinion so multiple opinion chunks are produced
-    opinion = "Opinion text block. " * 500  # ~10000 chars
-    mock_s3, mock_bedrock = _mock_clients(
-        opinion_bytes=opinion.encode(),
-        llm_response="Inferred holding summary.",
-    )
+def test_title_falls_back_to_doc_id_when_nothing_else() -> None:
+    metadata = {"citing_statutes": ""}
     doc = {
-        "doc_id": "case-law-331-wis-2d-256",
-        "key": "raw/case-law-331-wis-2d-256/case-law-331-wis-2d-256.txt",
-        "size": 10000,
+        "doc_id": "case-law-unknown-case",
+        "key": "raw/case-law-unknown-case/case-law-unknown-case.json",
+        "size": 0,
     }
+    result, _ = _run(metadata, doc)
+    assert result["title"] == "case-law-unknown-case"
+
+
+def test_statute_refs_normalize_filename_schemes() -> None:
+    """Wisconsin uses three naming schemes; all must yield clean chapter numbers."""
+    metadata = {
+        "citation": "test",
+        "citing_statutes": (
+            '[{"file": "70.pdf", "pages": [1]}, '
+            '{"file": "706 Document.pdf", "pages": [1]}, '
+            '{"file": "Document 76.pdf", "pages": [1]}]'
+        ),
+    }
+    result, _ = _run(metadata)
+    assert result["statute_refs"] == ["70", "706", "76"]
+
+
+def test_statute_refs_drops_unparseable_filenames() -> None:
+    metadata = {
+        "citation": "test",
+        "citing_statutes": '[{"file": "Spring Quarter Feedback.csv", "pages": [1]}]',
+    }
+    result, _ = _run(metadata)
+    assert result["statute_refs"] == []
+
+
+def test_no_bedrock_calls_made() -> None:
+    """Thin stubs never need LLM fallback — verifies the side_effect assert fires if called."""
+    metadata = {
+        "citation": "104 Wis. 2d 552",
+        "case_name": "Kollasch v. Adamany",
+        "citing_statutes": "",
+    }
+    _, mock_bedrock = _run(metadata)
+    mock_bedrock.converse.assert_not_called()
+
+
+def test_result_shape_matches_load_contract() -> None:
+    """load.py's phase_2_document_nodes needs specific keys to exist."""
     metadata = {
         "doc_type": "case_law",
-        "citation": "331 Wis. 2d 256",
-        "source_url": "",
+        "citation": "104 Wis. 2d 552",
+        "case_name": "Kollasch v. Adamany",
+        "source_url": "https://www.courtlistener.com/opinion/2144662/",
+        "authority_level": "3",
+        "framework_id": "FW-CASE-LAW",
         "citing_statutes": '[{"file": "70.pdf", "pages": [25]}]',
     }
-    config = {"bedrock_llm_model": "test-model"}
+    result, _ = _run(metadata)
 
-    def run(extract):
-        return extract.process_case_law_document(doc, "bucket", metadata, config)
-
-    result = _with_mocked_extract(mock_s3, mock_bedrock, run)
-
-    # Index groups by chunk_index: annotations=0..999, llm_summary=500, opinion=1000+
-    annotation_idxs = [c["metadata"]["chunk_index"] for c in result["chunks"] if c["metadata"]["chunk_kind"] == "annotation"]
-    llm_idxs = [c["metadata"]["chunk_index"] for c in result["chunks"] if c["metadata"]["chunk_kind"] == "llm_summary"]
-    opinion_idxs = [c["metadata"]["chunk_index"] for c in result["chunks"] if c["metadata"]["chunk_kind"] == "opinion"]
-
-    if annotation_idxs and llm_idxs:
-        assert max(annotation_idxs) < min(llm_idxs)
-    if llm_idxs and opinion_idxs:
-        assert max(llm_idxs) < min(opinion_idxs)
-
-
-def test_opinion_chunk_count_capped() -> None:
-    """Very long opinions are capped to MAX_OPINION_CHUNKS to keep graph usable."""
-    # 100k-char opinion would produce ~55 chunks without cap
-    opinion = "Opinion text. " * 7000
-    mock_s3, mock_bedrock = _mock_clients(opinion_bytes=opinion.encode())
-    doc = {
-        "doc_id": "case-law-2009-wi-app-159",
-        "key": "raw/case-law-2009-wi-app-159/case-law-2009-wi-app-159.txt",
-        "size": 100000,
+    # Fields load.py expects to exist on every document record
+    required = {
+        "doc_id", "s3_key", "doc_type", "framework_id", "authority_level",
+        "title", "summary", "statute_refs", "admin_rule_refs",
+        "implements_refs", "topics", "source_url", "chunks",
     }
-    metadata = {
-        "doc_type": "case_law",
-        "citation": "2009 WI App 159",
-        "source_url": "",
-        "citing_statutes": '[{"file": "70.pdf", "pages": [25]}]',
-    }
-    config = {"bedrock_llm_model": "test-model"}
-
-    def run(extract):
-        return extract.process_case_law_document(doc, "bucket", metadata, config)
-
-    result = _with_mocked_extract(mock_s3, mock_bedrock, run)
-    from scripts.graphrag.extract import MAX_OPINION_CHUNKS
-
-    opinion_chunks = [c for c in result["chunks"] if c["metadata"]["chunk_kind"] == "opinion"]
-    assert len(opinion_chunks) <= MAX_OPINION_CHUNKS
+    assert required.issubset(result.keys())
+    assert result["doc_type"] == "case_law"
+    assert result["framework_id"] == "FW-CASE-LAW"
+    assert result["authority_level"] == 3
+    assert result["source_url"].startswith("https://")
 
 
-def test_stub_only_case_no_opinion_file() -> None:
-    """Case where only a .json stub exists (Scholar+CourtListener both missed)."""
-    mock_s3 = MagicMock()
-    mock_s3.head_bucket.return_value = {}
-    # .json stubs should NOT be read as opinions — key ends in .json not .txt
-    mock_bedrock = MagicMock()
-    mock_bedrock.converse.return_value = {
-        "output": {"message": {"content": [{"text": "Topic-only inference."}]}}
-    }
-
-    doc = {
-        "doc_id": "case-law-missing-case",
-        "key": "raw/case-law-missing-case/case-law-missing-case.json",
-        "size": 200,
-    }
-    metadata = {
-        "doc_type": "case_law",
-        "citation": "456 Wis. 2d 1",
-        "source_url": "",
-        "citing_statutes": '[{"file": "70.pdf", "pages": [25]}]',
-    }
-    config = {"bedrock_llm_model": "test-model"}
-
-    def run(extract):
-        return extract.process_case_law_document(doc, "bucket", metadata, config)
-
-    result = _with_mocked_extract(mock_s3, mock_bedrock, run)
-
-    # No opinion_text should be read since key ends in .json
-    assert not any(c["metadata"]["chunk_kind"] == "opinion" for c in result["chunks"])
+def test_statute_file_to_chapter_helper() -> None:
+    assert extract._statute_file_to_chapter("70.pdf") == "70"
+    assert extract._statute_file_to_chapter("706 Document.pdf") == "706"
+    assert extract._statute_file_to_chapter("Document 76.pdf") == "76"
+    assert extract._statute_file_to_chapter("random.csv") == ""
+    assert extract._statute_file_to_chapter("") == ""
