@@ -106,6 +106,38 @@ def _history_context(chat_history: list[dict[str, str]] | None) -> str:
 TOOL_DEFINITIONS = [
     {
         "toolSpec": {
+            "name": "refine_query",
+            "description": (
+                "Rewrite the user's question into a focused search query "
+                "before calling faq_search or vector_search. Call this "
+                "when: (1) the user's question is a short follow-up that "
+                "depends on earlier conversation (e.g., 'what about "
+                "agriculture' with no other context), OR (2) the question "
+                "uses casual phrasing unlikely to match document "
+                "vocabulary (e.g., 'my land', 'can I'), OR (3) the "
+                "question has obvious typos or is very brief. Returns a "
+                "single rewritten query string you should pass to the "
+                "next search tool. Do NOT call this for already-specific "
+                "questions — it adds a turn for no gain."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "The original user question to refine."
+                            ),
+                        }
+                    },
+                    "required": ["query"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
             "name": "faq_search",
             "description": (
                 "Search frequently asked questions about Wisconsin DOR property "
@@ -126,28 +158,6 @@ TOOL_DEFINITIONS = [
                             "description": "Number of FAQ results to return (default: 5, max: 10)",
                             "default": 5,
                         },
-                    },
-                    "required": ["query"],
-                }
-            },
-        }
-    },
-    {
-        "toolSpec": {
-            "name": "refine_query",
-            "description": (
-                "Rewrite a short, casual, typo-prone, or follow-up user question "
-                "into a standalone Wisconsin property tax search query using prior "
-                "conversation context when available."
-            ),
-            "inputSchema": {
-                "json": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The user's current question to refine",
-                        }
                     },
                     "required": ["query"],
                 }
@@ -292,12 +302,16 @@ TOOL_DEFINITIONS = [
             "name": "fetch_case_opinion",
             "description": (
                 "Fetch the full text of a Wisconsin court opinion by citation. "
-                "Use this ONLY when the user's question requires the court's "
-                "actual analysis or holding — not for simple questions answered "
-                "by the case name alone. Case-law stubs in the graph include the "
+                "Use this ONLY as a LAST resort: (1) the primary sources "
+                "(statutes, admin rules, WPAM, FAQs) you've already gathered "
+                "are insufficient, AND (2) the case's ANNOTATION chunks "
+                "already in context do not contain enough detail, AND (3) the "
+                "user's question turns on the court's specific analysis or "
+                "holding. Do NOT call this to 'confirm' information the "
+                "annotation already shows. Case-law documents include the "
                 "citation you need (e.g., '109 Wis. 2d 290'). Returns opinion "
-                "text if available in our S3 archive, otherwise returns a "
-                "Google Scholar search URL the user can follow."
+                "text if available in our S3 archive, otherwise a Google "
+                "Scholar search URL."
             ),
             "inputSchema": {
                 "json": {
@@ -307,8 +321,8 @@ TOOL_DEFINITIONS = [
                             "type": "string",
                             "description": (
                                 "Legal citation exactly as it appears on the "
-                                "CaseLaw stub, e.g. '109 Wis. 2d 290' or '2000 "
-                                "WI App 182'."
+                                "CaseLaw document, e.g. '109 Wis. 2d 290' or "
+                                "'2000 WI App 182'."
                             ),
                         }
                     },
@@ -387,7 +401,11 @@ def execute_tool(
     neptune: NeptuneClient,
     chat_history: list[dict[str, str]] | None = None,
 ) -> dict:
-    """Execute a tool call and return the result."""
+    """Execute a tool call and return the result.
+
+    ``chat_history`` is threaded through for ``refine_query`` only. Other
+    branches ignore it.
+    """
     started = time.perf_counter()
     _log_tool_event(
         "tool_execute_start",

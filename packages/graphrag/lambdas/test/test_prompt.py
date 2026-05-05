@@ -58,3 +58,44 @@ def test_prompt_mandates_fetch_case_opinion_discretion():
 
     # The agent should NOT fetch full opinions for simple questions
     assert "fetch_case_opinion" in SYSTEM_PROMPT
+
+
+def test_prompt_forbids_case_law_as_starting_point():
+    from prompt import SYSTEM_PROMPT
+
+    # Case law must not be the entry point of a traversal — statutes first.
+    assert "SECONDARY source" in SYSTEM_PROMPT
+    assert "FIRST traversal step" in SYSTEM_PROMPT
+
+
+def test_prompt_requires_stub_before_opinion():
+    from prompt import SYSTEM_PROMPT
+
+    # Either the stub or the annotation must be consulted before the full
+    # opinion is fetched. The prompt currently uses "annotation" terminology,
+    # but either form of the gate is acceptable.
+    lower = SYSTEM_PROMPT.lower()
+    assert "annotation" in lower or "stub" in lower
+    # fetch_case_opinion is gated behind annotation/stub-insufficiency AND
+    # holding relevance.
+    assert "fetch_case_opinion ONLY when" in SYSTEM_PROMPT
+
+
+def test_prompt_mandates_refine_query_for_followups():
+    from prompt import SYSTEM_PROMPT
+
+    # The agent must know to rewrite short follow-ups against history.
+    assert "refine_query" in SYSTEM_PROMPT
+    # Either of the two motivating examples should be called out.
+    lower = SYSTEM_PROMPT.lower()
+    assert "follow-up" in lower or "follow up" in lower
+
+
+def test_prompt_discusses_conversation_history():
+    from prompt import SYSTEM_PROMPT
+
+    # Prior turns are injected as user/assistant messages — the prompt must
+    # tell the agent how to use them.
+    assert "FOLLOW-UP" in SYSTEM_PROMPT or "prior conversation" in SYSTEM_PROMPT.lower()
+    # And must forbid citing the prior answer as a source.
+    assert "cited_doc_ids" in SYSTEM_PROMPT

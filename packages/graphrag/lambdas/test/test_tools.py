@@ -145,3 +145,63 @@ def test_get_document_no_fallback_matches_returns_error():
 
     assert "error" in result
     assert result.get("fallback_matches", []) == []
+
+
+def test_refine_query_tool_in_definitions():
+    from tools import TOOL_DEFINITIONS
+
+    names = {t["toolSpec"]["name"] for t in TOOL_DEFINITIONS}
+    assert "refine_query" in names
+
+
+def test_refine_query_uses_history_when_present():
+    """When chat history is supplied, the Bedrock prompt should include it
+    so the model can resolve 'what about X' follow-ups."""
+    from tools import execute_tool
+
+    fake_response = {
+        "output": {
+            "message": {
+                "content": [
+                    {"text": "agricultural land classification requirements"}
+                ]
+            }
+        }
+    }
+    mock_bedrock = MagicMock()
+    mock_bedrock.converse.return_value = fake_response
+
+    with patch("tools.bedrock", mock_bedrock):
+        result = execute_tool(
+            "refine_query",
+            {"query": "what about agriculture"},
+            MagicMock(),
+            chat_history=[
+                {"query": "what are land classifications", "answer": "..."},
+            ],
+        )
+
+    assert result["refined_query"] == "agricultural land classification requirements"
+    # The Bedrock call must have received the history in the user content.
+    messages = mock_bedrock.converse.call_args.kwargs["messages"]
+    user_text = messages[0]["content"][0]["text"]
+    assert "what are land classifications" in user_text
+    assert "what about agriculture" in user_text
+
+
+def test_refine_query_falls_back_on_error():
+    """If Bedrock throws, the tool must not break the loop — return original."""
+    from tools import execute_tool
+
+    mock_bedrock = MagicMock()
+    mock_bedrock.converse.side_effect = RuntimeError("bedrock down")
+
+    with patch("tools.bedrock", mock_bedrock):
+        result = execute_tool(
+            "refine_query",
+            {"query": "original question"},
+            MagicMock(),
+            chat_history=None,
+        )
+
+    assert result["refined_query"] == "original question"
