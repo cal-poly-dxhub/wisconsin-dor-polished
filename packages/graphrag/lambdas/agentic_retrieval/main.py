@@ -862,7 +862,7 @@ def run_agentic_loop(
             max_turns=MAX_TURNS,
             message_count=len(messages),
             discovered_doc_count=len(all_doc_ids),
-            chunk_count=len(all_chunks),
+            accumulated_chunk_count=len(all_chunks),
             discovery=_discovery_summary(discovery),
         )
 
@@ -1052,7 +1052,7 @@ def run_agentic_loop(
                 tool_use_id=tool_use_id,
                 tool_latency_ms=tool_latency_ms,
                 discovered_doc_count=len(all_doc_ids),
-                chunk_count=len(all_chunks),
+                accumulated_chunk_count=len(all_chunks),
                 discovery=_discovery_summary(discovery),
                 tool_result_summary=tool_result_summary["raw"],
             )
@@ -1166,7 +1166,7 @@ def run_agentic_loop(
             **trace_context,
             answer_chars=len(answer),
             discovered_doc_count=len(all_doc_ids),
-            chunk_count=len(all_chunks),
+            accumulated_chunk_count=len(all_chunks),
             discovery=_discovery_summary(discovery),
         )
 
