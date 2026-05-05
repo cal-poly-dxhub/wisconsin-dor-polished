@@ -6,7 +6,7 @@ import { ChatInput } from '@/components/messages/chat-input';
 import { useChatStore } from '@/stores/chat-store';
 import type { ResourceItem, Query } from '@/stores/types';
 import { useCallback, useRef } from 'react';
-import { ShaderBackground } from '@/components/ui/shader-background';
+import { GradientBackground } from '@/components/ui/gradient-background';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ChatErrorProvider } from '@/components/errors/use-chat-error';
 
@@ -145,7 +145,7 @@ export default function MockChatPage() {
   return (
     <ChatErrorProvider>
       <QueryClientProvider client={queryClient}>
-        <ShaderBackground />
+        <GradientBackground />
       <div className="flex justify-center">
         <div className="grid h-screen grid-cols-[minmax(0,64rem)_400px] gap-6 p-32">
           <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border shadow-sm">

@@ -56,6 +56,8 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
         tracing: lambda.Tracing.ACTIVE,
         environment: {
           WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
+          SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
+          CHAT_HISTORY_TABLE_NAME: props.chatHistoryTable.tableName,
           NEPTUNE_GRAPH_ID: props.neptuneGraphId,
           AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
           RAW_BUCKET: props.rawBucketName,
@@ -83,6 +85,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
     // API Gateway WebSocket connections, so report_error can surface
     // Lambda failures to the UI instead of the frontend spinning forever.
     props.sessionsTable.grantReadData(agenticRetrievalHandler);
+
     agenticRetrievalHandler.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,

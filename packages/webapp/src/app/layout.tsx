@@ -1,5 +1,4 @@
 import { ThemeProvider } from '@/components/theme-provider';
-import { ThemeToggleContainer } from '@/components/theme-toggle-container';
 import { AuthProvider } from '@/contexts/auth-context';
 import { Toaster } from '@/components/ui/sonner';
 import type { Metadata } from 'next';
@@ -31,10 +30,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <AuthProvider>
-            <div className="relative min-h-screen">
-              <ThemeToggleContainer />
-              {children}
-            </div>
+            {children}
             <Toaster />
           </AuthProvider>
         </ThemeProvider>

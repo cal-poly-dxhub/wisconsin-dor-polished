@@ -1,8 +1,9 @@
 'use client';
 
 import { useChatStore } from '@/stores/chat-store';
-import { forwardRef, useCallback, useEffect, useRef } from 'react';
+import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { ChatMessage } from './chat-message';
+import { ChevronDown } from 'lucide-react';
 
 interface ChatContainerProps {
   variant?: 'default' | 'borderless' | 'narrow' | 'wide';
@@ -10,8 +11,10 @@ interface ChatContainerProps {
 
 export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
   ({ variant = 'default' }, ref) => {
-    const { queries, queryOrder, setCurrentQueryId, currentQueryId } =
-      useChatStore();
+    const queries = useChatStore(state => state.queries);
+    const queryOrder = useChatStore(state => state.queryOrder);
+    const currentQueryId = useChatStore(state => state.currentQueryId);
+    const setCurrentQueryId = useChatStore(state => state.setCurrentQueryId);
 
     // Use currentQueryId from store instead of selectedMessageId
     const selectedMessageId = currentQueryId;
@@ -19,6 +22,7 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
 
     const containerRef = useRef<HTMLDivElement>(null);
     const userScrolledUpRef = useRef(false);
+    const [showScrollButton, setShowScrollButton] = useState(false);
 
     // Track the center-most message using scroll events (without auto-centering)
     const handleScroll = useCallback(() => {
@@ -28,6 +32,10 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
       const el = containerRef.current;
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
       userScrolledUpRef.current = !atBottom;
+
+      // Show scroll button when user scrolled up and content overflows
+      const hasOverflow = el.scrollHeight > el.clientHeight;
+      setShowScrollButton(!atBottom && hasOverflow);
 
       const containerRect = el.getBoundingClientRect();
       const containerCenter = containerRect.top + containerRect.height / 2;
@@ -56,6 +64,15 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
       }
     }, [setSelectedMessageId]);
 
+    const scrollToBottom = useCallback(() => {
+      if (!containerRef.current) return;
+      userScrolledUpRef.current = false;
+      containerRef.current.scrollTo({
+        top: containerRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
+    }, []);
+
     // Add scroll event listener
     useEffect(() => {
       const container = containerRef.current;
@@ -75,7 +92,10 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
       .filter(Boolean);
 
     useEffect(() => {
-      handleScroll();
+      // Use requestAnimationFrame to avoid calling setState synchronously
+      requestAnimationFrame(() => {
+        handleScroll();
+      });
     }, [handleScroll, orderedQueries.length]);
 
     // A newly submitted question means the user wants to follow the next
@@ -93,12 +113,13 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
     const currentQuery = currentQueryId ? queries[currentQueryId] : null;
     const streamContent = currentQuery?.response?.content;
     const queryStatus = currentQuery?.status;
+    const agentTrace = currentQuery?.agentTrace;
     const isActive = queryStatus === 'streaming' || queryStatus === 'pending' || queryStatus === 'completed';
 
     useEffect(() => {
       if (!containerRef.current || !isActive || userScrolledUpRef.current) return;
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }, [streamContent, queryStatus, isActive]);
+    }, [streamContent, queryStatus, isActive, agentTrace]);
 
     return (
       <div className="relative h-full w-full">
@@ -134,6 +155,19 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
             ))}
           </div>
         </div>
+
+        {/* Scroll to bottom button */}
+        <button
+          onClick={scrollToBottom}
+          className={`absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-card/95 border-2 border-primary/20 shadow-xl hover:bg-card hover:border-primary/40 hover:shadow-2xl cursor-pointer backdrop-blur-sm transition-all duration-200 ease-out ${
+            showScrollButton
+              ? 'opacity-100 translate-y-0 pointer-events-auto'
+              : 'opacity-0 translate-y-2 pointer-events-none'
+          }`}
+          aria-label="Scroll to bottom"
+        >
+          <ChevronDown className="h-5 w-5 text-foreground" />
+        </button>
       </div>
     );
   }

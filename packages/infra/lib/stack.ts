@@ -66,6 +66,7 @@ export class WisconsinBotStack extends cdk.Stack {
         stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
         websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
         sessionsTable: sessionsStack.sessionsTable,
+        chatHistoryTable: sessionsStack.chatHistoryTable,
         websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
         neptuneGraphId: graphRAGStack.neptuneGraphId,
         neptuneGraphEndpoint: graphRAGStack.neptuneGraphEndpoint,

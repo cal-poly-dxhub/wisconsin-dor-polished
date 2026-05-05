@@ -26,6 +26,27 @@ const FeedbackRequest = z.object({
 const FeedbackResponse = z.object({
   successful: z.boolean(),
 });
+const Session = z.object({
+  sessionId: z.string().uuid(),
+  createdAt: z.string().optional(),
+  lastMessageAt: z.string().optional(),
+});
+const SessionsListResponse = z.object({
+  sessions: z.array(Session),
+});
+const ChatMessage = z.object({
+  queryId: z.string().uuid(),
+  query: z.string(),
+  answer: z.string(),
+  timestamp: z.string().optional(),
+  resources: z.any().optional(),
+});
+const SessionHistoryResponse = z.object({
+  messages: z.array(ChatMessage),
+});
+const DeleteSessionResponse = z.object({
+  message: z.string(),
+});
 
 export type ApiResponse = z.infer<typeof ApiResponse>;
 export type CreateSessionResponse = z.infer<typeof CreateSessionResponse>;
@@ -33,6 +54,11 @@ export type SendMessageRequest = z.infer<typeof SendMessageRequest>;
 export type SendMessageResponse = z.infer<typeof SendMessageResponse>;
 export type FeedbackRequest = z.infer<typeof FeedbackRequest>;
 export type FeedbackResponse = z.infer<typeof FeedbackResponse>;
+export type Session = z.infer<typeof Session>;
+export type SessionsListResponse = z.infer<typeof SessionsListResponse>;
+export type ChatMessage = z.infer<typeof ChatMessage>;
+export type SessionHistoryResponse = z.infer<typeof SessionHistoryResponse>;
+export type DeleteSessionResponse = z.infer<typeof DeleteSessionResponse>;
 
 // Unwraps the common response format and enforces a body schema
 async function handleApiCall<T>(
@@ -72,5 +98,23 @@ export async function assignFeedback(
   return handleApiCall(
     http.post(`session/${sessionId}/feedback`, { json: payload }).json(),
     FeedbackResponse
+  );
+}
+
+export async function getSessions() {
+  return handleApiCall(http.get('sessions').json(), SessionsListResponse);
+}
+
+export async function getSessionHistory(sessionId: string) {
+  return handleApiCall(
+    http.get(`session/${sessionId}/history`).json(),
+    SessionHistoryResponse
+  );
+}
+
+export async function deleteSession(sessionId: string) {
+  return handleApiCall(
+    http.delete(`session/${sessionId}`).json(),
+    DeleteSessionResponse
   );
 }
