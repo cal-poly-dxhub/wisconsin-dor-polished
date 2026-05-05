@@ -204,6 +204,7 @@ export const useChatStore = create<ChatStore>()(
         state.queryOrder = [];
         state.errors = [];
         state.draftMessage = '';
+        state.sessionId = null;
       }),
 
     setSessionId: (sessionId: string | null) =>
