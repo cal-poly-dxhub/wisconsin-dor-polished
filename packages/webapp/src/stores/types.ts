@@ -4,6 +4,15 @@ export interface MessageUnion {
   [key: string]: unknown;
 }
 
+export interface AgentTraceEvent {
+  kind: 'loop_start' | 'reasoning' | 'tool_call' | 'tool_result' | 'loop_complete';
+  turn?: number | null;
+  seq: number;
+  timestamp: number;
+  payload: Record<string, unknown>;
+  devPayload?: Record<string, unknown>;
+}
+
 export interface Query {
   query: string;
   queryId: string;
@@ -22,6 +31,7 @@ export interface Query {
 
   retryCount?: number;
   thinkingDuration?: number;
+  agentTrace?: AgentTraceEvent[];
 }
 
 export interface QueryError {
@@ -123,6 +133,7 @@ export interface ChatStore {
   clearQueryError: (queryId: string) => void;
   incrementQueryRetry: (queryId: string) => void;
   setThinkingDuration: (queryId: string, duration: number) => void;
+  appendAgentTraceEvent: (queryId: string, event: AgentTraceEvent) => void;
   getQuery: (queryId: string) => Query | undefined;
 
   addError: (error: ChatError) => void;

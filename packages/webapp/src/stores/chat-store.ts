@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type {
+  AgentTraceEvent,
   ChatError,
   ChatState,
   ChatStore,
@@ -125,6 +126,15 @@ export const useChatStore = create<ChatStore>()(
         if (state.queries[queryId]) {
           state.queries[queryId].thinkingDuration = duration;
         }
+      }),
+
+    appendAgentTraceEvent: (queryId: string, event: AgentTraceEvent) =>
+      set(state => {
+        const query = state.queries[queryId];
+        if (!query) return;
+        if (!query.agentTrace) query.agentTrace = [];
+        if (query.agentTrace.some(e => e.seq === event.seq)) return;
+        query.agentTrace.push(event);
       }),
 
     // Error and UI management
