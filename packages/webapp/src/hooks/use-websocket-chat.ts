@@ -79,6 +79,7 @@ export function useWebSocketChat(
               break;
 
             case 'trace':
+            case 'agent-trace':
               appendQueryTrace(message.queryId, {
                 event: message.content.event,
                 label: message.content.label,

@@ -50,6 +50,12 @@ export const TraceMessageSchema = z.object({
   content: TraceContentSchema,
 });
 
+export const AgentTraceMessageSchema = z.object({
+  responseType: z.literal('agent-trace'),
+  queryId: z.string(),
+  content: TraceContentSchema,
+});
+
 export const ErrorContentSchema = z.object({
   error: z.string(),
 });
@@ -80,6 +86,7 @@ export const MessageUnionSchema = z.discriminatedUnion('responseType', [
   DocumentsMessageSchema,
   FAQMessageSchema,
   TraceMessageSchema,
+  AgentTraceMessageSchema,
   ErrorMessageSchema,
   FragmentMessageSchema,
   AnswerEventTypeSchema,
@@ -98,6 +105,7 @@ export type FAQContent = z.infer<typeof FAQContentSchema>;
 export type FAQMessage = z.infer<typeof FAQMessageSchema>;
 export type TraceContent = z.infer<typeof TraceContentSchema>;
 export type TraceMessage = z.infer<typeof TraceMessageSchema>;
+export type AgentTraceMessage = z.infer<typeof AgentTraceMessageSchema>;
 export type ErrorContent = z.infer<typeof ErrorContentSchema>;
 export type ErrorMessage = z.infer<typeof ErrorMessageSchema>;
 export type AnswerEventType = z.infer<typeof AnswerEventTypeSchema>;
