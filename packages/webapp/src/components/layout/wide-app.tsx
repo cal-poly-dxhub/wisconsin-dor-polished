@@ -3,45 +3,48 @@
 import { DocumentList } from '@/components/documents/document-list';
 import { ChatContainer } from '@/components/messages/chat-container';
 import { ChatInput } from '@/components/messages/chat-input';
+import { SessionsSidebar } from '@/components/layout/sessions-sidebar';
 import { useChatStore } from '@/stores/chat-store';
 import type { ResourceItem } from '@/stores/types';
 import { useWebSocketChat } from '@/hooks/use-websocket-chat';
 import { Toaster } from '@/components/ui/sonner';
-import { ShaderBackground } from '@/components/ui/shader-background';
+import { GradientBackground } from '@/components/ui/gradient-background';
 
 const stableConfig = {
   websocketUrl: process.env.NEXT_PUBLIC_WEBSOCKET_URL!,
 };
 
 export function WideApp() {
-  const { currentQueryId, queries } = useChatStore();
-  const { sendMessage } = useWebSocketChat(stableConfig);
-
-  const selectedQuery = currentQueryId ? queries[currentQueryId] : null;
+  const selectedQuery = useChatStore(state =>
+    state.currentQueryId ? state.queries[state.currentQueryId] : null
+  );
   const items: ResourceItem[] = selectedQuery?.resources || [];
+  const { sendMessage } = useWebSocketChat(stableConfig);
 
   return (
     <>
-      <ShaderBackground />
-      <div className="flex justify-center">
-        <div className="h-screen w-full max-w-[calc(66rem+400px)] p-20 pt-24">
-          <div className="grid h-full min-h-0 grid-cols-[minmax(0,66rem)_400px] overflow-hidden rounded-lg border bg-card shadow-sm">
-            {/* Chat Container - Main Content Area */}
-            <div className="flex min-h-0 flex-col overflow-hidden">
-              <div className="min-h-0 flex-1">
-                <ChatContainer variant="wide" />
-              </div>
-              <ChatInput
-                placeholder="Ask a Wisconsin tax or revenue question..."
-                onSendMessage={sendMessage}
-              />
-            </div>
+      <GradientBackground />
+      <div className="flex h-screen w-screen overflow-hidden">
+        {/* Left Sidebar - Sessions */}
+        <SessionsSidebar />
 
-            {/* Documents List - Sidebar */}
-            <aside className="min-h-0 border-l bg-muted/20 p-5">
-              <DocumentList title="Sources" items={items} />
-            </aside>
+        {/* Main Content Area */}
+        <div className="flex min-w-0 flex-1">
+          {/* Chat Container - Main Content Area */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1">
+              <ChatContainer variant="wide" />
+            </div>
+            <ChatInput
+              placeholder="Ask a Wisconsin tax or revenue question..."
+              onSendMessage={sendMessage}
+            />
           </div>
+
+          {/* Documents List - Right Sidebar */}
+          <aside className="flex h-full w-[400px] flex-col border-l border-border bg-muted/20 p-5">
+            <DocumentList title="Sources" items={items} />
+          </aside>
         </div>
       </div>
       <Toaster />
