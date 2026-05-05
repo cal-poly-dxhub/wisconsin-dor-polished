@@ -23,6 +23,7 @@ import { FeedbackPopover } from './feedback-popover';
 type TraceStep = {
   label: string;
   done: boolean;
+  error?: boolean;
   detail?: string;
   devJson?: string;
 };
@@ -100,7 +101,8 @@ function renderTraceStep(
     const summary = String(event.payload.summary ?? '');
     const status = String(event.payload.status ?? 'ok');
     const done = status === 'ok' || status === 'terminal';
-    return { label: summary, done, detail, devJson };
+    const error = status === 'error';
+    return { label: summary, done, error, detail, devJson };
   }
   return null;
 }
@@ -469,13 +471,21 @@ export function ChatMessage({
                   >
                     <div className="relative ml-[3.5px] border-l border-muted-foreground/25 space-y-3 py-1">
                       {steps.map((step, i) => (
-                        <div key={i} className="flex flex-col gap-1 -ml-[4px]">
+                        <motion.div
+                          key={`${step.label}-${i}`}
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.18, ease: 'easeOut' }}
+                          className="flex flex-col gap-1 -ml-[4px]"
+                        >
                           <div className="flex items-start gap-2.5">
                             <div
                               className={`mt-[0.45em] h-[7px] w-[7px] shrink-0 rounded-full transition-colors duration-500 ${
-                                step.done
-                                  ? 'bg-muted-foreground'
-                                  : 'border border-muted-foreground/50 bg-background'
+                                step.error
+                                  ? 'bg-destructive'
+                                  : step.done
+                                    ? 'bg-muted-foreground'
+                                    : 'border border-muted-foreground/50 bg-background'
                               }`}
                             />
                             <span>
@@ -495,7 +505,7 @@ export function ChatMessage({
                               </pre>
                             </details>
                           )}
-                        </div>
+                        </motion.div>
                       ))}
                     </div>
                   </motion.div>
