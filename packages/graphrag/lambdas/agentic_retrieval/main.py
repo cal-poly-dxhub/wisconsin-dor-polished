@@ -617,6 +617,29 @@ def run_agentic_loop(
             )
             search_query = refined
 
+    trace_context = {
+        "query_id": query_id,
+        "session_id": session_id,
+        "request_id": request_id,
+    }
+    # Emit loop_start before the FAQ turn 0 so the UI sees a consistent
+    # open-event regardless of whether we short-circuit or enter the loop.
+    loop_started = time.perf_counter()
+    _log_agent_event(
+        "agent_loop_start",
+        **trace_context,
+        model_id=AGENTIC_MODEL_ID,
+        max_turns=MAX_TURNS,
+        **_query_log_fields(query),
+    )
+    _emit_trace(
+        ws_server,
+        trace_seq,
+        query_id=query_id,
+        kind="loop_start",
+        payload={"maxTurns": MAX_TURNS},
+    )
+
     # Turn 0: deterministic FAQ search (using the refined query when we have one).
     faq_result = _faq_search_direct(search_query)
     faq_entries = faq_result.get("faqs", [])
@@ -632,6 +655,18 @@ def run_agentic_loop(
             logger.info(
                 f"FAQ short-circuit: returning {len(faq_resource.faqs)} FAQ(s) "
                 "without entering agentic loop"
+            )
+            _emit_trace(
+                ws_server,
+                trace_seq,
+                query_id=query_id,
+                kind="loop_complete",
+                payload={
+                    "terminalReason": "faq_short_circuit",
+                    "turnsUsed": 0,
+                    "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
+                    "citedDocCount": 0,
+                },
             )
             # Empty document list — answer is fully grounded in FAQs.
             return "", [], [], faq_resource
@@ -682,20 +717,6 @@ def run_agentic_loop(
     ])
 
     tool_config = {"tools": TOOL_DEFINITIONS}
-    trace_context = {
-        "query_id": query_id,
-        "session_id": session_id,
-        "request_id": request_id,
-    }
-    loop_started = time.perf_counter()
-
-    _log_agent_event(
-        "agent_loop_start",
-        **trace_context,
-        model_id=AGENTIC_MODEL_ID,
-        max_turns=MAX_TURNS,
-        **_query_log_fields(query),
-    )
 
     for turn in range(MAX_TURNS):
         turn_number = turn + 1

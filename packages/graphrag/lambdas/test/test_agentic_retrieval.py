@@ -776,3 +776,63 @@ def test_run_agentic_loop_emits_trace_sequence(monkeypatch):
     # Cleanup for downstream re-imports.
     if "main" in _sys.modules:
         del _sys.modules["main"]
+
+
+def test_run_agentic_loop_faq_short_circuit_emits_bracketed_pair(monkeypatch):
+    """High-scoring FAQ short-circuit must still emit loop_start + loop_complete
+    so the UI can rely on a consistent open/close event pair on both paths.
+    """
+    import itertools
+    import sys as _sys
+    class FakeAgentEventMessage:
+        def __init__(self, **fields):
+            self.__dict__.update(fields)
+    _sys.modules["websocket_utils.models"].AgentEventMessage = FakeAgentEventMessage
+
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+        "EMIT_AGENT_TRACE": "true",
+    }):
+        if "main" in _sys.modules:
+            del _sys.modules["main"]
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            import main
+
+    # High-scoring FAQ triggers short-circuit.
+    monkeypatch.setattr(main, "_faq_search_direct", lambda q: {
+        "faqs": [{"text": "Q: what is TID\nA: answer", "score": 0.90,
+                  "source_uri": "s3://f/faq_1.txt"}],
+        "count": 1,
+    })
+
+    sent = []
+
+    def fake_run(coro):
+        coro.close()
+    monkeypatch.setattr(main.asyncio, "run", fake_run)
+    mock_ws = MagicMock()
+
+    def capture(msg):
+        sent.append(msg)
+        async def _noop():
+            return None
+        return _noop()
+    mock_ws.send_json = capture
+
+    main.run_agentic_loop(
+        "what is TID?",
+        query_id="q-1",
+        session_id="s-1",
+        ws_server=mock_ws,
+        trace_seq=itertools.count(1).__next__,
+    )
+
+    kinds = [m.kind for m in sent]
+    assert kinds == ["loop_start", "loop_complete"]
+    assert sent[-1].payload["terminalReason"] == "faq_short_circuit"
+    # Cleanup for downstream re-imports.
+    if "main" in _sys.modules:
+        del _sys.modules["main"]
