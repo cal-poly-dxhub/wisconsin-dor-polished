@@ -831,7 +831,13 @@ def test_run_agentic_loop_faq_short_circuit_emits_bracketed_pair(monkeypatch):
     )
 
     kinds = [m.kind for m in sent]
-    assert kinds == ["loop_start", "loop_complete"]
+    # Turn-0 FAQ now emits as a tool_call/tool_result pair (Change 2).
+    assert kinds == [
+        "loop_start",
+        "tool_call",
+        "tool_result",
+        "loop_complete",
+    ]
     assert sent[-1].payload["terminalReason"] == "faq_short_circuit"
     # Cleanup for downstream re-imports.
     if "main" in _sys.modules:

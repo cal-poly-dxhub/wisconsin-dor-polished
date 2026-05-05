@@ -100,6 +100,7 @@ class AgentEventMessage(WebSocketMessage):
         "tool_call",
         "tool_result",
         "loop_complete",
+        "phase",
     ]
     turn: int | None = None
     seq: int

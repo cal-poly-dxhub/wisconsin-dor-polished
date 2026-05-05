@@ -5,7 +5,13 @@ export interface MessageUnion {
 }
 
 export interface AgentTraceEvent {
-  kind: 'loop_start' | 'reasoning' | 'tool_call' | 'tool_result' | 'loop_complete';
+  kind:
+    | 'loop_start'
+    | 'reasoning'
+    | 'tool_call'
+    | 'tool_result'
+    | 'loop_complete'
+    | 'phase';
   turn?: number | null;
   seq: number;
   timestamp: number;

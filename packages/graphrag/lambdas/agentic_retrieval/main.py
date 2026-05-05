@@ -626,6 +626,18 @@ def run_agentic_loop(
     # it just burns a Bedrock call.
     search_query = query
     if chat_history:
+        _emit_trace(
+            ws_server,
+            trace_seq,
+            query_id=query_id,
+            kind="tool_call",
+            turn=0,
+            payload={
+                "toolName": "refine_query",
+                "summary": "",
+                "status": "pending",
+            },
+        )
         refine_result = execute_tool(
             "refine_query", {"query": query}, neptune, chat_history=chat_history
         )
@@ -635,6 +647,22 @@ def run_agentic_loop(
                 f"Turn-0 refine: '{query[:80]}' -> '{refined[:80]}'"
             )
             search_query = refined
+        refine_summary = _build_tool_result_summary("refine_query", refine_result)
+        _emit_trace(
+            ws_server,
+            trace_seq,
+            query_id=query_id,
+            kind="tool_result",
+            turn=0,
+            payload={
+                "toolName": "refine_query",
+                "status": refine_summary["status"],
+                "summary": refine_summary["summary_text"],
+                "docIds": refine_summary["doc_ids"],
+                "docTitles": refine_summary["doc_titles"],
+            },
+            dev_payload={"raw": refine_summary["raw"]},
+        )
 
     trace_context = {
         "query_id": query_id,
@@ -660,12 +688,40 @@ def run_agentic_loop(
     )
 
     # Turn 0: deterministic FAQ search (using the refined query when we have one).
+    _emit_trace(
+        ws_server,
+        trace_seq,
+        query_id=query_id,
+        kind="tool_call",
+        turn=0,
+        payload={
+            "toolName": "faq_search",
+            "summary": _build_tool_call_summary("faq_search", {"query": search_query}),
+            "status": "pending",
+        },
+    )
     faq_result = _faq_search_direct(search_query)
     faq_entries = faq_result.get("faqs", [])
     top_score = faq_entries[0].get("score", 0.0) if faq_entries else 0.0
     logger.info(
         f"FAQ turn-0: {len(faq_entries)} hits, top_score={top_score:.3f}, "
         f"threshold={FAQ_SCORE_THRESHOLD}"
+    )
+    faq_summary = _build_tool_result_summary("faq_search", faq_result)
+    _emit_trace(
+        ws_server,
+        trace_seq,
+        query_id=query_id,
+        kind="tool_result",
+        turn=0,
+        payload={
+            "toolName": "faq_search",
+            "status": faq_summary["status"],
+            "summary": faq_summary["summary_text"],
+            "docIds": faq_summary["doc_ids"],
+            "docTitles": faq_summary["doc_titles"],
+        },
+        dev_payload={"raw": faq_summary["raw"]},
     )
 
     if top_score >= FAQ_SCORE_THRESHOLD:
@@ -855,6 +911,7 @@ def run_agentic_loop(
                 payload={
                     "toolName": tool_name,
                     "summary": _build_tool_call_summary(tool_name, tool_input),
+                    "status": "pending",
                 },
                 dev_payload={
                     "toolInput": tool_input,
@@ -1445,6 +1502,25 @@ def handler(event: dict, context) -> dict[str, Any]:
                 )
                 ws_server = None
         trace_seq = itertools.count(1).__next__
+
+        _emit_trace(
+            ws_server,
+            trace_seq,
+            query_id=user_query.query_id,
+            kind="phase",
+            payload={"phase": "request_received"},
+        )
+        if chat_history:
+            _emit_trace(
+                ws_server,
+                trace_seq,
+                query_id=user_query.query_id,
+                kind="phase",
+                payload={
+                    "phase": "history_loaded",
+                    "historyTurns": len(chat_history),
+                },
+            )
 
         answer, cited_doc_ids, rag_documents, faq_resource = run_agentic_loop(
             user_query.query,
