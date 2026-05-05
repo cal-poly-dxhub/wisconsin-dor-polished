@@ -33,7 +33,7 @@ from step_function_types.models import (
     UserQuery,
 )
 from tools import TOOL_DEFINITIONS, execute_tool
-from websocket_utils.models import TraceContent, TraceMessage
+from websocket_utils.models import AgentEventMessage
 from websocket_utils.utils import WebSocketServer, get_ws_connection_from_session
 
 MAX_TURNS = 10
@@ -303,33 +303,26 @@ def _get_trace_ws(session_id: str) -> WebSocketServer | None:
         return None
 
 
-def _trace_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Keep UI trace payloads small and free of raw prompts or retrieved text."""
-    if not metadata:
-        return {}
+_trace_seq_counter = 0
 
-    allowed = {
-        "turn",
-        "max_turns",
-        "history_turns",
-        "faq_count",
-        "top_score",
-        "top_scores",
-        "chunk_count",
-        "neighbor_count",
-        "document_count",
-        "chain_length",
-        "graph_context_doc_count",
-        "graph_context_neighbor_count",
-        "cited_doc_count",
-        "rag_document_count",
-        "elapsed_ms",
-        "latency_ms",
-        "tool_names",
-        "found",
-        "refined",
-    }
-    return {k: v for k, v in metadata.items() if k in allowed and v is not None}
+
+def _trace_seq() -> int:
+    global _trace_seq_counter
+    _trace_seq_counter += 1
+    return _trace_seq_counter
+
+
+def _event_to_kind(event: str, status: str) -> str:
+    """Map legacy event names to AgentEventMessage kind values."""
+    if event == "agent_loop_start":
+        return "loop_start"
+    if event.endswith("_complete") or event == "faq_short_circuit":
+        return "tool_result"
+    if event.endswith("_start") or status == "pending":
+        return "tool_call"
+    if event in ("agent_loop_complete", "retrieval_complete"):
+        return "loop_complete"
+    return "phase"
 
 
 def _emit_trace_event(
@@ -345,22 +338,23 @@ def _emit_trace_event(
     if not trace_ws or not query_id:
         return
     try:
-        asyncio.run(
-            trace_ws.send_json(
-                TraceMessage(
-                    query_id=query_id,
-                    content=TraceContent(
-                        event=event,
-                        label=label,
-                        status=status,
-                        tool_name=tool_name,
-                        metadata=_trace_metadata(metadata),
-                    ),
-                )
-            )
+        payload: dict[str, Any] = {"label": label}
+        if tool_name:
+            payload["tool_name"] = tool_name
+        if metadata:
+            payload.update(metadata)
+
+        message = AgentEventMessage(
+            query_id=query_id,
+            kind=_event_to_kind(event, status),
+            seq=_trace_seq(),
+            timestamp=int(time.time() * 1000),
+            payload=payload,
+            dev_payload=_compact_log_value({"event": event, "status": status}),
         )
+        asyncio.run(trace_ws.send_json(message))
     except Exception as exc:  # noqa: BLE001 - never fail retrieval for UI trace.
-        logger.warning(f"Failed to send trace event '{event}': {exc}", exc_info=True)
+        logger.warning(f"Failed to emit agent-trace event '{event}': {exc}", exc_info=True)
 
 
 def _tool_trace_label(tool_name: str, result: dict | None = None) -> str:

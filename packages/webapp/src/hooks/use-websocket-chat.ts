@@ -7,10 +7,103 @@
 import { useCallback, useMemo, useEffect, useRef } from 'react';
 import { useValidatedWebSocket } from './use-validated-websocket';
 import { useChatStore } from '../stores/chat-store';
-import type { MessageUnion } from '@messages/websocket-interface';
-import type { ConnectionState, Query } from '../stores/types';
+import type { MessageUnion, AgentEventKind } from '@messages/websocket-interface';
+import type { ConnectionState, Query, TraceEvent } from '../stores/types';
 import { ChatError } from '@/components/errors/chat-error';
 import { useChatError } from '@/components/errors/use-chat-error';
+
+const TOOL_LABELS: Record<string, { pending: string; complete: string }> = {
+  faq_search: { pending: 'Checking FAQs', complete: 'Checked FAQs' },
+  refine_query: {
+    pending: 'Reviewing conversation context',
+    complete: 'Refined the search question',
+  },
+  vector_search: {
+    pending: 'Searching the knowledge graph',
+    complete: 'Searched the knowledge graph',
+  },
+  get_neighbors: {
+    pending: 'Exploring related authorities',
+    complete: 'Explored related authorities',
+  },
+  get_document: {
+    pending: 'Fetching document details',
+    complete: 'Fetched document details',
+  },
+  get_authority_chain: {
+    pending: 'Tracing authority chain',
+    complete: 'Traced authority chain',
+  },
+  list_framework_docs: {
+    pending: 'Listing framework documents',
+    complete: 'Listed framework documents',
+  },
+  fetch_case_opinion: {
+    pending: 'Fetching court opinion',
+    complete: 'Fetched court opinion',
+  },
+  answer: { pending: 'Preparing cited answer', complete: 'Prepared cited answer' },
+};
+
+function agentEventToTrace(
+  kind: AgentEventKind,
+  toolName: string | null,
+  summary: string,
+  payload: Record<string, unknown>
+): TraceEvent {
+  switch (kind) {
+    case 'loop_start':
+      return {
+        event: 'loop_start',
+        label: 'Planning retrieval',
+        status: 'pending',
+        metadata: payload,
+      };
+    case 'tool_call': {
+      const labels = toolName ? TOOL_LABELS[toolName] : undefined;
+      return {
+        event: `${toolName}_start`,
+        label: labels?.pending ?? (summary || `Running ${toolName}`),
+        status: 'pending',
+        toolName,
+        metadata: payload,
+      };
+    }
+    case 'tool_result': {
+      const labels = toolName ? TOOL_LABELS[toolName] : undefined;
+      return {
+        event: `${toolName}_complete`,
+        label: labels?.complete ?? (summary || `Completed ${toolName}`),
+        status: (payload.status as string) === 'error' ? 'error' : 'complete',
+        toolName,
+        metadata: payload,
+      };
+    }
+    case 'loop_complete':
+      return {
+        event: 'loop_complete',
+        label: 'Retrieval complete',
+        status: 'complete',
+        metadata: {
+          elapsed_ms: payload.elapsedMs,
+          cited_doc_count: payload.citedDocCount,
+        },
+      };
+    case 'reasoning':
+      return {
+        event: 'reasoning',
+        label: (payload.text as string) || 'Thinking...',
+        status: 'complete',
+      };
+    case 'phase':
+      return {
+        event: 'phase',
+        label: summary || 'Processing',
+        status: 'complete',
+        metadata: payload,
+      };
+  }
+}
 
 export interface UseWebSocketChatOptions {
   websocketUrl: string;
@@ -79,7 +172,6 @@ export function useWebSocketChat(
               break;
 
             case 'trace':
-            case 'agent-trace':
               appendQueryTrace(message.queryId, {
                 event: message.content.event,
                 label: message.content.label,
@@ -88,6 +180,21 @@ export function useWebSocketChat(
                 metadata: message.content.metadata,
               });
               break;
+
+            case 'agent-event': {
+              const payload = message.payload ?? {};
+              const toolName = (payload.toolName as string) ?? null;
+              const summary = (payload.summary as string) ?? '';
+
+              const traceEvent = agentEventToTrace(
+                message.kind,
+                toolName,
+                summary,
+                { ...payload, turn: message.turn }
+              );
+              appendQueryTrace(message.queryId, traceEvent);
+              break;
+            }
 
             case 'answer-event':
               const { event } = message;

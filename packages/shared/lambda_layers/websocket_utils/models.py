@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -68,18 +68,24 @@ class FAQMessage(WebSocketMessage):
     content: FAQContent
 
 
-class TraceContent(WebSocketMessage):
-    event: str
-    label: str
-    status: Literal["pending", "complete", "error"] = "complete"
-    tool_name: str | None = None
-    metadata: dict | None = None
+class AgentEventMessage(WebSocketMessage):
+    """Trace event emitted by the GraphRAG agent loop."""
 
-
-class TraceMessage(WebSocketMessage):
-    response_type: Literal["trace"] = "trace"
+    response_type: Literal["agent-event"] = "agent-event"
     query_id: str
-    content: TraceContent
+    kind: Literal[
+        "loop_start",
+        "reasoning",
+        "tool_call",
+        "tool_result",
+        "loop_complete",
+        "phase",
+    ]
+    turn: int | None = None
+    seq: int
+    timestamp: int
+    payload: dict[str, Any] = Field(default_factory=dict)
+    dev_payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class AnswerEventType(WebSocketMessage):

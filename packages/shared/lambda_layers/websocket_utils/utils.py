@@ -15,6 +15,7 @@ from websocket_utils.errors import (
     WebSocketConnectionError,
 )
 from websocket_utils.models import (
+    AgentEventMessage,
     AnswerEventType,
     DocumentsMessage,
     ErrorMessage,
@@ -22,7 +23,6 @@ from websocket_utils.models import (
     FragmentContent,
     FragmentMessage,
     PlainWebSocketMessage,
-    TraceMessage,
     WebSocketMessage,
 )
 
@@ -76,14 +76,14 @@ class WebSocketServer:
                     "streamId": "answer-event",
                     "body": body.model_dump(by_alias=True),
                 }
-            case TraceMessage():
-                message = {
-                    "streamId": "trace",
-                    "body": body.model_dump(by_alias=True),
-                }
             case PlainWebSocketMessage(message=message):
                 # For echoing during testing
                 pass
+            case AgentEventMessage():
+                message = {
+                    "streamId": "agent-trace",
+                    "body": body.model_dump(by_alias=True),
+                }
             case _:
                 logger.error("WebSocket client received an unknown message type")
                 raise InvalidMessageError(details={"message_type": type(body).__name__})

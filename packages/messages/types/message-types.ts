@@ -50,10 +50,24 @@ export const TraceMessageSchema = z.object({
   content: TraceContentSchema,
 });
 
-export const AgentTraceMessageSchema = z.object({
-  responseType: z.literal('agent-trace'),
+export const AgentEventKindSchema = z.enum([
+  'loop_start',
+  'reasoning',
+  'tool_call',
+  'tool_result',
+  'loop_complete',
+  'phase',
+]);
+
+export const AgentEventMessageSchema = z.object({
+  responseType: z.literal('agent-event'),
   queryId: z.string(),
-  content: TraceContentSchema,
+  kind: AgentEventKindSchema,
+  turn: z.number().nullable().optional(),
+  seq: z.number(),
+  timestamp: z.number(),
+  payload: z.record(z.unknown()).optional().default({}),
+  devPayload: z.record(z.unknown()).optional().default({}),
 });
 
 export const ErrorContentSchema = z.object({
@@ -86,7 +100,7 @@ export const MessageUnionSchema = z.discriminatedUnion('responseType', [
   DocumentsMessageSchema,
   FAQMessageSchema,
   TraceMessageSchema,
-  AgentTraceMessageSchema,
+  AgentEventMessageSchema,
   ErrorMessageSchema,
   FragmentMessageSchema,
   AnswerEventTypeSchema,
@@ -97,6 +111,8 @@ export const WebSocketMessageSchema = z.object({
   body: MessageUnionSchema,
 });
 
+export type AgentEventKind = z.infer<typeof AgentEventKindSchema>;
+
 export type SourceDocument = z.infer<typeof SourceDocumentSchema>;
 export type DocumentsContent = z.infer<typeof DocumentsContentSchema>;
 export type DocumentsMessage = z.infer<typeof DocumentsMessageSchema>;
@@ -105,7 +121,7 @@ export type FAQContent = z.infer<typeof FAQContentSchema>;
 export type FAQMessage = z.infer<typeof FAQMessageSchema>;
 export type TraceContent = z.infer<typeof TraceContentSchema>;
 export type TraceMessage = z.infer<typeof TraceMessageSchema>;
-export type AgentTraceMessage = z.infer<typeof AgentTraceMessageSchema>;
+export type AgentEventMessage = z.infer<typeof AgentEventMessageSchema>;
 export type ErrorContent = z.infer<typeof ErrorContentSchema>;
 export type ErrorMessage = z.infer<typeof ErrorMessageSchema>;
 export type AnswerEventType = z.infer<typeof AnswerEventTypeSchema>;

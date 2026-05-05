@@ -109,6 +109,7 @@ export const useValidatedWebSocket = (
       try {
         // Parse message
         const rawData: unknown = JSON.parse(event.data as string);
+        console.log('[WS] Received:', rawData);
         const validatedMessage: WebSocketMessage =
           WebSocketMessageSchema.parse(rawData);
         const messageBody = validatedMessage.body;
@@ -117,6 +118,8 @@ export const useValidatedWebSocket = (
         setLastMessage(messageBody);
         messageHandlerRef.current(messageBody);
       } catch (err) {
+        console.error('[WS] Validation failed:', err);
+        console.error('[WS] Raw message:', JSON.parse(event.data as string));
         handleError(
           new ChatError(
             err instanceof Error ? err : new Error('Unknown error'),

@@ -125,36 +125,52 @@ function formatTraceMetadata(metadata?: Record<string, unknown> | null) {
   if (!metadata) return '';
 
   const parts: string[] = [];
-  const addCount = (key: string, singular: string, plural = `${singular}s`) => {
-    const value = metadata[key];
+  const get = (snake: string, camel: string) =>
+    metadata[snake] ?? metadata[camel];
+
+  const addCount = (
+    snake: string,
+    camel: string,
+    singular: string,
+    plural = `${singular}s`
+  ) => {
+    const value = get(snake, camel);
     if (typeof value === 'number' && value > 0) {
       parts.push(`${value} ${value === 1 ? singular : plural}`);
     }
   };
 
-  addCount('history_turns', 'prior turn');
-  addCount('faq_count', 'FAQ hit');
-  addCount('chunk_count', 'chunk');
-  addCount('neighbor_count', 'neighbor');
-  addCount('document_count', 'document');
-  addCount('chain_length', 'authority step');
-  addCount('cited_doc_count', 'citation');
-  addCount('rag_document_count', 'source');
+  addCount('history_turns', 'historyTurns', 'prior turn');
+  addCount('faq_count', 'faqCount', 'FAQ hit');
+  addCount('chunk_count', 'chunkCount', 'chunk');
+  addCount('neighbor_count', 'neighborCount', 'neighbor');
+  addCount('document_count', 'documentCount', 'document');
+  addCount('chain_length', 'chainLength', 'authority step');
+  addCount('cited_doc_count', 'citedDocCount', 'citation');
+  addCount('rag_document_count', 'ragDocumentCount', 'source');
+  addCount('turns_used', 'turnsUsed', 'turn');
 
-  if (typeof metadata.top_score === 'number') {
-    parts.push(`top score ${metadata.top_score.toFixed(2)}`);
+  const topScore = get('top_score', 'topScore');
+  if (typeof topScore === 'number') {
+    parts.push(`top score ${topScore.toFixed(2)}`);
   }
-  if (typeof metadata.latency_ms === 'number') {
-    parts.push(`${metadata.latency_ms}ms`);
+  const latencyMs = get('latency_ms', 'latencyMs');
+  if (typeof latencyMs === 'number') {
+    parts.push(`${latencyMs}ms`);
   }
-  if (typeof metadata.elapsed_ms === 'number') {
-    parts.push(`${(metadata.elapsed_ms / 1000).toFixed(1)}s`);
+  const elapsedMs = get('elapsed_ms', 'elapsedMs');
+  if (typeof elapsedMs === 'number') {
+    parts.push(`${(elapsedMs / 1000).toFixed(1)}s`);
   }
   if (metadata.refined === true) {
     parts.push('expanded follow-up');
   }
-  if (Array.isArray(metadata.tool_names) && metadata.tool_names.length > 0) {
-    parts.push(`tools: ${metadata.tool_names.join(', ')}`);
+  const toolNames = get('tool_names', 'toolNames');
+  if (Array.isArray(toolNames) && toolNames.length > 0) {
+    parts.push(`tools: ${toolNames.join(', ')}`);
+  }
+  if (typeof metadata.summary === 'string' && metadata.summary) {
+    parts.push(metadata.summary as string);
   }
 
   return parts.join(' · ');

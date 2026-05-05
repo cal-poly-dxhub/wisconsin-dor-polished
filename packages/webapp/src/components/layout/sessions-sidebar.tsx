@@ -46,9 +46,12 @@ export function SessionsSidebar() {
   });
 
   const handleNewChat = () => {
+    console.log('[New Chat] Before:', { sessionId: currentSessionId });
     clearHistory();
     reset();
+    console.log('[New Chat] After reset');
     refetch();
+    toast.success('New chat started');
   };
 
   const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
