@@ -86,7 +86,7 @@ export const MessageUnionSchema = z.discriminatedUnion('responseType', [
 ]);
 
 export const WebSocketMessageSchema = z.object({
-  streamId: z.enum(['answer-event', 'answer', 'resources', 'trace', 'error']),
+  streamId: z.enum(['answer-event', 'answer', 'resources', 'trace', 'agent-trace', 'error']),
   body: MessageUnionSchema,
 });
 
