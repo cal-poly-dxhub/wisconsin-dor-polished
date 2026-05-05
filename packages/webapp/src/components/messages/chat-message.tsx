@@ -457,8 +457,12 @@ export function ChatMessage({
           {showThinkingLabel && (
             <div className="mb-4" style={{ fontSize: 'clamp(0.9rem, 1vw + 0.5rem, 1.05rem)' }}>
               <button
-                onClick={() => setStepsOpen(prev => !prev)}
-                className="flex items-center gap-1.5 text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+                onClick={
+                  steps.length > 0 ? () => setStepsOpen(prev => !prev) : undefined
+                }
+                className={`flex items-center gap-1.5 text-muted-foreground transition-colors ${
+                  steps.length > 0 ? 'cursor-pointer hover:text-foreground' : ''
+                }`}
               >
                 <span className={isThinking ? 'thinking-shimmer' : ''}>
                   {isThinking
@@ -467,18 +471,20 @@ export function ChatMessage({
                       ? `Thought for ${displaySeconds}s`
                       : 'Thought'}
                 </span>
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  className={`transition-transform duration-200 ${stepsOpen ? 'rotate-90' : ''}`}
-                >
-                  <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
+                {steps.length > 0 && (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 12 12"
+                    fill="none"
+                    className={`transition-transform duration-200 ${stepsOpen ? 'rotate-90' : ''}`}
+                  >
+                    <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
               </button>
               <AnimatePresence>
-                {stepsOpen && (
+                {steps.length > 0 && stepsOpen && (
                   <motion.div
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
