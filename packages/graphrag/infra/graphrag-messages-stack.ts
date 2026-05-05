@@ -11,6 +11,7 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   stepFunctionTypesLayer: lambda.LayerVersion;
   websocketUtilsLayer: lambda.LayerVersion;
   sessionsTable: cdk.aws_dynamodb.ITable;
+  chatHistoryTable: cdk.aws_dynamodb.ITable;
   websocketCallbackUrl: string;
   neptuneGraphId: string;
   neptuneGraphEndpoint: string;
@@ -59,6 +60,8 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
           RAW_BUCKET: props.rawBucketName,
           FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBaseId,
+          CHAT_HISTORY_TABLE_NAME: props.chatHistoryTable.tableName,
+          SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
           LOG_LEVEL: 'INFO',
           LOG_AGENT_TRACE: 'true',
           LOG_TOOL_TRACE: 'true',
@@ -67,8 +70,25 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           LOG_NEPTUNE_QUERY_TEXT: 'true',
           LOG_MAX_TEXT_CHARS: '500',
           LOG_MAX_QUERY_CHARS: '1000',
+          EMIT_AGENT_TRACE: 'true',
         },
       }
+    );
+
+    // Read access to chat history so the agent can resolve follow-up
+    // questions against prior turns and refine ambiguous queries.
+    props.chatHistoryTable.grantReadData(agenticRetrievalHandler);
+
+    // Read access to the sessions table + permission to post to
+    // API Gateway WebSocket connections, so report_error can surface
+    // Lambda failures to the UI instead of the frontend spinning forever.
+    props.sessionsTable.grantReadData(agenticRetrievalHandler);
+    agenticRetrievalHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['execute-api:ManageConnections'],
+        resources: ['*'],
+      })
     );
 
     // Neptune Analytics permissions (scoped to specific graph)
