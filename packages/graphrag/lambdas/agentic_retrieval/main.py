@@ -551,6 +551,24 @@ def _build_faq_resource(faq_results: list[dict]) -> FAQResource | None:
     return FAQResource(faqs=faqs) if faqs else None
 
 
+def _build_cited_faq_resource(
+    faq_results: list[dict],
+    cited_doc_ids: set[str],
+) -> FAQResource | None:
+    """Convert cited FAQ KB chunks into FAQResource for downstream synthesis.
+
+    The agent may cite IDs from the seeded FAQ search result. Those IDs are not
+    Neptune Document nodes, so they would otherwise be dropped from
+    RAGDocument construction and leave ResponseStreaming with no context.
+    """
+    cited_faq_results = [
+        entry
+        for entry in faq_results[:MAX_FAQS]
+        if _faq_id_from_uri(entry.get("source_uri", "")) in cited_doc_ids
+    ]
+    return _build_faq_resource(cited_faq_results)
+
+
 def _faq_search_direct(query: str) -> dict:
     """Run the `faq_search` tool with the user's verbatim query.
 
@@ -965,6 +983,7 @@ def run_agentic_loop(
                 rag_docs = _build_rag_documents(
                     cited_chunks, cited, cited_discovery, cited_opinions
                 )
+                cited_faq_resource = _build_cited_faq_resource(faq_entries, cited)
                 _log_agent_event(
                     "agent_loop_complete",
                     **trace_context,
@@ -975,6 +994,7 @@ def run_agentic_loop(
                     cited_doc_count=len(cited),
                     discovered_doc_count=len(all_doc_ids),
                     rag_document_count=len(rag_docs),
+                    faq_count=len(cited_faq_resource.faqs) if cited_faq_resource else 0,
                     discovery=_discovery_summary(cited_discovery),
                 )
                 _emit_trace(
@@ -989,7 +1009,7 @@ def run_agentic_loop(
                         "citedDocCount": len(cited),
                     },
                 )
-                return answer, list(cited), rag_docs, None
+                return answer, list(cited), rag_docs, cited_faq_resource
 
             tool_results.append({
                 "toolResult": {
