@@ -1,6 +1,34 @@
+// Allow-list mirrors ALLOWED_METADATA_KEYS in
+// packages/graphrag/lambdas/agentic_retrieval/main.py. Any key not listed
+// here is dropped before rendering — defense-in-depth in case a backend
+// version slips through with free-form content.
+const ALLOWED_METADATA_KEYS = new Set([
+  'chunkCount',
+  'docCount',
+  'neighborCount',
+  'topScore',
+  'faqCount',
+  'documentCount',
+  'chainLength',
+  'opinionChars',
+  'refined',
+  'citedDocCount',
+  'latencyMs',
+]);
+
+export function sanitizeTraceMetadata(
+  metadata: unknown,
+): Record<string, unknown> {
+  if (!metadata || typeof metadata !== 'object') return {};
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(metadata as Record<string, unknown>)) {
+    if (ALLOWED_METADATA_KEYS.has(k)) out[k] = v;
+  }
+  return out;
+}
+
 export function formatTraceMetadata(metadata: unknown): string {
-  if (!metadata || typeof metadata !== 'object') return '';
-  const m = metadata as Record<string, unknown>;
+  const m = sanitizeTraceMetadata(metadata);
   const parts: string[] = [];
   const addCount = (key: string, singular: string, plural = `${singular}s`) => {
     const v = m[key];

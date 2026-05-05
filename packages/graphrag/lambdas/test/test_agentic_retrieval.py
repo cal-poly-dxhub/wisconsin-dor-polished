@@ -555,6 +555,39 @@ def test_build_tool_result_summary_fetch_opinion_miss():
     assert "123 Wis. 2d 45" in s["summary_text"]
 
 
+def test_filter_metadata_keeps_allowed_keys_only():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _filter_metadata
+    out = _filter_metadata({
+        "chunkCount": 3,
+        "topScore": 0.9,
+        "latencyMs": 120,
+        "query": "how do I appeal my property tax",
+        "rawUserText": "sensitive",
+    })
+    assert out == {"chunkCount": 3, "topScore": 0.9, "latencyMs": 120}
+
+
+def test_filter_metadata_non_dict_returns_empty():
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            from main import _filter_metadata
+    assert _filter_metadata(None) == {}
+    assert _filter_metadata("not a dict") == {}
+    assert _filter_metadata([("key", "value")]) == {}
+
+
 def test_emit_trace_sends_agent_event_message():
     import itertools
     with patch.dict(os.environ, {

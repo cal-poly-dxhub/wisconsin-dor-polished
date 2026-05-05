@@ -289,6 +289,39 @@ def _build_tool_call_summary(tool_name: str, tool_input: dict) -> str:
     return ""
 
 
+# Allow-list for keys that may appear in tool_result.payload.metadata.
+# Anything outside this set is dropped at emission so future contributors
+# can't accidentally surface raw user text (or other free-form content)
+# in the frontend trace. New keys must be added here *and* to the
+# matching frontend allow-list in trace-metadata.ts.
+ALLOWED_METADATA_KEYS = frozenset({
+    "chunkCount",
+    "docCount",
+    "neighborCount",
+    "topScore",
+    "faqCount",
+    "documentCount",
+    "chainLength",
+    "opinionChars",
+    "refined",
+    "citedDocCount",
+    "latencyMs",
+})
+
+
+def _filter_metadata(metadata: Any) -> dict[str, Any]:
+    """Drop any keys not in ALLOWED_METADATA_KEYS, log on drops."""
+    if not isinstance(metadata, dict):
+        return {}
+    dropped = [k for k in metadata if k not in ALLOWED_METADATA_KEYS]
+    if dropped:
+        logger.warning(
+            "trace metadata dropped disallowed key(s): %s",
+            ", ".join(sorted(dropped)),
+        )
+    return {k: v for k, v in metadata.items() if k in ALLOWED_METADATA_KEYS}
+
+
 def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
     """Build a UI-friendly summary of a tool result.
 
@@ -685,7 +718,7 @@ def run_agentic_loop(
                 "summary": refine_summary["summary_text"],
                 "docIds": refine_summary["doc_ids"],
                 "docTitles": refine_summary["doc_titles"],
-                "metadata": refine_summary["metadata"],
+                "metadata": _filter_metadata(refine_summary["metadata"]),
             },
             dev_payload={"raw": refine_summary["raw"]},
         )
@@ -746,7 +779,7 @@ def run_agentic_loop(
             "summary": faq_summary["summary_text"],
             "docIds": faq_summary["doc_ids"],
             "docTitles": faq_summary["doc_titles"],
-            "metadata": faq_summary["metadata"],
+            "metadata": _filter_metadata(faq_summary["metadata"]),
         },
         dev_payload={"raw": faq_summary["raw"]},
     )
@@ -1027,6 +1060,7 @@ def run_agentic_loop(
                 result_metadata = dict(tool_result_summary["metadata"])
                 if tool_latency_ms is not None:
                     result_metadata["latencyMs"] = tool_latency_ms
+                result_metadata = _filter_metadata(result_metadata)
                 _emit_trace(
                     ws_server,
                     trace_seq,

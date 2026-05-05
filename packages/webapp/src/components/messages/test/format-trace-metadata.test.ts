@@ -1,6 +1,6 @@
 /** @bun */
 import { describe, test, expect } from 'bun:test';
-import { formatTraceMetadata } from '../trace-metadata';
+import { formatTraceMetadata, sanitizeTraceMetadata } from '../trace-metadata';
 
 describe('formatTraceMetadata', () => {
   test('renders vector_search subtitle with counts + score + latency', () => {
@@ -43,5 +43,37 @@ describe('formatTraceMetadata', () => {
   test('renders refined flag', () => {
     expect(formatTraceMetadata({ refined: true })).toBe('refined');
     expect(formatTraceMetadata({ refined: false })).toBe('');
+  });
+
+  test('drops disallowed keys so raw text cannot reach the UI', () => {
+    // `query` and `rawUserText` must never be rendered even if a backend
+    // version accidentally sends them.
+    expect(
+      formatTraceMetadata({
+        chunkCount: 3,
+        query: 'how do I appeal my property tax',
+        rawUserText: 'sensitive',
+      }),
+    ).toBe('3 chunks');
+  });
+});
+
+describe('sanitizeTraceMetadata', () => {
+  test('keeps allowed keys and drops the rest', () => {
+    expect(
+      sanitizeTraceMetadata({
+        chunkCount: 3,
+        topScore: 0.9,
+        latencyMs: 120,
+        query: 'nope',
+        arbitraryKey: { nested: true },
+      }),
+    ).toEqual({ chunkCount: 3, topScore: 0.9, latencyMs: 120 });
+  });
+
+  test('returns empty object for non-object input', () => {
+    expect(sanitizeTraceMetadata(undefined)).toEqual({});
+    expect(sanitizeTraceMetadata(null)).toEqual({});
+    expect(sanitizeTraceMetadata('string')).toEqual({});
   });
 });
