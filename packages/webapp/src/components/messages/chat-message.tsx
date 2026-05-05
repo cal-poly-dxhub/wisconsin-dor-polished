@@ -44,6 +44,16 @@ function verbFor(toolName: string): string {
   return TOOL_VERBS[toolName] ?? toolName;
 }
 
+function parseTimestampMs(timestamp?: string): number | null {
+  if (!timestamp) return null;
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function elapsedSecondsSince(startedAt: number): number {
+  return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+}
+
 function buildLegacySteps({
   hasResources,
   items,
@@ -338,36 +348,44 @@ export function ChatMessage({
   const messageRef = useRef<HTMLDivElement>(null);
   const breakpoint = useBreakpoint();
 
-  // Thinking timer: starts on pending, stops when streaming begins
-  const [thinkingSeconds, setThinkingSeconds] = useState(0);
+  const isThinking =
+    status === 'pending' || status === 'sending' || status === 'sent';
+  const isStreaming = status === 'streaming';
+
+  // Thinking timer anchored to the query's original timestamp so replacing
+  // the optimistic ID with the server query ID does not restart it.
+  const [thinkingSeconds, setThinkingSeconds] = useState(() => {
+    if (!isThinking) return 0;
+    const startedAt = parseTimestampMs(timestamp);
+    return startedAt ? elapsedSecondsSince(startedAt) : 0;
+  });
   const thinkingStartRef = useRef<number | null>(null);
   const storedDuration = useChatStore(s => s.queries[queryId]?.thinkingDuration);
 
   useEffect(() => {
-    if (status === 'pending' || status === 'sending') {
-      thinkingStartRef.current = Date.now();
+    if (isThinking) {
+      const startedAt =
+        thinkingStartRef.current ?? parseTimestampMs(timestamp) ?? Date.now();
+      thinkingStartRef.current = startedAt;
+      setThinkingSeconds(elapsedSecondsSince(startedAt));
       const interval = setInterval(() => {
-        if (thinkingStartRef.current) {
-          setThinkingSeconds(Math.floor((Date.now() - thinkingStartRef.current) / 1000));
-        }
+        setThinkingSeconds(elapsedSecondsSince(startedAt));
       }, 1000);
       return () => clearInterval(interval);
     }
     if (thinkingStartRef.current) {
-      const final = Math.floor((Date.now() - thinkingStartRef.current) / 1000);
+      const final = elapsedSecondsSince(thinkingStartRef.current);
       thinkingStartRef.current = null;
-      queueMicrotask(() => {
-        setThinkingSeconds(final);
+      setThinkingSeconds(final);
+      if (storedDuration === undefined) {
         useChatStore.getState().setThinkingDuration(queryId, final);
-      });
+      }
     }
     return undefined;
-  }, [status, queryId]);
+  }, [isThinking, queryId, storedDuration, timestamp]);
 
   const displaySeconds = storedDuration ?? thinkingSeconds;
 
-  const isThinking = status === 'pending' || status === 'sending';
-  const isStreaming = status === 'streaming';
   const hasCompleted = status === 'streaming' || status === 'completed';
   const showThinkingLabel = isThinking || hasCompleted;
   const hasResources = (items?.length ?? 0) > 0;
