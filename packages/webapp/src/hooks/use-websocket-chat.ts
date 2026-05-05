@@ -43,6 +43,9 @@ export function useWebSocketChat(
   const setCurrentQueryId = useChatStore(state => state.setCurrentQueryId);
   const setSessionId = useChatStore(state => state.setSessionId);
   const replaceQueryId = useChatStore(state => state.replaceQueryId);
+  const appendAgentTraceEvent = useChatStore(
+    state => state.appendAgentTraceEvent
+  );
 
   // Track the pending optimistic ID so handleSuccessfulSend can replace it
   const pendingQueryIdRef = useRef<string | null>(null);
@@ -99,6 +102,17 @@ export function useWebSocketChat(
                 updateQueryStatus(message.queryId, 'failed');
               }
               break;
+
+            case 'agent-event':
+              appendAgentTraceEvent(message.queryId, {
+                kind: message.kind,
+                turn: message.turn,
+                seq: message.seq,
+                timestamp: message.timestamp,
+                payload: message.payload,
+                devPayload: message.devPayload,
+              });
+              break;
           }
         }
       } catch (error) {
@@ -120,6 +134,7 @@ export function useWebSocketChat(
       appendQueryResponse,
       setChatState,
       setQueryError,
+      appendAgentTraceEvent,
       handleError,
     ]
   );

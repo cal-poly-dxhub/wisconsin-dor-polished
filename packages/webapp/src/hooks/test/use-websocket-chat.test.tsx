@@ -434,4 +434,65 @@ describe('useWebSocketChat Hook Tests', () => {
     expect(error.retryable).toBe(false);
     expect(error.timestamp).toBeInstanceOf(Date);
   });
+
+  test('routes agent-event messages into agentTrace store', async () => {
+    const options = { websocketUrl: 'wss://test-websocket.example.com' };
+    const createWrapper = (qc: QueryClient) => {
+      const Wrapper = ({ children }: { children: React.ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      );
+      Wrapper.displayName = 'TestWrapper';
+      return Wrapper;
+    };
+    renderHook(() => useWebSocketChat(options), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    const queryId = 'q-agent-1';
+    act(() => {
+      useChatStore.getState().addQuery({
+        query: 'hello',
+        queryId,
+        type: 'outbound',
+        timestamp: new Date().toISOString(),
+        status: 'pending',
+        response: { type: 'stream', content: '' },
+      });
+    });
+
+    const event1: MessageUnion = {
+      responseType: 'agent-event',
+      queryId,
+      kind: 'loop_start',
+      turn: null,
+      seq: 1,
+      timestamp: 1000,
+      payload: { maxTurns: 10 },
+      devPayload: {},
+    };
+    const event2: MessageUnion = {
+      responseType: 'agent-event',
+      queryId,
+      kind: 'tool_call',
+      turn: 1,
+      seq: 2,
+      timestamp: 1100,
+      payload: { toolName: 'vector_search', summary: '"use value"' },
+      devPayload: {},
+    };
+    // Duplicate seq — should be deduped.
+    const event2dup: MessageUnion = { ...event2 };
+
+    act(() => {
+      mockMessageHandler!(event1);
+      mockMessageHandler!(event2);
+      mockMessageHandler!(event2dup);
+    });
+
+    const trace = useChatStore.getState().queries[queryId].agentTrace;
+    expect(trace).toHaveLength(2);
+    expect(trace?.[0].kind).toBe('loop_start');
+    expect(trace?.[1].kind).toBe('tool_call');
+    expect(trace?.[1].payload.toolName).toBe('vector_search');
+  });
 });
