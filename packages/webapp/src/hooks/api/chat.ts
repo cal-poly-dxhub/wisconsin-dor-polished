@@ -10,7 +10,6 @@ import {
   sendMessage,
   assignFeedback,
   getSessions,
-  getSessionHistory,
   deleteSession,
   SendMessageRequest,
   CreateSessionResponse,
@@ -18,7 +17,6 @@ import {
   FeedbackRequest,
   FeedbackResponse,
   SessionsListResponse,
-  SessionHistoryResponse,
   DeleteSessionResponse,
 } from '../../api/chat-api';
 
@@ -78,18 +76,6 @@ export function useSessionsList(
   return useQuery({
     queryKey: ['chat', 'sessions'],
     queryFn: getSessions,
-    ...options,
-  });
-}
-
-export function useSessionHistory(
-  sessionId: string | null,
-  options?: Omit<UseQueryOptions<SessionHistoryResponse, Error>, 'queryKey' | 'queryFn'>
-) {
-  return useQuery({
-    queryKey: ['chat', 'session', sessionId, 'history'],
-    queryFn: () => getSessionHistory(sessionId!),
-    enabled: !!sessionId,
     ...options,
   });
 }
