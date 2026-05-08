@@ -69,18 +69,44 @@ def log_chat_history(
     faqs_data = [faq.model_dump() for faq in faqs.faqs] if faqs else []
     documents_data = [doc.model_dump() for doc in documents.documents] if documents else []
 
+    CONTENT_PREVIEW_LIMIT = 300
+
+    resources = []
+    if documents:
+        for doc in documents.documents:
+            data: dict = {"documentId": doc.document_id, "title": doc.title}
+            if doc.content:
+                data["content"] = doc.content[:CONTENT_PREVIEW_LIMIT]
+            if doc.source is not None:
+                data["source"] = doc.source
+            if doc.source_url is not None:
+                data["sourceUrl"] = doc.source_url
+            resources.append({"type": "document", "data": data})
+    if faqs:
+        for faq in faqs.faqs:
+            resources.append({
+                "type": "faq",
+                "data": {
+                    "faqId": faq.faq_id,
+                    "question": faq.question,
+                    "answer": faq.answer,
+                },
+            })
+
+    item: dict = {
+        "sessionId": session_id,
+        "timestamp": timestamp,
+        "queryId": query_id,
+        "query": query,
+        "answer": answer,
+        "faqs": json.dumps(faqs_data),
+        "documents": json.dumps(documents_data),
+    }
+    if resources:
+        item["resources"] = resources
+
     try:
-        table.put_item(
-            Item={
-                "sessionId": session_id,
-                "timestamp": timestamp,
-                "queryId": query_id,
-                "query": query,
-                "answer": answer,
-                "faqs": json.dumps(faqs_data),
-                "documents": json.dumps(documents_data),
-            }
-        )
+        table.put_item(Item=item)
         logger.info(f"Chat history saved for session {session_id}")
     except Exception as e:
         logger.error(f"Failed to save chat history: {e}", exc_info=True)

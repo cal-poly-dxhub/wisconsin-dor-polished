@@ -337,7 +337,9 @@ export class SessionsStack extends cdk.NestedStack {
       corsPreflight: {
         allowOrigins: ['*'],
         allowMethods: [
+          apigatewayv2.CorsHttpMethod.GET,
           apigatewayv2.CorsHttpMethod.POST,
+          apigatewayv2.CorsHttpMethod.DELETE,
           apigatewayv2.CorsHttpMethod.OPTIONS,
         ],
         allowHeaders: [
