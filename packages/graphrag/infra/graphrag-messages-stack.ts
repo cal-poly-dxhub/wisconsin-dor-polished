@@ -76,7 +76,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
 
     // WebSocket progress trace streaming needs the session -> connection lookup.
     props.sessionsTable.grantReadData(agenticRetrievalHandler);
-    props.chatHistoryTable.grantReadData(agenticRetrievalHandler);
+    props.chatHistoryTable.grantReadWriteData(agenticRetrievalHandler);
 
     agenticRetrievalHandler.addToRolePolicy(
       new iam.PolicyStatement({

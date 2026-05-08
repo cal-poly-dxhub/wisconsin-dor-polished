@@ -414,6 +414,33 @@ def get_chat_history(session_id: str) -> list[dict[str, str]]:
         return []
 
 
+def save_chat_history(
+    session_id: str, query_id: str, query: str, answer: str
+) -> None:
+    """Persist a query/answer pair to the chat history table."""
+    if not CHAT_HISTORY_TABLE or not session_id:
+        return
+    try:
+        import datetime
+
+        table = dynamodb_resource.Table(CHAT_HISTORY_TABLE)
+        table.put_item(
+            Item={
+                "queryId": query_id,
+                "sessionId": session_id,
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                "query": query,
+                "answer": answer,
+            }
+        )
+        logger.info(f"Saved chat history for session {session_id}, query {query_id}")
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            f"Failed to save chat history for session {session_id}",
+            exc_info=True,
+        )
+
+
 def process_event(event: dict) -> UserQuery:
     """Parse input event.
 
@@ -1452,6 +1479,10 @@ def handler(event: dict, context) -> dict[str, Any]:
             session_id=user_query.session_id,
             request_id=request_id,
             trace_ws=trace_ws,
+        )
+
+        save_chat_history(
+            session_id, user_query.query_id, user_query.query, answer
         )
 
         documents = DocumentResource(documents=rag_documents)
