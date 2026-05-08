@@ -10,8 +10,9 @@ import {
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ExternalLink, HelpCircle, X } from 'lucide-react';
+import { Maximize2, X } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
+import { AuthorityBadge } from './authority-badge';
 
 export interface FAQ {
   faqId: string;
@@ -20,7 +21,7 @@ export interface FAQ {
 }
 
 const faqCardVariants = cva(
-  'group cursor-pointer font-sans transition-all duration-200 ease-in-out hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-within:border-primary/50',
+  'group cursor-pointer font-sans transition-colors duration-200 ease-in-out hover:border-primary/40 hover:shadow-md focus-within:border-primary/50',
   {
     variants: {
       variant: {
@@ -46,34 +47,16 @@ const faqCardVariants = cva(
   }
 );
 
-const faqHeaderVariants = cva('flex min-w-0 flex-1 gap-2', {
-  variants: {
-    variant: {
-      compact: 'items-center',
-      modal: 'items-start pb-2',
-    },
-    size: {
-      sm: 'gap-1.5',
-      md: 'gap-2',
-      lg: 'gap-2.5',
-    },
-  },
-  defaultVariants: {
-    variant: 'compact',
-    size: 'md',
-  },
-});
-
-const iconVariants = cva('text-muted-foreground flex-shrink-0', {
+const faqHeaderVariants = cva('min-w-0 flex-1', {
   variants: {
     variant: {
       compact: '',
-      modal: 'mt-1',
+      modal: 'pb-2',
     },
     size: {
-      sm: 'h-3 w-3',
-      md: 'h-4 w-4',
-      lg: 'h-5 w-5',
+      sm: '',
+      md: '',
+      lg: '',
     },
   },
   defaultVariants: {
@@ -82,10 +65,10 @@ const iconVariants = cva('text-muted-foreground flex-shrink-0', {
   },
 });
 
-const titleVariants = cva('leading-tight opacity-90', {
+const titleVariants = cva('leading-snug opacity-90', {
   variants: {
     variant: {
-      compact: 'line-clamp-1 truncate',
+      compact: 'line-clamp-3',
       modal: 'line-clamp-2',
     },
     size: {
@@ -114,8 +97,12 @@ export function FAQHeader({
 }: FAQHeaderProps) {
   return (
     <div className={cn(faqHeaderVariants({ variant, size }))}>
-      <HelpCircle className={cn(iconVariants({ variant, size }))} />
       <div className="min-w-0 flex-1">
+        {variant === 'compact' && faqId && (
+          <div className="text-muted-foreground mb-1 truncate text-[0.65rem] font-medium uppercase tracking-wide">
+            ID: {faqId}
+          </div>
+        )}
         <CardTitle className={cn(titleVariants({ variant, size }))}>
           {question}
         </CardTitle>
@@ -181,19 +168,28 @@ export function FAQCardCompact({
         )}
       >
         <CardHeader className="pb-3">
-          <FAQHeader question={faq.question} variant={variant} size={size} />
+          <div className="flex items-start gap-3">
+            <FAQHeader question={faq.question} faqId={faq.faqId} variant={variant} size={size} />
+            <button
+              type="button"
+              onClick={event => {
+                event.stopPropagation();
+                onClick();
+              }}
+              className="text-muted-foreground hover:bg-accent hover:text-foreground -mt-1 -mr-1 cursor-pointer rounded-md p-1.5 transition-colors"
+              aria-label="Expand FAQ card"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </button>
+          </div>
           <CardDescription className="line-clamp-2">
             {answerPreview}
           </CardDescription>
         </CardHeader>
 
         <CardContent className="pt-0">
-          <div className="text-muted-foreground flex items-center justify-between text-sm">
-            <span>ID: {faq.faqId}</span>
-            <span className="inline-flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-              View
-              <ExternalLink className="h-3 w-3" />
-            </span>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+            <AuthorityBadge authorityLevel={6} size="sm" />
           </div>
         </CardContent>
       </Card>
@@ -232,19 +228,26 @@ function FAQCardModal({ faq, isAnimating, onClose }: FAQCardModalProps) {
         transition={{ ease: 'easeIn', duration: ANIMATION_CONFIG.duration }}
       >
         <Card className="flex h-full flex-col border-0 shadow-none overflow-hidden">
-          <CardHeader className="border-border border-b pb-3 flex-shrink-0">
-            <div className="flex items-start justify-between">
-              <FAQHeader
-                question={faq.question}
-                faqId={faq.faqId}
-                variant="modal"
-              />
+          <CardHeader className="border-border border-b pb-4 flex-shrink-0">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-muted-foreground mb-1 truncate text-[0.65rem] font-medium uppercase tracking-wide">
+                  ID: {faq.faqId}
+                </div>
+                <FAQHeader
+                  question={faq.question}
+                  variant="modal"
+                />
+                <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                  <AuthorityBadge authorityLevel={6} size="md" />
+                </div>
+              </div>
 
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={onClose}
-                className="h-8 w-8"
+                className="h-8 w-8 shrink-0 cursor-pointer"
                 aria-label="Close modal"
               >
                 <X className="h-4 w-4" />

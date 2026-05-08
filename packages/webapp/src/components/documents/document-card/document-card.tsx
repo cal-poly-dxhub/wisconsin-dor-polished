@@ -19,7 +19,7 @@ import { DocumentBadge } from './document-badge';
 export interface Document {
   documentId: string;
   title: string;
-  content: string;
+  content?: string;
   source?: string;
   sourceUrl?: string;
   authorityLevel?: number;
@@ -184,10 +184,11 @@ export function DocumentCardCompact({
   variant = 'compact',
   size = 'md',
 }: DocumentCardCompactProps) {
+  const content = document.content || '';
   const contentPreview =
-    document.content.length > CONTENT_PREVIEW_LENGTH
-      ? `${document.content.substring(0, CONTENT_PREVIEW_LENGTH)}...`
-      : document.content;
+    content.length > CONTENT_PREVIEW_LENGTH
+      ? `${content.substring(0, CONTENT_PREVIEW_LENGTH)}...`
+      : content;
 
   return (
     <motion.div
@@ -357,7 +358,7 @@ function DocumentCardModal({
           <CardContent className="scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 flex-1 overflow-y-auto p-6">
             <div className="prose prose-sm max-w-none">
               <p className="leading-relaxed whitespace-pre-wrap">
-                {document.content}
+                {document.content || 'No content available.'}
               </p>
             </div>
           </CardContent>

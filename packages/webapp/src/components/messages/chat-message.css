@@ -2,13 +2,13 @@
 .chat-query {
   font-weight: 500;
   font-size: clamp(0.9rem, 1vw + 0.5rem, 1.05rem);
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 
 .chat-response {
   font-weight: 200;
   font-size: 1.125rem;
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 
 .chat-response-aligned {
@@ -18,7 +18,7 @@
 /* Markdown formatting styles */
 .markdown-container {
   font-family: '42 Dot Sans', Arial, Helvetica, sans-serif;
-  color: hsl(var(--foreground));
+  color: var(--foreground);
   background: transparent;
   line-height: 1.5;
   font-size: clamp(0.9rem, 1vw + 0.5rem, 1.05rem);
@@ -37,7 +37,7 @@
   margin-top: 1em;
   margin-bottom: 0.5em;
   line-height: 1.25;
-  color: hsl(var(--foreground));
+  color: var(--foreground);
 }
 
 .markdown-container > :first-child {
@@ -126,22 +126,22 @@
 
 /* Links */
 .markdown-container a {
-  color: hsl(var(--primary));
+  color: var(--primary);
   text-decoration: underline;
   transition: color 0.2s;
 }
 .markdown-container a:hover {
-  color: hsl(var(--primary) / 0.8);
+  opacity: 0.8;
 }
 
 /* Blockquotes */
 .markdown-container blockquote {
-  border-left: 4px solid hsl(var(--primary));
-  background: hsl(var(--muted));
-  padding: 0.8em 1em;
+  border-left: 3px solid var(--muted-foreground);
+  background: transparent;
+  padding: 0.8em 1.2em;
   margin: 1.5em 0;
-  color: hsl(var(--muted-foreground));
-  font-style: italic;
+  color: var(--foreground);
+  font-style: normal;
 }
 
 /* Images */
@@ -157,15 +157,16 @@
   border-collapse: collapse;
   width: 100%;
   margin: 1.5em 0;
-  font-size: 0.97em;
+  font-size: 0.82em;
 }
 .markdown-container th,
 .markdown-container td {
-  border: 1px solid var(--border);
-  padding: 0.6em 0.8em;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 0.6em 1em;
+  text-align: left;
 }
 .markdown-container th {
-  background: var(--muted);
   font-weight: 500;
 } 
 

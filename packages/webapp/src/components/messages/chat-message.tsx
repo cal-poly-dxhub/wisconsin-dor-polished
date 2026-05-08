@@ -140,7 +140,6 @@ function formatTraceMetadata(metadata?: Record<string, unknown> | null) {
     }
   };
 
-  addCount('history_turns', 'historyTurns', 'prior turn');
   addCount('faq_count', 'faqCount', 'FAQ hit');
   addCount('chunk_count', 'chunkCount', 'chunk');
   addCount('neighbor_count', 'neighborCount', 'neighbor');
@@ -148,15 +147,10 @@ function formatTraceMetadata(metadata?: Record<string, unknown> | null) {
   addCount('chain_length', 'chainLength', 'authority step');
   addCount('cited_doc_count', 'citedDocCount', 'citation');
   addCount('rag_document_count', 'ragDocumentCount', 'source');
-  addCount('turns_used', 'turnsUsed', 'turn');
 
   const topScore = get('top_score', 'topScore');
   if (typeof topScore === 'number') {
     parts.push(`top score ${topScore.toFixed(2)}`);
-  }
-  const latencyMs = get('latency_ms', 'latencyMs');
-  if (typeof latencyMs === 'number') {
-    parts.push(`${latencyMs}ms`);
   }
   const elapsedMs = get('elapsed_ms', 'elapsedMs');
   if (typeof elapsedMs === 'number') {
@@ -164,13 +158,6 @@ function formatTraceMetadata(metadata?: Record<string, unknown> | null) {
   }
   if (metadata.refined === true) {
     parts.push('expanded follow-up');
-  }
-  const toolNames = get('tool_names', 'toolNames');
-  if (Array.isArray(toolNames) && toolNames.length > 0) {
-    parts.push(`tools: ${toolNames.join(', ')}`);
-  }
-  if (typeof metadata.summary === 'string' && metadata.summary) {
-    parts.push(metadata.summary as string);
   }
 
   return parts.join(' · ');
