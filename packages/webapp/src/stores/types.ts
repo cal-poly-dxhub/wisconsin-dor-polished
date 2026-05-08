@@ -39,7 +39,7 @@ export interface QueryResources {
 export interface Document {
   documentId: string;
   title: string;
-  content: string;
+  content?: string;
   source?: string;
   sourceUrl?: string;
   authorityLevel?: number;
@@ -98,6 +98,13 @@ export type QueryStatus =
   | 'completed'
   | 'failed';
 
+export interface SessionSnapshot {
+  queries: Record<string, Query>;
+  queryOrder: string[];
+  currentQueryId: string | null;
+  chatState: ChatState;
+}
+
 // Main store interface
 export interface ChatStore {
   sessionStatus: SessionStatus;
@@ -114,6 +121,7 @@ export interface ChatStore {
   draftMessage: string;
 
   sessionId: string | null;
+  sessionCache: Record<string, SessionSnapshot>;
 
   setSessionStatus: (status: SessionStatus) => void;
   setConnectionState: (state: ConnectionState) => void;
@@ -140,5 +148,7 @@ export interface ChatStore {
   clearErrors: () => void;
   setDraftMessage: (draft: string) => void;
   clearHistory: () => void;
+  stashSession: (sessionId: string) => void;
+  restoreSession: (sessionId: string) => boolean;
   reset: () => void;
 }

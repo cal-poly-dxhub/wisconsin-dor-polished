@@ -5,6 +5,7 @@
  */
 
 import { useCallback, useMemo, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useValidatedWebSocket } from './use-validated-websocket';
 import { useChatStore } from '../stores/chat-store';
 import type { MessageUnion, AgentEventKind } from '@messages/websocket-interface';
@@ -45,25 +46,37 @@ const TOOL_LABELS: Record<string, { pending: string; complete: string }> = {
   answer: { pending: 'Preparing cited answer', complete: 'Prepared cited answer' },
 };
 
+// Phase events that are too noisy / redundant to show in the UI.
+// These are emitted by the backend for logging but don't add value to the
+// user-facing thinking train of thought.
+const SUPPRESSED_PHASE_EVENTS = new Set([
+  'agent_turn_start',
+  'agent_turn_model_response',
+  'agentic_retrieval_request_received',
+  'agentic_retrieval_response_ready',
+  'chat_history_loaded',
+  'agent_turn_budget_warning_injected',
+]);
+
 function agentEventToTrace(
   kind: AgentEventKind,
   toolName: string | null,
-  summary: string,
+  label: string,
   payload: Record<string, unknown>
-): TraceEvent {
+): TraceEvent | null {
   switch (kind) {
     case 'loop_start':
       return {
         event: 'loop_start',
-        label: 'Planning retrieval',
+        label: label || 'Planning retrieval',
         status: 'pending',
         metadata: payload,
       };
     case 'tool_call': {
       const labels = toolName ? TOOL_LABELS[toolName] : undefined;
       return {
-        event: `${toolName}_start`,
-        label: labels?.pending ?? (summary || `Running ${toolName}`),
+        event: `${toolName ?? 'unknown'}_start`,
+        label: labels?.pending ?? (label || `Running ${toolName ?? 'tool'}`),
         status: 'pending',
         toolName,
         metadata: payload,
@@ -72,8 +85,8 @@ function agentEventToTrace(
     case 'tool_result': {
       const labels = toolName ? TOOL_LABELS[toolName] : undefined;
       return {
-        event: `${toolName}_complete`,
-        label: labels?.complete ?? (summary || `Completed ${toolName}`),
+        event: `${toolName ?? 'unknown'}_complete`,
+        label: labels?.complete ?? (label || `Completed ${toolName ?? 'tool'}`),
         status: (payload.status as string) === 'error' ? 'error' : 'complete',
         toolName,
         metadata: payload,
@@ -82,11 +95,12 @@ function agentEventToTrace(
     case 'loop_complete':
       return {
         event: 'loop_complete',
-        label: 'Retrieval complete',
+        label: label || 'Retrieval complete',
         status: 'complete',
         metadata: {
           elapsed_ms: payload.elapsedMs,
           cited_doc_count: payload.citedDocCount,
+          rag_document_count: payload.ragDocumentCount,
         },
       };
     case 'reasoning':
@@ -95,13 +109,19 @@ function agentEventToTrace(
         label: (payload.text as string) || 'Thinking...',
         status: 'complete',
       };
-    case 'phase':
+    case 'phase': {
+      const devPayload = payload.devPayload as Record<string, unknown> | undefined;
+      const backendEvent = (devPayload?.event as string) ?? '';
+      if (SUPPRESSED_PHASE_EVENTS.has(backendEvent)) {
+        return null;
+      }
       return {
         event: 'phase',
-        label: summary || 'Processing',
+        label: label || 'Processing',
         status: 'complete',
         metadata: payload,
       };
+    }
   }
 }
 
@@ -124,6 +144,7 @@ export function useWebSocketChat(
   options: UseWebSocketChatOptions
 ): UseWebSocketChatReturn {
   const { handleError } = useChatError();
+  const queryClient = useQueryClient();
   const setConnectionState = useChatStore(state => state.setConnectionState);
   const updateQueryStatus = useChatStore(state => state.updateQueryStatus);
   const appendQueryResponse = useChatStore(state => state.appendQueryResponse);
@@ -146,6 +167,12 @@ export function useWebSocketChat(
     (message: MessageUnion) => {
       try {
         if ('responseType' in message) {
+          // Ignore messages for queries that aren't in the current session's store
+          const queryId = 'queryId' in message ? message.queryId : null;
+          if (queryId && !useChatStore.getState().queries[queryId]) {
+            return;
+          }
+
           switch (message.responseType) {
             case 'documents':
               updateQueryResources(
@@ -183,16 +210,18 @@ export function useWebSocketChat(
 
             case 'agent-event': {
               const payload = message.payload ?? {};
-              const toolName = (payload.toolName as string) ?? null;
-              const summary = (payload.summary as string) ?? '';
+              const toolName = (payload.toolName as string) ?? (payload.tool_name as string) ?? null;
+              const label = (payload.label as string) ?? '';
 
               const traceEvent = agentEventToTrace(
                 message.kind,
                 toolName,
-                summary,
-                { ...payload, turn: message.turn }
+                label,
+                { ...payload, turn: message.turn, devPayload: message.devPayload }
               );
-              appendQueryTrace(message.queryId, traceEvent);
+              if (traceEvent) {
+                appendQueryTrace(message.queryId, traceEvent);
+              }
               break;
             }
 
@@ -204,6 +233,7 @@ export function useWebSocketChat(
               } else if (event === 'stop') {
                 updateQueryStatus(message.queryId, 'completed');
                 setChatState('idle');
+                queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] });
               }
               break;
 
@@ -241,6 +271,7 @@ export function useWebSocketChat(
       setChatState,
       setQueryError,
       handleError,
+      queryClient,
     ]
   );
 
@@ -281,7 +312,6 @@ export function useWebSocketChat(
 
   // Keep store session ID updated
   useEffect(() => {
-    console.log('useEffect found sessionId update');
     setSessionId(sessionId);
   }, [sessionId, setSessionId]);
 

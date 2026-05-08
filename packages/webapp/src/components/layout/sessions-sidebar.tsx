@@ -5,13 +5,15 @@ import { useAuth } from '@/contexts/auth-context';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ChevronLeft, MessageSquare, Moon, Sun, LogOut, Loader2, Plus, Trash2 } from 'lucide-react';
+import Image from 'next/image';
 import { useTheme } from 'next-themes';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { useSessionsList, useSessionHistory, useDeleteSession } from '@/hooks/api/chat';
+import { useSessionsList, useDeleteSession } from '@/hooks/api/chat';
+import { getSessionHistory } from '@/api/chat-api';
 import { useChatStore } from '@/stores/chat-store';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -28,8 +30,9 @@ export function SessionsSidebar() {
   const reset = useChatStore((state) => state.reset);
   const setSessionId = useChatStore((state) => state.setSessionId);
   const addQuery = useChatStore((state) => state.addQuery);
+  const stashSession = useChatStore((state) => state.stashSession);
+  const restoreSession = useChatStore((state) => state.restoreSession);
 
-  const { data: historyData, refetch: refetchHistory } = useSessionHistory(null);
   const deleteSessionMutation = useDeleteSession({
     onSuccess: () => {
       toast.success('Session deleted');
@@ -46,12 +49,12 @@ export function SessionsSidebar() {
   });
 
   const handleNewChat = () => {
-    console.log('[New Chat] Before:', { sessionId: currentSessionId });
+    if (currentSessionId) {
+      stashSession(currentSessionId);
+    }
     clearHistory();
     reset();
-    console.log('[New Chat] After reset');
     refetch();
-    toast.success('New chat started');
   };
 
   const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
@@ -64,16 +67,45 @@ export function SessionsSidebar() {
   const handleSessionSelect = async (sessionId: string) => {
     if (sessionId === currentSessionId) return;
 
+    // Stash current session's in-memory state before switching
+    if (currentSessionId) {
+      stashSession(currentSessionId);
+    }
+
+    // Try restoring from cache first (preserves in-flight queries)
+    const restored = restoreSession(sessionId);
+    if (restored) {
+      setSessionId(sessionId);
+      // Ensure currentQueryId points to the last query for resource display
+      const store = useChatStore.getState();
+      const lastId = store.queryOrder[store.queryOrder.length - 1];
+      if (lastId) {
+        useChatStore.getState().setCurrentQueryId(lastId);
+      }
+      // If there's a pending query, check if the answer arrived while away
+      const pendingId = store.queryOrder.find(
+        id => store.queries[id]?.status === 'pending' || store.queries[id]?.status === 'streaming'
+      );
+      if (pendingId) {
+        getSessionHistory(sessionId).then(history => {
+          const msg = history.messages?.find(m => m.queryId === pendingId);
+          if (msg?.answer && msg.answer.trim() !== '') {
+            useChatStore.getState().updateQueryResponse(pendingId, msg.answer);
+            useChatStore.getState().updateQueryStatus(pendingId, 'completed');
+            useChatStore.getState().setChatState('idle');
+          }
+        }).catch(() => {});
+      }
+      return;
+    }
+
     try {
-      // Clear current chat
+      const history = await getSessionHistory(sessionId);
+
       clearHistory();
 
-      // Load session history
-      const history = await refetchHistory();
-
-      if (history.data?.messages) {
-        // Populate chat store with historical messages
-        history.data.messages.forEach((msg) => {
+      if (history.messages && history.messages.length > 0) {
+        history.messages.forEach((msg) => {
           addQuery({
             queryId: msg.queryId,
             query: msg.query,
@@ -87,13 +119,12 @@ export function SessionsSidebar() {
             resources: msg.resources,
           });
         });
+        const lastMsg = history.messages[history.messages.length - 1];
+        useChatStore.getState().setCurrentQueryId(lastMsg.queryId);
       }
 
-      // Set the session ID (will trigger WebSocket reconnection)
       setSessionId(sessionId);
-
-      toast.success('Session loaded');
-    } catch (error) {
+    } catch (_error) {
       toast.error('Failed to load session');
     }
   };
@@ -125,15 +156,23 @@ export function SessionsSidebar() {
     >
       {/* Header with Logo/Collapse Button */}
       <div className="flex items-center justify-between border-b border-border px-4 py-4">
-        {/* Logo Placeholder */}
-        <div
-          className="overflow-hidden transition-all duration-300 ease-in-out"
-          style={{
-            width: isCollapsed ? '0px' : 'auto',
-            opacity: isCollapsed ? 0 : 1,
-          }}
-        >
-          <div className="text-sm font-semibold whitespace-nowrap">WisDOR</div>
+        <div className="flex items-center gap-2">
+          <Image
+            src="/wisdor-logo.png"
+            alt="WisDOR"
+            width={28}
+            height={28}
+            className="rounded shrink-0"
+          />
+          <div
+            className="overflow-hidden transition-all duration-300 ease-in-out"
+            style={{
+              width: isCollapsed ? '0px' : 'auto',
+              opacity: isCollapsed ? 0 : 1,
+            }}
+          >
+            <div className="text-sm font-semibold whitespace-nowrap">WisDOR</div>
+          </div>
         </div>
 
         {/* Collapse/Expand Button */}
@@ -211,7 +250,7 @@ export function SessionsSidebar() {
                       <MessageSquare className="h-4 w-4 shrink-0" />
                       <div className="flex-1 overflow-hidden text-left">
                         <p className="truncate text-sm">
-                          {session.sessionId.slice(0, 8)}
+                          {session.title || 'New chat'}
                         </p>
                         {session.lastMessageAt && (
                           <p className="truncate text-xs text-muted-foreground">
@@ -242,7 +281,7 @@ export function SessionsSidebar() {
       </div>
 
       {/* Bottom User Profile */}
-      <div className="border-t border-border">
+      <div className="border-t border-border pb-2">
         {isCollapsed ? (
           /* Collapsed: Just avatar icon */
           <div className="flex items-center justify-center py-4">
@@ -255,7 +294,7 @@ export function SessionsSidebar() {
                   {userInitial}
                 </button>
               </PopoverTrigger>
-              <PopoverContent side="right" align="end" className="w-56">
+              <PopoverContent side="right" align="end" collisionPadding={16} className="w-56">
                 <div className="space-y-1">
                   {/* Email header */}
                   <div className="px-2 py-2 border-b border-border">
@@ -313,7 +352,7 @@ export function SessionsSidebar() {
                 </div>
               </button>
             </PopoverTrigger>
-            <PopoverContent side="right" align="end" className="w-56">
+            <PopoverContent side="right" align="end" collisionPadding={16} className="w-56">
               <div className="space-y-1">
                 {/* Email header */}
                 <div className="px-2 py-2 border-b border-border">

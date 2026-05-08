@@ -37,6 +37,7 @@ export const useChatStore = create<ChatStore>()(
     errors: [],
     draftMessage: '',
     sessionId: null,
+    sessionCache: {},
 
     // Session management
     setSessionStatus: (sessionStatus: SessionStatus) =>
@@ -194,6 +195,30 @@ export const useChatStore = create<ChatStore>()(
         state.queryOrder = [];
         state.errors = [];
       }),
+
+    stashSession: (sessionId: string) =>
+      set(state => {
+        if (!sessionId || state.queryOrder.length === 0) return;
+        state.sessionCache[sessionId] = {
+          queries: state.queries,
+          queryOrder: state.queryOrder,
+          currentQueryId: state.currentQueryId,
+          chatState: state.chatState,
+        };
+      }),
+
+    restoreSession: (sessionId: string) => {
+      const snapshot = get().sessionCache[sessionId];
+      if (!snapshot) return false;
+      set(state => {
+        state.queries = snapshot.queries;
+        state.queryOrder = snapshot.queryOrder;
+        state.currentQueryId = snapshot.currentQueryId;
+        state.chatState = snapshot.chatState;
+        state.errors = [];
+      });
+      return true;
+    },
 
     reset: () =>
       set(state => {

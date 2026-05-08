@@ -30,6 +30,7 @@ const Session = z.object({
   sessionId: z.string().uuid(),
   createdAt: z.string().optional(),
   lastMessageAt: z.string().optional(),
+  title: z.string().optional(),
 });
 const SessionsListResponse = z.object({
   sessions: z.array(Session),
@@ -60,21 +61,25 @@ export type ChatMessage = z.infer<typeof ChatMessage>;
 export type SessionHistoryResponse = z.infer<typeof SessionHistoryResponse>;
 export type DeleteSessionResponse = z.infer<typeof DeleteSessionResponse>;
 
-// Unwraps the common response format and enforces a body schema
+// Parses the API response, handling both wrapped (Lambda proxy 1.0 style)
+// and direct (HTTP API format 2.0) response formats.
 async function handleApiCall<T>(
   responsePromise: Promise<unknown>,
   responseSchema: z.ZodSchema<T>
 ): Promise<T> {
-  const response = ApiResponse.parse(await responsePromise);
+  const raw = await responsePromise;
 
-  if (response.statusCode >= 400) {
-    const errorBody = JSON.parse(response.body);
-    throw new Error(errorBody.message || `HTTP ${response.statusCode} Error`);
+  const wrapped = ApiResponse.safeParse(raw);
+  if (wrapped.success) {
+    if (wrapped.data.statusCode >= 400) {
+      const errorBody = JSON.parse(wrapped.data.body);
+      throw new Error(errorBody.message || `HTTP ${wrapped.data.statusCode} Error`);
+    }
+    const body = JSON.parse(wrapped.data.body);
+    return responseSchema.parse(body);
   }
 
-  const body = JSON.parse(response.body);
-  // TODO: map Zod validation errors to standard error type
-  return responseSchema.parse(body);
+  return responseSchema.parse(raw);
 }
 
 export async function createSession() {

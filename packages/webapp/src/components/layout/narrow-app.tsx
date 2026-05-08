@@ -4,6 +4,7 @@ import { ChatContainer } from '@/components/messages/chat-container';
 import { ChatInput } from '@/components/messages/chat-input';
 import { SessionsSidebar } from '@/components/layout/sessions-sidebar';
 import { useWebSocketChat } from '@/hooks/use-websocket-chat';
+import { useSessionResume } from '@/hooks/use-session-resume';
 import { Toaster } from '@/components/ui/sonner';
 import { GradientBackground } from '@/components/ui/gradient-background';
 
@@ -12,6 +13,7 @@ const stableConfig = {
 };
 
 export function NarrowApp() {
+  useSessionResume();
   const { sendMessage } = useWebSocketChat(stableConfig);
 
   return (
