@@ -62,8 +62,6 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
           RAW_BUCKET: props.rawBucketName,
           FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBaseId,
-          CHAT_HISTORY_TABLE_NAME: props.chatHistoryTable.tableName,
-          SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
           LOG_LEVEL: 'INFO',
           LOG_AGENT_TRACE: 'true',
           LOG_TOOL_TRACE: 'true',
