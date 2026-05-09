@@ -85,6 +85,8 @@ def log_chat_history(
                 data["source"] = doc.source
             if doc.source_url is not None:
                 data["sourceUrl"] = doc.source_url
+            if doc.discovery_tag:
+                data["discoveryTag"] = doc.discovery_tag
             resources.append({"type": "document", "data": data})
     if faqs:
         for faq in faqs.faqs:
