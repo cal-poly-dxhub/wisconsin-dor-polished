@@ -415,24 +415,55 @@ def get_chat_history(session_id: str) -> list[dict[str, str]]:
 
 
 def save_chat_history(
-    session_id: str, query_id: str, query: str, answer: str
+    session_id: str,
+    query_id: str,
+    query: str,
+    answer: str,
+    rag_documents: list[RAGDocument] | None = None,
+    faq_resource: "FAQResource | None" = None,
 ) -> None:
-    """Persist a query/answer pair to the chat history table."""
+    """Persist a query/answer pair (with resources) to the chat history table."""
     if not CHAT_HISTORY_TABLE or not session_id:
         return
     try:
         import datetime
 
+        item: dict = {
+            "queryId": query_id,
+            "sessionId": session_id,
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+            "query": query,
+            "answer": answer,
+        }
+
+        resources: list[dict] = []
+        if rag_documents:
+            for doc in rag_documents:
+                resources.append({
+                    "type": "document",
+                    "data": {
+                        "documentId": doc.document_id,
+                        "title": doc.title,
+                        "source": doc.source,
+                        "sourceUrl": doc.source_url,
+                        "discoveryTag": doc.discovery_tag,
+                    },
+                })
+        if faq_resource:
+            for faq in faq_resource.faqs:
+                resources.append({
+                    "type": "faq",
+                    "data": {
+                        "faqId": faq.faq_id,
+                        "question": faq.question,
+                        "answer": faq.answer,
+                    },
+                })
+        if resources:
+            item["resources"] = resources
+
         table = dynamodb_resource.Table(CHAT_HISTORY_TABLE)
-        table.put_item(
-            Item={
-                "queryId": query_id,
-                "sessionId": session_id,
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
-                "query": query,
-                "answer": answer,
-            }
-        )
+        table.put_item(Item=item)
         logger.info(f"Saved chat history for session {session_id}, query {query_id}")
     except Exception:  # noqa: BLE001
         logger.warning(
@@ -1482,7 +1513,12 @@ def handler(event: dict, context) -> dict[str, Any]:
         )
 
         save_chat_history(
-            session_id, user_query.query_id, user_query.query, answer
+            session_id,
+            user_query.query_id,
+            user_query.query,
+            answer,
+            rag_documents=rag_documents,
+            faq_resource=faq_resource,
         )
 
         documents = DocumentResource(documents=rag_documents)

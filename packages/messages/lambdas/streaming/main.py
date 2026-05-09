@@ -26,7 +26,7 @@ dynamodb = boto3.resource("dynamodb")
 chat_history_table = os.environ.get("CHAT_HISTORY_TABLE_NAME")
 
 
-def get_chat_history(session_id: str) -> list[dict[str, str]]:
+def get_chat_history(session_id: str, exclude_query_id: str | None = None) -> list[dict[str, str]]:
     if not chat_history_table:
         logger.warning("CHAT_HISTORY_TABLE_NAME not set; returning empty chat history.")
         return []
@@ -41,7 +41,11 @@ def get_chat_history(session_id: str) -> list[dict[str, str]]:
             ScanIndexForward=True,
         )
         items = response.get("Items", [])
-        history = [{"query": item["query"], "answer": item["answer"]} for item in items]
+        history = [
+            {"query": item["query"], "answer": item["answer"]}
+            for item in items
+            if item.get("queryId") != exclude_query_id
+        ]
         logger.info(f"Retrieved {len(history)} chat history items for session {session_id}")
         return history
     except Exception as e:
@@ -221,7 +225,7 @@ def handler(event: dict, context) -> dict[str, Any]:
         return GenerateResponseResult(successful=False).model_dump()
 
     try:
-        chat_history = get_chat_history(job.session_id)
+        chat_history = get_chat_history(job.session_id, exclude_query_id=job.query_id)
     except Exception as e:
         logger.error(f"Error while getting chat history: {e}", exc_info=True)
         return GenerateResponseResult(successful=False).model_dump()
