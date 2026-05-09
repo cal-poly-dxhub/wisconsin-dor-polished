@@ -71,6 +71,55 @@ def _classify_line(spans: list, body_size: float) -> str:
     return "body"
 
 
+# Prose-as-table signatures. Real tables with long description cells (revision
+# logs, tax-allocation grids) have MANY rows; fake tables from multi-column
+# prose have few rows. We combine row count + max-cell-length to tell them
+# apart: a 4-row "table" with a 1000+ char cell is prose; a 26-row table with
+# a 220 char cell is a real revision log.
+_LONG_CELL_MIN_ROWS = 5
+_VERY_LONG_CELL_MIN_ROWS = 8
+_LONG_CELL_CHARS = 200
+_VERY_LONG_CELL_CHARS = 500
+
+
+def looks_like_real_table(rows: list[list]) -> bool:
+    """Return True when the extracted rows look like a genuine data grid.
+
+    ``find_tables()`` routinely flags multi-column prose pages as tables. Row-
+    joining those with ``" | "`` scrambles reading order and injects pipe noise
+    into chunks. We reject when the shape looks prose-like:
+      - Fewer than 2 rows (a 1-row "table" is almost always a header line).
+      - No cell has any content.
+      - Few rows AND a long cell (prose-as-table): the signature of POG p.41's
+        contact-info page, which comes back as 4 rows × 2 cols with a
+        1244-char cell. Real multi-row tables pass even when individual
+        cells are long (revision logs with 11-26 rows and 200-500 char
+        description cells).
+    """
+    if not rows or len(rows) < 2:
+        return False
+
+    any_content = False
+    max_cell = 0
+    for row in rows:
+        for cell in row:
+            text = str(cell).strip() if cell else ""
+            if not text:
+                continue
+            any_content = True
+            if len(text) > max_cell:
+                max_cell = len(text)
+    if not any_content:
+        return False
+
+    n_rows = len(rows)
+    if max_cell > _VERY_LONG_CELL_CHARS and n_rows < _VERY_LONG_CELL_MIN_ROWS:
+        return False
+    if max_cell > _LONG_CELL_CHARS and n_rows < _LONG_CELL_MIN_ROWS:
+        return False
+    return True
+
+
 def _extract_table_text(table) -> str:
     rows = table.extract()
     lines = []
@@ -105,9 +154,21 @@ def extract_with_pymupdf(
         # Detect tables on this page
         try:
             tables_result = page.find_tables()
-            table_objs = tables_result.tables if tables_result else []
+            candidate_tables = tables_result.tables if tables_result else []
         except Exception:
-            table_objs = []
+            candidate_tables = []
+        # Reject false-positive tables (multi-column prose layouts misdetected
+        # as tables). Blocks overlapping a rejected candidate will fall through
+        # to the normal text path below. Per-table extract() is wrapped so a
+        # malformed candidate can't fail the whole page.
+        table_objs = []
+        for t in candidate_tables:
+            try:
+                rows = t.extract()
+            except Exception:
+                continue
+            if looks_like_real_table(rows):
+                table_objs.append(t)
         table_rects = [t.bbox for t in table_objs]
         emitted_tables: set = set()
 

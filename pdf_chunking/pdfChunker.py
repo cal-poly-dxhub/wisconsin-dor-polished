@@ -17,6 +17,7 @@ from pdf_chunking.pymupdf_extractor import (
 from pdf2image import convert_from_path
 from PIL import Image
 from pdf_chunking.flowchart_tools import extract_flowcharts_from_document
+from pdf_chunking.toc_detector import is_toc_chunk
 
 config = Config(read_timeout=600, retries=dict(max_attempts=5))
 
@@ -182,44 +183,52 @@ def process_document(document, local_pdf_path: str):
 
     return header_split, line_page_mapping, flowchart_chunks
 
+# Dot-leader sequence used by TOC entries. Any line containing five or more
+# consecutive dots (each optionally followed by whitespace) is a TOC entry —
+# we never let such a line become a heading, since its body is just
+# "<section-title> . . . . . . <page-number>" and it would pollute every
+# downstream chunk with a nonsense heading.
+_LEADER_IN_LINE = re.compile(r"(?:\.[ \t\xa0]*){5,}\.")
+
+
+def _strip_tags(line: str) -> str:
+    """Strip ``<title>``/``<header>``/``<table>`` XML markers for text-only views."""
+    return re.sub(r"<[^>]+>", "", line).strip()
+
+
 def chunk_document(header_split, file, BUCKET, line_page_mapping):
-    """
-    Combine Textractor's structured chunking (<titles>) with exact page numbers.
-    Splits by both Roman numerals (I., II., XII., etc.)
-    and capital letter subsections (A., B., C., etc.).
+    """Chunk a general-purpose PDF.
+
+    Walks ``line_page_mapping`` directly so each buffered line carries its
+    source page from the start. Chunk page ranges are derived from the buffer
+    (``min``/``max`` of its pages), not reconstructed by substring-matching
+    chunk body lines against the whole document — the old approach inflated
+    page ranges whenever a chunk contained boilerplate text like a page
+    footer, which appears on every page.
+
+    Chunks are split on roman-numeral section headings and capital-letter
+    subsection headings. A candidate heading line that contains a TOC
+    dot-leader sequence is treated as body text (TOC entries look like
+    headings textually but reference a page rather than start a section).
     """
     max_words = 1200
-    overlap_size = 30
     chunks = []
     doc_id = os.path.basename(file)
 
     roman_pattern = re.compile(r"^(?:[IVXLCDM]+)\s*[\.\-–:]")
     capital_pattern = re.compile(r"^[A-Z]\s*[\.\-–:]")
-    number_pattern = re.compile(r"^\d+\s*[\.\-–:]")
-    paren_number_pattern = re.compile(r"^\d+\)")
 
-    def clean_line(line):
-        return re.sub(r"<[^>]+>", "", line).strip()
+    def count_words(entries: list[tuple[str, int]]) -> int:
+        return sum(len(re.findall(r"\w+", text)) for text, _ in entries)
 
-    def count_words(lines):
-        return sum(len(re.findall(r"\w+", l)) for l in lines)
-
-    def get_pages_for_chunk(chunk_lines):
-        pages = set()
-        line_set = set([clean_line(l) for l in chunk_lines if l.strip()])
-        for text, pnum in line_page_mapping:
-            cleaned = clean_line(text)
-            if cleaned in line_set:
-                pages.add(pnum)
-        return (min(pages), max(pages)) if pages else (1, 1)
-
-    def flush_chunk(local_buffer, heading, subheading=None):
-        """Flush buffer into a new chunk."""
-        if not local_buffer:
+    def flush_chunk(buffer: list[tuple[str, int]], heading: str, subheading: str) -> None:
+        if not buffer:
             return
         prefix = f"{heading}\n{subheading}" if subheading else heading
-        chunk_text = "\n".join([prefix] + local_buffer) if prefix else "\n".join(local_buffer)
-        start_page, end_page = get_pages_for_chunk(local_buffer)
+        body = "\n".join(text for text, _ in buffer)
+        chunk_text = f"{prefix}\n{body}" if prefix else body
+        pages = {page for _, page in buffer}
+        start_page, end_page = (min(pages), max(pages)) if pages else (1, 1)
         chunks.append({
             "text": chunk_text.strip(),
             "metadata": {
@@ -227,48 +236,51 @@ def chunk_document(header_split, file, BUCKET, line_page_mapping):
                 "heading": heading,
                 "subheading": subheading,
                 "start_page": start_page,
-                "end_page": end_page
-            }
+                "end_page": end_page,
+            },
         })
 
     roman_heading = ""
     sub_heading = ""
-    local_buffer = []
+    buffer: list[tuple[str, int]] = []
 
-    for items in header_split:
-        lines = sub_header_content_splitter(items)
-        for raw_line in lines:
-            line = clean_line(raw_line)
+    for raw_line, page in line_page_mapping:
+        for segment in sub_header_content_splitter(raw_line):
+            line = _strip_tags(segment)
             if not line:
                 continue
 
-            # Detect new Roman numeral section
-            if roman_pattern.match(line):
-                flush_chunk(local_buffer, roman_heading, sub_heading)
-                roman_heading = line
-                sub_heading = ""
-                local_buffer = []
+            # TOC entries match the heading regex textually but reference a
+            # page number via dot-leaders. Treat them as body text so they
+            # never become the current heading.
+            if _LEADER_IN_LINE.search(line):
+                buffer.append((line, page))
+                if count_words(buffer) > max_words:
+                    flush_chunk(buffer, roman_heading, sub_heading)
+                    buffer = []
                 continue
 
-            # Detect new capital-letter subsection (A., B., C., etc.)
+            if roman_pattern.match(line):
+                flush_chunk(buffer, roman_heading, sub_heading)
+                roman_heading = line
+                sub_heading = ""
+                buffer = []
+                continue
+
             if capital_pattern.match(line) and len(line.split()) > 1:
-                # flush if buffer already has content (avoid duplicates)
-                if local_buffer:
-                    flush_chunk(local_buffer, roman_heading, sub_heading)
-                    local_buffer = []
+                if buffer:
+                    flush_chunk(buffer, roman_heading, sub_heading)
+                    buffer = []
                 sub_heading = line
                 continue
 
-            # Add content
-            local_buffer.append(line)
+            buffer.append((line, page))
 
-            # Flush when chunk too long
-            if count_words(local_buffer) > max_words:
-                flush_chunk(local_buffer, roman_heading, sub_heading)
-                local_buffer = []
+            if count_words(buffer) > max_words:
+                flush_chunk(buffer, roman_heading, sub_heading)
+                buffer = []
 
-    # Final flush
-    flush_chunk(local_buffer, roman_heading, sub_heading)
+    flush_chunk(buffer, roman_heading, sub_heading)
     return chunks
 
 def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
@@ -382,19 +394,14 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
             return ""
         return re.sub(r"<[^>]+>", "", str(line)).strip()
 
-    def count_words(lines_or_text):
-        if isinstance(lines_or_text, str):
-            return len(re.findall(r"\w+", lines_or_text))
-        return sum(len(re.findall(r"\w+", l)) for l in lines_or_text)
-
-    def get_pages_for_chunk(chunk_lines):
-        pages = set()
-        line_set = set([clean_line(l) for l in chunk_lines if l.strip()])
-        for text, pnum in line_page_mapping:
-            cleaned = clean_line(text)
-            if cleaned in line_set:
-                pages.add(pnum)
-        return (min(pages), max(pages)) if pages else (1, 1)
+    def count_words(entries):
+        if isinstance(entries, str):
+            return len(re.findall(r"\w+", entries))
+        # Support both list[str] and list[tuple[str, int]]
+        return sum(
+            len(re.findall(r"\w+", e[0] if isinstance(e, tuple) else e))
+            for e in entries
+        )
 
     def is_probably_toc(text: str) -> bool:
         """Detect full or mini TOCs."""
@@ -412,19 +419,20 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         return False
 
     # --- Chunk Collector ---
-    def flush_chunk(buffer, chapter=None, section=None):
+    def flush_chunk(buffer: list[tuple[str, int]], chapter=None, section=None):
         if not buffer:
             return
 
-        buffer = [clean_line(b) for b in buffer if isinstance(b, str) and b]
+        body_lines = [text for text, _ in buffer]
         chapter = chapter or ""
         section = section or ""
         heading = f"{chapter}\n{section}".strip()
-        text = "\n".join(([heading] + buffer) if heading else buffer).strip()
+        text = "\n".join(([heading] + body_lines) if heading else body_lines).strip()
         if not text or is_probably_toc(text):
             return
 
-        sp, ep = get_pages_for_chunk(buffer)
+        pages = {page for _, page in buffer}
+        sp, ep = (min(pages), max(pages)) if pages else (1, 1)
         chunks.append({
             "text": text,
             "metadata": {
@@ -437,14 +445,24 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         })
 
     # --- Main Chunk Loop ---
-    current_chapter, current_section, buffer = None, None, []
+    # Walk line_page_mapping directly so each buffered line keeps its source
+    # page. Reconstructing pages via global substring match (the prior
+    # approach) inflated page ranges whenever chunks contained repeating
+    # boilerplate like page footers.
+    current_chapter, current_section = None, None
+    buffer: list[tuple[str, int]] = []
 
-    for part in header_split:
-        lines = sub_header_content_splitter(part)
-
-        for raw_line in lines:
-            line = clean_line(raw_line)
+    for raw_line, page in line_page_mapping:
+        for segment in sub_header_content_splitter(raw_line):
+            line = clean_line(segment)
             if not line:
+                continue
+
+            if _LEADER_IN_LINE.search(line):
+                buffer.append((line, page))
+                if count_words(buffer) > max_words:
+                    flush_chunk(buffer, current_chapter, current_section)
+                    buffer = []
                 continue
 
             if chapter_pattern.match(line):
@@ -457,7 +475,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
                 current_section, buffer = line, []
                 continue
 
-            buffer.append(line)
+            buffer.append((line, page))
 
             if count_words(buffer) > max_words:
                 flush_chunk(buffer, current_chapter, current_section)
@@ -734,10 +752,33 @@ def process_pdf_from_s3(
                     f.write(json.dumps(record, indent=2) + "\n")
             print(f"✅ Saved raw chunks to {raw_chunks_path}")
 
+        # --- Drop TOC / leader-dot chunks ---
+        # TOC fragments match queries lexically without carrying content,
+        # so they outrank real pages. Filter before clean-plaintext so the
+        # removal log captures them alongside other dropped chunks.
+        toc_removed = []
+        filtered_raw_chunks = []
+        for idx, chunk in enumerate(raw_chunks):
+            metadata = chunk.get("metadata", {})
+            if is_toc_chunk(chunk.get("text", ""), metadata.get("heading")):
+                toc_removed.append({
+                    "reason": "toc_chunk",
+                    "chunk_index": idx,
+                    "heading": metadata.get("heading"),
+                    "subheading": metadata.get("subheading"),
+                    "text": chunk.get("text", ""),
+                })
+                continue
+            filtered_raw_chunks.append(chunk)
+        if toc_removed:
+            print(f"🧹 Dropped {len(toc_removed)} TOC chunks for {doc_id}")
+        raw_chunks = filtered_raw_chunks
+
         # --- Clean text chunks ---
         cleaned_text_chunks, removed_chunks = extract_clean_plaintext(
             raw_chunks, doc_id=doc_id, is_statute=is_statute
         )
+        removed_chunks = toc_removed + removed_chunks
 
         if chunk_logs_dir:
             removed_chunks_dir = os.path.join(chunk_logs_dir, "removed")
