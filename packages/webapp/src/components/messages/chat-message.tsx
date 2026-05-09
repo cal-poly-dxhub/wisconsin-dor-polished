@@ -367,7 +367,6 @@ export function ChatMessage({
       const startedAt =
         thinkingStartRef.current ?? parseTimestampMs(timestamp) ?? Date.now();
       thinkingStartRef.current = startedAt;
-      setThinkingSeconds(elapsedSecondsSince(startedAt));
       const interval = setInterval(() => {
         setThinkingSeconds(elapsedSecondsSince(startedAt));
       }, 1000);
@@ -376,7 +375,6 @@ export function ChatMessage({
     if (thinkingStartRef.current) {
       const final = elapsedSecondsSince(thinkingStartRef.current);
       thinkingStartRef.current = null;
-      setThinkingSeconds(final);
       if (storedDuration === undefined) {
         useChatStore.getState().setThinkingDuration(queryId, final);
       }
