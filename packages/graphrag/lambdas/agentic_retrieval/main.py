@@ -77,28 +77,10 @@ LOG_MAX_TEXT_CHARS = int(os.environ.get("LOG_MAX_TEXT_CHARS", "500"))
 EMIT_AGENT_TRACE = os.environ.get("EMIT_AGENT_TRACE", "true").lower() == "true"
 
 
-def _redact_text(text: str) -> str:
-    """Remove common accidental PII before writing query/tool text to logs."""
-    redacted = re.sub(
-        r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
-        "[REDACTED_EMAIL]",
-        text,
-        flags=re.IGNORECASE,
-    )
-    redacted = re.sub(r"\b\d{3}-\d{2}-\d{4}\b", "[REDACTED_SSN]", redacted)
-    redacted = re.sub(
-        r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
-        "[REDACTED_PHONE]",
-        redacted,
-    )
-    return redacted
-
-
 def _truncate_text(value: str, max_chars: int = LOG_MAX_TEXT_CHARS) -> str:
-    text = _redact_text(value)
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + f"...[truncated {len(text) - max_chars} chars]"
+    if len(value) <= max_chars:
+        return value
+    return value[:max_chars] + f"...[truncated {len(value) - max_chars} chars]"
 
 
 def _compact_log_value(value: Any, max_chars: int = LOG_MAX_TEXT_CHARS) -> Any:
