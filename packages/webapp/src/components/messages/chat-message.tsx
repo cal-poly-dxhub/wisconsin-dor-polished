@@ -121,6 +121,43 @@ function renderResponse(
   );
 }
 
+function mergeTraceMetadata(
+  a?: Record<string, unknown> | null,
+  b?: Record<string, unknown> | null
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  const numericKeys = [
+    'faq_count', 'faqCount',
+    'chunk_count', 'chunkCount',
+    'neighbor_count', 'neighborCount',
+    'document_count', 'documentCount',
+    'chain_length', 'chainLength',
+    'cited_doc_count', 'citedDocCount',
+    'rag_document_count', 'ragDocumentCount',
+  ];
+  for (const key of numericKeys) {
+    const va = a?.[key];
+    const vb = b?.[key];
+    if (typeof va === 'number' || typeof vb === 'number') {
+      merged[key] = ((typeof va === 'number' ? va : 0) + (typeof vb === 'number' ? vb : 0));
+    }
+  }
+  const topA = a?.['top_score'] ?? a?.['topScore'];
+  const topB = b?.['top_score'] ?? b?.['topScore'];
+  if (typeof topA === 'number' || typeof topB === 'number') {
+    merged['topScore'] = Math.max(
+      typeof topA === 'number' ? topA : 0,
+      typeof topB === 'number' ? topB : 0
+    );
+  }
+  const elA = a?.['elapsed_ms'] ?? a?.['elapsedMs'];
+  const elB = b?.['elapsed_ms'] ?? b?.['elapsedMs'];
+  if (typeof elA === 'number' || typeof elB === 'number') {
+    merged['elapsedMs'] = ((typeof elA === 'number' ? elA : 0) + (typeof elB === 'number' ? elB : 0));
+  }
+  return merged;
+}
+
 function formatTraceMetadata(metadata?: Record<string, unknown> | null) {
   if (!metadata) return '';
 
@@ -345,13 +382,52 @@ export const ChatMessage = memo(function ChatMessage({
 
   // Use streamed backend trace events when available; otherwise keep the
   // previous synthetic steps for non-GraphRAG responses after waiting has ended.
+  // Collapses consecutive completed entries for the same tool into one line.
   const steps = useMemo(() => {
     if (traceEvents && traceEvents.length > 0) {
-      return traceEvents.map(event => ({
+      const mapped = traceEvents.map(event => ({
         label: event.label,
         detail: formatTraceMetadata(event.metadata),
         done: event.status === 'complete',
         error: event.status === 'error',
+        toolName: event.toolName ?? null,
+        metadata: event.metadata,
+      }));
+
+      interface CollapsedStep {
+        label: string;
+        detail: string;
+        done: boolean;
+        error: boolean;
+        toolName: string | null;
+        metadata: Record<string, unknown> | null | undefined;
+        count: number;
+      }
+
+      const collapsed: CollapsedStep[] = [];
+      for (const step of mapped) {
+        const prev = collapsed[collapsed.length - 1];
+        if (
+          prev &&
+          step.toolName &&
+          step.toolName === prev.toolName &&
+          step.done &&
+          prev.done
+        ) {
+          prev.count += 1;
+          const merged = mergeTraceMetadata(prev.metadata, step.metadata);
+          prev.detail = formatTraceMetadata(merged);
+          prev.metadata = merged;
+        } else {
+          collapsed.push({ ...step, count: 1 });
+        }
+      }
+
+      return collapsed.map(({ label, detail, done, error }) => ({
+        label,
+        detail,
+        done,
+        error,
       }));
     }
 

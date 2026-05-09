@@ -66,12 +66,7 @@ function agentEventToTrace(
 ): TraceEvent | null {
   switch (kind) {
     case 'loop_start':
-      return {
-        event: 'loop_start',
-        label: label || 'Planning retrieval',
-        status: 'pending',
-        metadata: payload,
-      };
+      return null;
     case 'tool_call': {
       const labels = toolName ? TOOL_LABELS[toolName] : undefined;
       return {
@@ -167,10 +162,19 @@ export function useWebSocketChat(
     (message: MessageUnion) => {
       try {
         if ('responseType' in message) {
-          // Ignore messages for queries that aren't in the current session's store
+          // Ignore messages for queries that aren't in the current session's store.
+          // However, if the real queryId isn't in the store yet (because the HTTP
+          // response hasn't returned to trigger replaceQueryId), eagerly perform
+          // the replacement so the WebSocket message isn't dropped.
           const queryId = 'queryId' in message ? message.queryId : null;
           if (queryId && !useChatStore.getState().queries[queryId]) {
-            return;
+            const pendingId = pendingQueryIdRef.current;
+            if (pendingId && useChatStore.getState().queries[pendingId]) {
+              replaceQueryId(pendingId, queryId);
+              pendingQueryIdRef.current = null;
+            } else {
+              return;
+            }
           }
 
           switch (message.responseType) {
@@ -272,6 +276,7 @@ export function useWebSocketChat(
       setQueryError,
       handleError,
       queryClient,
+      replaceQueryId,
     ]
   );
 

@@ -316,9 +316,9 @@ def _event_to_kind(event: str, status: str) -> str:
     """Map legacy event names to AgentEventMessage kind values."""
     if event == "agent_loop_start":
         return "loop_start"
-    if event.endswith("_complete") or event == "faq_short_circuit":
+    if event.endswith("_complete") or event in ("faq_short_circuit", "agent_tool_result", "agent_tool_error"):
         return "tool_result"
-    if event.endswith("_start") or status == "pending":
+    if event.endswith("_start") or event == "agent_tool_call" or status == "pending":
         return "tool_call"
     if event in ("agent_loop_complete", "retrieval_complete"):
         return "loop_complete"
