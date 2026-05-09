@@ -151,7 +151,7 @@ def validate_feedback_request(body: dict[str, Any]) -> FeedbackRequest:
 def get_user_id_from_jwt() -> str:
     """Extract userId from Cognito JWT in request context."""
     try:
-        claims = router.current_event.request_context.authorizer.jwt.claims
+        claims = router.current_event.request_context.authorizer.jwt_claim
         user_id = claims.get("sub")
         if not user_id:
             raise ValidationError(reason="Missing user ID in JWT claims")
