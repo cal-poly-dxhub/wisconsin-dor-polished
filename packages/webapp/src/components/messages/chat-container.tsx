@@ -145,7 +145,6 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
                 queryId={query.queryId}
                 query={query.query}
                 response={query.response.content || ''}
-                responseType="stream"
                 status={query.status}
                 timestamp={query.timestamp}
                 streamingComplete={query.status === 'completed'}

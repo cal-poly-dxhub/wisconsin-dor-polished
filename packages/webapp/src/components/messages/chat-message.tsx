@@ -1,14 +1,14 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Info, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Info, ThumbsUp, ThumbsDown, FileText } from 'lucide-react';
 import { useAssignFeedback } from '@/hooks/api/chat';
 import { useChatStore } from '@/stores/chat-store';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 
-import { DocumentList } from '../documents/document-list/document-list';
-import { useBreakpoint } from '@/hooks/use-breakpoint';
-import type { ResourceItem, TraceEvent } from '@/stores/types';
+import { DocumentCard, type Document } from '../documents/document-card/document-card';
+import { FAQCard } from '../documents/document-card/faq-card';
+import type { ResourceItem, TraceEvent, FAQ } from '@/stores/types';
 import type { QueryStatus } from '@/stores/types';
 
 import './chat-message.css';
@@ -22,7 +22,6 @@ export interface ChatMessageProps {
   queryId: string;
   query: string;
   response?: string;
-  responseType?: 'stream';
   status?: QueryStatus;
   timestamp?: string;
   className?: string;
@@ -38,20 +37,6 @@ interface StreamResponseProps {
   streamingComplete?: boolean;
 }
 
-interface DocumentsStreamResponseProps {
-  content: string;
-  className?: string;
-  streamingComplete?: boolean;
-  items: ResourceItem[];
-}
-
-export interface Document {
-  documentId: string;
-  title: string;
-  content: string;
-  source?: string;
-  sourceUrl?: string;
-}
 
 interface MessageOptionsBarProps {
   streamingComplete: boolean;
@@ -74,50 +59,55 @@ export function StreamResponse({
   );
 }
 
-export function DocumentsStreamResponse({
-  content,
-  className,
-  streamingComplete,
-  items,
-}: DocumentsStreamResponseProps) {
-  return (
-    <div className={`chat-response font-sans ${className || ''}`}>
-      {/* Documents List */}
-      <div className="mt-3">
-        <DocumentList items={items} title="Referenced Documents" />
-      </div>
+function InlineSources({ items, streamingComplete }: { items: ResourceItem[]; streamingComplete?: boolean }) {
+  const [open, setOpen] = useState(true);
 
-      <div className="markdown-container">
-        <AnimatedMarkdown content={content} animate={!streamingComplete} />
-      </div>
+  if (!items.length || !streamingComplete) return null;
+
+  const docCount = items.filter(i => i.type === 'document').length;
+  const faqCount = items.filter(i => i.type === 'faq').length;
+  const parts: string[] = [];
+  if (docCount > 0) parts.push(`${docCount} document${docCount === 1 ? '' : 's'}`);
+  if (faqCount > 0) parts.push(`${faqCount} FAQ${faqCount === 1 ? '' : 's'}`);
+
+  return (
+    <div className="mt-4">
+      <button
+        onClick={() => setOpen(prev => !prev)}
+        className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer mb-3"
+      >
+        <FileText className="h-3.5 w-3.5" />
+        <span>Sources ({parts.join(', ')})</span>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+        >
+          <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+      {open && (
+        <div className="inline-sources-row grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-2.5">
+          {items.map(item => {
+            const key =
+              item.type === 'document'
+                ? `doc-${(item.data as Document).documentId}`
+                : `faq-${(item.data as FAQ).faqId}`;
+            return (
+              <div key={key}>
+                {item.type === 'document' ? (
+                  <DocumentCard document={item.data as Document} />
+                ) : (
+                  <FAQCard faq={item.data as FAQ} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
-  );
-}
-
-function renderResponse(
-  response: string,
-  responseType: string,
-  streamingComplete?: boolean,
-  items?: ResourceItem[],
-  breakpoint?: string
-) {
-  // Show documents when there documents to show and the breakpoint is narrow
-  const shouldShowDocuments =
-    items && items.length > 0 && breakpoint === 'narrow';
-
-  if (responseType === 'stream' && shouldShowDocuments) {
-    return (
-      <DocumentsStreamResponse
-        content={response}
-        streamingComplete={streamingComplete}
-        items={items!}
-      />
-    );
-  }
-
-  // Otherwise show the plain response
-  return (
-    <StreamResponse content={response} streamingComplete={streamingComplete} />
   );
 }
 
@@ -311,7 +301,6 @@ export const ChatMessage = memo(function ChatMessage({
   queryId,
   query,
   response,
-  responseType = 'stream',
   status,
   timestamp,
   className,
@@ -321,7 +310,6 @@ export const ChatMessage = memo(function ChatMessage({
   traceEvents,
 }: ChatMessageProps) {
   const messageRef = useRef<HTMLDivElement>(null);
-  const breakpoint = useBreakpoint();
 
   const isThinking = status === 'pending' || status === 'sending' || status === 'sent';
   const isStreaming = status === 'streaming';
@@ -451,16 +439,11 @@ export const ChatMessage = memo(function ChatMessage({
 
     return (
       <div className="chat-response-aligned">
-        {renderResponse(
-          response,
-          responseType,
-          streamingComplete,
-          items,
-          breakpoint
-        )}
+        <StreamResponse content={response} streamingComplete={streamingComplete} />
+        <InlineSources items={items ?? []} streamingComplete={streamingComplete} />
       </div>
     );
-  }, [response, responseType, streamingComplete, items, breakpoint]);
+  }, [response, streamingComplete, items]);
 
   const containerClassName = useMemo(
     () => `font-sans ${className || ''}`,

@@ -226,3 +226,10 @@
   0% { background-position: 100% 0; }
   100% { background-position: -100% 0; }
 }
+
+/* Force equal-height cards in inline sources grid */
+.inline-sources-row > div,
+.inline-sources-row > div > div,
+.inline-sources-row > div > div > div {
+  height: 100%;
+}
