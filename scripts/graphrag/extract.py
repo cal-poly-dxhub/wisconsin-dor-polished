@@ -386,12 +386,24 @@ def main():
     parser.add_argument("--config", default="scripts/graphrag/ingest_config.yaml")
     parser.add_argument("--max-workers", type=int, default=3)
     parser.add_argument("--force", action="store_true", help="Re-extract all documents, ignoring cache")
+    parser.add_argument(
+        "--source-filter",
+        default="",
+        help="Only process doc_ids matching this prefix (e.g., 'wpam-' to re-extract WPAM only).",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
 
     docs = list_documents(args.raw_bucket, "raw/")
     logger.info(f"Found {len(docs)} documents in raw bucket")
+
+    if args.source_filter:
+        before = len(docs)
+        docs = [d for d in docs if d["doc_id"].startswith(args.source_filter)]
+        logger.info(
+            f"Source filter '{args.source_filter}': {before} → {len(docs)} documents"
+        )
 
     if not args.force:
         already_done = list_already_extracted(args.work_bucket)

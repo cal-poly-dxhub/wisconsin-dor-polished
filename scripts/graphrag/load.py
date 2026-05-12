@@ -910,12 +910,28 @@ def main():
     parser.add_argument("--config", default="scripts/graphrag/ingest_config.yaml")
     parser.add_argument("--start-phase", type=int, default=1, help="Resume from specific phase")
     parser.add_argument("--stop-after-phase", type=int, default=None, help="Exit cleanly after this phase completes")
+    parser.add_argument(
+        "--source-filter",
+        default="",
+        help=(
+            "Only load doc_ids matching this prefix (e.g., 'wpam-' for a WPAM-only "
+            "re-load). Graph-wide phases (scaffold, hierarchy, stub resolution) "
+            "still run but are MERGE-idempotent."
+        ),
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
     client, graph_id = get_neptune_client(args.graph_id)
     documents = load_embedded_docs(args.work_bucket)
     logger.info(f"Loaded {len(documents)} documents for graph loading")
+
+    if args.source_filter:
+        before = len(documents)
+        documents = [d for d in documents if d.get("doc_id", "").startswith(args.source_filter)]
+        logger.info(
+            f"Source filter '{args.source_filter}': {before} → {len(documents)} documents"
+        )
 
     phases = [
         (1, "Scaffold", lambda: phase_1_scaffold(client, graph_id, config)),

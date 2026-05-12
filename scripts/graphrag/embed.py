@@ -129,6 +129,11 @@ def main():
     parser.add_argument("--config", default="scripts/graphrag/ingest_config.yaml")
     parser.add_argument("--max-workers", type=int, default=5)
     parser.add_argument("--force", action="store_true", help="Re-embed all documents, ignoring cache")
+    parser.add_argument(
+        "--source-filter",
+        default="",
+        help="Only embed doc_ids matching this prefix (e.g., 'wpam-' to re-embed WPAM only).",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -137,6 +142,13 @@ def main():
 
     docs = load_extracted_docs(args.work_bucket)
     logger.info(f"Loaded {len(docs)} extracted documents")
+
+    if args.source_filter:
+        before = len(docs)
+        docs = [d for d in docs if d["doc_id"].startswith(args.source_filter)]
+        logger.info(
+            f"Source filter '{args.source_filter}': {before} → {len(docs)} documents"
+        )
 
     if not args.force:
         already_done = list_already_embedded(args.work_bucket)
