@@ -2,6 +2,7 @@
 
 import { ChatContainer } from '@/components/messages/chat-container';
 import { ChatInput } from '@/components/messages/chat-input';
+import { ChatSkeleton } from '@/components/messages/chat-skeleton';
 import { SessionsSidebar } from '@/components/layout/sessions-sidebar';
 import { useWebSocketChat } from '@/hooks/use-websocket-chat';
 import { useSessionResume } from '@/hooks/use-session-resume';
@@ -13,7 +14,7 @@ const stableConfig = {
 };
 
 export function NarrowApp() {
-  useSessionResume();
+  const { loading } = useSessionResume();
   const { sendMessage } = useWebSocketChat(stableConfig);
 
   return (
@@ -24,14 +25,22 @@ export function NarrowApp() {
         <SessionsSidebar />
 
         {/* Main Content Area */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1">
-            <ChatContainer variant="narrow" />
-          </div>
-          <ChatInput
-            placeholder="Ask a Wisconsin tax or revenue question..."
-            onSendMessage={sendMessage}
-          />
+        <div className="relative flex min-w-0 flex-1 flex-col">
+          {loading ? (
+            <ChatSkeleton />
+          ) : (
+            <>
+              <div className="min-h-0 flex-1">
+                <ChatContainer variant="narrow" />
+              </div>
+              <div className="absolute inset-x-0 bottom-0">
+                <ChatInput
+                  placeholder="Ask a Wisconsin tax or revenue question..."
+                  onSendMessage={sendMessage}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
       <Toaster />

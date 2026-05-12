@@ -19,19 +19,20 @@ export function ChatInput({
   const setChatState = useChatStore(s => s.setChatState);
   const disabled = chatState !== 'idle';
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  const [isMultiline, setIsMultiline] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   useLayoutEffect(() => {
     const ta = textAreaRef.current;
     if (!ta) return;
-    ta.style.minHeight = '0';
-    ta.style.height = 'auto';
-    const natural = ta.scrollHeight;
-    const multi = natural > 40;
-    setIsMultiline(multi);
-    const height = Math.min(Math.max(natural, multi ? 72 : 24), 200);
-    ta.style.height = height + 'px';
-    ta.style.minHeight = '';
+    ta.style.transition = 'none';
+    ta.style.height = '0px';
+    const scrollHeight = ta.scrollHeight;
+    const maxHeight = 200;
+    setExpanded(scrollHeight > 36);
+    ta.style.height = Math.min(scrollHeight, maxHeight) + 'px';
+    ta.style.overflowY = scrollHeight > maxHeight ? 'auto' : 'hidden';
+    ta.offsetHeight;
+    ta.style.transition = 'height 0.2s ease';
   }, [message]);
 
   const handleSend = () => {
@@ -50,11 +51,16 @@ export function ChatInput({
   };
 
   return (
-    <div className={`flex items-center justify-center px-4 py-4 ${className}`}>
+    <div className={`flex items-center justify-center px-4 pb-6 pt-4 pointer-events-none ${className}`}>
       <div
-        className={`flex w-full max-w-4xl border border-border bg-background shadow-sm transition-[border-radius] duration-150 ${
-          isMultiline ? 'flex-col rounded-2xl p-3' : 'items-center rounded-full pl-4 pr-2 py-2'
-        }`}
+        className="pointer-events-auto grid w-full max-w-2xl rounded-[26px] border border-border/50 bg-[hsl(0_0%_12%/0.85)] p-[10px] shadow-[0_8px_40px_rgba(0,0,0,0.7)] backdrop-blur-xl"
+        style={{
+          gridTemplateAreas: expanded
+            ? "'primary primary' 'footer trailing'"
+            : "'primary trailing'",
+          gridTemplateColumns: '1fr auto',
+          gridTemplateRows: expanded ? 'auto auto' : 'auto',
+        }}
       >
         <textarea
           ref={textAreaRef}
@@ -64,29 +70,30 @@ export function ChatInput({
           placeholder={disabled ? 'Please wait...' : placeholder}
           disabled={disabled}
           rows={1}
-          className={`flex-1 resize-none bg-transparent text-foreground placeholder:text-muted-foreground/60 outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
-            isMultiline ? 'px-1' : 'pl-1'
-          }`}
-          style={{ maxHeight: '200px', fontSize: 'clamp(0.9rem, 1vw + 0.5rem, 1.05rem)' }}
+          className="resize-none self-center bg-transparent pl-2 pr-2 text-foreground placeholder:text-muted-foreground/60 outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          style={{
+            gridArea: 'primary',
+            fontSize: 'clamp(0.9rem, 1vw + 0.5rem, 1.05rem)',
+            transition: 'height 0.2s ease',
+          }}
         />
-        <div className={`flex items-center ${isMultiline ? 'justify-end pt-2' : ''}`}>
-          <button
-            onClick={handleSend}
-            disabled={!message.trim() || disabled}
-            className={`shrink-0 rounded-full bg-foreground p-2 transition-all duration-200
-              ${disabled
-                ? 'opacity-30 cursor-not-allowed'
-                : message.trim()
-                  ? 'opacity-100 hover:opacity-80 cursor-pointer'
-                  : 'opacity-30 cursor-pointer'
-              }`}
-            aria-label="Send"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M8 12V4M8 4L4.5 7.5M8 4L11.5 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-background"/>
-            </svg>
-          </button>
-        </div>
+        <button
+          onClick={handleSend}
+          disabled={!message.trim() || disabled}
+          className={`self-end shrink-0 rounded-full bg-foreground p-2 transition-opacity duration-200
+            ${disabled
+              ? 'opacity-30 cursor-not-allowed'
+              : message.trim()
+                ? 'opacity-100 hover:opacity-80 cursor-pointer'
+                : 'opacity-30 cursor-pointer'
+            }`}
+          style={{ gridArea: 'trailing' }}
+          aria-label="Send"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 12V4M8 4L4.5 7.5M8 4L11.5 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-background"/>
+          </svg>
+        </button>
       </div>
     </div>
   );

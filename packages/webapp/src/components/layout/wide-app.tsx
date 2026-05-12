@@ -2,6 +2,7 @@
 
 import { ChatContainer } from '@/components/messages/chat-container';
 import { ChatInput } from '@/components/messages/chat-input';
+import { ChatSkeleton } from '@/components/messages/chat-skeleton';
 import { SessionsSidebar } from '@/components/layout/sessions-sidebar';
 import { useChatStore } from '@/stores/chat-store';
 import { useWebSocketChat } from '@/hooks/use-websocket-chat';
@@ -14,7 +15,7 @@ const stableConfig = {
 };
 
 export function WideApp() {
-  useSessionResume();
+  const { loading } = useSessionResume();
   const queryOrder = useChatStore(state => state.queryOrder);
   const isEmpty = queryOrder.length === 0;
   const { sendMessage } = useWebSocketChat(stableConfig);
@@ -30,15 +31,10 @@ export function WideApp() {
         <div className="flex min-w-0 flex-1">
           {/* Chat Container - Main Content Area */}
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className={`min-h-0 transition-all duration-500 ease-in-out ${isEmpty ? 'flex-none' : 'flex-1'}`}>
-              {!isEmpty && <ChatContainer variant="wide" />}
-            </div>
-            <div
-              className={`flex flex-col items-center transition-all duration-500 ease-in-out ${
-                isEmpty ? 'flex-1 justify-center' : 'flex-none'
-              }`}
-            >
-              {isEmpty && (
+            {loading ? (
+              <ChatSkeleton />
+            ) : isEmpty ? (
+              <div className="flex flex-1 flex-col items-center justify-center">
                 <div className="mb-6 text-center">
                   <h2 className="text-xl font-medium text-foreground">
                     Wisconsin Property Tax Assistant
@@ -47,14 +43,26 @@ export function WideApp() {
                     Ask a question about Wisconsin property tax law, assessments, or appeals.
                   </p>
                 </div>
-              )}
-              <div className="w-full max-w-2xl px-4">
-                <ChatInput
-                  placeholder="Ask a Wisconsin tax or revenue question..."
-                  onSendMessage={sendMessage}
-                />
+                <div className="w-full max-w-2xl px-4">
+                  <ChatInput
+                    placeholder="Ask a Wisconsin tax or revenue question..."
+                    onSendMessage={sendMessage}
+                  />
+                </div>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="min-h-0 flex-1">
+                  <ChatContainer variant="wide" />
+                </div>
+                <div className="absolute inset-x-0 bottom-0">
+                  <ChatInput
+                    placeholder="Ask a Wisconsin tax or revenue question..."
+                    onSendMessage={sendMessage}
+                  />
+                </div>
+              </>
+            )}
           </div>
 
         </div>
