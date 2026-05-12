@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useChatStore } from '@/stores/chat-store';
 import { getSessions, getSessionHistory } from '@/api/chat-api';
 import type { Query } from '@/stores/types';
@@ -6,7 +6,8 @@ import type { Query } from '@/stores/types';
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 40; // ~2 minutes max
 
-export function useSessionResume() {
+export function useSessionResume(): { loading: boolean } {
+  const [loading, setLoading] = useState(true);
   const sessionId = useChatStore(s => s.sessionId);
   const addQuery = useChatStore(s => s.addQuery);
   const setSessionId = useChatStore(s => s.setSessionId);
@@ -110,6 +111,8 @@ export function useSessionResume() {
         }
       } catch {
         // Fail silently — user can start a new session
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -125,4 +128,6 @@ export function useSessionResume() {
       stopPolling();
     };
   }, [sessionId, stopPolling]);
+
+  return { loading };
 }
