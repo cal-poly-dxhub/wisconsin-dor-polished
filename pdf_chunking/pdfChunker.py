@@ -190,6 +190,21 @@ def process_document(document, local_pdf_path: str):
 # downstream chunk with a nonsense heading.
 _LEADER_IN_LINE = re.compile(r"(?:\.[ \t\xa0]*){5,}\.")
 
+# Titan Embed Text v2 silently truncates inputs past 8000 characters in
+# embed.py. Any chunk larger than this was partially vector-invisible:
+# stored in Neptune, shown at retrieval, but the tail bytes were not part of
+# the match decision. 7500 leaves a margin for character-counting imprecision
+# between the chunker (which measures the buffer) and the final joined text
+# (which includes heading prefixes added at flush time).
+CHUNK_MAX_CHARS = 7500
+
+
+def _count_chars_in_buffer(buffer: list[tuple[str, int]]) -> int:
+    """Approximate char count for a (line, page) buffer joined by newlines."""
+    if not buffer:
+        return 0
+    return sum(len(text) for text, _ in buffer) + max(0, len(buffer) - 1)
+
 
 def _strip_tags(line: str) -> str:
     """Strip ``<title>``/``<header>``/``<table>`` XML markers for text-only views."""
@@ -255,7 +270,10 @@ def chunk_document(header_split, file, BUCKET, line_page_mapping):
             # never become the current heading.
             if _LEADER_IN_LINE.search(line):
                 buffer.append((line, page))
-                if count_words(buffer) > max_words:
+                if (
+                    count_words(buffer) > max_words
+                    or _count_chars_in_buffer(buffer) > CHUNK_MAX_CHARS
+                ):
                     flush_chunk(buffer, roman_heading, sub_heading)
                     buffer = []
                 continue
@@ -276,12 +294,52 @@ def chunk_document(header_split, file, BUCKET, line_page_mapping):
 
             buffer.append((line, page))
 
-            if count_words(buffer) > max_words:
+            if (
+                count_words(buffer) > max_words
+                or _count_chars_in_buffer(buffer) > CHUNK_MAX_CHARS
+            ):
                 flush_chunk(buffer, roman_heading, sub_heading)
                 buffer = []
 
     flush_chunk(buffer, roman_heading, sub_heading)
-    return chunks
+    return _enforce_chunk_cap(chunks)
+
+
+def _enforce_chunk_cap(chunks: list[dict]) -> list[dict]:
+    """Split any residual chunks that exceed CHUNK_MAX_CHARS.
+
+    The in-loop word/char triggers only fire at line boundaries, so a chunk
+    with one very long line or whose heading+body sum pushes past the cap
+    can still escape the primary flush. This pass walks the output and hard-
+    splits any over-cap chunk at paragraph/line breaks, preferring natural
+    seams within the last 20% of the cap window. Worst case is a mid-line
+    hard-cut for single-line paragraphs longer than CHUNK_MAX_CHARS — which
+    is still better than Titan's silent truncation, because the tail content
+    becomes its own embeddable chunk instead of being vector-invisible.
+    """
+    final: list[dict] = []
+    for chunk in chunks:
+        text = chunk["text"]
+        if len(text) <= CHUNK_MAX_CHARS:
+            final.append(chunk)
+            continue
+        start = 0
+        while start < len(text):
+            end = min(start + CHUNK_MAX_CHARS, len(text))
+            if end < len(text):
+                break_hint = text.rfind("\n\n", start + int(CHUNK_MAX_CHARS * 0.8), end)
+                if break_hint == -1:
+                    break_hint = text.rfind("\n", start + int(CHUNK_MAX_CHARS * 0.8), end)
+                if break_hint != -1 and break_hint > start:
+                    end = break_hint
+            piece = text[start:end].strip()
+            if piece:
+                split_chunk = {k: (dict(v) if isinstance(v, dict) else v) for k, v in chunk.items()}
+                split_chunk["text"] = piece
+                final.append(split_chunk)
+            start = end
+    return final
+
 
 def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
     """
@@ -366,7 +424,7 @@ def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
             }
         })
 
-    return merged_chunks
+    return _enforce_chunk_cap(merged_chunks)
 
 def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
     """
@@ -376,6 +434,12 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
     - Groups by Chapter headings and Section titles.
     - Automatically merges small related sections.
     - Returns final, ready-to-use chunks (like other chunkers).
+
+    Size discipline: chunks are capped at CHUNK_MAX_CHARS characters. The cap
+    is below Titan Embed v2's 8000-char silent-truncation threshold so every
+    chunk's embedding covers its full text. Both the main flush path and the
+    small-chunk merge step enforce this cap — prior versions only checked
+    word count, letting paragraph-dense WPAM text drift past 10KB.
     """
     doc_id = os.path.basename(file)
     chunks = []
@@ -402,6 +466,12 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
             len(re.findall(r"\w+", e[0] if isinstance(e, tuple) else e))
             for e in entries
         )
+
+    def count_chars(buffer: list[tuple[str, int]]) -> int:
+        """Approximate char count of buffer contents joined by newlines."""
+        if not buffer:
+            return 0
+        return sum(len(text) for text, _ in buffer) + len(buffer) - 1
 
     def is_probably_toc(text: str) -> bool:
         """Detect full or mini TOCs."""
@@ -460,7 +530,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
 
             if _LEADER_IN_LINE.search(line):
                 buffer.append((line, page))
-                if count_words(buffer) > max_words:
+                if count_words(buffer) > max_words or count_chars(buffer) > CHUNK_MAX_CHARS:
                     flush_chunk(buffer, current_chapter, current_section)
                     buffer = []
                 continue
@@ -477,7 +547,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
 
             buffer.append((line, page))
 
-            if count_words(buffer) > max_words:
+            if count_words(buffer) > max_words or count_chars(buffer) > CHUNK_MAX_CHARS:
                 flush_chunk(buffer, current_chapter, current_section)
                 buffer = []
 
@@ -499,7 +569,11 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
                 chunk["metadata"]["heading"] == next_chunk["metadata"]["heading"]
             )
             combined = text.strip() + "\n\n" + next_chunk["text"].strip()
-            if same_heading and count_words(combined) <= max_merge_total:
+            if (
+                same_heading
+                and count_words(combined) <= max_merge_total
+                and len(combined) <= CHUNK_MAX_CHARS
+            ):
                 merged_chunks.append({
                     "text": combined,
                     "metadata": {
@@ -513,7 +587,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         merged_chunks.append(chunk)
         i += 1
 
-    return merged_chunks
+    return _enforce_chunk_cap(merged_chunks)
 
 def parse_s3_uri(s3_uri):
     # Ensure the URI starts with "s3://"
@@ -829,6 +903,12 @@ def process_pdf_from_s3(
                     "source_id": source_id
                 },
             })
+
+        # Final cap enforcement: extract_clean_plaintext rejoins lines with
+        # double newlines which can push a chunk past the cap that was
+        # compliant during chunk_document's buffer-time measurement. Re-run
+        # the splitter so the emitted chunks are guaranteed <= CHUNK_MAX_CHARS.
+        all_chunks = _enforce_chunk_cap(all_chunks)
 
         if chunk_logs_dir:
             final_chunks_dir = os.path.join(chunk_logs_dir, "final_chunks")
