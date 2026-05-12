@@ -19,15 +19,17 @@ table_name = os.environ.get("SESSIONS_TABLE_NAME")
 
 def record_session_data(session_id: str, connection_id: str):
     try:
-        dynamodb.put_item(
+        dynamodb.update_item(
             TableName=table_name,
-            Item={
-                "sessionId": {"S": session_id},
-                "connectionId": {"S": connection_id},
-                "timestamp": {"S": datetime.now().isoformat()},
-                "ttl": {"N": str(int(time.time()) + 7200)},
+            Key={"sessionId": {"S": session_id}},
+            UpdateExpression="SET connectionId = :cid, #ts = :ts, #ttl = :ttl",
+            ExpressionAttributeNames={"#ts": "timestamp", "#ttl": "ttl"},
+            ExpressionAttributeValues={
+                ":cid": {"S": connection_id},
+                ":ts": {"S": datetime.now().isoformat()},
+                ":ttl": {"N": str(int(time.time()) + 7200)},
             },
-            ConditionExpression="attribute_exists(sessionId)",  # Ensure session exists
+            ConditionExpression="attribute_exists(sessionId)",
         )
         logger.info(
             f"Successfully updated session {session_id} with connection ID: {connection_id}"

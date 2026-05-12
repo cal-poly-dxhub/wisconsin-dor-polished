@@ -75,9 +75,10 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
       }
     );
 
-    // Read access to chat history so the agent can resolve follow-up
-    // questions against prior turns and refine ambiguous queries.
-    props.chatHistoryTable.grantReadData(agenticRetrievalHandler);
+    // Read-write access to chat history: the agent reads prior turns to
+    // resolve follow-ups and writes the current turn as a persistence
+    // fallback before ResponseStreaming runs.
+    props.chatHistoryTable.grantReadWriteData(agenticRetrievalHandler);
 
     // Read access to the sessions table + permission to post to
     // API Gateway WebSocket connections, so report_error can surface

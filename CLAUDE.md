@@ -137,6 +137,16 @@ Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeli
 - **Region in scripts** — `scripts/graphrag/*.py` use `os.environ.get("AWS_REGION", "us-east-1")` for boto3 clients. Always set `AWS_REGION` explicitly when running locally.
 - **SSL certs on macOS** — Set `AWS_CA_BUNDLE` to the certifi cert path when running ingestion scripts. Without this, Python 3.13+/3.14 may fail with `SSLError: [Errno 2] No such file or directory` after ~200 S3 calls.
 
+## WebSocket Contract
+
+Any change to messages sent over WebSocket (adding fields, changing `responseType` values, adding new message types, modifying trace/logging payloads) **must** update both sides:
+
+1. **Backend** — Python models in `packages/shared/lambda_layers/websocket_utils/models.py` and the `send_json` router in `utils.py`
+2. **Frontend** — Zod schemas in `packages/messages/types/message-types.ts` (the `MessageUnionSchema` discriminated union and `WebSocketMessageSchema`)
+3. **Handler** — The `messageHandler` switch in `packages/webapp/src/hooks/use-websocket-chat.ts`
+
+The frontend validates every WebSocket message via `WebSocketMessageSchema.parse()`. If the backend sends a `responseType` or shape that isn't in the Zod union, the message is rejected and an error is shown to the user. This applies to trace/logging messages too — they flow through the same validated WebSocket path.
+
 ## Deployment
 
 - **us-west-2** — Production stack. Do not deploy from feature branches.

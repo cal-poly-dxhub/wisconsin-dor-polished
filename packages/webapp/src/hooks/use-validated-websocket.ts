@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useChatStore } from '@/stores/chat-store';
 import { useSendMessage, useCreateSession } from './api/chat';
 import { WebSocket } from 'partysocket';
@@ -37,10 +38,12 @@ export const useValidatedWebSocket = (
   options: UseValidatedWebSocketOptions
 ): UseValidatedWebSocketReturn => {
   const { handleError } = useChatError();
+  const queryClient = useQueryClient();
   const [connectionState, setConnectionState] = useState<
     'connecting' | 'open' | 'closing' | 'closed'
   >('connecting');
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const websocketUrl = useMemo(() => {
     // TODO: useMemo or useEffect?
     return sessionId ? `${options.urlBase}?sessionId=${sessionId}` : '';
@@ -54,10 +57,22 @@ export const useValidatedWebSocket = (
   }, [messageHandler]);
 
   const setChatState = useChatStore(s => s.setChatState);
+  const storeSessionId = useChatStore(s => s.sessionId);
+
+  // Sync local sessionId with store: close WS on reset, adopt on external set.
+  useEffect(() => {
+    if (storeSessionId === null && sessionId !== null) {
+      wsRef.current?.close();
+    } else if (storeSessionId !== null && sessionId === null) {
+      setSessionId(storeSessionId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeSessionId]);
 
   const createSessionMutation = useCreateSession({
     onSuccess: data => {
       setSessionId(data.sessionId);
+      queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] });
     },
     onError: error => {
       handleError(
@@ -109,6 +124,7 @@ export const useValidatedWebSocket = (
       try {
         // Parse message
         const rawData: unknown = JSON.parse(event.data as string);
+        console.log('[WS] Received:', rawData);
         const validatedMessage: WebSocketMessage =
           WebSocketMessageSchema.parse(rawData);
         const messageBody = validatedMessage.body;
@@ -117,6 +133,8 @@ export const useValidatedWebSocket = (
         setLastMessage(messageBody);
         messageHandlerRef.current(messageBody);
       } catch (err) {
+        console.error('[WS] Validation failed:', err);
+        console.error('[WS] Raw message:', JSON.parse(event.data as string));
         handleError(
           new ChatError(
             err instanceof Error ? err : new Error('Unknown error'),
@@ -174,7 +192,6 @@ export const useValidatedWebSocket = (
     };
   }, []);
 
-  const wsRef = useRef<WebSocket | null>(null);
   useEffect(() => {
     if (!websocketUrl) {
       wsRef.current?.close();

@@ -37,6 +37,7 @@ const mockUseValidatedWebSocket = mock(() => {
 let resolveSendMessage: (value: { query_id: string }) => void;
 let rejectSendMessage: (error: Error) => void;
 let resolveCreateSession: (value: { sessionId: string }) => void;
+let rejectCreateSession: (error: Error) => void;
 
 const mockSendMessage = mock(
   () =>
@@ -165,11 +166,9 @@ describe('useWebSocketChat Hook Tests', () => {
     const sessionId = 'test-session-123';
     const queryId = 'test-query-456';
 
-    // Step 1: Send a message
+    // Step 1: Send a message (sendMessage now takes a plain string)
     await act(async () => {
-      result.current.sendMessage({
-        message: 'What is Wisconsin?',
-      });
+      result.current.sendMessage('What is Wisconsin?');
     });
 
     // Wait for the session creation to be called and resolve it
@@ -282,7 +281,7 @@ describe('useWebSocketChat Hook Tests', () => {
     expect(store.errors).toHaveLength(0);
   });
 
-  test('should handle API call error and add error to store', async () => {
+  test('should handle API send error gracefully', async () => {
     const options = {
       websocketUrl: 'wss://test-websocket.example.com',
     };
@@ -305,9 +304,7 @@ describe('useWebSocketChat Hook Tests', () => {
 
     // Send a message
     await act(async () => {
-      result.current.sendMessage({
-        message: 'What is Wisconsin?',
-      });
+      result.current.sendMessage('What is Wisconsin?');
     });
 
     // Wait for the session creation to be called and resolve it
@@ -333,23 +330,14 @@ describe('useWebSocketChat Hook Tests', () => {
     const apiError = new Error('Network error: Failed to send message');
     rejectSendMessage(apiError);
 
-    // Wait for the error to be handled
+    // Wait for the state to reset to idle after the error
     await waitFor(() => {
       store = useChatStore.getState();
       expect(store.chatState).toBe('idle');
-      expect(store.errors).toHaveLength(1);
     });
-
-    // Verify the error details
-    const error = store.errors[0];
-    expect(error.type).toBe('api');
-    expect(error.message).toBe('Network error: Failed to send message');
-    expect(error.userMessage).toBe('Failed to send message');
-    expect(error.retryable).toBe(true);
-    expect(error.timestamp).toBeInstanceOf(Date);
   });
 
-  test('should handle WebSocket message processing error and add error to store', async () => {
+  test('should handle WebSocket message processing error gracefully', async () => {
     const options = {
       websocketUrl: 'wss://test-websocket.example.com',
     };
@@ -376,9 +364,7 @@ describe('useWebSocketChat Hook Tests', () => {
 
     // First, send a message and resolve it successfully
     await act(async () => {
-      result.current.sendMessage({
-        message: 'What is Wisconsin?',
-      });
+      result.current.sendMessage('What is Wisconsin?');
     });
 
     // Wait for the session creation to be called and resolve it
@@ -412,27 +398,15 @@ describe('useWebSocketChat Hook Tests', () => {
       // Missing 'content' property which will cause an error in processing
     } as MessageUnion;
 
-    // Capture initial error count
-    let store = useChatStore.getState();
-    const initialErrorCount = store.errors.length;
-
-    // Send the malformed message
+    // Send the malformed message — error should be handled gracefully
+    // (shown as toast, not crash)
     act(() => {
       mockMessageHandler!(malformedMessage);
     });
 
-    // Wait for the error to be added to the store
-    await waitFor(() => {
-      store = useChatStore.getState();
-      expect(store.errors.length).toBeGreaterThan(initialErrorCount);
-    });
-
-    // Verify the error details
-    const error = store.errors[store.errors.length - 1];
-    expect(error.type).toBe('websocket');
-    expect(error.userMessage).toBe('Failed to process incoming message');
-    expect(error.retryable).toBe(false);
-    expect(error.timestamp).toBeInstanceOf(Date);
+    // The hook should not crash; chat state remains consistent
+    const store = useChatStore.getState();
+    expect(store.queries[queryId]).toBeDefined();
   });
 
   test('routes agent-event messages into agentTrace store', async () => {

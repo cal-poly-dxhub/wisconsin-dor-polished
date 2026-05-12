@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 import boto3
+from boto3.dynamodb.types import TypeDeserializer
+from botocore.exceptions import ClientError
 import pydantic
 from aws_lambda_powertools.event_handler.api_gateway import (
     APIGatewayHttpResolver,
@@ -151,7 +153,7 @@ def validate_feedback_request(body: dict[str, Any]) -> FeedbackRequest:
 def get_user_id_from_jwt() -> str:
     """Extract userId from Cognito JWT in request context."""
     try:
-        claims = router.current_event.request_context.authorizer.jwt_claim
+        claims = app.current_event.request_context.authorizer.jwt_claim
         user_id = claims.get("sub")
         if not user_id:
             raise ValidationError(reason="Missing user ID in JWT claims")
@@ -216,13 +218,14 @@ def list_sessions_handler() -> dict[str, Any]:
 
         sessions = []
         for item in response.get("Items", []):
-            sessions.append(
-                {
-                    "sessionId": item["sessionId"]["S"],
-                    "createdAt": item.get("createdAt", {}).get("S"),
-                    "lastMessageAt": item.get("lastMessageAt", {}).get("S"),
-                }
-            )
+            session_data = {
+                "sessionId": item["sessionId"]["S"],
+                "createdAt": item.get("createdAt", {}).get("S"),
+                "lastMessageAt": item.get("lastMessageAt", {}).get("S"),
+            }
+            if "title" in item:
+                session_data["title"] = item["title"]["S"]
+            sessions.append(session_data)
 
         return create_api_response(200, {"sessions": sessions})
 
@@ -325,9 +328,9 @@ def get_session_history_handler(session_id: str) -> dict[str, Any]:
                 "timestamp": item.get("timestamp", {}).get("S"),
             }
 
-            # Include resources if present
             if "resources" in item:
-                message["resources"] = item["resources"]
+                deserializer = TypeDeserializer()
+                message["resources"] = deserializer.deserialize(item["resources"])
 
             messages.append(message)
 
@@ -347,7 +350,7 @@ def feedback_handler(session_id) -> dict[str, Any]:
     try:
         validate_session_exists(session_id)
 
-        body = router.current_event.json_body
+        body = app.current_event.json_body
         feedback_request = validate_feedback_request(body)
 
         update_query_feedback(session_id, feedback_request)
@@ -382,6 +385,26 @@ def update_session_timestamp(session_id: str) -> None:
         # Non-critical error, don't raise
 
 
+def set_session_title_if_missing(session_id: str, message: str) -> None:
+    """Set session title from the first message, only if no title exists yet."""
+    title = message.strip()[:50]
+    try:
+        dynamodb.update_item(
+            TableName=session_table_name,
+            Key={"sessionId": {"S": session_id}},
+            UpdateExpression="SET title = :title",
+            ConditionExpression="attribute_not_exists(title)",
+            ExpressionAttributeValues={":title": {"S": title}},
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            pass
+        else:
+            logger.error(f"Failed to set session title: {e}")
+    except Exception as e:
+        logger.error(f"Failed to set session title: {e}")
+
+
 @app.post("/session/<session_id>/message")
 def send_message_handler(session_id: str) -> dict[str, Any]:
     """Process chat message and emit EventBridge event with session information"""
@@ -390,13 +413,14 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
     try:
         validate_session_exists(session_id)
 
-        body = router.current_event.json_body
+        body = app.current_event.json_body
         message_request = validate_message_request(body)
 
         logger.info(f"Processing message with query_id {query_id} for session {session_id}")
 
         emit_message_event(session_id, message_request.message, query_id)
         update_session_timestamp(session_id)
+        set_session_title_if_missing(session_id, message_request.message)
 
         response_body = {
             "message": "Message received and processing started",

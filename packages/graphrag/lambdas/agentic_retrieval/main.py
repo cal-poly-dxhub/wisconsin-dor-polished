@@ -26,7 +26,6 @@ from case_opinion import citation_to_raw_slug
 from neptune_client import NeptuneClient
 from prompt import SYSTEM_PROMPT
 from step_function_types.errors import ValidationError, report_error
-from websocket_utils.utils import get_ws_connection_from_session
 from step_function_types.models import (
     FAQ,
     DocumentResource,
@@ -35,6 +34,8 @@ from step_function_types.models import (
     UserQuery,
 )
 from tools import TOOL_DEFINITIONS, execute_tool
+from websocket_utils.models import AgentEventMessage
+from websocket_utils.utils import get_ws_connection_from_session
 
 MAX_TURNS = 10
 
@@ -471,8 +472,6 @@ def _emit_trace(
     if not EMIT_AGENT_TRACE or ws_server is None:
         return
     try:
-        from websocket_utils.models import AgentEventMessage
-
         message = AgentEventMessage(
             query_id=query_id,
             kind=kind,
@@ -527,6 +526,64 @@ def get_chat_history(session_id: str) -> list[dict[str, str]]:
             exc_info=True,
         )
         return []
+
+
+def save_chat_history(
+    session_id: str,
+    query_id: str,
+    query: str,
+    answer: str,
+    rag_documents: list[RAGDocument] | None = None,
+    faq_resource: "FAQResource | None" = None,
+) -> None:
+    """Persist a query/answer pair (with resources) to the chat history table."""
+    if not CHAT_HISTORY_TABLE or not session_id:
+        return
+    try:
+        import datetime
+
+        item: dict = {
+            "queryId": query_id,
+            "sessionId": session_id,
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+            "query": query,
+            "answer": answer,
+        }
+
+        resources: list[dict] = []
+        if rag_documents:
+            for doc in rag_documents:
+                resources.append({
+                    "type": "document",
+                    "data": {
+                        "documentId": doc.document_id,
+                        "title": doc.title,
+                        "source": doc.source,
+                        "sourceUrl": doc.source_url,
+                        "discoveryTag": doc.discovery_tag,
+                    },
+                })
+        if faq_resource:
+            for faq in faq_resource.faqs:
+                resources.append({
+                    "type": "faq",
+                    "data": {
+                        "faqId": faq.faq_id,
+                        "question": faq.question,
+                        "answer": faq.answer,
+                    },
+                })
+        if resources:
+            item["resources"] = resources
+
+        table = dynamodb_resource.Table(CHAT_HISTORY_TABLE)
+        table.put_item(Item=item)
+        logger.info(f"Saved chat history for session {session_id}, query {query_id}")
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            f"Failed to save chat history for session {session_id}",
+            exc_info=True,
+        )
 
 
 def process_event(event: dict) -> UserQuery:
@@ -1577,6 +1634,15 @@ def handler(event: dict, context) -> dict[str, Any]:
             request_id=request_id,
             ws_server=ws_server,
             trace_seq=trace_seq,
+        )
+
+        save_chat_history(
+            session_id,
+            user_query.query_id,
+            user_query.query,
+            answer,
+            rag_documents=rag_documents,
+            faq_resource=faq_resource,
         )
 
         documents = DocumentResource(documents=rag_documents)

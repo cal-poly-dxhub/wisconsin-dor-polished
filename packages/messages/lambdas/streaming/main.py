@@ -26,7 +26,7 @@ dynamodb = boto3.resource("dynamodb")
 chat_history_table = os.environ.get("CHAT_HISTORY_TABLE_NAME")
 
 
-def get_chat_history(session_id: str) -> list[dict[str, str]]:
+def get_chat_history(session_id: str, exclude_query_id: str | None = None) -> list[dict[str, str]]:
     if not chat_history_table:
         logger.warning("CHAT_HISTORY_TABLE_NAME not set; returning empty chat history.")
         return []
@@ -41,7 +41,11 @@ def get_chat_history(session_id: str) -> list[dict[str, str]]:
             ScanIndexForward=True,
         )
         items = response.get("Items", [])
-        history = [{"query": item["query"], "answer": item["answer"]} for item in items]
+        history = [
+            {"query": item["query"], "answer": item["answer"]}
+            for item in items
+            if item.get("queryId") != exclude_query_id
+        ]
         logger.info(f"Retrieved {len(history)} chat history items for session {session_id}")
         return history
     except Exception as e:
@@ -69,18 +73,46 @@ def log_chat_history(
     faqs_data = [faq.model_dump() for faq in faqs.faqs] if faqs else []
     documents_data = [doc.model_dump() for doc in documents.documents] if documents else []
 
+    CONTENT_PREVIEW_LIMIT = 300
+
+    resources = []
+    if documents:
+        for doc in documents.documents:
+            data: dict = {"documentId": doc.document_id, "title": doc.title}
+            if doc.content:
+                data["content"] = doc.content[:CONTENT_PREVIEW_LIMIT]
+            if doc.source is not None:
+                data["source"] = doc.source
+            if doc.source_url is not None:
+                data["sourceUrl"] = doc.source_url
+            if doc.discovery_tag:
+                data["discoveryTag"] = doc.discovery_tag
+            resources.append({"type": "document", "data": data})
+    if faqs:
+        for faq in faqs.faqs:
+            resources.append({
+                "type": "faq",
+                "data": {
+                    "faqId": faq.faq_id,
+                    "question": faq.question,
+                    "answer": faq.answer,
+                },
+            })
+
+    item: dict = {
+        "sessionId": session_id,
+        "timestamp": timestamp,
+        "queryId": query_id,
+        "query": query,
+        "answer": answer,
+        "faqs": json.dumps(faqs_data),
+        "documents": json.dumps(documents_data),
+    }
+    if resources:
+        item["resources"] = resources
+
     try:
-        table.put_item(
-            Item={
-                "sessionId": session_id,
-                "timestamp": timestamp,
-                "queryId": query_id,
-                "query": query,
-                "answer": answer,
-                "faqs": json.dumps(faqs_data),
-                "documents": json.dumps(documents_data),
-            }
-        )
+        table.put_item(Item=item)
         logger.info(f"Chat history saved for session {session_id}")
     except Exception as e:
         logger.error(f"Failed to save chat history: {e}", exc_info=True)
@@ -195,7 +227,7 @@ def handler(event: dict, context) -> dict[str, Any]:
         return GenerateResponseResult(successful=False).model_dump()
 
     try:
-        chat_history = get_chat_history(job.session_id)
+        chat_history = get_chat_history(job.session_id, exclude_query_id=job.query_id)
     except Exception as e:
         logger.error(f"Error while getting chat history: {e}", exc_info=True)
         return GenerateResponseResult(successful=False).model_dump()

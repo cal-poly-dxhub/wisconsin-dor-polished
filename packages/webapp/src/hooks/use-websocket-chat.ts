@@ -5,6 +5,7 @@
  */
 
 import { useCallback, useMemo, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useValidatedWebSocket } from './use-validated-websocket';
 import { useChatStore } from '../stores/chat-store';
 import type { MessageUnion } from '@messages/websocket-interface';
@@ -31,6 +32,7 @@ export function useWebSocketChat(
   options: UseWebSocketChatOptions
 ): UseWebSocketChatReturn {
   const { handleError } = useChatError();
+  const queryClient = useQueryClient();
   const setConnectionState = useChatStore(state => state.setConnectionState);
   const updateQueryStatus = useChatStore(state => state.updateQueryStatus);
   const appendQueryResponse = useChatStore(state => state.appendQueryResponse);
@@ -55,6 +57,21 @@ export function useWebSocketChat(
     (message: MessageUnion) => {
       try {
         if ('responseType' in message) {
+          // Ignore messages for queries that aren't in the current session's store.
+          // However, if the real queryId isn't in the store yet (because the HTTP
+          // response hasn't returned to trigger replaceQueryId), eagerly perform
+          // the replacement so the WebSocket message isn't dropped.
+          const queryId = 'queryId' in message ? message.queryId : null;
+          if (queryId && !useChatStore.getState().queries[queryId]) {
+            const pendingId = pendingQueryIdRef.current;
+            if (pendingId && useChatStore.getState().queries[pendingId]) {
+              replaceQueryId(pendingId, queryId);
+              pendingQueryIdRef.current = null;
+            } else {
+              return;
+            }
+          }
+
           switch (message.responseType) {
             case 'documents':
               updateQueryResources(
@@ -88,6 +105,7 @@ export function useWebSocketChat(
               } else if (event === 'stop') {
                 updateQueryStatus(message.queryId, 'completed');
                 setChatState('idle');
+                queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] });
               }
               break;
 
@@ -136,6 +154,8 @@ export function useWebSocketChat(
       setQueryError,
       appendAgentTraceEvent,
       handleError,
+      queryClient,
+      replaceQueryId,
     ]
   );
 
@@ -176,7 +196,6 @@ export function useWebSocketChat(
 
   // Keep store session ID updated
   useEffect(() => {
-    console.log('useEffect found sessionId update');
     setSessionId(sessionId);
   }, [sessionId, setSessionId]);
 
