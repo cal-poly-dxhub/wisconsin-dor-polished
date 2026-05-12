@@ -26,6 +26,10 @@ type TraceStep = {
   label: string;
   done: boolean;
   error?: boolean;
+  // `missed` means a tool ran successfully but produced no result (e.g.,
+  // get_document found no doc, fetch_case_opinion found no opinion). Distinct
+  // from error because the graph/S3 call itself succeeded.
+  missed?: boolean;
   detail?: string;
   devJson?: string;
 };
@@ -112,9 +116,10 @@ function renderTraceStep(
   if (event.kind === 'tool_result') {
     const summary = String(event.payload.summary ?? '');
     const status = String(event.payload.status ?? 'ok');
-    const done = status === 'ok' || status === 'terminal';
+    const missed = status === 'miss';
+    const done = status === 'ok' || status === 'terminal' || missed;
     const error = status === 'error';
-    return { label: summary, done, error, detail, devJson };
+    return { label: summary, done, error, missed, detail, devJson };
   }
   return null;
 }
@@ -128,13 +133,56 @@ function buildTraceSteps(
   const visible = trace.filter(
     e => e.kind !== 'loop_start' && e.kind !== 'loop_complete'
   );
-  const steps: TraceStep[] = [];
+
+  type CollapsibleStep = TraceStep & {
+    toolName: string | null;
+    isCompletedResult: boolean;
+    metadata: Record<string, unknown> | null;
+  };
+  const collapsed: CollapsibleStep[] = [];
+
   for (const event of visible) {
     const step = renderTraceStep(event, devMode);
     if (!step) continue;
-    steps.push(step);
+    const toolName =
+      event.kind === 'tool_call' || event.kind === 'tool_result'
+        ? (event.payload.toolName as string) ?? null
+        : null;
+    const isCompletedResult =
+      event.kind === 'tool_result' &&
+      step.done === true &&
+      !step.error &&
+      !step.missed;
+    const metadata = (event.payload.metadata as Record<string, unknown>) ?? null;
+
+    const prev = collapsed[collapsed.length - 1];
+    // Fold consecutive completed results for the same tool into one line.
+    // The agent often issues 2-3 vector_searches in a row; without this, the
+    // trace shows the same "Searched the knowledge graph" entry repeated
+    // with partial counts. Merging sums the counts and keeps one row.
+    if (
+      prev &&
+      prev.isCompletedResult &&
+      isCompletedResult &&
+      toolName &&
+      prev.toolName === toolName
+    ) {
+      const merged = mergeTraceMetadata(prev.metadata, metadata);
+      prev.metadata = merged;
+      prev.detail = formatTraceMetadata(merged);
+      continue;
+    }
+    collapsed.push({ ...step, toolName, isCompletedResult, metadata });
   }
-  return steps;
+
+  return collapsed.map(({ label, done, error, missed, detail, devJson }) => ({
+    label,
+    done,
+    error,
+    missed,
+    detail,
+    devJson,
+  }));
 }
 
 export interface ChatMessageProps {
@@ -527,13 +575,17 @@ export function ChatMessage({
                               className={`mt-[0.45em] h-[7px] w-[7px] shrink-0 rounded-full transition-colors duration-500 ${
                                 step.error
                                   ? 'bg-destructive'
-                                  : step.done
-                                    ? 'bg-muted-foreground'
-                                    : 'border border-muted-foreground/50 bg-background'
+                                  : step.missed
+                                    ? 'border border-muted-foreground/50 bg-background'
+                                    : step.done
+                                      ? 'bg-muted-foreground'
+                                      : 'border border-muted-foreground/50 bg-background'
                               }`}
                             />
                             <span>
-                              <span>{step.label}</span>
+                              <span className={step.missed ? 'text-muted-foreground/70' : undefined}>
+                                {step.label}
+                              </span>
                               {step.detail && (
                                 <span className="block text-muted-foreground/70">
                                   {step.detail}
