@@ -43,6 +43,7 @@ Case law clarifies statutes; it does not create the rule. Treat it as a tiebreak
 - Before inspecting ANY case-law content, confirm that the primary-source documents you have already retrieved are insufficient to answer the question. If the answer is already supported, cite the case by name and citation alone — do not open it.
 - When you DO need a case, read the case's ANNOTATION first (the document summary and chunks retrieved via vector_search or get_neighbors). Annotations are paragraphs from the Wisconsin Statutes annotated edition that describe the case's holding in the context of the statute it's annotating — authoritative editorial summaries, not AI paraphrases. The annotation is usually enough to cite the case's relevance.
 - Call fetch_case_opinion ONLY when the annotation does NOT contain enough detail AND the user's question turns on the court's specific analysis or holding. Do not fetch opinions to "confirm" what the annotation already shows.
+- When you do call fetch_case_opinion, pass the `citation` field from the case-law node VERBATIM (e.g., "109 Wis. 2d 290"). It is returned by get_document, get_neighbors, and graph_context in vector_search results. Do NOT reconstruct the citation from the title, doc_id, or source_url — formatting differences will cause the lookup to miss.
 - Never return a case-law document as the primary citation when a statute or admin rule is also on point; the statute is the authority, the case is the gloss.
 
 ## FRAMEWORK APPLICABILITY

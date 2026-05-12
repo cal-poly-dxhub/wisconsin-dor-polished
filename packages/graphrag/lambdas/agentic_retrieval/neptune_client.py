@@ -197,7 +197,7 @@ class NeptuneClient:
             "MATCH (d {id: $id}) "
             "RETURN d.id AS id, d.title AS title, d.summary AS summary, "
             "d.source_url AS source_url, d.source_key AS s3_key, "
-            "d.doc_type AS doc_type, "
+            "d.doc_type AS doc_type, d.citation AS citation, "
             "d.authority_level AS authority_level, labels(d) AS labels",
             {"id": doc_id},
             query_name="get_document",
@@ -231,7 +231,7 @@ class NeptuneClient:
             f"{pattern} "
             "RETURN type(r) AS relationship, n.id AS id, n.title AS title, "
             "n.summary AS summary, n.source_url AS source_url, "
-            "n.doc_type AS doc_type, labels(n) AS labels",
+            "n.doc_type AS doc_type, n.citation AS citation, labels(n) AS labels",
             {"id": node_id},
             query_name="get_neighbors",
         )
