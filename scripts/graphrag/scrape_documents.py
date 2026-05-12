@@ -190,12 +190,25 @@ DOCUMENT_SOURCES = {
 }
 
 
+_GENERIC_STEMS = {"home", "index", "default", "main", "page"}
+
+
 def make_doc_id(category: str, url: str) -> str:
-    """Generate a stable document ID from category and URL."""
+    """Generate a stable document ID from category and URL.
+
+    Uses the URL filename stem by default, but prepends the parent path segment
+    when the stem is generic (e.g. "home.aspx") so URLs like
+    /Pages/Manufacturing/home.aspx and /Pages/RETr/Home.aspx don't collide.
+    """
     path = urlparse(url).path
+    parts = [p for p in path.split("/") if p]
     filename = Path(path).stem
-    clean = re.sub(r"[%\s.]+", "-", filename).strip("-").lower()
-    return f"{category}-{clean}"
+    clean_stem = re.sub(r"[%\s.]+", "-", filename).strip("-").lower()
+    if clean_stem in _GENERIC_STEMS and len(parts) >= 2:
+        parent = re.sub(r"[%\s.]+", "-", parts[-2]).strip("-").lower()
+        if parent:
+            return f"{category}-{parent}-{clean_stem}"
+    return f"{category}-{clean_stem}"
 
 
 def download_file(url: str, max_retries: int = 3) -> tuple[bytes, str]:
@@ -253,15 +266,36 @@ def main():
     parser.add_argument("--bucket", required=True, help="S3 raw bucket name")
     parser.add_argument("--prefix", default="raw/", help="S3 prefix (default: raw/)")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be scraped without downloading")
+    parser.add_argument(
+        "--category",
+        action="append",
+        default=None,
+        help="Only scrape this category (repeatable). Choices: "
+        + ", ".join(sorted(DOCUMENT_SOURCES.keys())),
+    )
+    parser.add_argument(
+        "--sleep",
+        type=float,
+        default=0.5,
+        help="Seconds to sleep between requests (default: 0.5, be kind to revenue.wi.gov)",
+    )
     args = parser.parse_args()
 
-    total = sum(len(cat["urls"]) for cat in DOCUMENT_SOURCES.values())
-    print(f"Scraping {total} documents across {len(DOCUMENT_SOURCES)} categories\n")
+    if args.category:
+        unknown = set(args.category) - set(DOCUMENT_SOURCES.keys())
+        if unknown:
+            parser.error(f"Unknown --category values: {sorted(unknown)}")
+        sources = {k: v for k, v in DOCUMENT_SOURCES.items() if k in args.category}
+    else:
+        sources = DOCUMENT_SOURCES
+
+    total = sum(len(cat["urls"]) for cat in sources.values())
+    print(f"Scraping {total} documents across {len(sources)} categories\n")
 
     processed = 0
     failed = []
 
-    for category, config in DOCUMENT_SOURCES.items():
+    for category, config in sources.items():
         print(f"\n=== {category} (authority level {config['authority_level']}) ===")
 
         for url in config["urls"]:
@@ -296,6 +330,9 @@ def main():
             except Exception as e:
                 print(f"    FAILED: {e}")
                 failed.append({"doc_id": doc_id, "url": url, "error": str(e)})
+
+            if args.sleep > 0 and processed < total:
+                time.sleep(args.sleep)
 
     print(f"\n{'DRY RUN ' if args.dry_run else ''}Complete: {processed - len(failed)}/{processed} succeeded")
     if failed:
