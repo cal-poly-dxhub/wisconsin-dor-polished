@@ -159,7 +159,7 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
             f"SET d.title = $title, d.source_key = $source_key, "
             f"d.summary = $summary, d.source_url = $source_url, "
             f"d.doc_type = $doc_type, d.authority_level = $auth_level, "
-            f"d.citation = $citation",
+            f"d.citation = $citation, d.effective_date = $effective_date",
             {
                 "id": doc["doc_id"],
                 "title": doc.get("title", doc["doc_id"]),
@@ -169,6 +169,7 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
                 "doc_type": doc_type,
                 "auth_level": doc.get("authority_level", 6),
                 "citation": doc.get("citation", ""),
+                "effective_date": doc.get("effective_date", ""),
             },
         )
 

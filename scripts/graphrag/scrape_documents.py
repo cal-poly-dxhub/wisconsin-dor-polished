@@ -11,6 +11,7 @@ import argparse
 import json
 import re
 import time
+from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -18,6 +19,8 @@ import boto3
 import requests
 
 s3 = boto3.client("s3")
+
+SITEMAP_URL = "https://www.revenue.wi.gov/sitemap.xml"
 
 DOCUMENT_SOURCES = {
     "constitution": {
@@ -175,11 +178,6 @@ DOCUMENT_SOURCES = {
         "authority_level": 6,
         "doc_type": "advisory",
         "urls": [
-            "https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2024-03-29.aspx",
-            "https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2025-04-24.aspx",
-            "https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2025-03-19.aspx",
-            "https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2023-10-27.aspx",
-            "https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2023-03-02.aspx",
             "https://www.revenue.wi.gov/Pages/Manufacturing/home.aspx",
             "https://www.revenue.wi.gov/Pages/RETr/Home.aspx",
             "https://www.revenue.wi.gov/Pages/Training/assessor-certification.aspx",
@@ -187,27 +185,93 @@ DOCUMENT_SOURCES = {
             "https://www.revenue.wi.gov/Pages/Apps/assessor-inquiry.aspx",
         ],
     },
+    # `news_pages` is sitemap-driven: URLs are fetched at runtime, not hardcoded.
+    # Lives in DOCUMENT_SOURCES so it shows up in --category and the iteration loop.
+    "news_pages": {
+        "framework_id": "FW-GOV-PUBS",
+        "authority_level": 6,
+        "doc_type": "advisory",
+        "sitemap_filter": re.compile(r"/Pages/SLF/(?:COTVC-News|Assessor-News)/", re.I),
+        "urls": [],  # populated lazily by load_news_urls_from_sitemap()
+    },
 }
 
 
+# Date format variants observed in news URLs (sample from sitemap, 2026-05):
+#   YYYY-MM-DD                  e.g. 2025-06-02
+#   YYYY-M-D / YYYY-MM-D        e.g. 2025-2-3, 2023-08-4
+#   YYYYMMDD                    e.g. 20240117
+#   YYYY-M-D{a,b,c}             same-day disambiguator suffix
+#   YYYY-MM-DD-Slug-Words       title appended after date (rare, ~2 cases)
+#
+# We accept all of these and normalize to a real ISO date for the
+# effective_date metadata attribute. Letter suffixes are intentionally
+# discarded — they're sub-day ordering, not a calendar distinction.
+_NEWS_DATE_RE = re.compile(
+    r"/(?:COTVC-News|Assessor-News)/"
+    r"(?:"
+    r"(?P<y1>\d{4})-(?P<m1>\d{1,2})-(?P<d1>\d{1,2})[a-z]?"  # YYYY-M-D[suffix]
+    r"|(?P<y2>\d{4})(?P<m2>\d{2})(?P<d2>\d{2})"               # YYYYMMDD
+    r")",
+    re.I,
+)
+
+
+def extract_news_date(url: str) -> str | None:
+    """Return ISO date string (YYYY-MM-DD) from a news URL, or None if not parseable."""
+    m = _NEWS_DATE_RE.search(url)
+    if not m:
+        return None
+    if m.group("y1"):
+        y, mo, d = int(m.group("y1")), int(m.group("m1")), int(m.group("d1"))
+    else:
+        y, mo, d = int(m.group("y2")), int(m.group("m2")), int(m.group("d2"))
+    try:
+        return date(y, mo, d).isoformat()
+    except ValueError:
+        return None  # garbage like 20203-05-15
+
+
+def load_news_urls_from_sitemap(filter_re: re.Pattern) -> list[str]:
+    """Pull news URLs from the WI DOR sitemap, filtered to news sections."""
+    headers = {"User-Agent": "Mozilla/5.0 (WI-DOR-Bot/1.0)"}
+    resp = requests.get(SITEMAP_URL, headers=headers, timeout=60)
+    resp.raise_for_status()
+    locs = re.findall(r"<loc>([^<]+)</loc>", resp.text)
+    return sorted({url for url in locs if filter_re.search(url)})
+
+
 _GENERIC_STEMS = {"home", "index", "default", "main", "page"}
+_NEWS_PARENT_SEGMENTS = {"cotvc-news", "assessor-news"}
 
 
 def make_doc_id(category: str, url: str) -> str:
     """Generate a stable document ID from category and URL.
 
-    Uses the URL filename stem by default, but prepends the parent path segment
-    when the stem is generic (e.g. "home.aspx") so URLs like
-    /Pages/Manufacturing/home.aspx and /Pages/RETr/Home.aspx don't collide.
+    Default: `{category}-{filename-stem}`. Two disambiguation rules:
+
+    1. Generic stems (home.aspx, index.aspx) get the parent path prepended
+       so /Pages/Manufacturing/home.aspx ≠ /Pages/RETr/Home.aspx.
+    2. News URLs get the section (cotvc-news/assessor-news) prepended,
+       since both sections post on the same dates (~62 collisions in 2026-05
+       sitemap). Filename-only naming would silently overwrite half the corpus.
     """
     path = urlparse(url).path
     parts = [p for p in path.split("/") if p]
     filename = Path(path).stem
     clean_stem = re.sub(r"[%\s.]+", "-", filename).strip("-").lower()
+
     if clean_stem in _GENERIC_STEMS and len(parts) >= 2:
         parent = re.sub(r"[%\s.]+", "-", parts[-2]).strip("-").lower()
         if parent:
             return f"{category}-{parent}-{clean_stem}"
+
+    # News-section discriminator (rule 2 above).
+    if len(parts) >= 2:
+        parent = re.sub(r"[%\s.]+", "-", parts[-2]).strip("-").lower()
+        if parent in _NEWS_PARENT_SEGMENTS:
+            return f"{category}-{parent}-{clean_stem}"
+
     return f"{category}-{clean_stem}"
 
 
@@ -289,6 +353,13 @@ def main():
     else:
         sources = DOCUMENT_SOURCES
 
+    # Hydrate sitemap-driven categories now that we know which we'll scrape.
+    for category, config in sources.items():
+        if "sitemap_filter" in config and not config["urls"]:
+            print(f"Loading {category} URLs from {SITEMAP_URL}...")
+            config["urls"] = load_news_urls_from_sitemap(config["sitemap_filter"])
+            print(f"  {len(config['urls'])} URLs from sitemap for {category}")
+
     total = sum(len(cat["urls"]) for cat in sources.values())
     print(f"Scraping {total} documents across {len(sources)} categories\n")
 
@@ -303,7 +374,9 @@ def main():
             processed += 1
 
             if args.dry_run:
-                print(f"  [{processed}/{total}] Would scrape: {doc_id} <- {url}")
+                eff_date = extract_news_date(url)
+                date_part = f"  date={eff_date}" if eff_date else ""
+                print(f"  [{processed}/{total}] Would scrape: {doc_id} <- {url}{date_part}")
                 continue
 
             print(f"  [{processed}/{total}] {doc_id}")
@@ -323,6 +396,12 @@ def main():
                     "authority_level": str(config["authority_level"]),
                     "category": category,
                 }
+
+                # News pages get their publication date stamped so the loader
+                # can set Advisory.effective_date for date-based supersession.
+                eff_date = extract_news_date(url)
+                if eff_date:
+                    metadata["effective_date"] = eff_date
 
                 doc_key = upload_to_s3(args.bucket, args.prefix, doc_id, data, ct, metadata)
                 print(f"    -> s3://{args.bucket}/{doc_key}")

@@ -180,13 +180,18 @@ class NeptuneClient:
         procedures, so the embedding and topK are inlined into the query.
         """
         embedding_literal = "[" + ",".join(str(v) for v in embedding) + "]"
+        # OPTIONAL MATCH on the parent doc surfaces effective_date alongside
+        # each chunk so the agent can prefer newer Advisory results when two
+        # chunks address the same topic. Cheap join — chunk→doc is 1:1.
         results = self.query(
             f"CALL neptune.algo.vectors.topKByEmbedding({embedding_literal}, {{topK: {top_k}}}) "
             "YIELD node, score "
+            "OPTIONAL MATCH (node)-[:EXTRACTED_FROM]->(parent) "
             "RETURN node.id AS chunk_id, node.text AS text, node.doc_id AS doc_id, "
             "node.source_url AS source_url, node.s3_key AS s3_key, "
             "node.start_page AS start_page, node.end_page AS end_page, "
-            "node.heading AS heading, node.subheading AS subheading, score",
+            "node.heading AS heading, node.subheading AS subheading, "
+            "parent.effective_date AS effective_date, score",
             query_name="vector_search",
         )
         return results
@@ -198,7 +203,8 @@ class NeptuneClient:
             "RETURN d.id AS id, d.title AS title, d.summary AS summary, "
             "d.source_url AS source_url, d.source_key AS s3_key, "
             "d.doc_type AS doc_type, d.citation AS citation, "
-            "d.authority_level AS authority_level, labels(d) AS labels",
+            "d.authority_level AS authority_level, "
+            "d.effective_date AS effective_date, labels(d) AS labels",
             {"id": doc_id},
             query_name="get_document",
         )
@@ -231,7 +237,8 @@ class NeptuneClient:
             f"{pattern} "
             "RETURN type(r) AS relationship, n.id AS id, n.title AS title, "
             "n.summary AS summary, n.source_url AS source_url, "
-            "n.doc_type AS doc_type, n.citation AS citation, labels(n) AS labels",
+            "n.doc_type AS doc_type, n.citation AS citation, "
+            "n.effective_date AS effective_date, labels(n) AS labels",
             {"id": node_id},
             query_name="get_neighbors",
         )

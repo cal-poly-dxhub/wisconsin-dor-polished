@@ -335,6 +335,7 @@ def process_document(doc: dict, raw_bucket: str, work_bucket: str, config: dict)
             "implements_refs": classification.get("implements_refs", []),
             "topics": classification.get("topics", []),
             "source_url": metadata.get("source_url", "n/a"),
+            "effective_date": metadata.get("effective_date", ""),
             "full_text": full_text,
             "chunks": chunks,
         }
