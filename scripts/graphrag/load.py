@@ -238,6 +238,24 @@ def _flush_phase_3_batch(client, graph_id: str, batch: list[dict]) -> tuple[int,
         )
         edges += len(cite_statute_pairs)
 
+        # 2b. Mirror the edge for case-law docs: (Statute)-[:CITES]->(CaseLaw).
+        # Lets the agent traverse outgoing CITES from a Statute to discover
+        # interpreting cases. The forward edge alone (Case→Statute) means
+        # case discovery requires either incoming-direction get_neighbors or
+        # vector-search luck on bulky statute annotation chunks. Markarian
+        # buried in a 7K-char §70.32 chunk failed both at retrieval time.
+        case_law_pairs = [
+            row for row in cite_statute_pairs if row["doc_id"].startswith("case-law-")
+        ]
+        if case_law_pairs:
+            execute_query(client, graph_id,
+                "UNWIND $rows AS row "
+                "MATCH (s:Statute {id: row.stub_id}), (c:CaseLaw {id: row.doc_id}) "
+                "MERGE (s)-[:CITES]->(c)",
+                {"rows": case_law_pairs},
+            )
+            edges += len(case_law_pairs)
+
     # 3. doc -IMPLEMENTS-> Statute
     impl_pairs = [
         {"doc_id": b["doc_id"], "stub_id": f"WIS-STAT-{ref}"}
