@@ -342,39 +342,80 @@ def phase_3_cross_references(client, graph_id: str, documents: list[dict]):
 
 
 def phase_4_statute_hierarchy(client, graph_id: str):
+    """Build (Section)-[:PART_OF]->(Chapter) and (Sub)-[:PART_OF]->(Section).
+
+    Wisconsin Statute IDs look like:
+      - WIS-STAT-70           — chapter (no dot)
+      - WIS-STAT-70.32        — section (chapter.section)
+      - WIS-STAT-66.021(5)(g) — subsection (further nested by parens)
+
+    For each section/subsection, we emit one edge to its immediate parent
+    (rsplit on '(' for parens, otherwise the chapter). The chapter node
+    itself never gets a PART_OF — that would self-loop.
+
+    Both the section→chapter and subsection→section edges go through one
+    UNWIND each, instead of a per-statute execute_query — matches the
+    batching pattern used in phases 3, 5, 8.
+    """
     logger.info("Phase 4: Building statute hierarchy (PART_OF)...")
 
     result = execute_query(client, graph_id,
-        "MATCH (s:Statute) RETURN s.id AS id, s.title AS title"
+        "MATCH (s:Statute) RETURN s.id AS id"
     )
-
     statutes = result.get("results", [])
-    edges = 0
 
+    section_to_chapter: list[dict] = []
+    sub_to_parent: list[dict] = []
     for stat in statutes:
         stat_id = stat["id"]
-        match = re.match(r"WIS-STAT-(\d+)", stat_id)
+        # Only "WIS-STAT-{digits}{. or (}..." are sections/subsections.
+        # The trailing punctuation guard prevents chapter IDs from matching.
+        match = re.match(r"WIS-STAT-(\d+)(?:[.(])", stat_id)
         if match:
-            chapter_id = f"CH-{match.group(1)}"
-            execute_query(client, graph_id,
-                "MATCH (child:Statute {id: $child_id}), (parent:Statute {id: $parent_id}) "
-                "MERGE (child)-[:PART_OF]->(parent)",
-                {"child_id": stat_id, "parent_id": chapter_id},
-            )
-            edges += 1
+            chapter_id = f"WIS-STAT-{match.group(1)}"
+            if chapter_id != stat_id:
+                section_to_chapter.append({"child_id": stat_id, "parent_id": chapter_id})
 
+        # Subsection → its immediate paren-stripped parent (e.g.
+        # "WIS-STAT-66.021(5)(g)" → "WIS-STAT-66.021(5)"). The parent may
+        # not yet exist as a real node — created as a stub on demand.
         if "(" in stat_id:
             parent_id = stat_id.rsplit("(", 1)[0]
-            execute_query(client, graph_id,
-                "MERGE (p:Statute {id: $parent_id}) ON CREATE SET p.stub = true "
-                "WITH p "
-                "MATCH (child:Statute {id: $child_id}) "
-                "MERGE (child)-[:PART_OF]->(p)",
-                {"child_id": stat_id, "parent_id": parent_id},
-            )
-            edges += 1
+            sub_to_parent.append({"child_id": stat_id, "parent_id": parent_id})
 
-    logger.info(f"  Created {edges} hierarchy edges")
+    flush_cap = 400
+
+    for start in range(0, len(section_to_chapter), flush_cap):
+        chunk = section_to_chapter[start : start + flush_cap]
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (child:Statute {id: row.child_id}), (parent:Statute {id: row.parent_id}) "
+            "MERGE (child)-[:PART_OF]->(parent)",
+            {"rows": chunk},
+        )
+
+    for start in range(0, len(sub_to_parent), flush_cap):
+        chunk = sub_to_parent[start : start + flush_cap]
+        # Two-step: ensure parent stub exists, then wire the edge. We can't
+        # combine into one UNWIND cleanly because the MERGE-of-parent must
+        # commit before the section MATCH can pick it up.
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MERGE (p:Statute {id: row.parent_id}) "
+            "ON CREATE SET p.stub = true",
+            {"rows": chunk},
+        )
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (child:Statute {id: row.child_id}), (parent:Statute {id: row.parent_id}) "
+            "MERGE (child)-[:PART_OF]->(parent)",
+            {"rows": chunk},
+        )
+
+    logger.info(
+        f"  Created {len(section_to_chapter)} section→chapter and "
+        f"{len(sub_to_parent)} subsection→parent edges"
+    )
 
 
 def phase_5_topic_merging(client, graph_id: str, documents: list[dict], config: dict):
@@ -788,19 +829,68 @@ def _llm_classify_semantic_batch(
 
     Each edge spec: {"a_id", "b_id", "type", "sim", "reason"}.
     Raises on failure — caller logs + moves on.
+
+    Prompt design notes:
+      - Title + type alone is too thin for CONFLICTS_WITH detection. We
+        include the doc summary (first ~400 chars) so the LLM can see
+        substantive positions, not just titles.
+      - We define each edge type explicitly with positive AND negative
+        examples; without this the LLM defaults to RELATED_TO for
+        anything ambiguous, which is why CONFLICTS_WITH was 1/11k+.
+      - "related": false is still a valid output — many cosine-similar
+        pairs are coincidental (shared boilerplate, same chapter banner).
     """
     pairs_text = "\n".join([
-        f"Pair {k+1}: Doc A = '{a['title']}' (type={a['doc_type']}), "
-        f"Doc B = '{b['title']}' (type={b['doc_type']}), similarity={sim:.3f}"
+        (
+            f"Pair {k+1}:\n"
+            f"  Doc A: '{a['title']}' (type={a['doc_type']})\n"
+            f"    Summary: {(a.get('summary') or '')[:400]}\n"
+            f"  Doc B: '{b['title']}' (type={b['doc_type']})\n"
+            f"    Summary: {(b.get('summary') or '')[:400]}\n"
+            f"  Cosine similarity: {sim:.3f}"
+        )
         for k, (a, b, sim) in enumerate(batch)
     ])
     prompt = (
-        "For each pair of Wisconsin DOR documents below, determine if they are meaningfully related. "
-        "For each pair, return: {\"pair\": N, \"related\": true/false, "
+        "Classify each pair of Wisconsin DOR property tax documents. "
+        "Return one JSON array, no prose, no markdown.\n\n"
+        "Each result: {\"pair\": N, \"related\": true|false, "
         "\"type\": \"RELATED_TO\"|\"SUPPLEMENTS\"|\"SUPERSEDES\"|\"CONFLICTS_WITH\", "
-        "\"reason\": \"brief explanation\"}\n\n"
-        "Return ONLY a JSON array, no prose. Consider the Wisconsin legal hierarchy: "
-        "Constitution > Statutes > Admin Rules > WPAM > FAQs > Guides.\n\n"
+        "\"reason\": \"<one sentence>\"}\n\n"
+        "EDGE TYPE DEFINITIONS\n\n"
+        "RELATED_TO — same topic, mutually consistent, neither extends nor "
+        "replaces the other. Default for compatible docs that just cover "
+        "overlapping subject matter.\n"
+        "  POSITIVE: WPAM section on residential valuation + Advisory on "
+        "    new construction valuation in residential class.\n"
+        "  NEGATIVE: Two unrelated FAQs that happen to share boilerplate.\n\n"
+        "SUPPLEMENTS — Doc A provides additional detail or worked examples "
+        "for a rule that Doc B states. A → B (A supplements B).\n"
+        "  POSITIVE: Advisory worked example → WPAM section it illustrates.\n"
+        "  NEGATIVE: Two equally-detailed treatments of the same rule.\n\n"
+        "SUPERSEDES — Doc A is a newer version of Doc B and replaces it. "
+        "A → B (A supersedes B). Look for explicit version/year markers "
+        "(WPAM 2020 → WPAM 2017) or 'replaces' language.\n"
+        "  POSITIVE: WPAM 2024 chapter on uniformity → WPAM 2020 same chapter.\n"
+        "  NEGATIVE: Two contemporaneous Advisories from different quarters. "
+        "    Different scope is NOT supersession.\n\n"
+        "CONFLICTS_WITH — same topic, INCOMPATIBLE positions or guidance "
+        "that cannot both be followed simultaneously. This is a serious "
+        "label — the agent will surface this to users as a tension. Use "
+        "ONLY when the docs make affirmative claims that contradict each "
+        "other on substance, not when they just emphasize different things.\n"
+        "  POSITIVE: Advisory A says 'agricultural classification requires "
+        "    primary use'; Advisory B says 'any qualifying use suffices'.\n"
+        "  POSITIVE: WPAM section says assessor must use cost approach for X; "
+        "    admin rule allows market approach for the same X.\n"
+        "  NEGATIVE: Older guidance later softened — that is SUPERSEDES.\n"
+        "  NEGATIVE: Different topics that happen to use shared terminology.\n"
+        "  NEGATIVE: Same position phrased differently.\n\n"
+        "DECISION ORDER: SUPERSEDES > CONFLICTS_WITH > SUPPLEMENTS > RELATED_TO. "
+        "If Doc A explicitly replaces Doc B, label SUPERSEDES even if their "
+        "positions differ. CONFLICTS_WITH is only for unresolved contradiction "
+        "between docs that are both presently in force.\n\n"
+        "When in doubt, prefer 'related: false' over a wrong RELATED_TO.\n\n"
         f"Pairs:\n{pairs_text}"
     )
     response = bedrock.converse(
@@ -888,6 +978,7 @@ def phase_11_semantic_edges(client, graph_id: str, documents: list[dict], config
     batches_done = 0
     pending_edges: list[dict] = []
     flush_cap = 200
+    type_counts: dict[str, int] = {t: 0 for t in PHASE_11_ALLOWED_TYPES}
 
     with ThreadPoolExecutor(max_workers=PHASE_11_LLM_WORKERS) as pool:
         future_to_idx = {
@@ -898,6 +989,8 @@ def phase_11_semantic_edges(client, graph_id: str, documents: list[dict], config
             bi = future_to_idx[fut]
             try:
                 edges = fut.result()
+                for e in edges:
+                    type_counts[e["type"]] = type_counts.get(e["type"], 0) + 1
                 pending_edges.extend(edges)
             except Exception as e:
                 logger.warning(f"  Batch {bi} failed: {e}")
@@ -912,14 +1005,69 @@ def phase_11_semantic_edges(client, graph_id: str, documents: list[dict], config
             if batches_done % 20 == 0 or batches_done == len(batches):
                 logger.info(
                     f"  Phase 11 progress: {batches_done}/{len(batches)} batches, "
-                    f"{edges_created} edges written"
+                    f"{edges_created} edges written, by type: "
+                    + ", ".join(f"{t}={n}" for t, n in sorted(type_counts.items()))
                 )
 
     if pending_edges:
         written = _flush_semantic_edges(client, graph_id, pending_edges)
         edges_created += written
 
-    logger.info(f"  Created {edges_created} semantic edges")
+    logger.info(
+        f"  Created {edges_created} semantic edges; final by type: "
+        + ", ".join(f"{t}={n}" for t, n in sorted(type_counts.items()))
+    )
+
+
+def phase_12_cleanup(client, graph_id: str):
+    """Garbage-collect orphan nodes left over from prior loads.
+
+    Two specific classes:
+      1. Orphan Statute STUBs — created on demand by phase 3 / phase 8 when
+         a chunk's regex matches a section we never indexed full text for.
+         If after the whole load the stub has zero incoming AND zero
+         outgoing relationships, it's a regex hallucination (e.g., a
+         partial number that looked like a statute ref). Safe to delete.
+      2. Orphan Topic nodes — phase 5 sometimes creates canonical Topics
+         from LLM cluster output that no document maps to (the LLM names a
+         canonical that isn't a "member" of any cluster, so the doc→topic
+         edge is never wired). Topics with zero COVERS_TOPIC are dead
+         weight in the index.
+
+    This phase is run-once-and-safe. MERGE-idempotent phases above will
+    not re-create the orphans because the underlying conditions for stub
+    creation (unmatched regex, LLM canonical drift) only fire during
+    extract/embed. So running phase 12 doesn't fight the rest of the
+    pipeline.
+
+    We DELIBERATELY do not GC:
+      - Stub Statutes that have ANY edge — they're real placeholders.
+      - Topics with at least one COVERS_TOPIC — the agent uses these.
+      - Stub AdminRules — much smaller volume; defer until we see the
+        same pattern.
+    """
+    logger.info("Phase 12: Cleaning up orphan stubs and topics...")
+
+    stub_orphans = execute_query(client, graph_id,
+        "MATCH (s:Statute) "
+        "WHERE s.stub = true "
+        "  AND NOT (s)-[]-() "
+        "WITH s LIMIT 5000 "
+        "DETACH DELETE s "
+        "RETURN count(s) AS deleted"
+    )
+    deleted_stubs = stub_orphans.get("results", [{}])[0].get("deleted", 0)
+    logger.info(f"  Deleted {deleted_stubs} orphan Statute stubs (no incoming/outgoing edges)")
+
+    topic_orphans = execute_query(client, graph_id,
+        "MATCH (t:Topic) "
+        "WHERE NOT (t)<-[:COVERS_TOPIC]-() "
+        "WITH t LIMIT 5000 "
+        "DETACH DELETE t "
+        "RETURN count(t) AS deleted"
+    )
+    deleted_topics = topic_orphans.get("results", [{}])[0].get("deleted", 0)
+    logger.info(f"  Deleted {deleted_topics} orphan Topic nodes (no incoming COVERS_TOPIC)")
 
 
 def main():
@@ -963,6 +1111,7 @@ def main():
         (8, "Stub Resolution", lambda: phase_9_stub_resolution(client, graph_id)),
         (9, "Vector Upserts", lambda: phase_10_vectors(client, graph_id, documents)),
         (10, "Semantic Edges", lambda: phase_11_semantic_edges(client, graph_id, documents, config)),
+        (11, "Orphan Cleanup", lambda: phase_12_cleanup(client, graph_id)),
     ]
 
     for phase_num, name, fn in phases:

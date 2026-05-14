@@ -112,7 +112,11 @@ Neptune Analytics graph (`g-ndvl4j73v4` in us-east-1) with 1024-dim vectors and 
 **Authority hierarchy (9 levels, by legal precedence):**
 Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM (5) → FAQs (6) → Gov Pubs (7) → IAAO (8) → USPAP (9)
 
-**Edge types:** CITES, IMPLEMENTS, SUPERSEDES, PART_OF (statute hierarchy), HAS_CHUNK, TAGGED_WITH
+**Edge types:**
+- Authority: `CITES` (Doc→Statute, Doc→AdminRule, Statute→CaseLaw mirror, Chunk→Statute, Chunk→AdminRule), `IMPLEMENTS` (Doc→Statute)
+- Hierarchy: `PART_OF` (Section→Chapter, Subsection→Section), `BELONGS_TO` (Doc→Framework), `HAS_SUBSECTION` (Doc→Doc multi-part), `EXTRACTED_FROM` (Chunk→Doc), `DERIVED_FROM` (Framework→Framework, e.g., IAAO→WPAM)
+- Topical: `COVERS_TOPIC` (Doc→Topic)
+- Semantic (LLM-classified, phase 11): `RELATED_TO`, `SUPPLEMENTS`, `SUPERSEDES`, `CONFLICTS_WITH`
 
 **S3 bucket structure:** `raw/{category}-{clean-name}/{category}-{clean-name}.pdf` + `.metadata.json`
 
