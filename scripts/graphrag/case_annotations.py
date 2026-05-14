@@ -276,6 +276,59 @@ def extract_annotation_from_text(
     return _strip_leading_breadcrumb(annotation) or None
 
 
+# Section-number pattern in the page running header: e.g. "70.32" or "70.327".
+# Wisconsin Statutes print this in the banner of every page (alongside the
+# page number and the chapter name in all-caps), so the first match in the
+# first ~500 chars of page text reliably identifies the section that owns
+# the page. Trailing letters (e.g. "70.32m") are statute fragments and ARE
+# a valid section identifier — we match them.
+_SECTION_HEADER_RE = re.compile(r"\b(\d{1,3}\.\d{2,4}[a-z]?)\b")
+
+# How far into the page text to look for the section banner. Wisconsin
+# headers are always within ~250 chars; 500 gives margin for the alternate
+# banner ordering ("page | section | chapter" vs "chapter | section | page").
+_HEADER_SCAN_CHARS = 500
+
+
+def extract_section_for_page(
+    pdf_path: str | Path,
+    page_1idx: int,
+    expected_chapter: str | None = None,
+) -> str | None:
+    """Return the statute section number that owns a given page (1-indexed).
+
+    Reads the running header at the top of the page, which Wisconsin Statutes
+    print on every page in the form "GENERAL PROPERTY TAXES | 70.32 | 23" or
+    its mirrored variant. The first ``\\d+\\.\\d+`` match in the header region
+    is the section.
+
+    When ``expected_chapter`` is provided (e.g. ``"70"`` derived from the PDF
+    filename), only matches whose chapter portion equals it are accepted. This
+    rejects cross-references that appear in body text but not in the banner —
+    useful when a page has more than one section number near the top.
+
+    Returns None when:
+    - the page index is out of range,
+    - no section pattern is found in the header window,
+    - or every match's chapter prefix mismatches ``expected_chapter``.
+    """
+    doc = fitz.open(str(pdf_path))
+    try:
+        page_idx = page_1idx - 1
+        if not (0 <= page_idx < len(doc)):
+            return None
+        text = doc[page_idx].get_text()[:_HEADER_SCAN_CHARS]
+        for match in _SECTION_HEADER_RE.finditer(text):
+            section = match.group(1)
+            if expected_chapter is None:
+                return section
+            if section.split(".")[0] == expected_chapter:
+                return section
+        return None
+    finally:
+        doc.close()
+
+
 def extract_annotation_from_pdf(
     pdf_path: str | Path,
     citation: str,

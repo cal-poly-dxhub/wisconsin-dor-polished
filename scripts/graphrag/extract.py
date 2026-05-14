@@ -18,6 +18,7 @@ import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 import boto3
 import yaml
@@ -25,6 +26,14 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from pdf_chunking.pdfChunker import process_pdf_from_s3
+from scripts.graphrag.case_annotations import extract_section_for_page
+
+# Local mirror of the statute PDFs the case-law metadata references.
+# We need these to read the running header that identifies which section
+# owns each page (used to derive section-level statute_refs for case-law
+# nodes — without this every case-law CITES edge points at the chapter,
+# which makes section-anchored agent queries miss the case).
+DEFAULT_STATE_LAWS_DIR = Path(__file__).resolve().parent.parent.parent / "docs" / "state-laws"
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -134,6 +143,48 @@ def _parse_citing_statutes(metadata: dict) -> list[dict]:
     ]
 
 
+def _derive_case_statute_refs(
+    citing_statutes: list[dict], state_laws_dir: Path
+) -> list[str]:
+    """Build the case-law document's statute_refs list.
+
+    Returns the union of:
+      - chapter-level refs derived from the citing-statute filename ("70")
+      - section-level refs derived by reading each cited page's running
+        header in the local statute PDF ("70.32")
+
+    Section-level refs are the lever that makes case-law reachable from a
+    section node like WIS-STAT-70.32 — without them, the agent must walk
+    PART_OF up to WIS-STAT-70 to discover any cases at all (Markarian was
+    invisible to vector_search ranking on §70.32 chunks even though its
+    annotation lives there).
+
+    When the local PDF mirror is missing or page detection fails, falls back
+    silently to chapter-only refs, matching prior behavior.
+    """
+    refs: set[str] = set()
+    for src in citing_statutes:
+        filename = src.get("file", "")
+        chapter = _statute_file_to_chapter(filename)
+        if not chapter:
+            continue
+        refs.add(chapter)
+
+        pdf_path = state_laws_dir / filename
+        if not pdf_path.exists():
+            continue
+        for page in src.get("pages", []) or []:
+            try:
+                section = extract_section_for_page(
+                    pdf_path, int(page), expected_chapter=chapter
+                )
+            except (ValueError, TypeError):
+                continue
+            if section:
+                refs.add(section)
+    return sorted(refs)
+
+
 def process_case_law_document(
     doc: dict, raw_bucket: str, metadata: dict, config: dict
 ) -> dict | None:
@@ -175,13 +226,15 @@ def process_case_law_document(
     else:
         title = doc_id
 
-    # Statute refs drive the Document-level CITES edge targets in load.py
-    # (statute file "70.pdf" → "70", "706 Document.pdf" → "706").
-    statute_refs = sorted({
-        _statute_file_to_chapter(src["file"])
-        for src in citing_statutes
-        if _statute_file_to_chapter(src.get("file", ""))
-    })
+    # Statute refs drive the Document-level CITES edge targets in load.py.
+    # We emit both chapter- and section-level refs (e.g., "70" AND "70.32")
+    # so the agent can find this case from either granularity. Section is
+    # derived from the page header in the local statute PDF; falls back to
+    # chapter-only when the mirror is unavailable.
+    state_laws_dir = Path(
+        config.get("state_laws_dir") or DEFAULT_STATE_LAWS_DIR
+    )
+    statute_refs = _derive_case_statute_refs(citing_statutes, state_laws_dir)
 
     result = {
         "doc_id": doc_id,
@@ -203,7 +256,7 @@ def process_case_law_document(
 
     logger.info(
         f"  Extracted {doc_id}: thin case-law stub, title={title[:60]}, "
-        f"cites {len(statute_refs)} statute chapters"
+        f"cites {len(statute_refs)} statute refs ({statute_refs[:5]})"
     )
     return result
 
