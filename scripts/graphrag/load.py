@@ -60,6 +60,14 @@ def get_neptune_client(graph_id: str):
 
 
 def execute_query(client, graph_id: str, query: str, parameters: dict | None = None) -> dict:
+    """Run an OpenCypher query and return the parsed payload.
+
+    The boto3 ``neptune-graph.execute_query`` API returns ``{"payload": <StreamingBody>}``;
+    the actual ``{"results": [...]}`` JSON lives inside that streaming body. We
+    decode here so callers can reliably do ``result.get("results", [])``. Any
+    mutation-only phase that ignores the return value still works the same
+    because the parse cost is one ``read()`` per query.
+    """
     kwargs = {
         "graphIdentifier": graph_id,
         "language": "OPEN_CYPHER",
@@ -70,7 +78,11 @@ def execute_query(client, graph_id: str, query: str, parameters: dict | None = N
 
     for attempt in range(8):
         try:
-            return client.execute_query(**kwargs)
+            resp = client.execute_query(**kwargs)
+            payload = resp.get("payload")
+            if payload is None:
+                return {}
+            return json.loads(payload.read())
         except Exception as e:
             # Neptune Analytics signals throttling via ThrottlingException OR via
             # UnprocessableException with message "Retry for SDK query requests is
@@ -385,8 +397,20 @@ def phase_4_statute_hierarchy(client, graph_id: str):
 
     flush_cap = 400
 
+    # MERGE parent chapters on demand. At phase 4 time only 7 chapter nodes
+    # exist (the hardcoded ``statute_families`` config). Sections from
+    # chapters outside that list (e.g., ``WIS-STAT-292.31`` from chapter 292)
+    # have no parent to MATCH, so the original MATCH-MATCH-MERGE pattern
+    # produced 0 edges. We now MERGE the chapter as a stub if it doesn't
+    # exist before wiring the edge — same pattern as the subsection path.
     for start in range(0, len(section_to_chapter), flush_cap):
         chunk = section_to_chapter[start : start + flush_cap]
+        execute_query(client, graph_id,
+            "UNWIND $rows AS row "
+            "MERGE (p:Statute {id: row.parent_id}) "
+            "ON CREATE SET p.stub = true",
+            {"rows": chunk},
+        )
         execute_query(client, graph_id,
             "UNWIND $rows AS row "
             "MATCH (child:Statute {id: row.child_id}), (parent:Statute {id: row.parent_id}) "

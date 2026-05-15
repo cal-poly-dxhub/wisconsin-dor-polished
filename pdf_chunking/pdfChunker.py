@@ -446,7 +446,34 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
 
     # --- Patterns ---
     chapter_pattern = re.compile(r"^Chapter\s+\d+", re.IGNORECASE)
-    section_header_pattern = re.compile(r"^[A-Z][A-Za-z\s]{3,}$")
+
+    # Section-header detection. WPAM headings are typically one of:
+    #   - All-caps, short ("OVERVIEW", "INTRODUCTION", "DEFINITIONS")
+    #   - Numbered/lettered prefix ("A. Manufacturing Property", "1. Methodology")
+    #   - Roman-numeral prefix ("I. Major Concepts", "IV. Methodology")
+    # The prior pattern (``^[A-Z][A-Za-z\s]{3,}$``) accepted any line starting
+    # with a capital letter and containing only letters+spaces — that included
+    # mid-prose phrases like "Real Property Assessment" or "Manufacturing
+    # Property" when they happened to land on their own line, producing
+    # spurious chunk splits. Audit findings: long sentences shared as a
+    # heading prefix across 10+ adjacent retrieved chunks.
+    section_header_patterns = [
+        re.compile(r"^[A-Z]{2,}(?:\s+[A-Z]{2,}){0,5}\s*$"),  # ALL-CAPS up to 6 tokens
+        re.compile(r"^[A-Z]\.\s+[A-Z][A-Za-z]"),             # "A. Title" / "B. Notes"
+        re.compile(r"^\d+\.\s+[A-Z][A-Za-z]"),               # "1. Methodology"
+        re.compile(r"^[IVX]+\.\s+[A-Z][A-Za-z]"),            # "IV. Methodology"
+    ]
+
+    def _looks_like_section_header(line: str) -> bool:
+        """Return True only when the line has a structural heading signature.
+
+        Length cap (8 words / 80 chars) defends against long sentences that
+        happen to start with a heading-like token.
+        """
+        if len(line) > 80 or len(line.split()) >= 8:
+            return False
+        return any(p.match(line) for p in section_header_patterns)
+
     max_words = 1200
     min_merge_words = 80     # merge chunks smaller than this
     max_merge_total = 500    # only merge if result < this many words
@@ -540,7 +567,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
                 current_chapter, current_section, buffer = line, None, []
                 continue
 
-            if section_header_pattern.match(line) and len(line.split()) < 8:
+            if _looks_like_section_header(line):
                 flush_chunk(buffer, current_chapter, current_section)
                 current_section, buffer = line, []
                 continue

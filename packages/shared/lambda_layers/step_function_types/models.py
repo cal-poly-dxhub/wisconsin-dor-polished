@@ -63,6 +63,12 @@ class RAGDocument(BaseModel):
     source: str | None = Field(default=None)
     source_url: str | None = Field(default=None)
     discovery_tag: str = Field(default="unknown")
+    # Optional: 1=Constitution, 2=Statute, 3=CaseLaw, 4=AdminRule, 5=WPAM,
+    # 6=FAQ, 7=GovPub, 8=IAAO, 9=USPAP. Drives the AuthorityBadge color in
+    # the frontend. Stored on every Document node in Neptune; populated by
+    # _build_rag_documents / _build_opinion_card so non-FAQ cards render
+    # with their authority pill (FAQs hard-code level 6 client-side).
+    authority_level: int | None = Field(default=None)
 
 
 class DocumentResource(BaseModel):

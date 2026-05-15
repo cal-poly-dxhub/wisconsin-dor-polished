@@ -40,6 +40,7 @@ class SourceDocument(WebSocketMessage):
     source: str | None = None
     source_url: str | None = None
     discovery_tag: str = "unknown"
+    authority_level: int | None = None
 
 
 class DocumentsContent(WebSocketMessage):

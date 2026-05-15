@@ -2,6 +2,12 @@
 # GraphRAG ingestion pipeline configuration for Wisconsin DOR
 
 # --- Chunking ---
+# NOTE: chunk_size and chunk_overlap apply ONLY to the non-PDF fallback path
+# in extract.py (sliding-window over raw text — used for HTML scrapes etc).
+# PDF documents (statutes, WPAM, advisories, etc.) are routed through
+# pdf_chunking/pdfChunker.py which uses CHUNK_MAX_CHARS=7500 (kept just under
+# Titan v2's 8000-char silent-truncation threshold). Changing chunk_size below
+# does NOT affect PDF chunking — edit pdfChunker.py instead.
 chunk_size: 2000
 chunk_overlap: 200
 large_doc_threshold: 10000

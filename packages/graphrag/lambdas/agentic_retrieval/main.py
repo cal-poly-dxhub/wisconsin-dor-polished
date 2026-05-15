@@ -1434,6 +1434,7 @@ def _collapse_case_law_by_title(
             source=primary_doc.source,
             source_url=primary_doc.source_url,
             discovery_tag=primary_doc.discovery_tag,
+            authority_level=primary_doc.authority_level,
         )
         logger.info(
             f"Collapsed {len(group)} case-law parallel citations into "
@@ -1479,6 +1480,10 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
         source=citation or title,
         source_url=clickable_url,
         discovery_tag="opinion-fetched",
+        # Case-law authority level is 3 (above admin rules, below statutes).
+        # Pull from doc_info if available; fall back to literal 3 since
+        # case-law nodes always have authority_level=3 by construction.
+        authority_level=doc_info.get("authority_level") if doc_info else 3,
     )
 
 
@@ -1517,6 +1522,7 @@ def _build_rag_documents(
                 source=source,
                 source_url=source_url,
                 discovery_tag=tag,
+                authority_level=(doc_info or {}).get("authority_level"),
             )
         else:
             existing = docs_by_id[doc_id]
@@ -1528,6 +1534,7 @@ def _build_rag_documents(
                 source=existing.source or fallback_source,
                 source_url=existing.source_url or fallback_url,
                 discovery_tag=existing.discovery_tag,
+                authority_level=existing.authority_level,
             )
 
     # Include cited docs that had no chunks (e.g., fetched-only).
@@ -1551,6 +1558,7 @@ def _build_rag_documents(
             source=source,
             source_url=source_url,
             discovery_tag=tag,
+            authority_level=doc_info.get("authority_level"),
         )
 
     if fetched_opinions:

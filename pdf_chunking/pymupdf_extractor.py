@@ -81,6 +81,13 @@ _VERY_LONG_CELL_MIN_ROWS = 8
 _LONG_CELL_CHARS = 200
 _VERY_LONG_CELL_CHARS = 500
 
+# Sparsity-based rejection. WPAM 2013 audit revealed that find_tables() emits
+# many "tables" whose cells are mostly empty — column-layout artifacts where
+# only one of 4-6 columns has content per row. Joining those with " | " produces
+# the pipe-noise chunks observed across ~8.7% of WPAM extractions. We reject
+# when too many cells are blank, regardless of row count.
+_MAX_EMPTY_CELL_RATIO = 0.60
+
 
 def looks_like_real_table(rows: list[list]) -> bool:
     """Return True when the extracted rows look like a genuine data grid.
@@ -95,22 +102,35 @@ def looks_like_real_table(rows: list[list]) -> bool:
         1244-char cell. Real multi-row tables pass even when individual
         cells are long (revision logs with 11-26 rows and 200-500 char
         description cells).
+      - More than 60% of cells empty (sparse-grid signature): the typical
+        WPAM column-layout false positive comes back as a 3×3 or 43×6 grid
+        where 80-90% of cells are blank. Real revenue/revision/distribution
+        tables run 30-50% empty at most.
     """
     if not rows or len(rows) < 2:
         return False
 
     any_content = False
     max_cell = 0
+    total_cells = 0
+    empty_cells = 0
     for row in rows:
         for cell in row:
+            total_cells += 1
             text = str(cell).strip() if cell else ""
             if not text:
+                empty_cells += 1
                 continue
             any_content = True
             if len(text) > max_cell:
                 max_cell = len(text)
     if not any_content:
         return False
+
+    if total_cells > 0:
+        empty_ratio = empty_cells / total_cells
+        if empty_ratio > _MAX_EMPTY_CELL_RATIO:
+            return False
 
     n_rows = len(rows)
     if max_cell > _VERY_LONG_CELL_CHARS and n_rows < _VERY_LONG_CELL_MIN_ROWS:
@@ -121,10 +141,19 @@ def looks_like_real_table(rows: list[list]) -> bool:
 
 
 def _extract_table_text(table) -> str:
+    """Render a table's cells as ``" | "``-joined lines.
+
+    Skips rows where every cell is empty (pipe-only rows are pure noise once
+    chunked). The all-table-rejection happens upstream in ``looks_like_real_table``;
+    this guards against the residual case where a passing table contains a
+    handful of stray empty rows.
+    """
     rows = table.extract()
     lines = []
     for row in rows:
         cells = [str(c).strip() if c else "" for c in row]
+        if not any(cells):
+            continue
         lines.append(" | ".join(cells))
     return "\n".join(lines)
 

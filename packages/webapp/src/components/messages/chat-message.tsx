@@ -6,10 +6,8 @@ import { useAssignFeedback } from '@/hooks/api/chat';
 import { useChatStore } from '@/stores/chat-store';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { DocumentList } from '../documents/document-list/document-list';
 import { DocumentCard, type Document } from '../documents/document-card/document-card';
 import { FAQCard } from '../documents/document-card/faq-card';
-import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { useDevTrace } from '@/hooks/use-dev-trace';
 import type { AgentTraceEvent, ResourceItem, FAQ } from '@/stores/types';
 import type { QueryStatus } from '@/stores/types';
