@@ -339,6 +339,7 @@ export class SessionsStack extends cdk.NestedStack {
         allowMethods: [
           apigatewayv2.CorsHttpMethod.GET,
           apigatewayv2.CorsHttpMethod.POST,
+          apigatewayv2.CorsHttpMethod.PATCH,
           apigatewayv2.CorsHttpMethod.DELETE,
           apigatewayv2.CorsHttpMethod.OPTIONS,
         ],
@@ -386,6 +387,13 @@ export class SessionsStack extends cdk.NestedStack {
     httpApi.addRoutes({
       path: '/sessions',
       methods: [apigatewayv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/session/{sessionId}',
+      methods: [apigatewayv2.HttpMethod.PATCH],
       integration: lambdaIntegration,
       authorizer: authorizer,
     });

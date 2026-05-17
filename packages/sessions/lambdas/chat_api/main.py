@@ -237,6 +237,52 @@ def list_sessions_handler() -> dict[str, Any]:
         return create_api_response(500, error_response)
 
 
+@app.patch("/session/<session_id>")
+def update_session_handler(session_id: str) -> dict[str, Any]:
+    """Update session metadata (e.g. title)."""
+    try:
+        user_id = get_user_id_from_jwt()
+
+        session_response = dynamodb.get_item(
+            TableName=session_table_name, Key={"sessionId": {"S": session_id}}
+        )
+
+        if "Item" not in session_response:
+            raise SessionNotFoundError(session_id)
+
+        session_user_id = session_response["Item"].get("userId", {}).get("S")
+        if session_user_id != user_id:
+            raise ValidationError(reason="Not authorized to update this session")
+
+        body = app.current_event.json_body
+        if not body:
+            raise ValidationError(reason="Missing request body.")
+
+        title = body.get("title")
+        if title is None or not isinstance(title, str):
+            raise ValidationError(reason="title must be a non-empty string.")
+
+        title = title.strip()[:100]
+        if not title:
+            raise ValidationError(reason="title must be a non-empty string.")
+
+        dynamodb.update_item(
+            TableName=session_table_name,
+            Key={"sessionId": {"S": session_id}},
+            UpdateExpression="SET title = :title",
+            ExpressionAttributeValues={":title": {"S": title}},
+        )
+
+        return create_api_response(200, {"message": "Session updated", "title": title})
+
+    except ChatAPIError as e:
+        return create_api_response(e.status_code, e.to_response())
+    except Exception as e:
+        logger.error(f"Unexpected error in update_session: {e}")
+        error_response = create_error_body(e)
+        return create_api_response(500, error_response)
+
+
 @app.delete("/session/<session_id>")
 def delete_session_handler(session_id: str) -> dict[str, Any]:
     """Delete a session and all its chat history."""

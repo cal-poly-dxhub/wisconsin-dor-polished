@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { ChevronLeft, MessageSquare, Moon, Sun, LogOut, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ChevronLeft, MessageSquare, Moon, Sun, LogOut, Loader2, Plus, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import Image from 'next/image';
 import { useTheme } from 'next-themes';
 import {
@@ -12,14 +12,24 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { useSessionsList, useDeleteSession } from '@/hooks/api/chat';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
+import { useSessionsList, useDeleteSession, useRenameSession } from '@/hooks/api/chat';
 import { getSessionHistory } from '@/api/chat-api';
 import { useChatStore } from '@/stores/chat-store';
 import { formatDistanceToNow } from 'date-fns';
 
 export function SessionsSidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const { signOut, session } = useAuth();
   const router = useRouter();
   const { theme, setTheme } = useTheme();
@@ -38,7 +48,6 @@ export function SessionsSidebar() {
       toast.success('Session deleted');
       refetch();
       if (currentSessionId) {
-        // If deleted current session, reset
         clearHistory();
         reset();
       }
@@ -47,6 +56,23 @@ export function SessionsSidebar() {
       toast.error('Failed to delete session');
     },
   });
+
+  const renameSessionMutation = useRenameSession({
+    onSuccess: () => {
+      setRenamingSessionId(null);
+      refetch();
+    },
+    onError: () => {
+      toast.error('Failed to rename session');
+    },
+  });
+
+  useEffect(() => {
+    if (renamingSessionId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renamingSessionId]);
 
   const handleNewChat = () => {
     if (currentSessionId) {
@@ -57,8 +83,21 @@ export function SessionsSidebar() {
     refetch();
   };
 
-  const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation();
+  const handleStartRename = (sessionId: string, currentTitle: string) => {
+    setRenamingSessionId(sessionId);
+    setRenameValue(currentTitle || '');
+  };
+
+  const handleConfirmRename = (sessionId: string) => {
+    const trimmed = renameValue.trim();
+    if (trimmed) {
+      renameSessionMutation.mutate({ sessionId, title: trimmed });
+    } else {
+      setRenamingSessionId(null);
+    }
+  };
+
+  const handleDeleteSession = (sessionId: string) => {
     if (confirm('Are you sure you want to delete this session?')) {
       deleteSessionMutation.mutate(sessionId);
     }
@@ -153,41 +192,55 @@ export function SessionsSidebar() {
     <div
       className="flex h-full flex-col border-r border-border bg-card transition-all duration-300 ease-in-out"
       style={{ width: isCollapsed ? '64px' : '256px' }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
       {/* Header with Logo/Collapse Button */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-4">
-        <div className="flex items-center gap-2">
-          <Image
-            src="/wisdor-logo.png"
-            alt="WisDOR"
-            width={28}
-            height={28}
-            className="rounded shrink-0"
-          />
-          <div
-            className="overflow-hidden transition-all duration-300 ease-in-out"
-            style={{
-              width: isCollapsed ? '0px' : 'auto',
-              opacity: isCollapsed ? 0 : 1,
-            }}
-          >
-            <div className="text-sm font-semibold whitespace-nowrap">WisDOR</div>
-          </div>
-        </div>
-
-        {/* Collapse/Expand Button */}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="rounded-md p-1.5 text-muted-foreground transition-all duration-200 hover:bg-muted hover:text-foreground cursor-pointer"
-          aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          <ChevronLeft
-            className="h-4 w-4 transition-transform duration-300 ease-in-out"
-            style={{
-              transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)',
-            }}
-          />
-        </button>
+      <div className="flex items-center justify-center border-b border-border px-4 py-4"
+        style={{ justifyContent: isCollapsed ? 'center' : 'space-between' }}
+      >
+        {isCollapsed ? (
+          isHovered ? (
+            <button
+              onClick={() => setIsCollapsed(false)}
+              className="rounded-md p-1.5 text-muted-foreground transition-all duration-200 hover:bg-muted hover:text-foreground cursor-pointer"
+              aria-label="Expand sidebar"
+            >
+              <ChevronLeft
+                className="h-4 w-4 transition-transform duration-300 ease-in-out"
+                style={{ transform: 'rotate(180deg)' }}
+              />
+            </button>
+          ) : (
+            <Image
+              src="/wisdor-logo.png"
+              alt="WisDOR"
+              width={28}
+              height={28}
+              className="rounded"
+            />
+          )
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <Image
+                src="/wisdor-logo.png"
+                alt="WisDOR"
+                width={28}
+                height={28}
+                className="rounded shrink-0"
+              />
+              <div className="text-sm font-semibold whitespace-nowrap">WisDOR</div>
+            </div>
+            <button
+              onClick={() => { setIsCollapsed(true); setIsHovered(false); }}
+              className="rounded-md p-1.5 text-muted-foreground transition-all duration-200 hover:bg-muted hover:text-foreground cursor-pointer"
+              aria-label="Collapse sidebar"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          </>
+        )}
       </div>
 
       {/* New Chat Button */}
@@ -209,10 +262,11 @@ export function SessionsSidebar() {
           /* Collapsed Sessions Icon */
           <div className="flex flex-col items-center gap-3 py-4">
             <button
+              onClick={handleNewChat}
               className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
-              aria-label="Sessions"
+              aria-label="New chat"
             >
-              <MessageSquare className="h-5 w-5" />
+              <Plus className="h-5 w-5" />
             </button>
           </div>
         ) : (
@@ -237,37 +291,76 @@ export function SessionsSidebar() {
                 sessionsData.sessions.map((session) => (
                   <div
                     key={session.sessionId}
-                    className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted group ${
+                    className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted group ${
                       currentSessionId === session.sessionId
                         ? 'bg-muted text-foreground'
                         : 'text-muted-foreground'
                     }`}
                   >
-                    <button
-                      onClick={() => handleSessionSelect(session.sessionId)}
-                      className="flex flex-1 items-center gap-3 cursor-pointer min-w-0"
-                    >
-                      <MessageSquare className="h-4 w-4 shrink-0" />
-                      <div className="flex-1 overflow-hidden text-left">
-                        <p className="truncate text-sm">
-                          {session.title || 'New chat'}
-                        </p>
-                        {session.lastMessageAt && (
-                          <p className="truncate text-xs text-muted-foreground">
-                            {formatDistanceToNow(new Date(session.lastMessageAt), {
-                              addSuffix: true,
-                            })}
-                          </p>
-                        )}
+                    {renamingSessionId === session.sessionId ? (
+                      <div className="flex flex-1 items-center gap-2 min-w-0">
+                        <MessageSquare className="h-4 w-4 shrink-0" />
+                        <input
+                          ref={renameInputRef}
+                          type="text"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onBlur={() => handleConfirmRename(session.sessionId)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleConfirmRename(session.sessionId);
+                            if (e.key === 'Escape') setRenamingSessionId(null);
+                          }}
+                          className="flex-1 min-w-0 bg-transparent border-b border-primary text-sm outline-none"
+                        />
                       </div>
-                    </button>
-                    <button
-                      onClick={(e) => handleDeleteSession(e, session.sessionId)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-destructive/10 rounded cursor-pointer"
-                      aria-label="Delete session"
-                    >
-                      <Trash2 className="h-3 w-3 text-destructive" />
-                    </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => handleSessionSelect(session.sessionId)}
+                          className="flex flex-1 items-center gap-3 cursor-pointer min-w-0"
+                        >
+                          <MessageSquare className="h-4 w-4 shrink-0" />
+                          <div className="flex-1 overflow-hidden text-left">
+                            <p className="truncate text-sm">
+                              {session.title || 'New chat'}
+                            </p>
+                            {session.lastMessageAt && (
+                              <p className="truncate text-xs text-muted-foreground">
+                                {formatDistanceToNow(new Date(session.lastMessageAt), {
+                                  addSuffix: true,
+                                })}
+                              </p>
+                            )}
+                          </div>
+                        </button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              className="shrink-0 w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-70 hover:!opacity-90 data-[state=open]:opacity-70 transition-opacity cursor-pointer"
+                              aria-label="Session options"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreHorizontal className="h-4.5 w-4.5" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent side="right" align="start">
+                            <DropdownMenuItem
+                              onClick={() => handleStartRename(session.sessionId, session.title || '')}
+                            >
+                              <Pencil className="h-4 w-4" />
+                              Rename
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleDeleteSession(session.sessionId)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </>
+                    )}
                   </div>
                 ))
               ) : (

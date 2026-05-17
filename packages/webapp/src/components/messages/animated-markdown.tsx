@@ -10,6 +10,7 @@ export interface AnimatedMarkdownProps {
   content: string;
   animate: boolean;
   animationDuration?: string;
+  docUrls?: Record<string, string>;
 }
 
 const WORD_SPLIT = /(\s+)/;
@@ -59,13 +60,37 @@ function isKatexElement(className: unknown): boolean {
   return typeof className === 'string' && className.includes('katex');
 }
 
+const DOC_HREF_PREFIX = 'doc:';
+
+function resolveHref(href: string | undefined, docUrls?: Record<string, string>): string | undefined {
+  if (!href) return href;
+  if (href.startsWith(DOC_HREF_PREFIX) && docUrls) {
+    const docId = href.slice(DOC_HREF_PREFIX.length);
+    return docUrls[docId] || undefined;
+  }
+  return href;
+}
+
 const AnimatedMarkdown = memo(function AnimatedMarkdown({
   content,
   animate,
   animationDuration = '1s',
+  docUrls,
 }: AnimatedMarkdownProps) {
   const components = useMemo<Components>(() => {
-    if (!animate) return {};
+    if (!animate) {
+      return {
+        a: ({ children, href, ...props }) => {
+          const resolved = resolveHref(href, docUrls);
+          if (!resolved) return <span {...props}>{children}</span>;
+          return (
+            <a {...props} href={resolved} target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
+          );
+        },
+      };
+    }
 
     const style = animatedSpanStyle(animationDuration);
     const wrap = (children: React.ReactNode, keyPrefix: string) =>
@@ -84,11 +109,15 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
         <strong {...props}>{wrap(children, 'strong')}</strong>
       ),
       em: ({ children, ...props }) => <em {...props}>{wrap(children, 'em')}</em>,
-      a: ({ children, href, ...props }) => (
-        <a {...props} href={href} target="_blank" rel="noopener noreferrer">
-          {wrap(children, 'a')}
-        </a>
-      ),
+      a: ({ children, href, ...props }) => {
+        const resolved = resolveHref(href, docUrls);
+        if (!resolved) return <span {...props}>{wrap(children, 'a')}</span>;
+        return (
+          <a {...props} href={resolved} target="_blank" rel="noopener noreferrer">
+            {wrap(children, 'a')}
+          </a>
+        );
+      },
       blockquote: ({ children, ...props }) => (
         <blockquote {...props}>{wrap(children, 'bq')}</blockquote>
       ),
@@ -121,13 +150,14 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
           </div>
         ),
     };
-  }, [animate, animationDuration]);
+  }, [animate, animationDuration, docUrls]);
 
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[rehypeKatex]}
       components={components}
+      urlTransform={(url) => url}
     >
       {content}
     </ReactMarkdown>

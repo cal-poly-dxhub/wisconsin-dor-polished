@@ -48,6 +48,13 @@ const SessionHistoryResponse = z.object({
 const DeleteSessionResponse = z.object({
   message: z.string(),
 });
+const RenameSessionRequest = z.object({
+  title: z.string().min(1),
+});
+const RenameSessionResponse = z.object({
+  message: z.string(),
+  title: z.string(),
+});
 
 export type ApiResponse = z.infer<typeof ApiResponse>;
 export type CreateSessionResponse = z.infer<typeof CreateSessionResponse>;
@@ -60,6 +67,8 @@ export type SessionsListResponse = z.infer<typeof SessionsListResponse>;
 export type ChatMessage = z.infer<typeof ChatMessage>;
 export type SessionHistoryResponse = z.infer<typeof SessionHistoryResponse>;
 export type DeleteSessionResponse = z.infer<typeof DeleteSessionResponse>;
+export type RenameSessionRequest = z.infer<typeof RenameSessionRequest>;
+export type RenameSessionResponse = z.infer<typeof RenameSessionResponse>;
 
 // Parses the API response, handling both wrapped (Lambda proxy 1.0 style)
 // and direct (HTTP API format 2.0) response formats.
@@ -121,5 +130,12 @@ export async function deleteSession(sessionId: string) {
   return handleApiCall(
     http.delete(`session/${sessionId}`).json(),
     DeleteSessionResponse
+  );
+}
+
+export async function renameSession(sessionId: string, title: string) {
+  return handleApiCall(
+    http.patch(`session/${sessionId}`, { json: { title } }).json(),
+    RenameSessionResponse
   );
 }

@@ -11,6 +11,7 @@ import {
   assignFeedback,
   getSessions,
   deleteSession,
+  renameSession,
   SendMessageRequest,
   CreateSessionResponse,
   SendMessageResponse,
@@ -18,6 +19,7 @@ import {
   FeedbackResponse,
   SessionsListResponse,
   DeleteSessionResponse,
+  RenameSessionResponse,
 } from '../../api/chat-api';
 
 export function useCreateSession(
@@ -86,6 +88,21 @@ export function useDeleteSession(
   return useMutation({
     mutationKey: ['chat', 'session', 'delete'],
     mutationFn: (sessionId: string) => deleteSession(sessionId),
+    ...options,
+  });
+}
+
+export function useRenameSession(
+  options?: UseMutationOptions<
+    RenameSessionResponse,
+    Error,
+    { sessionId: string; title: string }
+  >
+) {
+  return useMutation({
+    mutationKey: ['chat', 'session', 'rename'],
+    mutationFn: ({ sessionId, title }: { sessionId: string; title: string }) =>
+      renameSession(sessionId, title),
     ...options,
   });
 }

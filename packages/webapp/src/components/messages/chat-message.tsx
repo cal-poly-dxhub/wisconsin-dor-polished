@@ -199,6 +199,7 @@ interface StreamResponseProps {
   content: string;
   className?: string;
   streamingComplete?: boolean;
+  docUrls?: Record<string, string>;
 }
 
 
@@ -213,11 +214,12 @@ export function StreamResponse({
   content,
   className,
   streamingComplete,
+  docUrls,
 }: StreamResponseProps) {
   return (
     <div className={`chat-response font-sans ${className || ''}`}>
       <div className="markdown-container">
-        <AnimatedMarkdown content={content} animate={!streamingComplete} />
+        <AnimatedMarkdown content={content} animate={!streamingComplete} docUrls={docUrls} />
       </div>
     </div>
   );
@@ -476,16 +478,27 @@ export function ChatMessage({
     return buildTraceSteps(agentTrace, devTrace);
   }, [agentTrace, devTrace, hasResources, items, isStreaming, streamingComplete]);
 
+  const docUrls = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const item of items ?? []) {
+      if (item.type === 'document') {
+        const doc = item.data as Document;
+        if (doc.sourceUrl) map[doc.documentId] = doc.sourceUrl;
+      }
+    }
+    return map;
+  }, [items]);
+
   const memoizedResponse = useMemo(() => {
     if (!response) return null;
 
     return (
       <div className="chat-response-aligned">
-        <StreamResponse content={response} streamingComplete={streamingComplete} />
+        <StreamResponse content={response} streamingComplete={streamingComplete} docUrls={docUrls} />
         <InlineSources items={items ?? []} streamingComplete={streamingComplete} />
       </div>
     );
-  }, [response, streamingComplete, items]);
+  }, [response, streamingComplete, items, docUrls]);
 
   const containerClassName = useMemo(
     () => `font-sans ${className || ''}`,

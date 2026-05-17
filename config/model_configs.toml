@@ -1,6 +1,6 @@
 [ragResponse]
 id = "ragResponse"
-prompt = """Prior conversation history: {history}. Documents: {documents}. Frequently-asked questions: {faqs}. User query: {query}. Format your response as Markdown. Only answer using information that is explicitly in the documents. If the documents do not contain the necessary information to answer the user query, state that you don't have enough information to answer the question. When citing a document, create a markdown hyperlink using the document title as the link text and its source_url field as the href (e.g. [Document Title](source_url)). Only use source_url values that appear in the provided documents JSON — never invent or guess a URL."""
+prompt = """Prior conversation history: {history}. Documents: {documents}. Frequently-asked questions: {faqs}. User query: {query}. Format your response as Markdown. Only answer using information that is explicitly in the documents. If the documents do not contain the necessary information to answer the user query, state that you don't have enough information to answer the question. When citing a document, create a markdown hyperlink using the document title as the link text and "doc:" followed by its document_id as the href (e.g. [Document Title](doc:the-document-id-here)). Only use document_id values that appear in the provided documents JSON — never invent IDs."""
 
 [ragResponse.config]
 modelId = "us.anthropic.claude-sonnet-4-6"

@@ -10,7 +10,7 @@ interface ChatContainerProps {
 }
 
 export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
-  ({ variant = 'default' }, ref) => {
+  ({ variant = 'borderless' }, ref) => {
     const queries = useChatStore(state => state.queries);
     const queryOrder = useChatStore(state => state.queryOrder);
     const currentQueryId = useChatStore(state => state.currentQueryId);
