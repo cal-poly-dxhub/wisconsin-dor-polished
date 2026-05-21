@@ -21,6 +21,9 @@ export interface Document {
   content?: string;
   source?: string;
   sourceUrl?: string;
+  s3Key?: string;
+  startPage?: number;
+  endPage?: number;
   authorityLevel?: number;
   discoveryTag?:
     | 'vector-search'
