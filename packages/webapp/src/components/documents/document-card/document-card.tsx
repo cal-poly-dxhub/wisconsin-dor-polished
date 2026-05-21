@@ -12,6 +12,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ExternalLink, Maximize2, X } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
+import { buildResolverUrl } from '@/lib/citation-resolver';
 import { AuthorityBadge } from './authority-badge';
 import { DiscoveryBadge } from './discovery-badge';
 
@@ -240,7 +241,7 @@ export function DocumentCardCompact({
           {document.discoveryTag && document.discoveryTag !== 'unknown' && (
             <DiscoveryBadge tag={document.discoveryTag} size="sm" />
           )}
-          {document.source && document.sourceUrl && (
+          {document.source && (document.sourceUrl || document.s3Key) && (
             <button
               type="button"
               className="text-muted-foreground hover:text-foreground ml-auto inline-flex items-center gap-1 text-xs transition-colors cursor-pointer"
@@ -304,7 +305,7 @@ function DocumentCardModal({
               )}
             </div>
             <div className="flex items-center gap-3">
-              {document.source && document.sourceUrl && (
+              {document.source && (document.sourceUrl || document.s3Key) && (
                 <button
                   type="button"
                   className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-accent transition-colors cursor-pointer"
@@ -377,9 +378,30 @@ export const DocumentCard = memo(function DocumentCard({
   const handleSourceClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (document.sourceUrl) {
+
+      if (document.s3Key) {
+        // window.open() must run synchronously to satisfy popup blockers;
+        // the JWT fetch is async so we open about:blank first and redirect
+        // the popup once the resolver URL is built.
+        const popup = window.open(
+          'about:blank',
+          '_blank',
+          'noopener,noreferrer'
+        );
+        if (!popup) return;
+        void buildResolverUrl(document.s3Key, document.startPage)
+          .then(url => {
+            if (url) {
+              popup.location.href = url;
+            } else {
+              popup.close();
+            }
+          })
+          .catch(() => popup.close());
+      } else if (document.sourceUrl) {
         window.open(document.sourceUrl, '_blank', 'noopener,noreferrer');
       }
+
       onSourceClick?.(document);
     },
     [document, onSourceClick]
