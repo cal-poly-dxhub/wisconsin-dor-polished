@@ -108,7 +108,9 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
       })
     );
 
-    // S3 read permissions for presigned URL generation on raw documents
+    // S3 read permissions: fetch_case_opinion GETs case-law .txt files
+    // to feed full opinion text into the agent prompt. Citation URLs are
+    // minted by the citation_resolver Lambda, not here.
     agenticRetrievalHandler.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
