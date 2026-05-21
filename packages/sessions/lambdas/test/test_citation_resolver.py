@@ -2,6 +2,7 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "citation_resolver"))
 
 
@@ -103,3 +104,36 @@ def test_returns_404_for_no_such_key():
         response = handler(event, MagicMock())
 
     assert response["statusCode"] == 404
+
+
+@patch.dict(os.environ, {"RAW_BUCKET": "different-bucket"})
+def test_uses_current_env_var_per_invocation():
+    """RAW_BUCKET must be read at handler invocation, not module import,
+    so a per-test env override is honored."""
+    from citation_resolver.main import handler
+
+    with patch("citation_resolver.main.s3") as mock_s3:
+        mock_s3.head_object.return_value = {}
+        mock_s3.generate_presigned_url.return_value = (
+            "https://different-bucket.s3.amazonaws.com/raw/x.pdf?sig=q"
+        )
+
+        event = {"queryStringParameters": {"s3Key": "raw/x.pdf"}}
+        response = handler(event, MagicMock())
+
+    assert response["statusCode"] == 302
+    mock_s3.head_object.assert_called_once_with(
+        Bucket="different-bucket", Key="raw/x.pdf"
+    )
+
+
+@patch.dict(os.environ, {"RAW_BUCKET": ""})
+def test_raises_when_raw_bucket_empty():
+    from citation_resolver.main import handler
+
+    try:
+        handler({"queryStringParameters": {"s3Key": "raw/x.pdf"}}, MagicMock())
+    except RuntimeError as e:
+        assert "RAW_BUCKET" in str(e)
+    else:
+        raise AssertionError("expected RuntimeError on empty RAW_BUCKET")

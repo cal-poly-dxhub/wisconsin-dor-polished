@@ -19,9 +19,21 @@ logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
 
 s3 = boto3.client("s3")
-RAW_BUCKET = os.environ["RAW_BUCKET"]
 EXPIRES_IN = 900  # 15 minutes
 ALLOWED_PREFIX = "raw/"
+
+
+def _raw_bucket() -> str:
+    """Read RAW_BUCKET at invocation time so per-test env overrides land.
+
+    A module-level read would bind on first import and silently ignore later
+    `@patch.dict(os.environ, ...)` decorations under pytest. Also fails fast
+    if the CDK wired an empty string instead of a real bucket name.
+    """
+    bucket = os.environ.get("RAW_BUCKET", "")
+    if not bucket:
+        raise RuntimeError("RAW_BUCKET env var is unset or empty")
+    return bucket
 
 
 def _bad_request(reason: str) -> dict:
@@ -33,6 +45,7 @@ def _bad_request(reason: str) -> dict:
 
 
 def handler(event: dict, _context) -> dict:
+    bucket = _raw_bucket()
     qs = event.get("queryStringParameters") or {}
     s3_key = qs.get("s3Key")
     page = qs.get("page")
@@ -50,7 +63,7 @@ def handler(event: dict, _context) -> dict:
             return _bad_request("page must be >= 1")
 
     try:
-        s3.head_object(Bucket=RAW_BUCKET, Key=s3_key)
+        s3.head_object(Bucket=bucket, Key=s3_key)
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code")
         if code in ("404", "NoSuchKey", "NotFound"):
@@ -66,7 +79,7 @@ def handler(event: dict, _context) -> dict:
 
     url = s3.generate_presigned_url(
         "get_object",
-        Params={"Bucket": RAW_BUCKET, "Key": s3_key},
+        Params={"Bucket": bucket, "Key": s3_key},
         ExpiresIn=EXPIRES_IN,
     )
     if page_num:
