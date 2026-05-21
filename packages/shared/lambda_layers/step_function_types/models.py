@@ -69,6 +69,12 @@ class RAGDocument(BaseModel):
     # _build_rag_documents / _build_opinion_card so non-FAQ cards render
     # with their authority pill (FAQs hard-code level 6 client-side).
     authority_level: int | None = Field(default=None)
+    # Stable S3 reference resolved at click time by the citation_resolver
+    # Lambda. Replaces eager presigned URLs so restored sessions stay
+    # clickable indefinitely while a copied URL still expires in 15 min.
+    s3_key: str | None = Field(default=None)
+    start_page: int | None = Field(default=None)
+    end_page: int | None = Field(default=None)
 
 
 class DocumentResource(BaseModel):
