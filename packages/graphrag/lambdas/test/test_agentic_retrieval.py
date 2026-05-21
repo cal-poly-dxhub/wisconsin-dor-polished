@@ -268,6 +268,48 @@ def test_collapse_case_law_by_title_merges_parallel_citations():
         assert "wis.2d host" in nudo_cards[0].content
 
 
+def test_collapse_case_law_preserves_s3_key_and_pages():
+    """The merge constructor must carry the s3 reference forward; otherwise the
+    fetched-opinion case-law cards (which set source_url=None) become
+    non-clickable after collapse."""
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        from main import _collapse_case_law_by_title
+
+        docs = {
+            "case-law-foo-1": MockRAGDocument(
+                document_id="case-law-foo-1-abc",
+                title="Foo v. Bar",
+                content="primary opinion text",
+                source_url=None,
+                s3_key="raw/case-law-foo/foo.txt",
+                start_page=None,
+                end_page=None,
+                discovery_tag="opinion-fetched",
+                authority_level=3,
+            ),
+            "case-law-foo-2": MockRAGDocument(
+                document_id="case-law-foo-2-def",
+                title="Foo v. Bar",
+                content="parallel citation text",
+                source_url=None,
+                s3_key="raw/case-law-foo/foo.txt",
+                start_page=None,
+                end_page=None,
+                discovery_tag="opinion-fetched",
+                authority_level=3,
+            ),
+        }
+
+        merged = _collapse_case_law_by_title(docs)
+        assert len(merged) == 1
+        surviving = next(iter(merged.values()))
+        assert surviving.s3_key == "raw/case-law-foo/foo.txt"
+        assert surviving.start_page is None
+        assert surviving.end_page is None
+
+
 def test_collapse_case_law_leaves_distinct_cases_alone():
     with patch("main.boto3"), patch("main.NeptuneClient"):
         if "main" in sys.modules:

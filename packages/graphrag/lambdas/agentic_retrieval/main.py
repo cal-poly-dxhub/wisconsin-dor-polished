@@ -1415,6 +1415,9 @@ def _collapse_case_law_by_title(
             content=merged_content or primary_doc.content,
             source=primary_doc.source,
             source_url=primary_doc.source_url,
+            s3_key=primary_doc.s3_key,
+            start_page=primary_doc.start_page,
+            end_page=primary_doc.end_page,
             discovery_tag=primary_doc.discovery_tag,
             authority_level=primary_doc.authority_level,
         )
@@ -1452,7 +1455,7 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
         # When raw_key is empty (S3 lookup miss in fetch_case_opinion),
         # fall back to the Google Scholar URL so the card is still
         # clickable. The resolver isn't involved when s3_key is None.
-        source_url=None if raw_key else scholar_url,
+        source_url=None if raw_key else (scholar_url or None),
         s3_key=raw_key or None,
         start_page=None,
         end_page=None,
@@ -1508,18 +1511,26 @@ def _build_rag_documents(
             )
         else:
             existing = docs_by_id[doc_id]
+            # First chunk that supplied an s3_key wins, and start_page/end_page
+            # come from the SAME chunk — pairing a key from one chunk with a
+            # page from another would point the resolver at the wrong page.
+            if existing.s3_key:
+                merged_s3_key = existing.s3_key
+                merged_start_page = existing.start_page
+                merged_end_page = existing.end_page
+            else:
+                merged_s3_key = chunk.get("s3_key")
+                merged_start_page = chunk.get("start_page")
+                merged_end_page = chunk.get("end_page")
             docs_by_id[doc_id] = RAGDocument(
                 document_id=existing.document_id,
                 title=existing.title,
                 content=existing.content + "\n\n" + chunk_text,
                 source=existing.source,
                 source_url=existing.source_url,
-                # First chunk wins for the s3 reference (chunks of the same
-                # doc all point to the same PDF; pick the lowest start_page
-                # only if the existing one is None).
-                s3_key=existing.s3_key or chunk.get("s3_key"),
-                start_page=existing.start_page or chunk.get("start_page"),
-                end_page=existing.end_page or chunk.get("end_page"),
+                s3_key=merged_s3_key,
+                start_page=merged_start_page,
+                end_page=merged_end_page,
                 discovery_tag=existing.discovery_tag,
                 authority_level=existing.authority_level,
             )
