@@ -70,3 +70,7 @@ sources = ["./packages/messages/lambdas/streaming"]
 dest = "agentic_retrieval"
 sources = ["./packages/graphrag/lambdas/agentic_retrieval"]
 
+[[bundles]]
+dest = "citation_resolver"
+sources = ["./packages/sessions/lambdas/citation_resolver"]
+

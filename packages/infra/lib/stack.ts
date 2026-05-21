@@ -19,11 +19,19 @@ export class WisconsinBotStack extends cdk.Stack {
       description: 'Shared lambda layers for the Wisconsin bot.',
     });
 
+    // GraphRAG infra (Neptune + S3 buckets) must come before SessionsStack
+    // so the citation_resolver can wire its env var to the raw bucket.
+    const graphRAGStack = new GraphRAGStack(this, 'WisconsinGraphRAGStack', {
+      description:
+        'Stack providing GraphRAG services (Neptune Analytics + S3).',
+    });
+
     const sessionsStack = new SessionsStack(this, 'WisconsinSessionsStack', {
       description:
         'Stack providing API and WebSocket session services for the Wisconsin bot.',
       stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
       websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
+      rawBucketName: graphRAGStack.rawBucketName,
     });
 
     const knowledgeBaseStack = new KnowledgeBaseStack(
@@ -49,12 +57,6 @@ export class WisconsinBotStack extends cdk.Stack {
       ragKnowledgeBase: knowledgeBaseStack.ragKnowledgeBase,
       chatHistoryTable: sessionsStack.chatHistoryTable,
       useGraphRAG: USE_GRAPHRAG,
-    });
-
-    // GraphRAG Backend (NEW, deployed alongside existing)
-    const graphRAGStack = new GraphRAGStack(this, 'WisconsinGraphRAGStack', {
-      description:
-        'Stack providing GraphRAG services (Neptune Analytics + S3).',
     });
 
     const graphRAGMessagesStack = new GraphRAGMessagesStack(

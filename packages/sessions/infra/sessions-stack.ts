@@ -12,6 +12,9 @@ import { Construct } from 'constructs';
 export interface SessionsStackProps extends cdk.StackProps {
   stepFunctionTypesLayer: lambda.LayerVersion;
   websocketUtilsLayer: lambda.LayerVersion;
+  // The raw GraphRAG bucket. citation_resolver mints presigned URLs
+  // against keys under raw/ on demand.
+  rawBucketName: string;
 }
 
 export class SessionsStack extends cdk.NestedStack {
@@ -151,6 +154,42 @@ export class SessionsStack extends cdk.NestedStack {
         effect: iam.Effect.ALLOW,
         actions: ['events:PutEvents'],
         resources: ['*'],
+      })
+    );
+
+    const citationResolverHandler = new lambda.Function(this, 'CitationResolverHandler', {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'main.handler',
+      code: lambda.Code.fromAsset('bundle/citation_resolver', {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash',
+            '-c',
+            [
+              'pip install --platform manylinux2014_x86_64 --only-binary=:all: -r requirements.txt -t /asset-output',
+              'cp -r . /asset-output',
+            ].join(' && '),
+          ],
+        },
+      }),
+      description: 'Mints short-lived presigned URLs for citation clicks',
+      timeout: cdk.Duration.seconds(5),
+      memorySize: 128,
+      environment: {
+        RAW_BUCKET: props.rawBucketName,
+        LOG_LEVEL: 'INFO',
+      },
+    });
+
+    citationResolverHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['s3:GetObject', 's3:HeadObject'],
+        // Allow-list to raw/ — work/, embeddings/, and other bucket
+        // prefixes are NOT user-accessible. Defense in depth on top of
+        // the in-Lambda startswith("raw/") check.
+        resources: [`arn:aws:s3:::${props.rawBucketName}/raw/*`],
       })
     );
 
@@ -360,6 +399,14 @@ export class SessionsStack extends cdk.NestedStack {
       }`,
       {
         jwtAudience: [this.userPoolClient.userPoolClientId],
+        // Default identity source is "$request.header.Authorization".
+        // The citation resolver is invoked by window.open() which cannot
+        // set custom headers, so we accept the token from a query param
+        // as well. The header form is preferred when present.
+        identitySource: [
+          '$request.header.Authorization',
+          '$request.querystring.token',
+        ],
       }
     );
 
@@ -423,6 +470,16 @@ export class SessionsStack extends cdk.NestedStack {
       path: '/session/{sessionId}/feedback',
       methods: [apigatewayv2.HttpMethod.POST],
       integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/citation',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: new apigatewayv2Integrations.HttpLambdaIntegration(
+        'CitationResolverIntegration',
+        citationResolverHandler
+      ),
       authorizer: authorizer,
     });
 
