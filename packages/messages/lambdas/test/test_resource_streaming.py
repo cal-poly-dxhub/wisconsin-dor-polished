@@ -256,6 +256,46 @@ class TestResourceStreamingHandler:
         stream_result = StreamResourcesResult(**result)
         assert stream_result.successful is True
 
+    def test_source_document_carries_s3_key_and_pages(self):
+        """resource_streaming forwards s3_key/start_page/end_page to the WebSocket payload."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        from resource_streaming.main import _stream_resources_async
+        from step_function_types.models import (
+            DocumentResource,
+            RAGDocument,
+            StreamResourcesJob,
+        )
+
+        rag_doc = RAGDocument(
+            document_id="doc-001",
+            title="WPAM",
+            content="some content",
+            source="https://www.revenue.wi.gov/wpam.pdf",
+            source_url="https://www.revenue.wi.gov/wpam.pdf",
+            s3_key="raw/wpam/wpam.pdf",
+            start_page=12,
+            end_page=14,
+        )
+        job = StreamResourcesJob(
+            query_id="q-1",
+            session_id="s-1",
+            documents=DocumentResource(documents=[rag_doc]),
+        )
+
+        sent_messages = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=lambda msg: sent_messages.append(msg))
+
+        asyncio.run(_stream_resources_async(job, ws))
+
+        assert len(sent_messages) == 1
+        sent_doc = sent_messages[0].content.documents[0]
+        assert sent_doc.s3_key == "raw/wpam/wpam.pdf"
+        assert sent_doc.start_page == 12
+        assert sent_doc.end_page == 14
+
 
 class TestDocumentBatching:
     def _doc(self, idx: int, content_len: int) -> SourceDocument:

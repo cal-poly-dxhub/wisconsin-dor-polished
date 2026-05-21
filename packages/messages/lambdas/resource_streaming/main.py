@@ -122,6 +122,9 @@ async def _stream_resources_async(job: StreamResourcesJob, ws_connect: WebSocket
                 source_url=doc.source_url,
                 discovery_tag=doc.discovery_tag,
                 authority_level=doc.authority_level,
+                s3_key=doc.s3_key,
+                start_page=doc.start_page,
+                end_page=doc.end_page,
             )
             for doc in documents_resource.documents
         ]
