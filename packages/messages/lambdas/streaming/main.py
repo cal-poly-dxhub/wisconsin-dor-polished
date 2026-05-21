@@ -87,6 +87,12 @@ def log_chat_history(
                 data["sourceUrl"] = doc.source_url
             if doc.discovery_tag:
                 data["discoveryTag"] = doc.discovery_tag
+            if doc.s3_key is not None:
+                data["s3Key"] = doc.s3_key
+            if doc.start_page is not None:
+                data["startPage"] = doc.start_page
+            if doc.end_page is not None:
+                data["endPage"] = doc.end_page
             resources.append({"type": "document", "data": data})
     if faqs:
         for faq in faqs.faqs:
