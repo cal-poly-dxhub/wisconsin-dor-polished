@@ -399,14 +399,22 @@ export class SessionsStack extends cdk.NestedStack {
       }`,
       {
         jwtAudience: [this.userPoolClient.userPoolClientId],
-        // Default identity source is "$request.header.Authorization".
-        // The citation resolver is invoked by window.open() which cannot
-        // set custom headers, so we accept the token from a query param
-        // as well. The header form is preferred when present.
-        identitySource: [
-          '$request.header.Authorization',
-          '$request.querystring.token',
-        ],
+      }
+    );
+
+    // Dedicated authorizer for /citation: window.open() can't attach a
+    // custom Authorization header, so the citation resolver accepts the
+    // JWT from a query-string parameter. AWS HTTP API requires a single
+    // identitySource per JWT authorizer, so we use a separate one here
+    // and leave the header-only authorizer applied to every other route.
+    const citationAuthorizer = new apigatewayv2Authorizers.HttpJwtAuthorizer(
+      'CitationAuthorizer',
+      `https://cognito-idp.${cdk.Stack.of(this).region}.amazonaws.com/${
+        this.userPool.userPoolId
+      }`,
+      {
+        jwtAudience: [this.userPoolClient.userPoolClientId],
+        identitySource: ['$request.querystring.token'],
       }
     );
 
@@ -480,7 +488,7 @@ export class SessionsStack extends cdk.NestedStack {
         'CitationResolverIntegration',
         citationResolverHandler
       ),
-      authorizer: authorizer,
+      authorizer: citationAuthorizer,
     });
 
     new cdk.CfnOutput(this, 'ApiHandlerFunctionArn', {

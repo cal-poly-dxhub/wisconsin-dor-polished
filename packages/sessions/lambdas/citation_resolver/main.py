@@ -92,6 +92,9 @@ def handler(event: dict, _context) -> dict:
             # Browsers and CDNs MUST NOT cache the redirect. Otherwise a
             # second click after expiry would still get the dead URL.
             "Cache-Control": "no-store",
+            # The token rides in the request URL; without this the browser
+            # would send Referer: https://.../citation?...&token=... to S3.
+            "Referrer-Policy": "no-referrer",
         },
         "body": "",
     }

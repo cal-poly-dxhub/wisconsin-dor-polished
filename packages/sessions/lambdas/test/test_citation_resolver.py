@@ -20,6 +20,7 @@ def test_redirects_with_page_fragment():
     assert response["statusCode"] == 302
     assert response["headers"]["Location"].endswith("#page=12")
     assert response["headers"]["Cache-Control"] == "no-store"
+    assert response["headers"]["Referrer-Policy"] == "no-referrer"
     mock_s3.head_object.assert_called_once_with(Bucket="test-bucket", Key="raw/wpam/wpam.pdf")
 
 
@@ -36,6 +37,7 @@ def test_redirects_without_page_fragment():
 
     assert response["statusCode"] == 302
     assert "#page" not in response["headers"]["Location"]
+    assert response["headers"]["Referrer-Policy"] == "no-referrer"
 
 
 @patch.dict(os.environ, {"RAW_BUCKET": "test-bucket"})
