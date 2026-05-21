@@ -65,11 +65,9 @@ logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), lo
 
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 bedrock = boto3.client("bedrock-runtime", region_name=REGION)
-s3_client = boto3.client("s3", region_name=REGION)
 neptune = NeptuneClient()
 
 RAW_BUCKET = os.environ.get("RAW_BUCKET", "")
-PRESIGNED_URL_EXPIRY = int(os.environ.get("PRESIGNED_URL_EXPIRY", "3600"))
 
 AGENTIC_MODEL_ID = os.environ.get("AGENTIC_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 LOG_AGENT_TRACE = os.environ.get("LOG_AGENT_TRACE", "true").lower() == "true"
@@ -553,16 +551,21 @@ def save_chat_history(
         resources: list[dict] = []
         if rag_documents:
             for doc in rag_documents:
-                resources.append({
-                    "type": "document",
-                    "data": {
-                        "documentId": doc.document_id,
-                        "title": doc.title,
-                        "source": doc.source,
-                        "sourceUrl": doc.source_url,
-                        "discoveryTag": doc.discovery_tag,
-                    },
-                })
+                data: dict = {
+                    "documentId": doc.document_id,
+                    "title": doc.title,
+                    "source": doc.source,
+                    "discoveryTag": doc.discovery_tag,
+                }
+                if doc.source_url is not None:
+                    data["sourceUrl"] = doc.source_url
+                if doc.s3_key is not None:
+                    data["s3Key"] = doc.s3_key
+                if doc.start_page is not None:
+                    data["startPage"] = doc.start_page
+                if doc.end_page is not None:
+                    data["endPage"] = doc.end_page
+                resources.append({"type": "document", "data": data})
         if faq_resource:
             for faq in faq_resource.faqs:
                 resources.append({
@@ -1237,38 +1240,17 @@ def run_agentic_loop(
     return answer, list(all_doc_ids), rag_docs, None
 
 
-def _generate_source_links(chunk: dict, doc_info: dict | None) -> tuple[str, str]:
-    """Return (display_label, clickable_url) for a chunk.
+def _generate_source_label(chunk: dict, doc_info: dict | None) -> str:
+    """Return the display label shown on the citation badge.
 
-    - clickable_url: presigned S3 URL with #page=N when a PDF is in S3; otherwise the
-      original source_url from Neptune (gov website link); otherwise empty.
-    - display_label: the gov source_url as a short label, or the doc title, or "".
-      Used as the badge text so users don't see a raw presigned URL.
+    Replaces _generate_source_links: URL construction now happens at click
+    time in the citation_resolver Lambda. Cards carry stable s3_key /
+    start_page on the RAGDocument; the badge label still uses the gov
+    source_url (when present) so users see something semantically
+    meaningful, not the doc title.
     """
-    s3_key = chunk.get("s3_key") or (doc_info or {}).get("s3_key") or ""
-    start_page = chunk.get("start_page")
     gov_source_url = chunk.get("source_url") or (doc_info or {}).get("source_url") or ""
-
-    clickable_url = ""
-    if RAW_BUCKET and s3_key and s3_key.endswith(".pdf"):
-        try:
-            presigned = s3_client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": RAW_BUCKET, "Key": s3_key},
-                ExpiresIn=PRESIGNED_URL_EXPIRY,
-            )
-            # Always include #page so the browser opens the cited page; default to 1
-            # when start_page is missing so the fragment form stays consistent.
-            page = start_page if start_page else 1
-            clickable_url = f"{presigned}#page={page}"
-        except Exception:
-            logger.warning(f"Failed to generate presigned URL for {s3_key}", exc_info=True)
-
-    if not clickable_url:
-        clickable_url = gov_source_url
-
-    display_label = gov_source_url or (doc_info or {}).get("title", "")
-    return display_label, clickable_url
+    return gov_source_url or (doc_info or {}).get("title", "")
 
 
 _CASE_LAW_STUB_PREFIX = "case-law-"
@@ -1447,9 +1429,11 @@ def _collapse_case_law_by_title(
 def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
     """Build a RAGDocument for a fetched full court opinion.
 
-    Supersedes the one-chunk case-law stub card for this citation. Links
-    directly to the opinion .txt in S3 via presigned URL; falls back to
-    Google Scholar when S3 presigning fails.
+    Supersedes the one-chunk case-law stub card for this citation. The
+    resolver mints the presigned URL to the .txt at click time; this
+    function only carries the stable s3 reference. scholar_url remains
+    available on chunk metadata as a public fallback when the bot
+    surfaces the case but the .txt isn't in S3.
     """
     citation = payload.get("citation", "")
     raw_key = payload.get("raw_key", "")
@@ -1460,29 +1444,19 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
     title = doc_info.get("title") or citation or stub_doc_id
     content_hash = hashlib.sha256(stub_doc_id.encode()).hexdigest()[:7]
 
-    clickable_url = ""
-    if RAW_BUCKET and raw_key:
-        try:
-            clickable_url = s3_client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": RAW_BUCKET, "Key": raw_key},
-                ExpiresIn=PRESIGNED_URL_EXPIRY,
-            )
-        except Exception:
-            logger.warning(f"Failed to presign opinion URL for {raw_key}", exc_info=True)
-    if not clickable_url:
-        clickable_url = scholar_url
-
     return RAGDocument(
         document_id=f"{stub_doc_id}-{content_hash}",
         title=title,
         content=opinion_text,
         source=citation or title,
-        source_url=clickable_url,
+        # When raw_key is empty (S3 lookup miss in fetch_case_opinion),
+        # fall back to the Google Scholar URL so the card is still
+        # clickable. The resolver isn't involved when s3_key is None.
+        source_url=None if raw_key else scholar_url,
+        s3_key=raw_key or None,
+        start_page=None,
+        end_page=None,
         discovery_tag="opinion-fetched",
-        # Case-law authority level is 3 (above admin rules, below statutes).
-        # Pull from doc_info if available; fall back to literal 3 since
-        # case-law nodes always have authority_level=3 by construction.
         authority_level=doc_info.get("authority_level") if doc_info else 3,
     )
 
@@ -1513,26 +1487,39 @@ def _build_rag_documents(
             doc_info = neptune.get_document(doc_id)
             title = (doc_info.get("title") if doc_info else None) or doc_id
             content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
-            source, source_url = _generate_source_links(chunk, doc_info)
+            label = _generate_source_label(chunk, doc_info)
+            gov_url = chunk.get("source_url") or (doc_info or {}).get("source_url")
+            s3_key = chunk.get("s3_key") or (doc_info or {}).get("s3_key")
 
             docs_by_id[doc_id] = RAGDocument(
                 document_id=f"{doc_id}-{content_hash}",
                 title=title,
                 content=chunk_text,
-                source=source,
-                source_url=source_url,
+                source=label,
+                # source_url now only carries public gov URLs. S3 references
+                # ride on s3_key / start_page / end_page; the resolver mints
+                # the presigned URL at click time.
+                source_url=gov_url,
+                s3_key=s3_key,
+                start_page=chunk.get("start_page"),
+                end_page=chunk.get("end_page"),
                 discovery_tag=tag,
                 authority_level=(doc_info or {}).get("authority_level"),
             )
         else:
             existing = docs_by_id[doc_id]
-            fallback_source, fallback_url = _generate_source_links(chunk, None)
             docs_by_id[doc_id] = RAGDocument(
                 document_id=existing.document_id,
                 title=existing.title,
                 content=existing.content + "\n\n" + chunk_text,
-                source=existing.source or fallback_source,
-                source_url=existing.source_url or fallback_url,
+                source=existing.source,
+                source_url=existing.source_url,
+                # First chunk wins for the s3 reference (chunks of the same
+                # doc all point to the same PDF; pick the lowest start_page
+                # only if the existing one is None).
+                s3_key=existing.s3_key or chunk.get("s3_key"),
+                start_page=existing.start_page or chunk.get("start_page"),
+                end_page=existing.end_page or chunk.get("end_page"),
                 discovery_tag=existing.discovery_tag,
                 authority_level=existing.authority_level,
             )
@@ -1550,13 +1537,16 @@ def _build_rag_documents(
             continue
         content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
         tag = discovery.get(doc_id, "unknown")
-        source, source_url = _generate_source_links({}, doc_info)
+        label = _generate_source_label({}, doc_info)
         docs_by_id[doc_id] = RAGDocument(
             document_id=f"{doc_id}-{content_hash}",
             title=doc_info.get("title") or doc_id,
             content=doc_info.get("summary") or "",
-            source=source,
-            source_url=source_url,
+            source=label,
+            source_url=doc_info.get("source_url"),
+            s3_key=doc_info.get("s3_key"),
+            start_page=None,
+            end_page=None,
             discovery_tag=tag,
             authority_level=doc_info.get("authority_level"),
         )

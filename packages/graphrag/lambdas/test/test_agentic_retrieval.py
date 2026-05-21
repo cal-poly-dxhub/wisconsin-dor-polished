@@ -38,6 +38,10 @@ class MockRAGDocument(pydantic.BaseModel):
     source: str | None = None
     source_url: str | None = None
     discovery_tag: str = "unknown"
+    authority_level: int | None = None
+    s3_key: str | None = None
+    start_page: int | None = None
+    end_page: int | None = None
 
 
 # Patch the models module to provide real Pydantic models
@@ -90,8 +94,22 @@ def test_build_rag_documents():
             from main import _build_rag_documents
 
             chunks = [
-                {"doc_id": "doc-1", "text": "chunk 1 text", "source_url": "http://example.com"},
-                {"doc_id": "doc-1", "text": "chunk 2 text", "source_url": "http://example.com"},
+                {
+                    "doc_id": "doc-1",
+                    "text": "chunk 1 text",
+                    "source_url": "http://example.com",
+                    "s3_key": "raw/doc-1/doc-1.pdf",
+                    "start_page": 12,
+                    "end_page": 14,
+                },
+                {
+                    "doc_id": "doc-1",
+                    "text": "chunk 2 text",
+                    "source_url": "http://example.com",
+                    "s3_key": "raw/doc-1/doc-1.pdf",
+                    "start_page": 20,
+                    "end_page": 22,
+                },
             ]
 
             docs = _build_rag_documents(chunks, {"doc-1"}, {})
@@ -99,6 +117,114 @@ def test_build_rag_documents():
             assert len(docs) == 1
             assert "chunk 1 text" in docs[0].content
             assert "chunk 2 text" in docs[0].content
+            # Stable s3 reference is populated; first chunk wins.
+            assert docs[0].s3_key == "raw/doc-1/doc-1.pdf"
+            assert docs[0].start_page == 12
+            assert docs[0].end_page == 14
+            # source_url carries the public gov URL, not a presigned URL.
+            assert docs[0].source_url == "http://example.com"
+            assert "X-Amz-Signature" not in (docs[0].source_url or "")
+
+
+def test_generate_source_label_returns_gov_url_when_present():
+    """_generate_source_label returns the gov URL as the badge label; no URL minting."""
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        from main import _generate_source_label
+
+    chunk = {
+        "s3_key": "raw/wpam/wpam.pdf",
+        "start_page": 12,
+        "end_page": 14,
+        "source_url": "https://www.revenue.wi.gov/dor-publications/wpam.pdf",
+    }
+    doc_info = {"title": "Wisconsin Property Assessment Manual"}
+
+    label = _generate_source_label(chunk, doc_info)
+    assert label == "https://www.revenue.wi.gov/dor-publications/wpam.pdf"
+
+
+def test_generate_source_label_falls_back_to_doc_title():
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        from main import _generate_source_label
+
+    label = _generate_source_label({"s3_key": "raw/wpam/wpam.pdf"}, {"title": "WPAM"})
+    assert label == "WPAM"
+
+
+def test_generate_source_label_returns_empty_when_no_info():
+    with patch("main.boto3"), patch("main.NeptuneClient"):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        from main import _generate_source_label
+
+    assert _generate_source_label({}, None) == ""
+    assert _generate_source_label({}, {}) == ""
+
+
+def test_build_opinion_card_uses_s3_key_not_presigned_url():
+    """_build_opinion_card carries the stable raw_key on s3_key; source_url
+    is None when raw_key is present (resolver mints presigned at click time)."""
+    with patch("main.boto3"), patch("main.NeptuneClient") as MockNeptune:
+        mock_instance = MagicMock()
+        mock_instance.get_document.return_value = {
+            "title": "State v. Defendant",
+            "authority_level": 3,
+        }
+        MockNeptune.return_value = mock_instance
+
+        if "main" in sys.modules:
+            del sys.modules["main"]
+
+        with patch("main.neptune", mock_instance):
+            from main import _build_opinion_card
+
+            payload = {
+                "citation": "123 Wis. 2d 45",
+                "raw_key": "raw/case-law-123-wis-2d-45/123-wis-2d-45.txt",
+                "text": "full opinion text...",
+                "scholar_url": "https://scholar.google.com/foo",
+            }
+            card = _build_opinion_card("case-law-123-wis-2d-45", payload)
+
+            assert card.s3_key == "raw/case-law-123-wis-2d-45/123-wis-2d-45.txt"
+            assert card.start_page is None
+            assert card.end_page is None
+            # When raw_key is present, source_url is None (resolver handles it).
+            assert card.source_url is None
+            assert card.authority_level == 3
+            assert card.discovery_tag == "opinion-fetched"
+
+
+def test_build_opinion_card_falls_back_to_scholar_when_no_raw_key():
+    """When fetch_case_opinion didn't find the .txt in S3, scholar_url is the
+    public fallback so the card stays clickable without the resolver."""
+    with patch("main.boto3"), patch("main.NeptuneClient") as MockNeptune:
+        mock_instance = MagicMock()
+        mock_instance.get_document.return_value = None
+        MockNeptune.return_value = mock_instance
+
+        if "main" in sys.modules:
+            del sys.modules["main"]
+
+        with patch("main.neptune", mock_instance):
+            from main import _build_opinion_card
+
+            payload = {
+                "citation": "123 Wis. 2d 45",
+                "raw_key": "",
+                "text": "",
+                "scholar_url": "https://scholar.google.com/foo",
+            }
+            card = _build_opinion_card("case-law-123-wis-2d-45", payload)
+
+            assert card.s3_key is None
+            assert card.source_url == "https://scholar.google.com/foo"
+            # No doc_info → fall back to literal 3 for case-law authority.
+            assert card.authority_level == 3
 
 
 def test_collapse_case_law_by_title_merges_parallel_citations():
