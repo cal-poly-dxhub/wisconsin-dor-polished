@@ -382,12 +382,12 @@ export const DocumentCard = memo(function DocumentCard({
       if (document.s3Key) {
         // window.open() must run synchronously to satisfy popup blockers;
         // the JWT fetch is async so we open about:blank first and redirect
-        // the popup once the resolver URL is built.
-        const popup = window.open(
-          'about:blank',
-          '_blank',
-          'noopener,noreferrer'
-        );
+        // the popup once the resolver URL is built. We can't pass
+        // 'noopener' here — browsers return null from window.open with
+        // noopener, which would defeat the popup-first pattern. The only
+        // page the popup ever lands on is our resolver's S3 redirect, so
+        // window.opener leakage is bounded.
+        const popup = window.open('about:blank', '_blank');
         if (!popup) return;
         void buildResolverUrl(document.s3Key, document.startPage)
           .then(url => {
