@@ -159,19 +159,33 @@ def phase_1_scaffold(client, graph_id: str, config: dict):
 def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config: dict):
     logger.info("Phase 2: Creating document nodes...")
 
+    from wpam_year import extract_wpam_year_from_doc_id
+
     doc_type_to_label = config.get("doc_types", {})
     count = 0
+    wpam_year_misses = 0
 
     for doc in documents:
         doc_type = doc.get("doc_type", "guide")
         label = doc_type_to_label.get(doc_type, "Guide")
+
+        edition_year = None
+        if doc.get("framework_id") == "FW-WPAM":
+            edition_year = extract_wpam_year_from_doc_id(doc["doc_id"])
+            if edition_year is None:
+                wpam_year_misses += 1
+                logger.warning(
+                    f"Phase 2: WPAM doc '{doc['doc_id']}' has no extractable edition_year; "
+                    "loading without the property"
+                )
 
         execute_query(client, graph_id,
             f"MERGE (d:{label} {{id: $id}}) "
             f"SET d.title = $title, d.source_key = $source_key, "
             f"d.summary = $summary, d.source_url = $source_url, "
             f"d.doc_type = $doc_type, d.authority_level = $auth_level, "
-            f"d.citation = $citation, d.effective_date = $effective_date",
+            f"d.citation = $citation, d.effective_date = $effective_date, "
+            f"d.edition_year = $edition_year",
             {
                 "id": doc["doc_id"],
                 "title": doc.get("title", doc["doc_id"]),
@@ -182,6 +196,7 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
                 "auth_level": doc.get("authority_level", 6),
                 "citation": doc.get("citation", ""),
                 "effective_date": doc.get("effective_date", ""),
+                "edition_year": edition_year,
             },
         )
 
@@ -195,6 +210,10 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
         if count % 200 == 0:
             logger.info(f"  Phase 2 progress: {count}/{len(documents)} document nodes")
 
+    if wpam_year_misses:
+        logger.warning(
+            f"Phase 2: {wpam_year_misses} WPAM docs loaded without edition_year"
+        )
     logger.info(f"  Created {count} document nodes")
 
 
