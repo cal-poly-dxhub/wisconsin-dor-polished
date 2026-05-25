@@ -30,11 +30,12 @@ Three pipeline boundaries, all changes additive:
 
 2. **Retrieval (intent capture)** — `refine_query` tool (`packages/graphrag/lambdas/agentic_retrieval/tools.py`) gains an optional `target_wpam_year: int | null` field in its response. The tool's prompt is extended: populate when the user explicitly mentions a 4-digit year AND the question is plausibly about WPAM / assessment-manual content. Null otherwise.
 
-3. **Retrieval (dedup)** — a new helper module `packages/graphrag/lambdas/agentic_retrieval/wpam_dedup.py` exposes `dedupe_wpam_chunks(chunks, target_year)`. It is called by `vector_search` and `get_neighbors` after Neptune returns results. It applies two passes over the WPAM subset of the chunk list (non-WPAM chunks pass through unchanged):
-   - **Pass A (heading dedup):** group by `(framework_id, normalized_section_path)`. If `target_year` is set, prefer chunks from that year; otherwise prefer max(`edition_year`). Keep one per group.
-   - **Pass B (cosine dedup):** within survivors, compute pairwise cosine similarity on chunk embeddings (already returned by Neptune). For pairs ≥ 0.93, drop the older.
+3. **Retrieval (dedup)** — a new helper module `packages/graphrag/lambdas/agentic_retrieval/wpam_dedup.py` exposes `dedupe_wpam_chunks(chunks, target_year)`. It is called by `vector_search` and `get_neighbors` after Neptune returns results. It applies one pass over the WPAM subset of the chunk list (non-WPAM chunks pass through unchanged):
+   - **Heading dedup:** group by `(framework_id, normalized_section_path)`. If `target_year` is set, prefer chunks from that year; otherwise prefer max(`edition_year`). Keep one per group.
 
-   **Older-edition-only content survives.** Chunks unique to a single edition (no group peer in another year) form a group of one and are kept as-is. This is the key property that addresses the case where an older WPAM contains content the latest edition dropped: dedup only collapses *duplicates*, not *singletons*. Cosine pass B applies the same logic — it only drops chunks that have a near-identical newer counterpart.
+   **Older-edition-only content survives.** Chunks unique to a single edition (no group peer in another year) form a group of one and are kept as-is. This is the key property that addresses the case where an older WPAM contains content the latest edition dropped: dedup only collapses *duplicates*, not *singletons*.
+
+   **Cosine-based dedup is deferred.** Initially scoped, then dropped because Neptune's `vector_search` and `get_neighbors` Cypher do not currently return raw chunk embeddings — only similarity scores. Adding embedding retrieval would require a second algo call per query and ~10-20 KB extra payload. Heading dedup alone addresses the dominant user-visible failure mode (15 near-identical chunks → 1). If we observe renamed-heading edge cases in production (same content, different section heading across editions), we can layer cosine dedup in as a follow-up.
 
 The two tools that surface WPAM content to the agent — `vector_search` and `get_neighbors` — both call the helper. `get_authority_chain`, `get_document`, `faq_search`, and `fetch_case_opinion` do not need it (single-doc returns or non-WPAM content).
 
@@ -69,21 +70,21 @@ A new bullet in `prompt.py` under CITATION RULES tells the agent that WPAM tool 
 
 `get_neighbors` input — add optional `target_wpam_year: int | null` (default null). Same dedup applied to its WPAM result subset.
 
-### Helper module (`packages/graphrag/lambdas/agentic_retrieval/wpam_dedup.py`, new ~80 lines)
+### Helper module (`packages/graphrag/lambdas/agentic_retrieval/wpam_dedup.py`, new ~50 lines)
 
 ```python
 def dedupe_wpam_chunks(
-    chunks: list[Chunk],
+    chunks: list[dict],
     target_year: int | None = None,
-) -> list[Chunk]:
+) -> list[dict]:
     """Pure function. Splits chunks into WPAM and non-WPAM,
-    applies heading + cosine dedup to WPAM only, returns
-    a list with non-WPAM chunks preserved in original position
-    where reasonable. WPAM chunks missing edition_year are
-    held aside (passed through, never deduped) and logged."""
+    applies heading dedup to WPAM only, returns a list with
+    non-WPAM chunks preserved in original position. WPAM chunks
+    missing edition_year are held aside (passed through, never
+    deduped) and logged."""
 ```
 
-Imports numpy (already in the layer for vector ops). No new entries in `requirements.txt`.
+No new dependencies — pure Python, no numpy needed.
 
 ### Rationale: denormalizing `edition_year` onto Chunks
 
@@ -99,12 +100,11 @@ All changes are additive:
 
 ## Re-ingestion
 
-Phase 4 over the WPAM corpus must run so the loader writes `edition_year` onto existing nodes. Two options, to be chosen during implementation:
+The loader must rewrite phase 2 (Doc nodes) and phase 8 (Chunk nodes) for WPAM so the new `edition_year` property lands on existing nodes. The CLI already supports `--source-filter wpam-` (`load.py:1104-1112`), which scopes the doc list to WPAM-only while leaving graph-wide phases (scaffold, hierarchy, stub resolution) MERGE-idempotent. We use that flag to re-run phases 2 and 8 against the existing graph without a full wipe.
 
-- **Targeted phase-4 re-run scoped to FW-WPAM** if the loader supports a framework filter. Cheaper.
-- **Full graph wipe + reload** per the established convention (memory: `feedback_edge_changes_full_reingest.md`). Safer fallback.
+The full-reingest convention (memory: `feedback_edge_changes_full_reingest.md`) applies to edge-logic changes; this is a property-only mutation on existing nodes, so a scoped re-run is appropriate.
 
-Property-only mutations on existing nodes don't strictly require the full-reingest rule (which exists for edge logic), but the implementation plan should verify scoped re-runs are supported before relying on them.
+Note: `vector_search` and `get_neighbors` Cypher in `neptune_client.py` currently do not return `edition_year` — those `RETURN` clauses need a one-line addition for `edition_year` to surface in tool results.
 
 ## Testing
 
@@ -113,8 +113,7 @@ Property-only mutations on existing nodes don't strictly require the full-reinge
 - Heading dedup: 5 chunks with same `(framework, section_path)`, different `edition_year` → returns 1 chunk (max year).
 - Heading dedup with `target_year`: same input, `target_year=2018` → returns the 2018 chunk, not the 2025.
 - Heading dedup, target year not present: `target_year=2017` but only 2018-2025 in input → falls back to max(year), no error.
-- Cosine dedup: two chunks with different `section_path` but cosine ≥ 0.93 → drops the older.
-- Cosine threshold boundary: cosine = 0.93 exactly → drops; cosine = 0.92 → keeps both.
+- Singleton survival: a chunk unique to 2018 (no peer in any other year) passes through unchanged regardless of `target_year`.
 - Mixed list: WPAM + non-WPAM → only WPAM dedup'd, non-WPAM passes through unchanged.
 - Missing `edition_year` on a WPAM chunk → that chunk passes through, warning logged.
 - Empty input → empty output, no errors.
@@ -146,13 +145,13 @@ Property-only mutations on existing nodes don't strictly require the full-reinge
 
 ## Risks
 
-- **Cosine threshold of 0.93 is a guess.** Picked because Titan Embed v2 puts genuinely duplicate content at 0.95+ and 0.93 leaves room for minor reformatting. Tunable in one place. Adjust based on live behavior.
-- **`section_path` consistency across editions.** Heading dedup relies on stable, normalized section identifiers across years. Reworded headings (even cosmetic) defeat heading dedup; cosine catches them. Worth a sanity check during implementation: pull 5-10 chunks that should be the same section across editions and verify `section_path` values match.
+- **`section_path` consistency across editions.** Heading dedup relies on stable, normalized section identifiers across years. Reworded headings (even cosmetic) let near-duplicate chunks survive; without cosine pass B as a fallback, this means context budget gets eaten by a few near-dupes. Failure mode is mild (some noise, not a wrong answer). Worth a sanity check during implementation: pull 5-10 chunks that should be the same section across editions and verify `section_path` values match. If the pattern is bad enough to matter in practice, follow up with cosine dedup.
 - **Re-ingest cost.** Decide between scoped FW-WPAM re-run and full reload before writing the property-mutation code.
 - **Year-mention false positives in refine_query.** "What's the 2024 deadline for appeals?" might be wrongly tagged as `target_wpam_year=2024`. Prompt must draw the line: 4-digit year + WPAM-y topic. Accept some false positives; failure mode is recoverable (user gets 2024 WPAM instead of latest).
 
 ## YAGNI cuts
 
+- Cosine-based dedup pass. Deferred — heading dedup alone handles the dominant failure mode. Layer in if production traces show renamed-heading edge cases.
 - Frontend display of `edition_year` (wire-only in v1).
 - `SUPERSEDES` edges between editions. Edition recency handled at retrieval layer, not graph layer.
 - Generalizing `edition_year` beyond WPAM. Plumbed as `Optional[int]` so future frameworks can opt in, but only WPAM gets the dedup helper.
@@ -167,7 +166,7 @@ Property-only mutations on existing nodes don't strictly require the full-reinge
 
 | Component | What it does | Depends on |
 |---|---|---|
-| `wpam_dedup.py` (new) | Pure dedup function over chunk lists | numpy (existing layer dep) |
+| `wpam_dedup.py` (new) | Pure dedup function over chunk lists | none |
 | `tools.py` (`vector_search`) | Calls dedup helper after Neptune query | `wpam_dedup` |
 | `tools.py` (`get_neighbors`) | Calls dedup helper after Neptune query | `wpam_dedup` |
 | `tools.py` (`refine_query`) | Surfaces `target_wpam_year` in response | LLM prompt update |
