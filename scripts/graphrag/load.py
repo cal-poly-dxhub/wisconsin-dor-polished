@@ -624,7 +624,7 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
         "c.source_url = row.source_url, c.chunk_index = row.idx, "
         "c.s3_key = row.s3_key, c.start_page = row.start_page, "
         "c.end_page = row.end_page, c.heading = row.heading, "
-        "c.subheading = row.subheading",
+        "c.subheading = row.subheading, c.edition_year = row.edition_year",
         {"rows": [
             {
                 "id": b["chunk_id"],
@@ -637,6 +637,7 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
                 "end_page": b["end_page"],
                 "heading": b["heading"],
                 "subheading": b["subheading"],
+                "edition_year": b.get("edition_year"),
             } for b in batch
         ]},
     )
@@ -701,6 +702,10 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
         f"Phase 8: Creating chunk nodes with headings + chunk-level CITES edges "
         f"(batch size {PHASE_8_BATCH_SIZE})..."
     )
+    try:
+        from wpam_year import extract_wpam_year_from_doc_id
+    except ImportError:
+        from scripts.graphrag.wpam_year import extract_wpam_year_from_doc_id
 
     batch: list[dict] = []
     batch_pairs = 0
@@ -711,6 +716,9 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
     for doc in documents:
         doc_id = doc["doc_id"]
         s3_key = doc.get("s3_key", "")
+        edition_year = None
+        if doc.get("framework_id") == "FW-WPAM":
+            edition_year = extract_wpam_year_from_doc_id(doc_id)
         for i, chunk in enumerate(doc.get("chunks", [])):
             meta = chunk.get("metadata", {})
             entry = {
@@ -724,6 +732,7 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
                 "end_page": meta.get("end_page"),
                 "heading": meta.get("heading", ""),
                 "subheading": meta.get("subheading", ""),
+                "edition_year": edition_year,
                 "statute_refs": meta.get("statute_refs", []),
                 "admin_rule_refs": meta.get("admin_rule_refs", []),
             }
