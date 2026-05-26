@@ -1553,6 +1553,27 @@ def _build_rag_documents(
         labels = doc_info.get("labels") or []
         if any(label in _NON_DOCUMENT_LABELS for label in labels):
             continue
+
+        # Section-level Statute stubs (e.g., WIS-STAT-70.32) carry id/title
+        # only — no summary, no chunks. A card built from this would render
+        # empty. Promote to the parent Document (e.g., statutes-70) whose
+        # chunks CITE this stub, keeping the stub's title for prose-link
+        # continuity but borrowing content + s3_key + page range so the
+        # card is informative and clickable.
+        if not doc_info.get("summary"):
+            promotion = neptune.find_stub_promotion(doc_id)
+            if promotion:
+                doc_info = {
+                    **doc_info,
+                    "summary": promotion.get("summary"),
+                    "source_url": promotion.get("source_url") or doc_info.get("source_url"),
+                    "s3_key": promotion.get("s3_key") or doc_info.get("s3_key"),
+                    "authority_level": doc_info.get("authority_level")
+                    or promotion.get("authority_level"),
+                    "_promoted_start_page": promotion.get("start_page"),
+                    "_promoted_end_page": promotion.get("end_page"),
+                }
+
         content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
         tag = discovery.get(doc_id, "unknown")
         label = _generate_source_label({}, doc_info)
@@ -1563,8 +1584,8 @@ def _build_rag_documents(
             source=label,
             source_url=doc_info.get("source_url"),
             s3_key=doc_info.get("s3_key"),
-            start_page=None,
-            end_page=None,
+            start_page=doc_info.get("_promoted_start_page"),
+            end_page=doc_info.get("_promoted_end_page"),
             discovery_tag=tag,
             authority_level=doc_info.get("authority_level"),
             edition_year=doc_info.get("edition_year"),

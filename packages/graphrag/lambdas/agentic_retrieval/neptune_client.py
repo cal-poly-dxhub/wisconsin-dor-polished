@@ -216,6 +216,47 @@ class NeptuneClient:
         )
         return results[0] if results else None
 
+    def find_stub_promotion(self, stub_id: str) -> dict | None:
+        """Find a parent Document whose chunks cite this stub.
+
+        Section-level Statute nodes (e.g., WIS-STAT-70.32) are stubs: they
+        carry id/title only and no chunks of their own. Citation cards for
+        them would render empty. The chapter-level PDF (e.g., statutes-70)
+        does have content and chunks; one of those chunks holds the page
+        range where the section is defined.
+
+        Many frameworks reference a single statute (admin rules, WPAM all
+        CITES the same WIS-STAT-* stub), so we prefer parents whose
+        framework matches the stub's framework. That keeps a stub like
+        WIS-STAT-70.05 promoting to statutes-70 rather than to an
+        admin-rules chapter that happens to cite it first.
+
+        Returns the parent doc plus the page range from the citing chunk,
+        or None if no chapter doc cites the stub.
+        """
+        results = self.query(
+            "MATCH (stub {id: $id}) "
+            "OPTIONAL MATCH (stub)-[:BELONGS_TO]->(stub_fw:Framework) "
+            "WITH stub, stub_fw "
+            "MATCH (c:Chunk)-[:CITES]->(stub) "
+            "MATCH (c)-[:EXTRACTED_FROM]->(parent) "
+            "WHERE parent.summary IS NOT NULL "
+            "OPTIONAL MATCH (parent)-[:BELONGS_TO]->(parent_fw:Framework) "
+            "WITH parent, c, "
+            "  CASE WHEN stub_fw IS NOT NULL AND parent_fw IS NOT NULL "
+            "    AND parent_fw.id = stub_fw.id THEN 0 ELSE 1 END AS rank "
+            "ORDER BY rank ASC, c.start_page ASC "
+            "RETURN parent.id AS id, parent.title AS title, "
+            "parent.summary AS summary, parent.source_url AS source_url, "
+            "parent.source_key AS s3_key, parent.doc_type AS doc_type, "
+            "parent.authority_level AS authority_level, "
+            "c.start_page AS start_page, c.end_page AS end_page "
+            "LIMIT 1",
+            {"id": stub_id},
+            query_name="find_stub_promotion",
+        )
+        return results[0] if results else None
+
     def get_neighbors(
         self,
         node_id: str,

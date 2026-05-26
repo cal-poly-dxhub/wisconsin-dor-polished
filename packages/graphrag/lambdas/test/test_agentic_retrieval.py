@@ -127,6 +127,91 @@ def test_build_rag_documents():
             assert "X-Amz-Signature" not in (docs[0].source_url or "")
 
 
+def test_build_rag_documents_promotes_stub_statute_to_parent():
+    """Stub Statute nodes (id/title only, no summary) cited by the agent get
+    promoted to the parent chapter document so the card has real content and
+    a page range that points the resolver at the right PDF page."""
+    with patch("main.boto3"), patch("main.NeptuneClient") as MockNeptune:
+        mock_instance = MagicMock()
+
+        def get_document(doc_id):
+            if doc_id == "WIS-STAT-70.32":
+                # Stub: title only, no summary, no s3_key.
+                return {
+                    "id": "WIS-STAT-70.32",
+                    "title": "Wis. Stat. 70.32",
+                    "summary": None,
+                    "source_url": None,
+                    "s3_key": None,
+                    "authority_level": 2,
+                    "edition_year": None,
+                    "labels": ["Statute"],
+                }
+            return None
+
+        mock_instance.get_document.side_effect = get_document
+        mock_instance.find_stub_promotion.return_value = {
+            "id": "statutes-70",
+            "title": "Chapter 70 - General Property Taxes",
+            "summary": "Chapter 70 governs general property taxes...",
+            "source_url": "",
+            "s3_key": "raw/statutes-70/statutes-70.pdf",
+            "authority_level": 2,
+            "start_page": 22,
+            "end_page": 23,
+        }
+        MockNeptune.return_value = mock_instance
+
+        if "main" in sys.modules:
+            del sys.modules["main"]
+
+        with patch("main.neptune", mock_instance):
+            from main import _build_rag_documents
+
+            # No chunks — only cited_doc_ids drives the build.
+            docs = _build_rag_documents([], {"WIS-STAT-70.32"}, {})
+
+            assert len(docs) == 1
+            stub_card = docs[0]
+            # Stub's identity preserved so prose links still resolve.
+            assert stub_card.document_id.startswith("WIS-STAT-70.32-")
+            assert stub_card.title == "Wis. Stat. 70.32"
+            # Promoted content + s3 reference from parent.
+            assert "Chapter 70 governs" in stub_card.content
+            assert stub_card.s3_key == "raw/statutes-70/statutes-70.pdf"
+            assert stub_card.start_page == 22
+            assert stub_card.end_page == 23
+            assert stub_card.authority_level == 2
+
+
+def test_build_rag_documents_skips_promotion_when_no_parent():
+    """When no chunk cites the stub, the card falls back to empty content
+    rather than crashing — graceful degrade, not a failed query."""
+    with patch("main.boto3"), patch("main.NeptuneClient") as MockNeptune:
+        mock_instance = MagicMock()
+        mock_instance.get_document.return_value = {
+            "id": "ORPHAN-STUB",
+            "title": "Orphan Stub",
+            "summary": None,
+            "labels": ["Statute"],
+        }
+        mock_instance.find_stub_promotion.return_value = None
+        MockNeptune.return_value = mock_instance
+
+        if "main" in sys.modules:
+            del sys.modules["main"]
+
+        with patch("main.neptune", mock_instance):
+            from main import _build_rag_documents
+
+            docs = _build_rag_documents([], {"ORPHAN-STUB"}, {})
+
+            assert len(docs) == 1
+            assert docs[0].title == "Orphan Stub"
+            assert docs[0].content == ""
+            assert docs[0].start_page is None
+
+
 def test_generate_source_label_returns_gov_url_when_present():
     """_generate_source_label returns the gov URL as the badge label; no URL minting."""
     with patch("main.boto3"), patch("main.NeptuneClient"):
