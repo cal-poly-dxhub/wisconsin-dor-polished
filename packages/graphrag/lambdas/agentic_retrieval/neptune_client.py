@@ -183,14 +183,18 @@ class NeptuneClient:
         # OPTIONAL MATCH on the parent doc surfaces effective_date alongside
         # each chunk so the agent can prefer newer Advisory results when two
         # chunks address the same topic. Cheap join — chunk→doc is 1:1.
+        # framework_id and edition_year flow through for WPAM dedup.
         results = self.query(
             f"CALL neptune.algo.vectors.topKByEmbedding({embedding_literal}, {{topK: {top_k}}}) "
             "YIELD node, score "
             "OPTIONAL MATCH (node)-[:EXTRACTED_FROM]->(parent) "
+            "OPTIONAL MATCH (parent)-[:BELONGS_TO]->(fw:Framework) "
             "RETURN node.id AS chunk_id, node.text AS text, node.doc_id AS doc_id, "
             "node.source_url AS source_url, node.s3_key AS s3_key, "
             "node.start_page AS start_page, node.end_page AS end_page, "
             "node.heading AS heading, node.subheading AS subheading, "
+            "node.edition_year AS edition_year, "
+            "fw.id AS framework_id, "
             "parent.effective_date AS effective_date, score",
             query_name="vector_search",
         )
@@ -235,10 +239,15 @@ class NeptuneClient:
 
         results = self.query(
             f"{pattern} "
+            "OPTIONAL MATCH (n)-[:BELONGS_TO]->(fw:Framework) "
             "RETURN type(r) AS relationship, n.id AS id, n.title AS title, "
             "n.summary AS summary, n.source_url AS source_url, "
             "n.doc_type AS doc_type, n.citation AS citation, "
-            "n.effective_date AS effective_date, labels(n) AS labels",
+            "n.effective_date AS effective_date, "
+            "n.edition_year AS edition_year, "
+            "n.heading AS heading, "
+            "fw.id AS framework_id, "
+            "labels(n) AS labels",
             {"id": node_id},
             query_name="get_neighbors",
         )
