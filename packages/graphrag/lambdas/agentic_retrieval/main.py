@@ -40,8 +40,9 @@ from websocket_utils.utils import get_ws_connection_from_session
 MAX_TURNS = 10
 
 # Bedrock KB relevance scores range 0-1. A well-matched FAQ typically scores
-# 0.75+; loosely related hits land around 0.6-0.7. 0.70 is strict enough to
-# avoid false short-circuits on tangential FAQs while still catching paraphrases.
+# 0.75+; loosely related hits land around 0.6-0.7. At/above this threshold the
+# FAQ is treated as the primary source of truth for the answer, while the
+# agentic loop still runs to supplement it with citable graph evidence.
 FAQ_SCORE_THRESHOLD = 0.70
 
 # Cap on FAQ entries passed to downstream synthesis. Prevents low-relevance
@@ -693,10 +694,13 @@ def run_agentic_loop(
 ) -> tuple[str, list[str], list[RAGDocument], FAQResource | None]:
     """Run Claude's agentic loop against Neptune.
 
-    Turn 0 is hardcoded: run `faq_search` with the verbatim user query. If the
-    top FAQ score clears FAQ_SCORE_THRESHOLD, short-circuit — return the FAQs
-    and let downstream ResponseStreaming synthesize the answer. Otherwise seed
-    the conversation with the FAQ result and hand off to Claude for graph work.
+    Turn 0 is hardcoded: run `faq_search` with the verbatim user query. The
+    result is always seeded into the conversation and Claude is handed off to
+    graph work. When the top FAQ score clears FAQ_SCORE_THRESHOLD, the FAQ is
+    flagged as a high-confidence match: the system message tells Claude to
+    treat the FAQ as the primary source of truth and use graph traversal to
+    supplement/ground it, and the FAQResource is returned regardless of
+    whether the agent's cited_doc_ids reference the FAQ explicitly.
 
     When ``chat_history`` is provided, prior {query, answer} pairs are
     prepended to the message list so Claude can resolve follow-up questions
@@ -705,9 +709,6 @@ def run_agentic_loop(
 
     Returns:
         (answer_text, cited_doc_ids, rag_documents, faq_resource)
-
-    answer_text is only meaningful when we fall through to the loop; when we
-    short-circuit on FAQs it's a placeholder since downstream re-synthesizes.
     """
     chat_history = chat_history or []
     if trace_seq is None:
@@ -828,30 +829,24 @@ def run_agentic_loop(
         dev_payload={"raw": faq_summary["raw"]},
     )
 
+    # When the top FAQ scores above threshold, build the resource up front so
+    # we can return it unconditionally — even if Claude doesn't include the
+    # FAQ ID in cited_doc_ids, the high-confidence FAQ should anchor the
+    # downstream synthesis prompt as the primary source of truth.
+    high_confidence_faq: FAQResource | None = None
     if top_score >= FAQ_SCORE_THRESHOLD:
-        faq_resource = _build_faq_resource(faq_entries)
-        if faq_resource:
+        high_confidence_faq = _build_faq_resource(faq_entries)
+        if high_confidence_faq:
             logger.info(
-                f"FAQ short-circuit: returning {len(faq_resource.faqs)} FAQ(s) "
-                "without entering agentic loop"
+                f"FAQ high-confidence match (score={top_score:.3f}): treating "
+                f"{len(high_confidence_faq.faqs)} FAQ(s) as primary source; "
+                "graph traversal will supplement the answer"
             )
-            _emit_trace(
-                ws_server,
-                trace_seq,
-                query_id=query_id,
-                kind="loop_complete",
-                payload={
-                    "terminalReason": "faq_short_circuit",
-                    "turnsUsed": 0,
-                    "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
-                    "citedDocCount": 0,
-                },
+        else:
+            logger.warning(
+                "FAQ score cleared threshold but no entries parsed; "
+                "loop will treat FAQs as ordinary context"
             )
-            # Empty document list — answer is fully grounded in FAQs.
-            return "", [], [], faq_resource
-        logger.warning(
-            "FAQ score cleared threshold but no entries parsed; falling through to graph"
-        )
 
     # Prepend prior turns so Claude can resolve pronouns and short follow-ups
     # against the conversation, not just the current query. We replay them as
@@ -894,6 +889,31 @@ def run_agentic_loop(
             ],
         },
     ])
+
+    # When the seeded FAQ is a strong match, tell Claude explicitly to anchor
+    # on it. The system prompt covers the general policy, but a per-turn note
+    # with the actual score and FAQ ids gives the agent something concrete to
+    # latch onto and reduces drift toward graph-only synthesis.
+    if high_confidence_faq:
+        faq_ids = [faq.faq_id for faq in high_confidence_faq.faqs]
+        messages.append({
+            "role": "user",
+            "content": [{
+                "text": (
+                    f"The seeded faq_search returned a high-confidence match "
+                    f"(top score {top_score:.2f} ≥ {FAQ_SCORE_THRESHOLD:.2f}, "
+                    f"FAQ id(s): {', '.join(faq_ids)}). Treat the FAQ Q/A as "
+                    "the PRIMARY source of truth for your answer. Still run "
+                    "vector_search and graph traversal to find authoritative "
+                    "documents (statutes, admin rules, WPAM) that support, "
+                    "ground, or add useful detail to what the FAQ says — but "
+                    "do NOT contradict the FAQ. Use graph results to "
+                    "supplement and cite, not to replace. Include the FAQ "
+                    "id(s) above in your final cited_doc_ids alongside any "
+                    "supporting docs you retrieve."
+                )
+            }],
+        })
 
     tool_config = {"tools": TOOL_DEFINITIONS}
 
@@ -1149,7 +1169,14 @@ def run_agentic_loop(
                 rag_docs = _build_rag_documents(
                     cited_chunks, cited, cited_discovery, cited_opinions
                 )
-                cited_faq_resource = _build_cited_faq_resource(faq_entries, cited)
+                # When the seeded FAQ was high-confidence, surface it
+                # unconditionally — the prompt asked Claude to cite it, but
+                # downstream synthesis must see the FAQ as primary truth even
+                # if the agent's cited_doc_ids forgot to include the FAQ id.
+                cited_faq_resource = (
+                    high_confidence_faq
+                    or _build_cited_faq_resource(faq_entries, cited)
+                )
                 _log_agent_event(
                     "agent_loop_complete",
                     **trace_context,
@@ -1239,7 +1266,7 @@ def run_agentic_loop(
             "citedDocCount": len(all_doc_ids),
         },
     )
-    return answer, list(all_doc_ids), rag_docs, None
+    return answer, list(all_doc_ids), rag_docs, high_confidence_faq
 
 
 def _generate_source_label(chunk: dict, doc_info: dict | None) -> str:

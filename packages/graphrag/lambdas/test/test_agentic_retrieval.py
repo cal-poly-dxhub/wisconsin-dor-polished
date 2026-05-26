@@ -1074,16 +1074,36 @@ def test_run_agentic_loop_emits_trace_sequence(monkeypatch):
         del _sys.modules["main"]
 
 
-def test_run_agentic_loop_faq_short_circuit_emits_bracketed_pair(monkeypatch):
-    """High-scoring FAQ short-circuit must still emit loop_start + loop_complete
-    so the UI can rely on a consistent open/close event pair on both paths.
+def test_run_agentic_loop_high_confidence_faq_continues_into_graph(monkeypatch):
+    """High FAQ score no longer short-circuits — the loop continues into the
+    graph so Claude can supplement the FAQ answer with citable evidence.
+
+    Asserts:
+      - bedrock.converse is invoked (graph traversal happens).
+      - The trace emits loop_start, the seeded FAQ tool_call/tool_result,
+        downstream tool events, and loop_complete with terminalReason=answer_tool.
+      - The FAQ resource flows through to the result even when Claude's
+        cited_doc_ids omit the FAQ id.
     """
     import itertools
     import sys as _sys
+
     class FakeAgentEventMessage:
         def __init__(self, **fields):
             self.__dict__.update(fields)
     _sys.modules["websocket_utils.models"].AgentEventMessage = FakeAgentEventMessage
+
+    # Realistic FAQResource for the assertion path.
+    class FakeFAQ(pydantic.BaseModel):
+        faq_id: str
+        question: str
+        answer: str
+
+    class FakeFAQResource(pydantic.BaseModel):
+        faqs: list[FakeFAQ]
+
+    _sys.modules["step_function_types.models"].FAQ = FakeFAQ
+    _sys.modules["step_function_types.models"].FAQResource = FakeFAQResource
 
     with patch.dict(os.environ, {
         "AWS_REGION": "us-east-1",
@@ -1097,18 +1117,55 @@ def test_run_agentic_loop_faq_short_circuit_emits_bracketed_pair(monkeypatch):
              patch("neptune_client.NeptuneClient"):
             import main
 
-    # High-scoring FAQ triggers short-circuit.
+    # High-scoring FAQ — used to trigger the new "anchor + supplement" path.
     monkeypatch.setattr(main, "_faq_search_direct", lambda q: {
-        "faqs": [{"text": "Q: what is TID\nA: answer", "score": 0.90,
-                  "source_uri": "s3://f/faq_1.txt"}],
+        "faqs": [{"text": "Q: what is TID\nA: tax incremental district",
+                  "score": 0.90, "source_uri": "s3://f/faq_1.txt"}],
         "count": 1,
     })
+
+    # Turn 1: vector_search; Turn 2: answer (note cited_doc_ids omits the FAQ
+    # id intentionally — the FAQ resource must still flow through).
+    converse_responses = [
+        {
+            "output": {"message": {"content": [
+                {"toolUse": {"toolUseId": "t1", "name": "vector_search",
+                             "input": {"query": "TID statute"}}},
+            ]}},
+            "stopReason": "tool_use",
+            "usage": {"inputTokens": 10, "outputTokens": 20, "totalTokens": 30},
+            "metrics": {"latencyMs": 100},
+        },
+        {
+            "output": {"message": {"content": [
+                {"toolUse": {"toolUseId": "t2", "name": "answer",
+                             "input": {"response": "A TID is...",
+                                       "cited_doc_ids": ["doc-stat"]}}},
+            ]}},
+            "stopReason": "tool_use",
+            "usage": {"inputTokens": 15, "outputTokens": 30, "totalTokens": 45},
+            "metrics": {"latencyMs": 120},
+        },
+    ]
+    main.bedrock.converse = MagicMock(side_effect=converse_responses)
+
+    def fake_execute(name, input_, neptune_client, chat_history=None):
+        if name == "vector_search":
+            return {"chunks": [{"doc_id": "doc-stat", "text": "..."}],
+                    "graph_context": {}}
+        if name == "answer":
+            return {"response": input_.get("response", ""),
+                    "cited_doc_ids": input_.get("cited_doc_ids", [])}
+        return {}
+    monkeypatch.setattr(main, "execute_tool", fake_execute)
+    main.neptune.get_document = MagicMock(return_value=None)
 
     sent = []
 
     def fake_run(coro):
         coro.close()
     monkeypatch.setattr(main.asyncio, "run", fake_run)
+
     mock_ws = MagicMock()
 
     def capture(msg):
@@ -1118,7 +1175,7 @@ def test_run_agentic_loop_faq_short_circuit_emits_bracketed_pair(monkeypatch):
         return _noop()
     mock_ws.send_json = capture
 
-    main.run_agentic_loop(
+    answer, cited, rag_docs, faq_resource = main.run_agentic_loop(
         "what is TID?",
         query_id="q-1",
         session_id="s-1",
@@ -1126,15 +1183,20 @@ def test_run_agentic_loop_faq_short_circuit_emits_bracketed_pair(monkeypatch):
         trace_seq=itertools.count(1).__next__,
     )
 
+    # Bedrock was actually called — the loop did not short-circuit.
+    assert main.bedrock.converse.call_count == 2
+
+    # FAQ resource is returned even though Claude only cited "doc-stat".
+    assert faq_resource is not None
+    assert len(faq_resource.faqs) == 1
+    assert faq_resource.faqs[0].faq_id == "faq_1"
+
+    # Trace emits the answer-tool terminal, not faq_short_circuit.
     kinds = [m.kind for m in sent]
-    # Turn-0 FAQ now emits as a tool_call/tool_result pair (Change 2).
-    assert kinds == [
-        "loop_start",
-        "tool_call",
-        "tool_result",
-        "loop_complete",
-    ]
-    assert sent[-1].payload["terminalReason"] == "faq_short_circuit"
+    assert kinds[0] == "loop_start"
+    assert kinds[-1] == "loop_complete"
+    assert sent[-1].payload["terminalReason"] == "answer_tool"
+
     # Cleanup for downstream re-imports.
     if "main" in _sys.modules:
         del _sys.modules["main"]
