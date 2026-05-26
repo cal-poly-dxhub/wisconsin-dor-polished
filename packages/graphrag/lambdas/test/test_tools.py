@@ -205,3 +205,94 @@ def test_refine_query_falls_back_on_error():
         )
 
     assert result["refined_query"] == "original question"
+
+
+def test_refine_query_extracts_target_wpam_year():
+    """LLM should return target_wpam_year when user explicitly mentions a year + WPAM."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_response = {
+        "output": {
+            "message": {
+                "content": [{"text": '{"refined_query": "WPAM agricultural land 2018", "target_wpam_year": 2018}'}]
+            }
+        }
+    }
+    with patch("tools.bedrock") as mock_bedrock:
+        mock_bedrock.converse.return_value = mock_response
+        result = execute_tool(
+            "refine_query",
+            {"query": "what does the 2018 WPAM say about agricultural land?"},
+            mock_neptune,
+            chat_history=[],
+        )
+
+    assert result["refined_query"] == "WPAM agricultural land 2018"
+    assert result["target_wpam_year"] == 2018
+
+
+def test_refine_query_no_target_year_when_no_year_mentioned():
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_response = {
+        "output": {
+            "message": {
+                "content": [{"text": '{"refined_query": "WPAM agricultural land", "target_wpam_year": null}'}]
+            }
+        }
+    }
+    with patch("tools.bedrock") as mock_bedrock:
+        mock_bedrock.converse.return_value = mock_response
+        result = execute_tool(
+            "refine_query",
+            {"query": "what does WPAM say about agricultural land?"},
+            mock_neptune,
+            chat_history=[],
+        )
+
+    assert result["target_wpam_year"] is None
+
+
+def test_refine_query_falls_back_on_invalid_json():
+    """If the LLM doesn't return JSON, treat the entire output as the
+    refined query and target_wpam_year as None."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_response = {
+        "output": {
+            "message": {
+                "content": [{"text": "WPAM agricultural land"}]
+            }
+        }
+    }
+    with patch("tools.bedrock") as mock_bedrock:
+        mock_bedrock.converse.return_value = mock_response
+        result = execute_tool(
+            "refine_query",
+            {"query": "what does WPAM say about agricultural land?"},
+            mock_neptune,
+            chat_history=[],
+        )
+
+    assert result["refined_query"] == "WPAM agricultural land"
+    assert result["target_wpam_year"] is None
+
+
+def test_refine_query_falls_back_on_bedrock_error():
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    with patch("tools.bedrock") as mock_bedrock:
+        mock_bedrock.converse.side_effect = RuntimeError("bedrock unavailable")
+        result = execute_tool(
+            "refine_query",
+            {"query": "what does WPAM say about agricultural land?"},
+            mock_neptune,
+            chat_history=[],
+        )
+
+    assert result["refined_query"] == "what does WPAM say about agricultural land?"
+    assert result["target_wpam_year"] is None

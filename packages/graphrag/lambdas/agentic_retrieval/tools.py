@@ -434,10 +434,20 @@ def execute_tool(
         prompt = (
             "Rewrite the current user question as one standalone search query for "
             "Wisconsin property tax retrieval. Use the prior conversation only to "
-            "resolve references or missing context. Return only the rewritten query.\n\n"
+            "resolve references or missing context.\n\n"
+            "Also: if the user explicitly mentions a 4-digit year (e.g., '2018', "
+            "'the 2024 manual') AND the question is about WPAM / Wisconsin Property "
+            "Assessment Manual / property assessment guidance, populate "
+            "target_wpam_year with that year. Otherwise, target_wpam_year is null. "
+            "A year that refers only to a tax-filing deadline or a statute year is "
+            "NOT a target_wpam_year.\n\n"
+            "Return ONLY a JSON object on a single line, no prose, no markdown:\n"
+            '{"refined_query": "<rewritten query>", "target_wpam_year": <year or null>}\n\n'
             f"Prior conversation:\n{_history_context(chat_history)}\n\n"
             f"Current question: {query}"
         )
+        target_year: int | None = None
+        refined = query
         try:
             response = bedrock.converse(
                 modelId=REFINEMENT_MODEL_ID,
@@ -445,11 +455,20 @@ def execute_tool(
                 inferenceConfig={"maxTokens": 256, "temperature": 0.0},
             )
             message = response["output"]["message"]
-            refined = " ".join(
+            raw = " ".join(
                 block.get("text", "").strip()
                 for block in message.get("content", [])
                 if block.get("text")
             ).strip()
+            try:
+                parsed = json.loads(raw)
+                refined = str(parsed.get("refined_query", "")).strip()
+                year_value = parsed.get("target_wpam_year")
+                if isinstance(year_value, int) and not isinstance(year_value, bool):
+                    target_year = year_value
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                # LLM didn't return JSON — treat output as refined query, no target year
+                refined = raw
         except Exception as exc:  # noqa: BLE001
             _log_tool_event(
                 "refine_query_error",
@@ -468,10 +487,11 @@ def execute_tool(
             tool_name=tool_name,
             latency_ms=round((time.perf_counter() - started) * 1000),
             refined_query=refined,
+            target_wpam_year=target_year,
             history_turns=len(chat_history or []),
             **_query_fields(query),
         )
-        return {"refined_query": refined}
+        return {"refined_query": refined, "target_wpam_year": target_year}
 
     elif tool_name == "vector_search":
         embedding = embed_query(tool_input["query"])
