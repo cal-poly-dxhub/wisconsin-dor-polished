@@ -208,7 +208,9 @@ class NeptuneClient:
             "d.source_url AS source_url, d.source_key AS s3_key, "
             "d.doc_type AS doc_type, d.citation AS citation, "
             "d.authority_level AS authority_level, "
-            "d.effective_date AS effective_date, labels(d) AS labels",
+            "d.effective_date AS effective_date, "
+            "d.edition_year AS edition_year, "
+            "labels(d) AS labels",
             {"id": doc_id},
             query_name="get_document",
         )

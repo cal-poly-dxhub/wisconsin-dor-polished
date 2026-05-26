@@ -565,6 +565,8 @@ def save_chat_history(
                     data["startPage"] = doc.start_page
                 if doc.end_page is not None:
                     data["endPage"] = doc.end_page
+                if doc.edition_year is not None:
+                    data["editionYear"] = doc.edition_year
                 resources.append({"type": "document", "data": data})
         if faq_resource:
             for faq in faq_resource.faqs:
@@ -1420,6 +1422,7 @@ def _collapse_case_law_by_title(
             end_page=primary_doc.end_page,
             discovery_tag=primary_doc.discovery_tag,
             authority_level=primary_doc.authority_level,
+            edition_year=primary_doc.edition_year,
         )
         logger.info(
             f"Collapsed {len(group)} case-law parallel citations into "
@@ -1461,6 +1464,7 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
         end_page=None,
         discovery_tag="opinion-fetched",
         authority_level=doc_info.get("authority_level") if doc_info else 3,
+        edition_year=None,
     )
 
 
@@ -1508,6 +1512,7 @@ def _build_rag_documents(
                 end_page=chunk.get("end_page"),
                 discovery_tag=tag,
                 authority_level=(doc_info or {}).get("authority_level"),
+                edition_year=chunk.get("edition_year"),
             )
         else:
             existing = docs_by_id[doc_id]
@@ -1522,6 +1527,7 @@ def _build_rag_documents(
                 merged_s3_key = chunk.get("s3_key")
                 merged_start_page = chunk.get("start_page")
                 merged_end_page = chunk.get("end_page")
+            merged_edition_year = existing.edition_year or chunk.get("edition_year")
             docs_by_id[doc_id] = RAGDocument(
                 document_id=existing.document_id,
                 title=existing.title,
@@ -1533,6 +1539,7 @@ def _build_rag_documents(
                 end_page=merged_end_page,
                 discovery_tag=existing.discovery_tag,
                 authority_level=existing.authority_level,
+                edition_year=merged_edition_year,
             )
 
     # Include cited docs that had no chunks (e.g., fetched-only).
@@ -1560,6 +1567,7 @@ def _build_rag_documents(
             end_page=None,
             discovery_tag=tag,
             authority_level=doc_info.get("authority_level"),
+            edition_year=doc_info.get("edition_year"),
         )
 
     if fetched_opinions:

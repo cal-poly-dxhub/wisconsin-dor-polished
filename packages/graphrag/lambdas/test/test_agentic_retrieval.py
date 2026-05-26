@@ -42,6 +42,7 @@ class MockRAGDocument(pydantic.BaseModel):
     s3_key: str | None = None
     start_page: int | None = None
     end_page: int | None = None
+    edition_year: int | None = None
 
 
 # Patch the models module to provide real Pydantic models
