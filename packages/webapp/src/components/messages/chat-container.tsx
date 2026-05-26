@@ -138,7 +138,7 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
               : 'bg-card overflow-hidden rounded-lg border shadow-sm'
           }`}
         >
-          <div className="space-y-10 py-6 pr-[4%] pl-[4%] pt-[4%]">
+          <div className="space-y-10 pb-40 pr-[4%] pl-[4%] pt-[4%]">
             {orderedQueries.map(query => (
               <ChatMessage
                 key={query.queryId}
