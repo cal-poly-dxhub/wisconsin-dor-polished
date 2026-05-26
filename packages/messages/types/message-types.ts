@@ -1,20 +1,28 @@
 import { z } from 'zod';
 
+// Pydantic serializes Optional fields as JSON `null`, but z.optional() only
+// accepts `undefined` (i.e., key absent). Use nullish() and normalize null
+// to undefined so the runtime shape matches the TS Document type and a
+// single null doesn't reject the whole documents frame.
+const optStr = z.string().nullish().transform(v => v ?? undefined);
+const optInt = z.number().int().nullish().transform(v => v ?? undefined);
+const optNum = z.number().nullish().transform(v => v ?? undefined);
+
 export const SourceDocumentSchema = z.object({
   documentId: z.string(),
   title: z.string(),
   content: z.string(),
-  source: z.string().optional(),
-  sourceUrl: z.string().optional(),
-  discoveryTag: z.string().optional(),
-  authorityLevel: z.number().optional(),
+  source: optStr,
+  sourceUrl: optStr,
+  discoveryTag: optStr,
+  authorityLevel: optNum,
   // Stable references to the raw S3 object. The frontend sends these to
   // GET /citation at click time; the resolver mints a 15-minute presigned
   // URL and 302-redirects.
-  s3Key: z.string().optional(),
-  startPage: z.number().int().optional(),
-  endPage: z.number().int().optional(),
-  editionYear: z.number().int().optional(),
+  s3Key: optStr,
+  startPage: optInt,
+  endPage: optInt,
+  editionYear: optInt,
 });
 
 export const DocumentsContentSchema = z.object({
