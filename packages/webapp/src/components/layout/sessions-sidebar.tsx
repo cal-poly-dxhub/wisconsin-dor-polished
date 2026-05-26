@@ -44,10 +44,10 @@ export function SessionsSidebar() {
   const restoreSession = useChatStore((state) => state.restoreSession);
 
   const deleteSessionMutation = useDeleteSession({
-    onSuccess: () => {
+    onSuccess: (_data, deletedSessionId) => {
       toast.success('Session deleted');
       refetch();
-      if (currentSessionId) {
+      if (deletedSessionId === currentSessionId) {
         clearHistory();
         reset();
       }
