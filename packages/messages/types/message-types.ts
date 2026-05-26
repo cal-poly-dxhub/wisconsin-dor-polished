@@ -14,6 +14,7 @@ export const SourceDocumentSchema = z.object({
   s3Key: z.string().optional(),
   startPage: z.number().int().optional(),
   endPage: z.number().int().optional(),
+  editionYear: z.number().int().optional(),
 });
 
 export const DocumentsContentSchema = z.object({

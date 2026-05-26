@@ -75,6 +75,9 @@ class RAGDocument(BaseModel):
     s3_key: str | None = Field(default=None)
     start_page: int | None = Field(default=None)
     end_page: int | None = Field(default=None)
+    # WPAM edition year (e.g., 2025). Set on chunks from the Wisconsin
+    # Property Assessment Manual; null on all other doc types.
+    edition_year: int | None = Field(default=None)
 
 
 class DocumentResource(BaseModel):

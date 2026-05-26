@@ -62,6 +62,7 @@ export interface Document {
   endPage?: number;
   authorityLevel?: number;
   discoveryTag?: string;
+  editionYear?: number;
 }
 
 export interface DocumentsContent {
