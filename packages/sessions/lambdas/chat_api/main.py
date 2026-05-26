@@ -3,11 +3,10 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import boto3
-from boto3.dynamodb.types import TypeDeserializer
-from botocore.exceptions import ClientError
 import pydantic
 from aws_lambda_powertools.event_handler.api_gateway import (
     APIGatewayHttpResolver,
@@ -15,6 +14,8 @@ from aws_lambda_powertools.event_handler.api_gateway import (
     Router,
 )
 from aws_lambda_powertools.utilities.typing import LambdaContext
+from boto3.dynamodb.types import TypeDeserializer
+from botocore.exceptions import ClientError
 from chat_api_errors import (
     ChatAPIError,
     DynamoDBError,
@@ -48,11 +49,19 @@ logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
 
 
+def _json_default(value: Any) -> Any:
+    # boto3's TypeDeserializer hands back Decimal for any DDB number; json.dumps
+    # rejects it. Whole values become int, fractions become float.
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def create_api_response(status_code: int, body: dict[str, Any]) -> dict[str, Any]:
     """Create a standardized API response."""
     return {
         "statusCode": status_code,
-        "body": json.dumps(body),
+        "body": json.dumps(body, default=_json_default),
         "isBase64Encoded": False,
         "headers": {
             "Content-Type": "application/json",
