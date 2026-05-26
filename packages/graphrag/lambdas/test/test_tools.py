@@ -296,3 +296,80 @@ def test_refine_query_falls_back_on_bedrock_error():
 
     assert result["refined_query"] == "what does WPAM say about agricultural land?"
     assert result["target_wpam_year"] is None
+
+
+def test_vector_search_applies_wpam_dedup():
+    """Two near-identical WPAM chunks from different years should collapse."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.vector_search.return_value = [
+        {"chunk_id": "wpam-2018-c1", "doc_id": "wpam-...-2018",
+         "framework_id": "FW-WPAM", "edition_year": 2018,
+         "heading": "Manufactured Homes", "text": "old"},
+        {"chunk_id": "wpam-2025-c1", "doc_id": "wpam-...-2025",
+         "framework_id": "FW-WPAM", "edition_year": 2025,
+         "heading": "Manufactured Homes", "text": "new"},
+    ]
+    mock_neptune.get_neighbors.return_value = []
+
+    with patch("tools.embed_query", return_value=[0.1] * 1024):
+        result = execute_tool(
+            "vector_search",
+            {"query": "manufactured homes"},
+            mock_neptune,
+        )
+
+    assert len(result["chunks"]) == 1
+    assert result["chunks"][0]["edition_year"] == 2025
+
+
+def test_vector_search_target_year_overrides_max():
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.vector_search.return_value = [
+        {"chunk_id": "wpam-2018-c1", "doc_id": "wpam-...-2018",
+         "framework_id": "FW-WPAM", "edition_year": 2018,
+         "heading": "Manufactured Homes", "text": "..."},
+        {"chunk_id": "wpam-2025-c1", "doc_id": "wpam-...-2025",
+         "framework_id": "FW-WPAM", "edition_year": 2025,
+         "heading": "Manufactured Homes", "text": "..."},
+    ]
+    mock_neptune.get_neighbors.return_value = []
+
+    with patch("tools.embed_query", return_value=[0.1] * 1024):
+        result = execute_tool(
+            "vector_search",
+            {"query": "2018 manufactured homes", "target_wpam_year": 2018},
+            mock_neptune,
+        )
+
+    assert len(result["chunks"]) == 1
+    assert result["chunks"][0]["edition_year"] == 2018
+
+
+def test_get_neighbors_applies_wpam_dedup():
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.get_neighbors.return_value = [
+        {"id": "wpam-2018-c1", "framework_id": "FW-WPAM", "edition_year": 2018,
+         "heading": "Manufactured Homes", "relationship": "CITES"},
+        {"id": "wpam-2025-c1", "framework_id": "FW-WPAM", "edition_year": 2025,
+         "heading": "Manufactured Homes", "relationship": "CITES"},
+        {"id": "stat-70-32", "framework_id": "FW-STATUTES",
+         "heading": "70.32", "relationship": "CITES"},
+    ]
+
+    result = execute_tool(
+        "get_neighbors",
+        {"node_id": "stat-70-32", "edge_types": ["CITES"]},
+        mock_neptune,
+    )
+
+    # WPAM dedup'd to 1, statute passes through.
+    assert len(result["neighbors"]) == 2
+    wpam = [n for n in result["neighbors"] if n.get("framework_id") == "FW-WPAM"]
+    assert len(wpam) == 1
+    assert wpam[0]["edition_year"] == 2025

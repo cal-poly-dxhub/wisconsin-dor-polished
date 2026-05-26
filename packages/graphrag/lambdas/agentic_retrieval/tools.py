@@ -14,6 +14,7 @@ import boto3
 
 from case_opinion import fetch_case_opinion
 from neptune_client import NeptuneClient
+from wpam_dedup import dedupe_wpam_chunks
 
 logger = logging.getLogger(__name__)
 LOG_TOOL_TRACE = os.environ.get("LOG_TOOL_TRACE", "true").lower() == "true"
@@ -167,6 +168,15 @@ TOOL_DEFINITIONS = [
                             "description": "Number of results to return (default: 10, max: 20)",
                             "default": 10,
                         },
+                        "target_wpam_year": {
+                            "type": ["integer", "null"],
+                            "description": (
+                                "Optional. If the user explicitly asked about a "
+                                "specific WPAM edition year, pass it here so dedup "
+                                "returns chunks from that edition instead of the "
+                                "most recent. Use the value returned by refine_query."
+                            ),
+                        },
                     },
                     "required": ["query"],
                 }
@@ -227,6 +237,15 @@ TOOL_DEFINITIONS = [
                             "enum": ["outgoing", "incoming", "both"],
                             "description": "Edge direction (default: both)",
                             "default": "both",
+                        },
+                        "target_wpam_year": {
+                            "type": ["integer", "null"],
+                            "description": (
+                                "Optional. If the user explicitly asked about a "
+                                "specific WPAM edition year, pass it here so dedup "
+                                "returns chunks from that edition instead of the "
+                                "most recent. Use the value returned by refine_query."
+                            ),
                         },
                     },
                     "required": ["node_id"],
@@ -498,11 +517,16 @@ def execute_tool(
         top_k = min(tool_input.get("top_k", 10), 20)
         vector_started = time.perf_counter()
         chunks = neptune.vector_search(embedding, top_k=top_k)
+        target_year = tool_input.get("target_wpam_year")
+        pre_dedup_count = len(chunks)
+        chunks = dedupe_wpam_chunks(chunks, target_year=target_year)
         _log_tool_event(
             "vector_search_neptune_complete",
             tool_name=tool_name,
             top_k=top_k,
             chunk_count=len(chunks),
+            pre_dedup_count=pre_dedup_count,
+            target_wpam_year=target_year,
             latency_ms=round((time.perf_counter() - vector_started) * 1000),
             top_doc_ids=[chunk.get("doc_id") for chunk in chunks[:5]],
             **_query_fields(tool_input["query"]),
@@ -595,12 +619,15 @@ def execute_tool(
             edge_types=tool_input.get("edge_types"),
             direction=tool_input.get("direction", "both"),
         )
+        target_year = tool_input.get("target_wpam_year")
+        neighbors = dedupe_wpam_chunks(neighbors, target_year=target_year)
         _log_tool_event(
             "get_neighbors_complete",
             tool_name=tool_name,
             node_id=tool_input["node_id"],
             edge_types=tool_input.get("edge_types"),
             direction=tool_input.get("direction", "both"),
+            target_wpam_year=target_year,
             neighbor_count=len(neighbors),
             relationships=sorted({
                 n.get("relationship", "") for n in neighbors if n.get("relationship")

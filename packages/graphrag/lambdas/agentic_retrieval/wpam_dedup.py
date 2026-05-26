@@ -26,18 +26,25 @@ def _normalize_heading(heading: str | None) -> str:
     return _WHITESPACE_RE.sub(" ", heading).strip().lower()
 
 
+def _chunk_key(chunk: dict) -> str:
+    """Some callers (vector_search) use 'chunk_id'; others (get_neighbors)
+    use 'id'. Either is unique within a single tool result."""
+    return chunk.get("chunk_id") or chunk.get("id") or ""
+
+
 def _is_wpam(chunk: dict) -> bool:
     return chunk.get("framework_id") == "FW-WPAM"
 
 
 def _can_dedup(chunk: dict) -> bool:
     """A WPAM chunk is dedup-eligible iff it has both an edition_year
-    (so we can pick a survivor) and a non-empty heading (so we can
-    group it with peers)."""
+    (so we can pick a survivor), a non-empty heading (so we can
+    group it with peers), and a unique key."""
     return (
         _is_wpam(chunk)
         and chunk.get("edition_year") is not None
         and bool(_normalize_heading(chunk.get("heading")))
+        and bool(_chunk_key(chunk))
     )
 
 
@@ -86,10 +93,10 @@ def dedupe_wpam_chunks(
         if len(group) == 1:
             # Singleton — passes through unchanged.
             chunk = group[0]
-            survivors_by_id[chunk["chunk_id"]] = chunk
+            survivors_by_id[_chunk_key(chunk)] = chunk
             continue
         survivor = _pick_survivor(group, target_year)
-        survivors_by_id[survivor["chunk_id"]] = survivor
+        survivors_by_id[_chunk_key(survivor)] = survivor
         drops += len(group) - 1
 
     if drops:
@@ -107,7 +114,7 @@ def dedupe_wpam_chunks(
         if idx not in eligible_indexes:
             result.append(chunk)
             continue
-        if chunk["chunk_id"] in survivors_by_id:
+        if _chunk_key(chunk) in survivors_by_id:
             result.append(chunk)
-            del survivors_by_id[chunk["chunk_id"]]
+            del survivors_by_id[_chunk_key(chunk)]
     return result
