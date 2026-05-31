@@ -53,7 +53,7 @@ export function ChatInput({
   return (
     <div className={`flex items-center justify-center px-4 pb-6 pt-4 pointer-events-none ${className}`}>
       <div
-        className="pointer-events-auto grid w-full max-w-2xl rounded-[26px] border border-border/50 bg-[hsl(0_0%_12%/0.85)] p-[10px] shadow-[0_8px_40px_rgba(0,0,0,0.7)] backdrop-blur-xl"
+        className="pointer-events-auto grid w-full max-w-2xl rounded-[26px] border border-black/15 dark:border-border/50 bg-card/90 p-[10px] shadow-[0_4px_24px_rgba(0,0,0,0.08)] dark:bg-[hsl(0_0%_12%/0.85)] dark:shadow-[0_8px_40px_rgba(0,0,0,0.7)] backdrop-blur-xl"
         style={{
           gridTemplateAreas: expanded
             ? "'primary primary' 'footer trailing'"

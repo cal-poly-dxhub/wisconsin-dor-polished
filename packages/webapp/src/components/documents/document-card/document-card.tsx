@@ -36,7 +36,7 @@ export interface Document {
 }
 
 const documentCardVariants = cva(
-  'group cursor-pointer font-sans transition-colors duration-200 ease-in-out hover:border-primary/40 hover:shadow-md focus-within:border-primary/50',
+  'group cursor-pointer font-sans transition-colors duration-200 ease-in-out border-black/15 dark:border-border hover:border-primary/40 hover:shadow-md focus-within:border-primary/50 shadow-none dark:shadow-sm',
   {
     variants: {
       variant: {
