@@ -12,13 +12,10 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Maximize2, X } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
+import type { FAQ } from '@messages/websocket-interface';
 import { AuthorityBadge } from './authority-badge';
 
-export interface FAQ {
-  faqId: string;
-  question: string;
-  answer: string;
-}
+export type { FAQ };
 
 const faqCardVariants = cva(
   'group cursor-pointer font-sans transition-colors duration-200 ease-in-out hover:border-primary/40 hover:shadow-md focus-within:border-primary/50',

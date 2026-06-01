@@ -39,6 +39,8 @@ export const FAQSchema = z.object({
   faqId: z.string(),
   question: z.string(),
   answer: z.string(),
+  // Public revenue.wi.gov page for this FAQ; absent/null when unmatched.
+  sourceUrl: optStr,
 });
 
 export const FAQContentSchema = z.object({

@@ -1,3 +1,5 @@
+import type { FAQ } from '@messages/websocket-interface';
+
 // Core message types used throughout the application
 export interface MessageUnion {
   type: string;
@@ -69,11 +71,7 @@ export interface DocumentsContent {
   documents: Array<Document>;
 }
 
-export interface FAQ {
-  faqId: string;
-  question: string;
-  answer: string;
-}
+export type { FAQ };
 
 export interface FAQContent {
   faqs: Array<FAQ>;
