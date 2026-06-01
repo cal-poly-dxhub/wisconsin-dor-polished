@@ -375,3 +375,37 @@ def test_faq_models_carry_source_url():
 
     # Backward compatible: omitting source_url is allowed and defaults to None.
     assert SfnFAQ(faq_id="faq_2", question="Q?", answer="A.").source_url is None
+
+
+def test_stream_faq_message_includes_source_url():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from resource_streaming.main import _stream_resources_async
+    from step_function_types.models import FAQResource, StreamResourcesJob
+
+    job = StreamResourcesJob(
+        query_id="q1",
+        session_id="s1",
+        documents=None,
+        faqs=FAQResource(
+            faqs=[
+                {
+                    "faq_id": "faq_1",
+                    "question": "Q?",
+                    "answer": "A.",
+                    "source_url": "https://revenue.wi.gov/x",
+                }
+            ]
+        ),
+    )
+
+    sent_messages = []
+    ws = MagicMock()
+    ws.send_json = AsyncMock(side_effect=lambda msg: sent_messages.append(msg))
+
+    asyncio.run(_stream_resources_async(job, ws))
+
+    faq_msgs = [m for m in sent_messages if getattr(m, "response_type", None) == "faq"]
+    assert len(faq_msgs) == 1
+    assert faq_msgs[0].content.faqs[0].source_url == "https://revenue.wi.gov/x"

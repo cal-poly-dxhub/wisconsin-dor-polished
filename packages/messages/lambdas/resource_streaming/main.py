@@ -146,6 +146,7 @@ async def _stream_resources_async(job: StreamResourcesJob, ws_connect: WebSocket
                         faq_id=faq.faq_id,
                         question=faq.question,
                         answer=faq.answer,
+                        source_url=faq.source_url,
                     )
                     for faq in faq_resource.faqs
                 ]
