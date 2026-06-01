@@ -93,3 +93,11 @@ def test_fetch_case_opinion_empty_citation():
     assert result["found"] is False
     assert "error" in result
     mock_s3.get_object.assert_not_called()
+
+
+def test_scholar_url_public_alias_encodes_citation():
+    from case_opinion import scholar_url
+
+    url = scholar_url("109 Wis. 2d 290")
+    assert url.startswith("http://scholar.google.com/scholar?")
+    assert "q=109%20Wis.%202d%20290" in url

@@ -47,6 +47,13 @@ def _scholar_url(citation: str) -> str:
     )
 
 
+# Public alias so other modules can build the same Google Scholar search URL
+# without reaching into a private helper. _scholar_url stays for internal use.
+def scholar_url(citation: str) -> str:
+    """Public wrapper around _scholar_url for cross-module use."""
+    return _scholar_url(citation)
+
+
 def fetch_case_opinion(
     citation: str,
     raw_bucket: str,
