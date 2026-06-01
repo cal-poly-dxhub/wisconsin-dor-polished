@@ -252,8 +252,8 @@ def test_generate_source_label_returns_empty_when_no_info():
 
 
 def test_build_opinion_card_uses_s3_key_not_presigned_url():
-    """_build_opinion_card carries the stable raw_key on s3_key; source_url
-    is None when raw_key is present (resolver mints presigned at click time)."""
+    """_build_opinion_card always links to Google Scholar, not S3, even when
+    the opinion .txt is archived. The S3 text still rides in content for synthesis."""
     with patch("main.boto3"), patch("main.NeptuneClient") as MockNeptune:
         mock_instance = MagicMock()
         mock_instance.get_document.return_value = {
@@ -276,13 +276,15 @@ def test_build_opinion_card_uses_s3_key_not_presigned_url():
             }
             card = _build_opinion_card("case-law-123-wis-2d-45", payload)
 
-            assert card.s3_key == "raw/case-law-123-wis-2d-45/123-wis-2d-45.txt"
+            # Always link to Scholar, not S3.
+            assert card.s3_key is None
+            assert card.source_url == "https://scholar.google.com/foo"
             assert card.start_page is None
             assert card.end_page is None
-            # When raw_key is present, source_url is None (resolver handles it).
-            assert card.source_url is None
             assert card.authority_level == 3
             assert card.discovery_tag == "opinion-fetched"
+            # Opinion text still available for synthesis.
+            assert card.content == "full opinion text..."
 
 
 def test_build_opinion_card_falls_back_to_scholar_when_no_raw_key():
@@ -355,9 +357,8 @@ def test_collapse_case_law_by_title_merges_parallel_citations():
 
 
 def test_collapse_case_law_preserves_s3_key_and_pages():
-    """The merge constructor must carry the s3 reference forward; otherwise the
-    fetched-opinion case-law cards (which set source_url=None) become
-    non-clickable after collapse."""
+    """The merge constructor must preserve the source_url (Google Scholar link)
+    so parallel citations stay clickable after collapse."""
     with patch("main.boto3"), patch("main.NeptuneClient"):
         if "main" in sys.modules:
             del sys.modules["main"]
@@ -368,8 +369,8 @@ def test_collapse_case_law_preserves_s3_key_and_pages():
                 document_id="case-law-foo-1-abc",
                 title="Foo v. Bar",
                 content="primary opinion text",
-                source_url=None,
-                s3_key="raw/case-law-foo/foo.txt",
+                source_url="https://scholar.google.com/scholar?q=foo",
+                s3_key=None,
                 start_page=None,
                 end_page=None,
                 discovery_tag="opinion-fetched",
@@ -379,8 +380,8 @@ def test_collapse_case_law_preserves_s3_key_and_pages():
                 document_id="case-law-foo-2-def",
                 title="Foo v. Bar",
                 content="parallel citation text",
-                source_url=None,
-                s3_key="raw/case-law-foo/foo.txt",
+                source_url="https://scholar.google.com/scholar?q=bar",
+                s3_key=None,
                 start_page=None,
                 end_page=None,
                 discovery_tag="opinion-fetched",
@@ -391,7 +392,10 @@ def test_collapse_case_law_preserves_s3_key_and_pages():
         merged = _collapse_case_law_by_title(docs)
         assert len(merged) == 1
         surviving = next(iter(merged.values()))
-        assert surviving.s3_key == "raw/case-law-foo/foo.txt"
+        # Merged cards preserve a source_url (Google Scholar link).
+        assert surviving.source_url is not None
+        assert "scholar.google.com" in surviving.source_url
+        assert surviving.s3_key is None
         assert surviving.start_page is None
         assert surviving.end_page is None
 
@@ -1283,3 +1287,41 @@ def test_handler_runs_with_ws_none_when_session_lookup_fails(monkeypatch):
     assert kwargs["ws_server"] is None
     if "main" in _sys.modules:
         del _sys.modules["main"]
+
+
+def test_build_opinion_card_links_to_scholar_not_s3(monkeypatch):
+    import main
+
+    # get_document is consulted for title/authority; stub it.
+    monkeypatch.setattr(
+        main.neptune,
+        "get_document",
+        lambda doc_id: {"title": "Corroon v. Hosch", "authority_level": 3},
+    )
+
+    payload = {
+        "citation": "109 Wis. 2d 290",
+        "raw_key": "raw/case-law-109-wis-2d-290/case-law-109-wis-2d-290.txt",
+        "text": "Full opinion text...",
+        "scholar_url": "http://scholar.google.com/scholar?q=109%20Wis.%202d%20290",
+    }
+    card = main._build_opinion_card("case-law-109-wis-2d-290", payload)
+
+    # Even though raw_key is present, the user link must be Google Scholar.
+    assert card.s3_key is None
+    assert card.source_url == "http://scholar.google.com/scholar?q=109%20Wis.%202d%20290"
+    # Opinion text still feeds downstream synthesis.
+    assert card.content == "Full opinion text..."
+
+
+def test_build_opinion_card_no_link_when_citation_and_scholar_url_empty(monkeypatch):
+    import main
+
+    monkeypatch.setattr(
+        main.neptune, "get_document",
+        lambda doc_id: {"title": "Untitled", "authority_level": 3},
+    )
+    payload = {"citation": "", "raw_key": "", "text": "body", "scholar_url": ""}
+    card = main._build_opinion_card("case-law-unknown", payload)
+    assert card.s3_key is None
+    assert card.source_url is None

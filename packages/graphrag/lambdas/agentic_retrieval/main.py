@@ -22,7 +22,7 @@ from typing import Any
 
 import boto3
 import pydantic
-from case_opinion import citation_to_raw_slug
+from case_opinion import citation_to_raw_slug, scholar_url as _scholar_url_fn
 from neptune_client import NeptuneClient
 from prompt import SYSTEM_PROMPT
 from step_function_types.errors import ValidationError, report_error
@@ -1482,11 +1482,13 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
         title=title,
         content=opinion_text,
         source=citation or title,
-        # When raw_key is empty (S3 lookup miss in fetch_case_opinion),
-        # fall back to the Google Scholar URL so the card is still
-        # clickable. The resolver isn't involved when s3_key is None.
-        source_url=None if raw_key else (scholar_url or None),
-        s3_key=raw_key or None,
+        # Always link the user to Google Scholar for the citation, even when
+        # the opinion .txt is archived in S3. The S3 object is a flat text
+        # blob with no page anchor, so linking to the public opinion loses
+        # nothing and gives a properly formatted, citable source. The opinion
+        # text still rides in `content` to inform synthesis.
+        source_url=scholar_url or (_scholar_url_fn(citation) if citation else None),
+        s3_key=None,
         start_page=None,
         end_page=None,
         discovery_tag="opinion-fetched",
