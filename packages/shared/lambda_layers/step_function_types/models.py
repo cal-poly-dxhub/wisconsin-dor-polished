@@ -49,6 +49,9 @@ class FAQ(BaseModel):
     faq_id: str
     question: str
     answer: str
+    # Public revenue.wi.gov source page for this FAQ, resolved at query time
+    # from the FAQ-URL table. None when no URL could be matched (no link shown).
+    source_url: str | None = Field(default=None)
 
 
 # Types of resources used in generating responses

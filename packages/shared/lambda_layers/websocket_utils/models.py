@@ -63,6 +63,8 @@ class FAQ(WebSocketMessage):
     faq_id: str
     question: str
     answer: str
+    # Mirrors the shared FAQ model; serialized as `sourceUrl` for the frontend.
+    source_url: str | None = None
 
 
 class FAQContent(WebSocketMessage):

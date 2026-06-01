@@ -359,3 +359,19 @@ class TestDocumentBatching:
 
     def test_empty_docs_list_produces_no_batches(self):
         assert _batch_documents_for_ws([], query_id="q-5") == []
+
+
+def test_faq_models_carry_source_url():
+    from step_function_types.models import FAQ as SfnFAQ
+    from websocket_utils.models import FAQ as WsFAQ
+
+    sfn = SfnFAQ(faq_id="faq_1", question="Q?", answer="A.", source_url="https://revenue.wi.gov/x")
+    assert sfn.source_url == "https://revenue.wi.gov/x"
+
+    ws = WsFAQ(faq_id="faq_1", question="Q?", answer="A.", source_url="https://revenue.wi.gov/x")
+    # CamelCaseModel aliasing -> sourceUrl on the wire.
+    dumped = ws.model_dump(by_alias=True)
+    assert dumped["sourceUrl"] == "https://revenue.wi.gov/x"
+
+    # Backward compatible: omitting source_url is allowed and defaults to None.
+    assert SfnFAQ(faq_id="faq_2", question="Q?", answer="A.").source_url is None
