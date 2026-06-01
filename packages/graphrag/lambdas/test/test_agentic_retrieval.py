@@ -1325,3 +1325,63 @@ def test_build_opinion_card_no_link_when_citation_and_scholar_url_empty(monkeypa
     card = main._build_opinion_card("case-law-unknown", payload)
     assert card.s3_key is None
     assert card.source_url is None
+
+
+def test_build_rag_documents_case_law_stub_links_to_scholar(monkeypatch):
+    import main
+
+    monkeypatch.setattr(
+        main.neptune,
+        "get_document",
+        lambda doc_id: {
+            "title": "Some Case v. Other",
+            "authority_level": 3,
+            "citation": "200 Wis. 2d 1",
+            "source_url": "https://docs.legis.wisconsin.gov/document/courts/200%20Wis.%202d%201",
+            "s3_key": "raw/case-law-200-wis-2d-1/case-law-200-wis-2d-1.txt",
+        },
+    )
+
+    chunks = [
+        {
+            "doc_id": "case-law-200-wis-2d-1",
+            "text": "stub summary text",
+            "s3_key": "raw/case-law-200-wis-2d-1/case-law-200-wis-2d-1.txt",
+        }
+    ]
+    docs = main._build_rag_documents(chunks, {"case-law-200-wis-2d-1"})
+    assert len(docs) == 1
+    card = docs[0]
+    assert card.s3_key is None
+    assert card.source_url.startswith("http://scholar.google.com/scholar?")
+    assert "q=200%20Wis.%202d%201" in card.source_url
+
+
+def test_build_rag_documents_case_law_multi_chunk_preserves_scholar_link(monkeypatch):
+    import main
+
+    monkeypatch.setattr(
+        main.neptune,
+        "get_document",
+        lambda doc_id: {
+            "title": "Multi-Chunk Case",
+            "authority_level": 3,
+            "citation": "300 Wis. 2d 100",
+            "source_url": "https://docs.legis.wisconsin.gov/document/courts/300",
+            "s3_key": "raw/case-law-300-wis-2d-100/case-law-300-wis-2d-100.txt",
+        },
+    )
+    chunks = [
+        {"doc_id": "case-law-300-wis-2d-100", "text": "first chunk",
+         "s3_key": "raw/case-law-300-wis-2d-100/case-law-300-wis-2d-100.txt"},
+        {"doc_id": "case-law-300-wis-2d-100", "text": "second chunk",
+         "s3_key": "raw/case-law-300-wis-2d-100/case-law-300-wis-2d-100.txt"},
+    ]
+    docs = main._build_rag_documents(chunks, {"case-law-300-wis-2d-100"})
+    assert len(docs) == 1
+    card = docs[0]
+    assert card.s3_key is None
+    assert card.source_url.startswith("http://scholar.google.com/scholar?")
+    assert "q=300%20Wis.%202d%20100" in card.source_url
+    assert "first chunk" in card.content
+    assert "second chunk" in card.content

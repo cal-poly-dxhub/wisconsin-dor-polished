@@ -1497,6 +1497,25 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
     )
 
 
+def _case_law_link_override(
+    doc_id: str, doc_info: dict | None, s3_key: str | None, source_url: str | None
+) -> tuple[str | None, str | None]:
+    """For case-law docs, return (source_url, s3_key) that link to Google
+    Scholar and drop the S3 reference.
+
+    Case-law S3 objects are flat .txt with no page anchor; linking to the
+    public Scholar search for the citation is strictly better. Non-case-law
+    docs pass through unchanged. Falls back to the incoming values when the
+    node has no citation to build a Scholar URL from.
+    """
+    if not _is_case_law_stub(doc_id):
+        return source_url, s3_key
+    citation = (doc_info or {}).get("citation")
+    if not citation:
+        return source_url, s3_key
+    return _scholar_url_fn(citation), None
+
+
 def _build_rag_documents(
     chunks: list[dict],
     doc_ids: set[str],
@@ -1526,6 +1545,7 @@ def _build_rag_documents(
             label = _generate_source_label(chunk, doc_info)
             gov_url = chunk.get("source_url") or (doc_info or {}).get("source_url")
             s3_key = chunk.get("s3_key") or (doc_info or {}).get("s3_key")
+            gov_url, s3_key = _case_law_link_override(doc_id, doc_info, s3_key, gov_url)
 
             docs_by_id[doc_id] = RAGDocument(
                 document_id=f"{doc_id}-{content_hash}",
@@ -1552,6 +1572,13 @@ def _build_rag_documents(
                 merged_s3_key = existing.s3_key
                 merged_start_page = existing.start_page
                 merged_end_page = existing.end_page
+            elif _is_case_law_stub(doc_id):
+                # Case-law cards never carry an s3_key (they link to Scholar); the
+                # first-chunk override set it None and the merge must not resurrect it
+                # from a later chunk.
+                merged_s3_key = None
+                merged_start_page = None
+                merged_end_page = None
             else:
                 merged_s3_key = chunk.get("s3_key")
                 merged_start_page = chunk.get("start_page")
@@ -1606,13 +1633,16 @@ def _build_rag_documents(
         content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
         tag = discovery.get(doc_id, "unknown")
         label = _generate_source_label({}, doc_info)
+        nochunk_url, nochunk_s3 = _case_law_link_override(
+            doc_id, doc_info, doc_info.get("s3_key"), doc_info.get("source_url")
+        )
         docs_by_id[doc_id] = RAGDocument(
             document_id=f"{doc_id}-{content_hash}",
             title=doc_info.get("title") or doc_id,
             content=doc_info.get("summary") or "",
             source=label,
-            source_url=doc_info.get("source_url"),
-            s3_key=doc_info.get("s3_key"),
+            source_url=nochunk_url,
+            s3_key=nochunk_s3,
             start_page=doc_info.get("_promoted_start_page"),
             end_page=doc_info.get("_promoted_end_page"),
             discovery_tag=tag,
