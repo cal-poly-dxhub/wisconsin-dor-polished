@@ -124,7 +124,13 @@ documents and the frontend already opens it when `s3Key` is null.
 - `websocket_utils/models.py` `FAQ`: add `source_url` (→ `sourceUrl` on wire).
 - `resource_streaming/main.py`: map `source_url=faq.source_url` in the
   `FAQMessage` construction.
-- `message-types.ts` `FAQSchema`: add `sourceUrl: optStr`.
+- `message-types.ts` `FAQSchema`: add `sourceUrl: optStr`. **Refactor:** the
+  `FAQ` shape is currently hand-declared three times (Zod schema, store
+  `types.ts`, and inside `faq-card.tsx`). Make the Zod-inferred type the single
+  source of truth and have the store + card *import* it, so the new field is
+  added in one place and the type cannot drift (the exact failure mode the
+  three-sided WebSocket contract guards against). The duplicated `Document`
+  type is left as a follow-up to keep this change FAQ-scoped.
 - `_save_chat_history` (`main.py` ~line 572): include `sourceUrl` in the FAQ
   resource dict so restored sessions keep the link.
 - `faq-card.tsx`: add a **"View on revenue.wi.gov ↗"** button (compact + modal)
