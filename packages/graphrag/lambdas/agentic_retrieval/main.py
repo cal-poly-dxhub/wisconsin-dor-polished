@@ -1528,23 +1528,36 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
     )
 
 
-def _case_law_link_override(
-    doc_id: str, doc_info: dict | None, s3_key: str | None, source_url: str | None
-) -> tuple[str | None, str | None]:
-    """For case-law docs, return (source_url, s3_key) that link to Google
-    Scholar and drop the S3 reference.
+def _apply_case_law_links(
+    docs_by_id: dict[str, RAGDocument], doc_infos: dict[str, dict]
+) -> dict[str, RAGDocument]:
+    """Point every case-law stub card at Google Scholar and drop its S3 ref.
 
-    Case-law S3 objects are flat .txt with no page anchor; linking to the
-    public Scholar search for the citation is strictly better. Non-case-law
-    docs pass through unchanged. Falls back to the incoming values when the
-    node has no citation to build a Scholar URL from.
+    Single source of truth for the rule. Case-law S3 objects are flat .txt
+    with no page anchor, so the public Scholar search for the citation is
+    strictly better than a presigned link. Runs as one post-pass over the
+    built cards (rather than scattered through the build/merge loops) so the
+    invariant lives in exactly one place.
+
+    Only touches stub cards: fetched full opinions set their own Scholar link
+    in _build_opinion_card and are swapped in after this pass. A stub with no
+    citation to build a URL from is left unchanged.
     """
-    if not _is_case_law_stub(doc_id):
-        return source_url, s3_key
-    citation = (doc_info or {}).get("citation")
-    if not citation:
-        return source_url, s3_key
-    return scholar_url(citation), None
+    for doc_id, card in docs_by_id.items():
+        if not _is_case_law_stub(doc_id):
+            continue
+        citation = (doc_infos.get(doc_id) or {}).get("citation")
+        if not citation:
+            continue
+        docs_by_id[doc_id] = card.model_copy(
+            update={
+                "source_url": scholar_url(citation),
+                "s3_key": None,
+                "start_page": None,
+                "end_page": None,
+            }
+        )
+    return docs_by_id
 
 
 def _build_rag_documents(
@@ -1563,6 +1576,9 @@ def _build_rag_documents(
     discovery = discovery or {}
     fetched_opinions = fetched_opinions or {}
     docs_by_id: dict[str, RAGDocument] = {}
+    # Per-doc_id graph metadata, threaded to _apply_case_law_links so it can
+    # read each case-law stub's citation without re-querying Neptune.
+    doc_infos: dict[str, dict] = {}
 
     for chunk in chunks:
         doc_id = chunk.get("doc_id", "unknown")
@@ -1571,12 +1587,12 @@ def _build_rag_documents(
 
         if doc_id not in docs_by_id:
             doc_info = neptune.get_document(doc_id)
+            doc_infos[doc_id] = doc_info or {}
             title = (doc_info.get("title") if doc_info else None) or doc_id
             content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
             label = _generate_source_label(chunk, doc_info)
             gov_url = chunk.get("source_url") or (doc_info or {}).get("source_url")
             s3_key = chunk.get("s3_key") or (doc_info or {}).get("s3_key")
-            gov_url, s3_key = _case_law_link_override(doc_id, doc_info, s3_key, gov_url)
 
             docs_by_id[doc_id] = RAGDocument(
                 document_id=f"{doc_id}-{content_hash}",
@@ -1603,13 +1619,6 @@ def _build_rag_documents(
                 merged_s3_key = existing.s3_key
                 merged_start_page = existing.start_page
                 merged_end_page = existing.end_page
-            elif _is_case_law_stub(doc_id):
-                # Case-law cards never carry an s3_key (they link to Scholar); the
-                # first-chunk override set it None and the merge must not resurrect it
-                # from a later chunk.
-                merged_s3_key = None
-                merged_start_page = None
-                merged_end_page = None
             else:
                 merged_s3_key = chunk.get("s3_key")
                 merged_start_page = chunk.get("start_page")
@@ -1664,22 +1673,25 @@ def _build_rag_documents(
         content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
         tag = discovery.get(doc_id, "unknown")
         label = _generate_source_label({}, doc_info)
-        nochunk_url, nochunk_s3 = _case_law_link_override(
-            doc_id, doc_info, doc_info.get("s3_key"), doc_info.get("source_url")
-        )
+        doc_infos[doc_id] = doc_info
         docs_by_id[doc_id] = RAGDocument(
             document_id=f"{doc_id}-{content_hash}",
             title=doc_info.get("title") or doc_id,
             content=doc_info.get("summary") or "",
             source=label,
-            source_url=nochunk_url,
-            s3_key=nochunk_s3,
+            source_url=doc_info.get("source_url"),
+            s3_key=doc_info.get("s3_key"),
             start_page=doc_info.get("_promoted_start_page"),
             end_page=doc_info.get("_promoted_end_page"),
             discovery_tag=tag,
             authority_level=doc_info.get("authority_level"),
             edition_year=doc_info.get("edition_year"),
         )
+
+    # Rewrite every remaining case-law stub card to link to Google Scholar.
+    # Runs before the fetched-opinion swap (opinion cards bring their own link)
+    # and before the title-collapse (which copies these values forward).
+    docs_by_id = _apply_case_law_links(docs_by_id, doc_infos)
 
     if fetched_opinions:
         # Replace stub cards for fetched citations with richer opinion cards,
