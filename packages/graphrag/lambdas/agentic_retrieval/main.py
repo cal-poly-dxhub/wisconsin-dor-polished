@@ -602,14 +602,14 @@ def save_chat_history(
                 resources.append({"type": "document", "data": data})
         if faq_resource:
             for faq in faq_resource.faqs:
-                resources.append({
-                    "type": "faq",
-                    "data": {
-                        "faqId": faq.faq_id,
-                        "question": faq.question,
-                        "answer": faq.answer,
-                    },
-                })
+                faq_data: dict = {
+                    "faqId": faq.faq_id,
+                    "question": faq.question,
+                    "answer": faq.answer,
+                }
+                if faq.source_url is not None:
+                    faq_data["sourceUrl"] = faq.source_url
+                resources.append({"type": "faq", "data": faq_data})
         if resources:
             item["resources"] = resources
 

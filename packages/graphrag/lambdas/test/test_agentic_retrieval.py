@@ -1458,3 +1458,32 @@ def test_build_faq_resource_tolerates_missing_table(monkeypatch):
     results = [{"text": "Q: Anything?\nA: Sure.", "source_uri": "s3://b/faq_1.txt"}]
     resource = main._build_faq_resource(results)
     assert resource.faqs[0].source_url is None
+
+
+def test_save_chat_history_persists_faq_source_url(monkeypatch):
+    # Use the same real-FAQ-model import idiom the other FAQ tests use.
+    import sys as _sys
+    main = _import_main_with_real_faq_models(_sys)
+    FAQ = main.FAQ
+    FAQResource = main.FAQResource
+
+    captured = {}
+
+    class FakeTable:
+        def put_item(self, Item):
+            captured["item"] = Item
+
+    monkeypatch.setattr(main, "CHAT_HISTORY_TABLE", "ChatHistory")
+    monkeypatch.setattr(main.dynamodb_resource, "Table", lambda name: FakeTable())
+
+    faq_resource = FAQResource(faqs=[
+        FAQ(faq_id="faq_1", question="Q?", answer="A.",
+            source_url="https://revenue.wi.gov/x"),
+    ])
+    main.save_chat_history(
+        "s1", "q1", "the query", "the answer",
+        rag_documents=None, faq_resource=faq_resource,
+    )
+
+    faq_res = [r for r in captured["item"]["resources"] if r["type"] == "faq"]
+    assert faq_res[0]["data"]["sourceUrl"] == "https://revenue.wi.gov/x"
