@@ -1487,3 +1487,37 @@ def test_save_chat_history_persists_faq_source_url(monkeypatch):
 
     faq_res = [r for r in captured["item"]["resources"] if r["type"] == "faq"]
     assert faq_res[0]["data"]["sourceUrl"] == "https://revenue.wi.gov/x"
+
+
+def test_faq_question_normalizer_matches_seed_script():
+    """main._normalize_faq_question must stay byte-identical to the seed/extract
+    scripts' faq_url_map.normalize_question.
+
+    The two are independent copies (the lambda bundle can't import from scripts/),
+    coupled only by docstrings. A FAQ's source URL is keyed on the normalized
+    question, so if these ever drift, lookups at query time silently miss and the
+    "View on revenue.wi.gov" link disappears. This guard fails the moment one
+    copy is edited without the other.
+    """
+    import sys as _sys
+
+    main = _import_main_with_real_faq_models(_sys)
+    from scripts.graphrag.faq_url_map import normalize_question
+
+    cases = [
+        "What is the homestead credit?",
+        "Already clean.",
+        "  leading and trailing  ",
+        "a\tb\n c",
+        "Non\xa0breaking\xa0space?",
+        "zero​width",
+        "﻿BOM prefix",
+        "",
+        "MiXeD CaSe Question???",
+        "trailing dots...",
+        "ends with q mark and dot?.",
+    ]
+    for text in cases:
+        assert main._normalize_faq_question(text) == normalize_question(text), (
+            f"normalizer drift on {text!r}"
+        )
