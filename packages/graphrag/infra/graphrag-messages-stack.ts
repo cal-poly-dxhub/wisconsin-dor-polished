@@ -20,6 +20,7 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   resourceStreamingFunction: lambda.IFunction;
   enabled: boolean;
   faqKnowledgeBaseId: string;
+  faqUrlTable: cdk.aws_dynamodb.ITable;
 }
 
 export class GraphRAGMessagesStack extends cdk.NestedStack {
@@ -62,6 +63,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
           RAW_BUCKET: props.rawBucketName,
           FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBaseId,
+          FAQ_URL_TABLE_NAME: props.faqUrlTable.tableName,
           LOG_LEVEL: 'INFO',
           LOG_AGENT_TRACE: 'true',
           LOG_TOOL_TRACE: 'true',
@@ -84,6 +86,10 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
     // API Gateway WebSocket connections, so report_error can surface
     // Lambda failures to the UI instead of the frontend spinning forever.
     props.sessionsTable.grantReadData(agenticRetrievalHandler);
+
+    // Read access to the FAQ-URL table so _build_faq_resource can attach the
+    // public revenue.wi.gov link to each FAQ at query time.
+    props.faqUrlTable.grantReadData(agenticRetrievalHandler);
 
     agenticRetrievalHandler.addToRolePolicy(
       new iam.PolicyStatement({
