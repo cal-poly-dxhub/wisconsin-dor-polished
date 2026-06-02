@@ -490,6 +490,37 @@ CHAT_HISTORY_TABLE = os.environ.get("CHAT_HISTORY_TABLE_NAME", "")
 MAX_HISTORY_TURNS = 5
 dynamodb_resource = boto3.resource("dynamodb", region_name=REGION)
 
+FAQ_URL_TABLE = os.environ.get("FAQ_URL_TABLE_NAME", "")
+
+
+def _faq_url_table():
+    """Return the FAQ-URL DynamoDB Table resource (separate fn so tests can patch)."""
+    return dynamodb_resource.Table(FAQ_URL_TABLE)
+
+
+def _normalize_faq_question(text: str) -> str:
+    """Canonical FAQ question key — must match scripts/graphrag/faq_url_map.py."""
+    if not text:
+        return ""
+    cleaned = text.replace("​", "").replace("\xa0", " ").replace("﻿", "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
+    return cleaned.rstrip("?.").strip()
+
+
+def _lookup_faq_url(question: str) -> str | None:
+    """Resolve a FAQ's public source URL by normalized question; None on miss/error."""
+    if not FAQ_URL_TABLE:
+        return None
+    try:
+        resp = _faq_url_table().get_item(
+            Key={"normalized_question": _normalize_faq_question(question)}
+        )
+        item = resp.get("Item")
+        return item.get("source_url") if item else None
+    except Exception:  # noqa: BLE001
+        logger.warning("FAQ URL lookup failed", exc_info=True)
+        return None
+
 
 def get_chat_history(session_id: str) -> list[dict[str, str]]:
     """Fetch prior {query, answer} pairs for a session, oldest first.
@@ -649,6 +680,7 @@ def _build_faq_resource(faq_results: list[dict]) -> FAQResource | None:
                 faq_id=_faq_id_from_uri(entry.get("source_uri", "")),
                 question=question,
                 answer=answer,
+                source_url=_lookup_faq_url(question),
             )
         )
     return FAQResource(faqs=faqs) if faqs else None

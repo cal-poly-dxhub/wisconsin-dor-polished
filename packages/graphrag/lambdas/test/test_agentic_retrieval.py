@@ -1385,3 +1385,76 @@ def test_build_rag_documents_case_law_multi_chunk_preserves_scholar_link(monkeyp
     assert "q=300%20Wis.%202d%20100" in card.source_url
     assert "first chunk" in card.content
     assert "second chunk" in card.content
+
+
+def _import_main_with_real_faq_models(_sys):
+    """Re-import `main` with real FAQ / FAQResource models (incl. source_url).
+
+    `main` does `from step_function_types.models import FAQ, FAQResource` at
+    import time, so the only way to give it real Pydantic classes is to set them
+    on the mocked module and re-import main fresh — the same idiom the rest of
+    this file uses.
+    """
+    class FakeFAQ(pydantic.BaseModel):
+        faq_id: str
+        question: str
+        answer: str
+        source_url: str | None = None
+
+    class FakeFAQResource(pydantic.BaseModel):
+        faqs: list[FakeFAQ]
+
+    _sys.modules["step_function_types.models"].FAQ = FakeFAQ
+    _sys.modules["step_function_types.models"].FAQResource = FakeFAQResource
+
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+    }):
+        if "main" in _sys.modules:
+            del _sys.modules["main"]
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            import main
+    return main
+
+
+def test_build_faq_resource_attaches_source_url(monkeypatch):
+    import sys as _sys
+    main = _import_main_with_real_faq_models(_sys)
+
+    # Fake DynamoDB table returning a URL for the normalized question.
+    class FakeTable:
+        def __init__(self):
+            self.requested = []
+
+        def get_item(self, Key):
+            self.requested.append(Key["normalized_question"])
+            if Key["normalized_question"] == "is x a y":
+                return {"Item": {"normalized_question": "is x a y",
+                                 "source_url": "https://revenue.wi.gov/x"}}
+            return {}
+
+    fake = FakeTable()
+    monkeypatch.setattr(main, "FAQ_URL_TABLE", "FaqUrlTable")
+    monkeypatch.setattr(main, "_faq_url_table", lambda: fake)
+
+    results = [
+        {"text": "Q: Is X a Y?\nA: Yes it is.", "source_uri": "s3://b/faq_1.txt"},
+        {"text": "Q: Unknown thing?\nA: No idea.", "source_uri": "s3://b/faq_2.txt"},
+    ]
+    resource = main._build_faq_resource(results)
+    by_q = {f.question: f.source_url for f in resource.faqs}
+    assert by_q["Is X a Y?"] == "https://revenue.wi.gov/x"
+    assert by_q["Unknown thing?"] is None
+
+
+def test_build_faq_resource_tolerates_missing_table(monkeypatch):
+    import sys as _sys
+    main = _import_main_with_real_faq_models(_sys)
+
+    monkeypatch.setattr(main, "FAQ_URL_TABLE", "")  # not configured
+    results = [{"text": "Q: Anything?\nA: Sure.", "source_uri": "s3://b/faq_1.txt"}]
+    resource = main._build_faq_resource(results)
+    assert resource.faqs[0].source_url is None
