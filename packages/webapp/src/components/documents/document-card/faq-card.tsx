@@ -10,7 +10,7 @@ import {
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Maximize2, X } from 'lucide-react';
+import { ExternalLink, Maximize2, X } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import type { FAQ } from '@messages/websocket-interface';
 import { AuthorityBadge } from './authority-badge';
@@ -182,6 +182,18 @@ export function FAQCardCompact({
 
         <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pb-3">
           <AuthorityBadge authorityLevel={6} size="sm" />
+          {faq.sourceUrl && (
+            <a
+              href={faq.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={event => event.stopPropagation()}
+              className="text-primary hover:text-primary/80 ml-auto inline-flex items-center gap-1 text-xs font-medium"
+            >
+              View on revenue.wi.gov
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
         </div>
       </Card>
     </motion.div>
@@ -223,6 +235,17 @@ function FAQCardModal({ faq, isAnimating, onClose }: FAQCardModalProps) {
           <div className="flex items-center justify-between px-5 pt-4 pb-0">
             <div className="flex items-center gap-2">
               <AuthorityBadge authorityLevel={6} size="sm" />
+              {faq.sourceUrl && (
+                <a
+                  href={faq.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:text-primary/80 inline-flex items-center gap-1 text-xs font-medium"
+                >
+                  View on revenue.wi.gov
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
             </div>
             <div className="flex items-center gap-3">
               <Button
