@@ -22,7 +22,8 @@ from typing import Any
 
 import boto3
 import pydantic
-from case_opinion import citation_to_raw_slug, scholar_url as _scholar_url_fn
+from case_opinion import citation_to_raw_slug
+from case_opinion import scholar_url as _scholar_url_fn
 from neptune_client import NeptuneClient
 from prompt import SYSTEM_PROMPT
 from step_function_types.errors import ValidationError, report_error
@@ -1501,7 +1502,6 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
     surfaces the case but the .txt isn't in S3.
     """
     citation = payload.get("citation", "")
-    raw_key = payload.get("raw_key", "")
     opinion_text = payload.get("text", "")
     scholar_url = payload.get("scholar_url", "")
 
