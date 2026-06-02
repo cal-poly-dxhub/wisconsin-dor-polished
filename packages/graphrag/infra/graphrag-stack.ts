@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as neptune from 'aws-cdk-lib/aws-neptunegraph';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { bedrock } from '@cdklabs/generative-ai-cdk-constructs';
 import { Construct } from 'constructs';
 
@@ -12,6 +13,7 @@ export class GraphRAGStack extends cdk.NestedStack {
   public readonly faqKnowledgeBaseId: string;
   public readonly faqBucketName: string;
   public readonly faqDataSourceId: string;
+  public readonly faqUrlTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -38,6 +40,18 @@ export class GraphRAGStack extends cdk.NestedStack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       autoDeleteObjects: false,
     });
+
+    // Maps a normalized FAQ question to its public revenue.wi.gov URL.
+    // Seeded from documents/faqs.json and refreshed by extract_faq_qa_pairs.py.
+    const faqUrlTable = new dynamodb.Table(this, 'FaqUrlTable', {
+      partitionKey: {
+        name: 'normalized_question',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+    this.faqUrlTable = faqUrlTable;
 
     const faqKb = new bedrock.VectorKnowledgeBase(this, 'WisDorFaqKbGraphRAG', {
       name: 'wis-faq-graphrag',
@@ -101,6 +115,10 @@ export class GraphRAGStack extends cdk.NestedStack {
     new cdk.CfnOutput(this, 'FaqDataSourceId', {
       value: faqDataSource.dataSourceId,
       description: 'FAQ Bedrock KB Data Source ID (GraphRAG)',
+    });
+    new cdk.CfnOutput(this, 'FaqUrlTableName', {
+      value: faqUrlTable.tableName,
+      description: 'DynamoDB table mapping normalized FAQ question -> source URL',
     });
   }
 }
