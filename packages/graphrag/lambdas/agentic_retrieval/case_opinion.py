@@ -38,20 +38,13 @@ def citation_to_raw_slug(citation: str) -> str:
     return CASE_LAW_PREFIX + "-".join(tokens)
 
 
-def _scholar_url(citation: str) -> str:
+def scholar_url(citation: str) -> str:
     """Google Scholar search URL for a case citation."""
     q = urllib.parse.quote(citation)
     return (
         f"http://scholar.google.com/scholar?hl=en&as_sdt=4&as_sdts=50"
         f"&as_vis=1&q={q}"
     )
-
-
-# Public alias so other modules can build the same Google Scholar search URL
-# without reaching into a private helper. _scholar_url stays for internal use.
-def scholar_url(citation: str) -> str:
-    """Public wrapper around _scholar_url for cross-module use."""
-    return _scholar_url(citation)
 
 
 def fetch_case_opinion(
@@ -80,7 +73,7 @@ def fetch_case_opinion(
             "found": False,
             "citation": citation,
             "error": "empty citation",
-            "scholar_url": _scholar_url(citation),
+            "scholar_url": scholar_url(citation),
         }
 
     s3 = s3_client or boto3.client("s3")
@@ -97,14 +90,14 @@ def fetch_case_opinion(
                 "found": False,
                 "citation": citation,
                 "raw_key": raw_key,
-                "scholar_url": _scholar_url(citation),
+                "scholar_url": scholar_url(citation),
             }
         logger.warning(f"S3 error fetching opinion for '{citation}': {e}")
         return {
             "found": False,
             "citation": citation,
             "raw_key": raw_key,
-            "scholar_url": _scholar_url(citation),
+            "scholar_url": scholar_url(citation),
             "error": f"s3 error: {code}",
         }
 
@@ -117,5 +110,5 @@ def fetch_case_opinion(
         "citation": citation,
         "raw_key": raw_key,
         "text": text,
-        "scholar_url": _scholar_url(citation),
+        "scholar_url": scholar_url(citation),
     }

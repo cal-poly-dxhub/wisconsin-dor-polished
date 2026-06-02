@@ -22,8 +22,7 @@ from typing import Any
 
 import boto3
 import pydantic
-from case_opinion import citation_to_raw_slug
-from case_opinion import scholar_url as _scholar_url_fn
+from case_opinion import citation_to_raw_slug, scholar_url
 from neptune_client import NeptuneClient
 from prompt import SYSTEM_PROMPT
 from step_function_types.errors import ValidationError, report_error
@@ -1503,7 +1502,7 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
     """
     citation = payload.get("citation", "")
     opinion_text = payload.get("text", "")
-    scholar_url = payload.get("scholar_url", "")
+    payload_scholar_url = payload.get("scholar_url", "")
 
     doc_info = neptune.get_document(stub_doc_id) or {}
     title = doc_info.get("title") or citation or stub_doc_id
@@ -1519,7 +1518,7 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
         # blob with no page anchor, so linking to the public opinion loses
         # nothing and gives a properly formatted, citable source. The opinion
         # text still rides in `content` to inform synthesis.
-        source_url=scholar_url or (_scholar_url_fn(citation) if citation else None),
+        source_url=payload_scholar_url or (scholar_url(citation) if citation else None),
         s3_key=None,
         start_page=None,
         end_page=None,
@@ -1545,7 +1544,7 @@ def _case_law_link_override(
     citation = (doc_info or {}).get("citation")
     if not citation:
         return source_url, s3_key
-    return _scholar_url_fn(citation), None
+    return scholar_url(citation), None
 
 
 def _build_rag_documents(
