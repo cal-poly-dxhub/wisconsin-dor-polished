@@ -64,7 +64,7 @@ DOCUMENT_SOURCES = {
     },
     "admin_rules": {
         "framework_id": "FW-ADMIN-RULES",
-        "authority_level": 3,
+        "authority_level": 4,
         "doc_type": "admin_rule",
         "urls": [
             "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%206.pdf",
@@ -78,7 +78,7 @@ DOCUMENT_SOURCES = {
     },
     "wpam": {
         "framework_id": "FW-WPAM",
-        "authority_level": 4,
+        "authority_level": 5,
         "doc_type": "assessment_manual",
         "urls": [
             "https://www.revenue.wi.gov/documents/wpam25.pdf",
@@ -86,7 +86,7 @@ DOCUMENT_SOURCES = {
     },
     "faq_pages": {
         "framework_id": "FW-FAQ",
-        "authority_level": 5,
+        "authority_level": 6,
         "doc_type": "faq_page",
         "urls": [
             "https://www.revenue.wi.gov/Pages/FAQS/slf-agfores6.aspx",
@@ -151,7 +151,7 @@ DOCUMENT_SOURCES = {
     },
     "gov_publications": {
         "framework_id": "FW-GOV-PUBS",
-        "authority_level": 6,
+        "authority_level": 7,
         "doc_type": "guide",
         "urls": [
             "https://www.revenue.wi.gov/DOR%20Publications/prop066.pdf",
@@ -175,7 +175,7 @@ DOCUMENT_SOURCES = {
     },
     "complex_inquiry_pages": {
         "framework_id": "FW-GOV-PUBS",
-        "authority_level": 6,
+        "authority_level": 7,
         "doc_type": "advisory",
         "urls": [
             "https://www.revenue.wi.gov/Pages/Manufacturing/home.aspx",
@@ -189,7 +189,7 @@ DOCUMENT_SOURCES = {
     # Lives in DOCUMENT_SOURCES so it shows up in --category and the iteration loop.
     "news_pages": {
         "framework_id": "FW-GOV-PUBS",
-        "authority_level": 6,
+        "authority_level": 7,
         "doc_type": "advisory",
         "sitemap_filter": re.compile(r"/Pages/SLF/(?:COTVC-News|Assessor-News)/", re.I),
         "urls": [],  # populated lazily by load_news_urls_from_sitemap()

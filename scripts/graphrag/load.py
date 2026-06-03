@@ -156,6 +156,28 @@ def phase_1_scaffold(client, graph_id: str, config: dict):
     logger.info(f"  Created {len(frameworks)} frameworks, {len(config.get('statute_families', []))} statute families")
 
 
+def resolve_authority_level(doc: dict, config: dict) -> int | None:
+    """Resolve a document's authority level without defaulting to FAQ.
+
+    Precedence:
+      1. An explicit ``authority_level`` on the doc.
+      2. The canonical level of the doc's framework (single source of truth
+         in ingest_config.yaml).
+      3. None — render no authority badge rather than a misleading one.
+
+    The old behaviour silently defaulted a missing level to 6 (FAQ), which
+    is how 607 gov-pub/advisory nodes ended up badged as FAQs in the UI.
+    """
+    explicit = doc.get("authority_level")
+    if explicit is not None:
+        return int(explicit)
+
+    framework_levels = {
+        fw["id"]: fw["authority_level"] for fw in config.get("frameworks", [])
+    }
+    return framework_levels.get(doc.get("framework_id"))
+
+
 def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config: dict):
     logger.info("Phase 2: Creating document nodes...")
 
@@ -193,7 +215,7 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
                 "summary": doc.get("summary", ""),
                 "source_url": doc.get("source_url", ""),
                 "doc_type": doc_type,
-                "auth_level": doc.get("authority_level", 6),
+                "auth_level": resolve_authority_level(doc, config),
                 "citation": doc.get("citation", ""),
                 "effective_date": doc.get("effective_date", ""),
                 "edition_year": edition_year,
