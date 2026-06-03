@@ -1672,13 +1672,22 @@ def _build_rag_documents(
         if not doc_info.get("summary"):
             promotion = neptune.find_stub_promotion(doc_id)
             if promotion:
+                # Borrow CONTENT (summary, s3_key, pages) from the parent that
+                # best explains this section, but NOT authority: the card's
+                # identity is still the stub (e.g. a statute section), so its
+                # badge must reflect the stub's own authority — never the
+                # parent's. A statute section explained by a WPAM chunk would
+                # otherwise render a WPAM badge. WIS-STAT-* section stubs carry
+                # no authority_level in the graph, so fall back to Statute (2).
+                stub_authority = doc_info.get("authority_level")
+                if stub_authority is None and doc_id.startswith("WIS-STAT-"):
+                    stub_authority = 2
                 doc_info = {
                     **doc_info,
                     "summary": promotion.get("summary"),
                     "source_url": promotion.get("source_url") or doc_info.get("source_url"),
                     "s3_key": promotion.get("s3_key") or doc_info.get("s3_key"),
-                    "authority_level": doc_info.get("authority_level")
-                    or promotion.get("authority_level"),
+                    "authority_level": stub_authority,
                     "_promoted_start_page": promotion.get("start_page"),
                     "_promoted_end_page": promotion.get("end_page"),
                 }

@@ -184,6 +184,63 @@ def test_build_rag_documents_promotes_stub_statute_to_parent():
             assert stub_card.authority_level == 2
 
 
+def test_build_rag_documents_stub_keeps_statute_authority_when_promoted_to_wpam():
+    """A statute section stub (authority_level=None in the graph) promoted to a
+    WPAM parent for content must keep its STATUTE authority, not inherit the
+    WPAM parent's level 5. Otherwise 'Wis. Stat. 70.49(2)' renders a WPAM badge.
+
+    Reproduces the live bug: WIS-STAT-* stubs have authority_level=None, and the
+    chunk that best explains a section often lives in the WPAM, so the stub
+    promotes to a WPAM Document and borrowed its level 5.
+    """
+    with patch("main.boto3"), patch("main.NeptuneClient") as MockNeptune:
+        mock_instance = MagicMock()
+
+        def get_document(doc_id):
+            if doc_id == "WIS-STAT-70.49(2)":
+                return {
+                    "id": "WIS-STAT-70.49(2)",
+                    "title": "Wis. Stat. 70.49(2)",
+                    "summary": None,
+                    "source_url": None,
+                    "s3_key": None,
+                    "authority_level": None,  # live condition
+                    "edition_year": None,
+                    "labels": ["Statute"],
+                }
+            return None
+
+        mock_instance.get_document.side_effect = get_document
+        # Best-explaining chunk lives in the WPAM (authority_level 5).
+        mock_instance.find_stub_promotion.return_value = {
+            "id": "wpam-wisconsin-property-assessment-manual-2011",
+            "title": "Wisconsin Property Assessment Manual (2011)",
+            "summary": "The WPAM is a comprehensive reference guide...",
+            "source_url": "",
+            "s3_key": "raw/wpam-.../wpam.pdf",
+            "authority_level": 5,
+            "start_page": 10,
+            "end_page": 11,
+        }
+        MockNeptune.return_value = mock_instance
+
+        if "main" in sys.modules:
+            del sys.modules["main"]
+
+        with patch("main.neptune", mock_instance):
+            from main import _build_rag_documents
+
+            docs = _build_rag_documents([], {"WIS-STAT-70.49(2)"}, {})
+
+            assert len(docs) == 1
+            card = docs[0]
+            # Content is borrowed from the WPAM parent (that's fine)...
+            assert "WPAM is a comprehensive" in card.content
+            # ...but the card's IDENTITY is a statute, so the badge must be
+            # Statute (2), NOT WPAM (5).
+            assert card.authority_level == 2
+
+
 def test_build_rag_documents_skips_promotion_when_no_parent():
     """When no chunk cites the stub, the card falls back to empty content
     rather than crashing — graceful degrade, not a failed query."""
