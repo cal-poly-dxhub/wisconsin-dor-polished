@@ -47,6 +47,29 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def resolve_authority_level(
+    metadata: dict, framework_id: str, config: dict
+) -> int | None:
+    """Resolve a document's authority level without defaulting to FAQ.
+
+    Precedence:
+      1. An explicit ``authority_level`` in the doc's metadata.
+      2. The canonical level of the doc's framework (single source of truth
+         in ingest_config.yaml).
+      3. None — never a misleading concrete default. The old code defaulted
+         general docs to 6 (FAQ) and case-law to 3, so a doc with missing
+         metadata silently inherited the wrong authority downstream.
+    """
+    explicit = metadata.get("authority_level")
+    if explicit is not None:
+        return int(explicit)
+
+    framework_levels = {
+        fw["id"]: fw["authority_level"] for fw in config.get("frameworks", [])
+    }
+    return framework_levels.get(framework_id)
+
+
 LLM_CLASSIFY_PROMPT = """You are a document classifier for the Wisconsin Department of Revenue.
 Given the text below, extract:
 
@@ -241,7 +264,9 @@ def process_case_law_document(
         "s3_key": key,
         "doc_type": "case_law",
         "framework_id": metadata.get("framework_id", "FW-CASE-LAW"),
-        "authority_level": int(metadata.get("authority_level", 3)),
+        "authority_level": resolve_authority_level(
+            metadata, metadata.get("framework_id", "FW-CASE-LAW"), config
+        ),
         "title": title,
         "summary": "",  # intentionally empty — annotation lives on the citing statute
         "citation": citation,
@@ -380,7 +405,9 @@ def process_document(doc: dict, raw_bucket: str, work_bucket: str, config: dict)
             "s3_key": key,
             "doc_type": metadata.get("doc_type", classification.get("doc_type", "guide")),
             "framework_id": metadata.get("framework_id", "FW-GOV-PUBS"),
-            "authority_level": int(metadata.get("authority_level", 6)),
+            "authority_level": resolve_authority_level(
+                metadata, metadata.get("framework_id", "FW-GOV-PUBS"), config
+            ),
             "title": classification.get("title", doc_id),
             "summary": classification.get("summary", ""),
             "statute_refs": classification.get("statute_refs", []),
