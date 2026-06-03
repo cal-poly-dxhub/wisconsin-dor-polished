@@ -1489,6 +1489,44 @@ def test_save_chat_history_persists_faq_source_url(monkeypatch):
     assert faq_res[0]["data"]["sourceUrl"] == "https://revenue.wi.gov/x"
 
 
+def test_save_chat_history_persists_authority_level_and_content(monkeypatch):
+    """Resumed sessions must keep their authority badge and preview text.
+
+    save_chat_history rebuilds document resources field-by-field; if it
+    omits authorityLevel, replayed cards render with no/incorrect badge,
+    and omitting content blanks the card preview. Both must round-trip.
+    """
+    import sys as _sys
+
+    main = _import_main_with_real_faq_models(_sys)
+    RAGDocument = main.RAGDocument
+
+    captured = {}
+
+    class FakeTable:
+        def put_item(self, Item):
+            captured["item"] = Item
+
+    monkeypatch.setattr(main, "CHAT_HISTORY_TABLE", "ChatHistory")
+    monkeypatch.setattr(main.dynamodb_resource, "Table", lambda name: FakeTable())
+
+    doc = RAGDocument(
+        document_id="case-law-x",
+        title="Lowe's Home Centers, LLC v. City of Delavan",
+        content="The opinion text preview.",
+        source="379 Wis. 2d 141",
+        authority_level=3,
+    )
+    main.save_chat_history(
+        "s1", "q1", "the query", "the answer",
+        rag_documents=[doc], faq_resource=None,
+    )
+
+    doc_res = [r for r in captured["item"]["resources"] if r["type"] == "document"]
+    assert doc_res[0]["data"]["authorityLevel"] == 3
+    assert doc_res[0]["data"]["content"] == "The opinion text preview."
+
+
 def test_faq_question_normalizer_matches_seed_script():
     """main._normalize_faq_question must stay byte-identical to the seed/extract
     scripts' faq_url_map.normalize_question.

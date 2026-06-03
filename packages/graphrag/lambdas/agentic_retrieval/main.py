@@ -586,9 +586,15 @@ def save_chat_history(
                 data: dict = {
                     "documentId": doc.document_id,
                     "title": doc.title,
+                    # Preview text + authority badge must round-trip so a
+                    # resumed session renders cards identically to the live
+                    # answer (not blank previews / missing badges).
+                    "content": doc.content,
                     "source": doc.source,
                     "discoveryTag": doc.discovery_tag,
                 }
+                if doc.authority_level is not None:
+                    data["authorityLevel"] = doc.authority_level
                 if doc.source_url is not None:
                     data["sourceUrl"] = doc.source_url
                 if doc.s3_key is not None:
