@@ -15,6 +15,7 @@ import { memo, useCallback, useState } from 'react';
 import { buildResolverUrl } from '@/lib/citation-resolver';
 import { AuthorityBadge } from './authority-badge';
 import { DiscoveryBadge } from './discovery-badge';
+import { chooseSourceTarget } from './source-target';
 
 export interface Document {
   documentId: string;
@@ -379,7 +380,8 @@ export const DocumentCard = memo(function DocumentCard({
     (e: React.MouseEvent) => {
       e.stopPropagation();
 
-      if (document.s3Key) {
+      const target = chooseSourceTarget(document);
+      if (target?.kind === 's3') {
         // window.open() must run synchronously to satisfy popup blockers;
         // the JWT fetch is async so we open about:blank first and redirect
         // the popup once the resolver URL is built. We can't pass
@@ -389,7 +391,7 @@ export const DocumentCard = memo(function DocumentCard({
         // window.opener leakage is bounded.
         const popup = window.open('about:blank', '_blank');
         if (!popup) return;
-        void buildResolverUrl(document.s3Key, document.startPage)
+        void buildResolverUrl(target.s3Key, document.startPage)
           .then(url => {
             if (url) {
               popup.location.href = url;
@@ -398,8 +400,8 @@ export const DocumentCard = memo(function DocumentCard({
             }
           })
           .catch(() => popup.close());
-      } else if (document.sourceUrl) {
-        window.open(document.sourceUrl, '_blank', 'noopener,noreferrer');
+      } else if (target?.kind === 'url') {
+        window.open(target.url, '_blank', 'noopener,noreferrer');
       }
 
       onSourceClick?.(document);
