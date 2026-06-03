@@ -42,6 +42,35 @@ def test_execute_tool_get_document_not_found():
     assert "error" in result
 
 
+def test_execute_tool_get_document_accepts_node_id_alias():
+    """The model sometimes calls get_document with node_id (the param name
+    used by get_neighbors/get_authority_chain) instead of doc_id. Accept it
+    rather than raising KeyError, which would crash the whole agent loop."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.get_document.return_value = {"id": "doc-1", "title": "Test Doc"}
+
+    result = execute_tool("get_document", {"node_id": "doc-1"}, mock_neptune)
+
+    assert "document" in result
+    assert result["document"]["id"] == "doc-1"
+    mock_neptune.get_document.assert_called_once_with("doc-1")
+
+
+def test_execute_tool_get_document_missing_id_returns_error_not_keyerror():
+    """A get_document call with no id at all must return a tool error, not
+    raise — a raise propagates out of the loop and crashes the request."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.get_document.return_value = None
+
+    result = execute_tool("get_document", {}, mock_neptune)
+
+    assert "error" in result
+
+
 def test_execute_tool_answer_is_terminal():
     from tools import execute_tool
 

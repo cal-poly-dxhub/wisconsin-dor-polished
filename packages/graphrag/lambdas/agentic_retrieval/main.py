@@ -1098,7 +1098,14 @@ def run_agentic_loop(
                     error_type=type(exc).__name__,
                     error=str(exc),
                 )
-                raise
+                # A single malformed/failed tool call must not abort the whole
+                # request. Feed the error back as a tool_result so the model can
+                # correct itself on the next turn (e.g. retry with the right
+                # argument). Previously this re-raised, crashing the Lambda and
+                # leaving the user stuck on "answering".
+                result = {
+                    "error": f"{tool_name} failed: {type(exc).__name__}: {exc}"
+                }
             tool_latency_ms = round((time.perf_counter() - tool_started) * 1000)
 
             if tool_name == "vector_search" and "chunks" in result:

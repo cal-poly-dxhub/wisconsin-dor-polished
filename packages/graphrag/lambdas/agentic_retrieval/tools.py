@@ -582,7 +582,12 @@ def execute_tool(
         return {"chunks": chunks, "graph_context": graph_context}
 
     elif tool_name == "get_document":
-        doc = neptune.get_document(tool_input["doc_id"])
+        # The model occasionally passes `node_id` (the param name used by
+        # get_neighbors/get_authority_chain) instead of `doc_id`. Accept the
+        # alias and a missing id gracefully — indexing tool_input["doc_id"]
+        # directly raised KeyError and crashed the entire agent loop.
+        requested_id = tool_input.get("doc_id") or tool_input.get("node_id") or ""
+        doc = neptune.get_document(requested_id) if requested_id else None
         if doc:
             _log_tool_event(
                 "get_document_complete",
@@ -596,20 +601,23 @@ def execute_tool(
         # Fallback: vector search on the ID string itself. Handles typos
         # and format mismatches (e.g., user capitalization differences).
         try:
-            embedding = embed_query(tool_input["doc_id"])
-            matches = neptune.vector_search(embedding, top_k=5)
+            matches = (
+                neptune.vector_search(embed_query(requested_id), top_k=5)
+                if requested_id
+                else []
+            )
         except Exception:  # noqa: BLE001
             matches = []
         _log_tool_event(
             "get_document_complete",
             tool_name=tool_name,
             status="miss",
-            doc_id=tool_input["doc_id"],
+            doc_id=requested_id,
             fallback_match_count=len(matches),
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
         return {
-            "error": f"Document '{tool_input['doc_id']}' not found",
+            "error": f"Document '{requested_id}' not found",
             "fallback_matches": matches,
         }
 

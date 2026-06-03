@@ -1078,6 +1078,105 @@ def test_run_agentic_loop_emits_trace_sequence(monkeypatch):
         del _sys.modules["main"]
 
 
+def test_run_agentic_loop_recovers_from_tool_exception(monkeypatch):
+    """A tool that raises (e.g. a malformed get_document call) must NOT crash
+    the request. The loop should feed an error tool_result back to the model
+    so it can recover and still produce an answer.
+
+    Regression for the live hang: get_document raised KeyError('doc_id') when
+    the model passed node_id, the exception propagated out of the loop, the
+    Lambda failed, and the user was stuck on "answering".
+    """
+    import itertools
+    import sys as _sys
+
+    class FakeAgentEventMessage:
+        def __init__(self, **fields):
+            self.__dict__.update(fields)
+    _sys.modules["websocket_utils.models"].AgentEventMessage = FakeAgentEventMessage
+
+    with patch.dict(os.environ, {
+        "AWS_REGION": "us-east-1",
+        "RAW_BUCKET": "test-bucket",
+        "CHAT_HISTORY_TABLE_NAME": "",
+        "EMIT_AGENT_TRACE": "true",
+    }):
+        if "main" in _sys.modules:
+            del _sys.modules["main"]
+        with patch("boto3.client"), patch("boto3.resource"), \
+             patch("neptune_client.NeptuneClient"):
+            import main
+
+    monkeypatch.setattr(main, "_faq_search_direct", lambda q: {
+        "faqs": [{"text": "Q: unrelated\nA: nope", "score": 0.2,
+                  "source_uri": "s3://f/faq_1.txt"}],
+        "count": 1,
+    })
+
+    # Turn 1: get_document (will raise); Turn 2: answer.
+    responses = [
+        {
+            "output": {"message": {"content": [
+                {"toolUse": {"toolUseId": "t1", "name": "get_document",
+                             "input": {"node_id": "doc-a"}}},
+            ]}},
+            "stopReason": "tool_use",
+            "usage": {"inputTokens": 10, "outputTokens": 20, "totalTokens": 30},
+            "metrics": {"latencyMs": 100},
+        },
+        {
+            "output": {"message": {"content": [
+                {"toolUse": {"toolUseId": "t2", "name": "answer",
+                             "input": {"response": "Recovered answer.",
+                                       "cited_doc_ids": []}}},
+            ]}},
+            "stopReason": "tool_use",
+            "usage": {"inputTokens": 15, "outputTokens": 30, "totalTokens": 45},
+            "metrics": {"latencyMs": 120},
+        },
+    ]
+    main.bedrock.converse = MagicMock(side_effect=responses)
+
+    def fake_execute(name, input_, neptune_client, chat_history=None):
+        if name == "get_document":
+            raise KeyError("doc_id")
+        if name == "answer":
+            return {
+                "response": input_.get("response", ""),
+                "cited_doc_ids": input_.get("cited_doc_ids", []),
+            }
+        return {}
+    monkeypatch.setattr(main, "execute_tool", fake_execute)
+
+    def fake_run(coro):
+        coro.close()
+    monkeypatch.setattr(main.asyncio, "run", fake_run)
+
+    mock_ws = MagicMock()
+
+    def capture_send(msg):
+        async def _noop():
+            return None
+        return _noop()
+    mock_ws.send_json = capture_send
+
+    # Must NOT raise — the tool exception is recovered, not propagated.
+    answer, cited, rag_docs, faq_resource = main.run_agentic_loop(
+        "what is use value?",
+        query_id="q-1",
+        session_id="s-1",
+        ws_server=mock_ws,
+        trace_seq=itertools.count(1).__next__,
+    )
+
+    assert answer == "Recovered answer."
+    # The model got a second turn, proving the error was fed back, not fatal.
+    assert main.bedrock.converse.call_count == 2
+
+    if "main" in _sys.modules:
+        del _sys.modules["main"]
+
+
 def test_run_agentic_loop_high_confidence_faq_continues_into_graph(monkeypatch):
     """High FAQ score no longer short-circuits — the loop continues into the
     graph so Claude can supplement the FAQ answer with citable evidence.
