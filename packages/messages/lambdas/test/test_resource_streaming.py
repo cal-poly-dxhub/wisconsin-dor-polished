@@ -296,6 +296,88 @@ class TestResourceStreamingHandler:
         assert sent_doc.start_page == 12
         assert sent_doc.end_page == 14
 
+    def test_source_document_carries_edition_year(self):
+        """resource_streaming forwards a WPAM edition_year onto the WebSocket payload.
+
+        Regression guard: edition_year is declared on RAGDocument and on the
+        frontend Zod/Document types, but if websocket_utils.SourceDocument omits
+        the field (or the construction in _stream_resources_async forgets to copy
+        it) the value is silently dropped at the wire boundary and never reaches
+        the browser. Assert it both survives and aliases to `editionYear`.
+        """
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        from resource_streaming.main import _stream_resources_async
+        from step_function_types.models import (
+            DocumentResource,
+            RAGDocument,
+            StreamResourcesJob,
+        )
+
+        rag_doc = RAGDocument(
+            document_id="wpam-2025-ch7",
+            title="WPAM Chapter 7 (2025)",
+            content="some content",
+            source="https://www.revenue.wi.gov/wpam-2025.pdf",
+            source_url="https://www.revenue.wi.gov/wpam-2025.pdf",
+            s3_key="raw/wpam-2025/wpam-2025.pdf",
+            start_page=12,
+            end_page=14,
+            edition_year=2025,
+        )
+        job = StreamResourcesJob(
+            query_id="q-1",
+            session_id="s-1",
+            documents=DocumentResource(documents=[rag_doc]),
+        )
+
+        sent_messages = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=lambda msg: sent_messages.append(msg))
+
+        asyncio.run(_stream_resources_async(job, ws))
+
+        assert len(sent_messages) == 1
+        sent_doc = sent_messages[0].content.documents[0]
+        assert sent_doc.edition_year == 2025
+        # CamelCaseModel aliasing -> editionYear on the wire.
+        assert sent_doc.model_dump(by_alias=True)["editionYear"] == 2025
+
+    def test_source_document_edition_year_defaults_none_for_non_wpam(self):
+        """Non-WPAM docs carry no edition_year; the field defaults to None."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        from resource_streaming.main import _stream_resources_async
+        from step_function_types.models import (
+            DocumentResource,
+            RAGDocument,
+            StreamResourcesJob,
+        )
+
+        rag_doc = RAGDocument(
+            document_id="statutes-wi-statute-ch70",
+            title="Wis. Stat. ch. 70",
+            content="statute text",
+            source="https://docs.legis.wisconsin.gov/statutes/70",
+            source_url="https://docs.legis.wisconsin.gov/statutes/70",
+        )
+        job = StreamResourcesJob(
+            query_id="q-2",
+            session_id="s-1",
+            documents=DocumentResource(documents=[rag_doc]),
+        )
+
+        sent_messages = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=lambda msg: sent_messages.append(msg))
+
+        asyncio.run(_stream_resources_async(job, ws))
+
+        sent_doc = sent_messages[0].content.documents[0]
+        assert sent_doc.edition_year is None
+
 
 class TestDocumentBatching:
     def _doc(self, idx: int, content_len: int) -> SourceDocument:

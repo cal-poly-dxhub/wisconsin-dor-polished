@@ -47,6 +47,10 @@ class SourceDocument(WebSocketMessage):
     s3_key: str | None = None
     start_page: int | None = None
     end_page: int | None = None
+    # WPAM edition year (e.g. 2025); None for all other doc types. Mirrors
+    # RAGDocument.edition_year so the value survives the wire boundary instead
+    # of being silently dropped here. Serialized as `editionYear`.
+    edition_year: int | None = None
 
 
 class DocumentsContent(WebSocketMessage):
