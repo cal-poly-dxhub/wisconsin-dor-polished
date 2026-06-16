@@ -402,3 +402,58 @@ def test_get_neighbors_applies_wpam_dedup():
     wpam = [n for n in result["neighbors"] if n.get("framework_id") == "FW-WPAM"]
     assert len(wpam) == 1
     assert wpam[0]["edition_year"] == 2025
+
+
+def test_get_neighbors_filters_out_chunk_labels():
+    """Chunk-labeled nodes should be excluded from get_neighbors results."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.get_neighbors.return_value = [
+        {"id": "doc-1", "title": "Real Doc", "labels": ["Document"],
+         "relationship": "CITES"},
+        {"id": "chunk-1", "title": None, "labels": ["Chunk"],
+         "relationship": "EXTRACTED_FROM"},
+        {"id": "chunk-2", "title": None, "labels": ["Chunk"],
+         "relationship": "CITES"},
+        {"id": "stat-1", "title": "Statute 70.32", "labels": ["Document", "Statute"],
+         "relationship": "IMPLEMENTS"},
+    ]
+
+    result = execute_tool(
+        "get_neighbors",
+        {"node_id": "some-node"},
+        mock_neptune,
+    )
+
+    assert len(result["neighbors"]) == 2
+    ids = [n["id"] for n in result["neighbors"]]
+    assert "doc-1" in ids
+    assert "stat-1" in ids
+    assert "chunk-1" not in ids
+    assert "chunk-2" not in ids
+
+
+def test_vector_search_auto_enrichment_filters_chunks():
+    """Auto-enrichment in vector_search should not include Chunk-labeled
+    neighbors in graph_context."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.vector_search.return_value = [
+        {"chunk_id": "c1", "text": "test", "score": 0.9, "doc_id": "doc-1"},
+    ]
+    mock_neptune.get_neighbors.return_value = [
+        {"id": "related-doc", "title": "Related", "labels": ["Document"],
+         "relationship": "CITES"},
+        {"id": "chunk-99", "title": None, "labels": ["Chunk"],
+         "relationship": "EXTRACTED_FROM"},
+    ]
+
+    with patch("tools.embed_query", return_value=[0.1] * 1024):
+        result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
+
+    assert "graph_context" in result
+    neighbors = result["graph_context"].get("doc-1", [])
+    assert len(neighbors) == 1
+    assert neighbors[0]["id"] == "related-doc"

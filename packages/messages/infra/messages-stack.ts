@@ -14,8 +14,8 @@ export interface MessagesStackProps extends cdk.StackProps {
   websocketUtilsLayer: lambda.LayerVersion;
   sessionsTable: cdk.aws_dynamodb.ITable;
   websocketCallbackUrl: string;
-  faqKnowledgeBase: bedrock.VectorKnowledgeBase;
-  ragKnowledgeBase: bedrock.VectorKnowledgeBase;
+  faqKnowledgeBase?: bedrock.VectorKnowledgeBase;
+  ragKnowledgeBase?: bedrock.VectorKnowledgeBase;
   chatHistoryTable: dynamodb.Table;
   /** When true, disable this stack's EventBridge rule (traffic goes to GraphRAG instead). */
   useGraphRAG?: boolean;
@@ -67,7 +67,9 @@ export class MessagesStack extends cdk.NestedStack {
       environment: {
         SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
         WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
-        FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBase.knowledgeBaseId,
+        ...(props.faqKnowledgeBase && {
+          FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBase.knowledgeBaseId,
+        }),
       },
     });
 
@@ -117,7 +119,9 @@ export class MessagesStack extends cdk.NestedStack {
       memorySize: 256,
       environment: {
         WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
-        RAG_KNOWLEDGE_BASE_ID: props.ragKnowledgeBase.knowledgeBaseId,
+        ...(props.ragKnowledgeBase && {
+          RAG_KNOWLEDGE_BASE_ID: props.ragKnowledgeBase.knowledgeBaseId,
+        }),
       },
     });
 

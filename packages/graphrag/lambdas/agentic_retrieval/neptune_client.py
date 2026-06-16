@@ -262,6 +262,7 @@ class NeptuneClient:
         node_id: str,
         edge_types: list[str] | None = None,
         direction: str = "both",
+        limit: int = 50,
     ) -> list[dict]:
         """Get neighboring nodes via specified edge types."""
         if edge_types:
@@ -272,6 +273,7 @@ class NeptuneClient:
                 pattern = f"MATCH (d {{id: $id}})<-[r:{type_filter}]-(n)"
             else:
                 pattern = f"MATCH (d {{id: $id}})-[r:{type_filter}]-(n)"
+            where_clause = ""
         else:
             if direction == "outgoing":
                 pattern = "MATCH (d {id: $id})-[r]->(n)"
@@ -279,9 +281,10 @@ class NeptuneClient:
                 pattern = "MATCH (d {id: $id})<-[r]-(n)"
             else:
                 pattern = "MATCH (d {id: $id})-[r]-(n)"
+            where_clause = " WHERE type(r) <> 'EXTRACTED_FROM'"
 
         results = self.query(
-            f"{pattern} "
+            f"{pattern}{where_clause} "
             "OPTIONAL MATCH (n)-[:BELONGS_TO]->(fw:Framework) "
             "RETURN type(r) AS relationship, n.id AS id, n.title AS title, "
             "n.summary AS summary, n.source_url AS source_url, "
@@ -290,7 +293,8 @@ class NeptuneClient:
             "n.edition_year AS edition_year, "
             "n.heading AS heading, "
             "fw.id AS framework_id, "
-            "labels(n) AS labels",
+            "labels(n) AS labels "
+            f"LIMIT {int(limit)}",
             {"id": node_id},
             query_name="get_neighbors",
         )

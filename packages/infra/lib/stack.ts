@@ -3,7 +3,6 @@ import { Construct } from 'constructs';
 import { SessionsStack } from '../../sessions/infra/sessions-stack';
 import { MessagesStack } from '../../messages/infra/messages-stack';
 import { LambdaLayersStack } from '../../shared/lambda_layers/infra/lambda-layers-stack';
-import { KnowledgeBaseStack } from '../../knowledge-base/infra/knowledge-base-stack';
 import { GraphRAGStack } from '../../graphrag/infra/graphrag-stack';
 import { GraphRAGMessagesStack } from '../../graphrag/infra/graphrag-messages-stack';
 import { CloudWatchIam } from '../../cloudwatch-iam/infra/cloudwatch-iam';
@@ -34,17 +33,24 @@ export class WisconsinBotStack extends cdk.Stack {
       rawBucketName: graphRAGStack.rawBucketName,
     });
 
-    const knowledgeBaseStack = new KnowledgeBaseStack(
-      this,
-      'WisconsinKnowledgeBaseStack',
-      {
-        description:
-          'Stack providing knowledge base services for the Wisconsin bot.',
-      }
-    );
-
     // GraphRAG feature flag: mutually exclusive EventBridge rules
     const USE_GRAPHRAG = this.node.tryGetContext('useGraphRAG') === 'true';
+
+    // Legacy KnowledgeBaseStack (OpenSearch Serverless backed) is only needed
+    // when NOT using GraphRAG. Each KB provisions an OpenSearch Serverless
+    // collection with a ~$300/month minimum — skip them when unused.
+    let knowledgeBaseStack: any;
+    if (!USE_GRAPHRAG) {
+      const { KnowledgeBaseStack } = require('../../knowledge-base/infra/knowledge-base-stack');
+      knowledgeBaseStack = new KnowledgeBaseStack(
+        this,
+        'WisconsinKnowledgeBaseStack',
+        {
+          description:
+            'Stack providing knowledge base services for the Wisconsin bot.',
+        }
+      );
+    }
 
     const messagesStack = new MessagesStack(this, 'WisconsinMessagesStack', {
       description:
@@ -53,8 +59,10 @@ export class WisconsinBotStack extends cdk.Stack {
       websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
       sessionsTable: sessionsStack.sessionsTable,
       websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
-      faqKnowledgeBase: knowledgeBaseStack.faqKnowledgeBase,
-      ragKnowledgeBase: knowledgeBaseStack.ragKnowledgeBase,
+      ...(knowledgeBaseStack && {
+        faqKnowledgeBase: knowledgeBaseStack.faqKnowledgeBase,
+        ragKnowledgeBase: knowledgeBaseStack.ragKnowledgeBase,
+      }),
       chatHistoryTable: sessionsStack.chatHistoryTable,
       useGraphRAG: USE_GRAPHRAG,
     });
@@ -132,17 +140,19 @@ export class WisconsinBotStack extends cdk.Stack {
       description: 'URL of the web application',
     });
 
-    new cdk.CfnOutput(this, 'FaqBucketName', {
-      value: knowledgeBaseStack.faqBucketName,
-      description: 'S3 bucket for FAQ documents',
-      exportName: 'WisconsinBot-FaqBucketName',
-    });
+    if (knowledgeBaseStack) {
+      new cdk.CfnOutput(this, 'FaqBucketName', {
+        value: knowledgeBaseStack.faqBucketName,
+        description: 'S3 bucket for FAQ documents',
+        exportName: 'WisconsinBot-FaqBucketName',
+      });
 
-    new cdk.CfnOutput(this, 'RagBucketName', {
-      value: knowledgeBaseStack.ragBucketName,
-      description: 'S3 bucket for RAG documents',
-      exportName: 'WisconsinBot-RagBucketName',
-    });
+      new cdk.CfnOutput(this, 'RagBucketName', {
+        value: knowledgeBaseStack.ragBucketName,
+        description: 'S3 bucket for RAG documents',
+        exportName: 'WisconsinBot-RagBucketName',
+      });
+    }
 
     new cdk.CfnOutput(this, 'ModelConfigTableName', {
       value: messagesStack.modelConfigTable.tableName,

@@ -122,8 +122,10 @@ export const useValidatedWebSocket = (
   const handleMessage = useCallback(
     (event: MessageEvent) => {
       try {
-        // Parse message
         const rawData: unknown = JSON.parse(event.data as string);
+        if (!rawData || typeof rawData !== 'object' || !('streamId' in rawData)) {
+          return;
+        }
         console.log('[WS] Received:', rawData);
         const validatedMessage: WebSocketMessage =
           WebSocketMessageSchema.parse(rawData);

@@ -84,8 +84,10 @@ def fetch_case_opinion(
         obj = s3.get_object(Bucket=raw_bucket, Key=raw_key)
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code", "")
-        if code in ("NoSuchKey", "404"):
-            logger.info(f"No raw opinion for citation '{citation}' (key={raw_key})")
+        # AccessDenied on GetObject typically means the key doesn't exist
+        # but the caller lacks s3:ListBucket (AWS masks 404 as 403).
+        if code in ("NoSuchKey", "404", "AccessDenied"):
+            logger.info(f"No raw opinion for citation '{citation}' (key={raw_key}, code={code})")
             return {
                 "found": False,
                 "citation": citation,

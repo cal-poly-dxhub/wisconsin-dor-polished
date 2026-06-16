@@ -117,12 +117,23 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
     // S3 read permissions: fetch_case_opinion GETs case-law .txt files
     // to feed full opinion text into the agent prompt. Citation URLs are
     // minted by the citation_resolver Lambda, not here.
+    // ListBucket is required so that GetObject on a missing key returns
+    // NoSuchKey (404) instead of AccessDenied (403).
     agenticRetrievalHandler.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['s3:GetObject'],
         resources: [
           `arn:aws:s3:::${props.rawBucketName}/*`,
+        ],
+      })
+    );
+    agenticRetrievalHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['s3:ListBucket'],
+        resources: [
+          `arn:aws:s3:::${props.rawBucketName}`,
         ],
       })
     );

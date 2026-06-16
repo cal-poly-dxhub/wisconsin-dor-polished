@@ -547,6 +547,7 @@ def execute_tool(
             try:
                 enrich_started = time.perf_counter()
                 neighbors = neptune.get_neighbors(doc_id)
+                neighbors = [n for n in neighbors if "Chunk" not in (n.get("labels") or [])]
                 if neighbors:
                     graph_context[doc_id] = neighbors
                 _log_tool_event(
@@ -629,6 +630,8 @@ def execute_tool(
         )
         target_year = tool_input.get("target_wpam_year")
         neighbors = dedupe_wpam_chunks(neighbors, target_year=target_year)
+        pre_filter_count = len(neighbors)
+        neighbors = [n for n in neighbors if "Chunk" not in (n.get("labels") or [])]
         _log_tool_event(
             "get_neighbors_complete",
             tool_name=tool_name,
@@ -637,6 +640,7 @@ def execute_tool(
             direction=tool_input.get("direction", "both"),
             target_wpam_year=target_year,
             neighbor_count=len(neighbors),
+            filtered_chunk_count=pre_filter_count - len(neighbors),
             relationships=sorted({
                 n.get("relationship", "") for n in neighbors if n.get("relationship")
             }),
