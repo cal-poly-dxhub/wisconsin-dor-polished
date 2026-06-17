@@ -1,14 +1,19 @@
 """WPAM cross-edition chunk deduplication.
 
 The WPAM is republished annually. Without dedup, vector_search returns
-near-identical chunks from many editions. This helper collapses them
-to one chunk per (framework, normalized_section_heading), preferring
-either the user-specified target year or the most recent edition.
+near-identical chunks from many editions. This module applies two passes:
 
-Singletons (chunks unique to one edition) survive — we only collapse
-groups with multiple peers. WPAM chunks missing edition_year (e.g.,
-loaded before this feature shipped) pass through unchanged because
-we can't compare them.
+1. Heading-based collapse: groups chunks by normalized heading and keeps
+   one per group (target_year or max edition_year).
+2. Edition-year filter (when target_year is None): drops ALL WPAM chunks
+   from older editions, keeping only the latest. This catches singletons
+   whose headings differ across editions but whose content is equivalent.
+
+When target_year IS set, the edition filter is skipped — the user
+explicitly wants a specific edition.
+
+WPAM chunks missing edition_year pass through unchanged (we can't
+compare them).
 """
 
 import logging
@@ -61,6 +66,7 @@ def _pick_survivor(group: list[dict], target_year: int | None) -> dict:
 def dedupe_wpam_chunks(
     chunks: list[dict],
     target_year: int | None = None,
+    current_wpam_year: int | None = None,
 ) -> list[dict]:
     """Collapse near-duplicate WPAM chunks across editions.
 
@@ -68,6 +74,10 @@ def dedupe_wpam_chunks(
         chunks: List of chunk dicts. Each chunk must have framework_id,
             edition_year, and heading for dedup eligibility.
         target_year: If set, prefer chunks from this year over max year.
+            Also skips the edition filter entirely (user wants a specific edition).
+        current_wpam_year: The authoritative current WPAM year from Neptune.
+            When set and target_year is None, the edition filter uses this
+            instead of max(edition_year) from the result set.
 
     Returns:
         A new list with dedup applied to WPAM chunks. Non-WPAM chunks
@@ -117,4 +127,39 @@ def dedupe_wpam_chunks(
         if _chunk_key(chunk) in survivors_by_id:
             result.append(chunk)
             del survivors_by_id[_chunk_key(chunk)]
+
+    # Pass 2: edition-year filter. Only allow WPAM chunks from permitted
+    # years. When target_year is None, only the current edition is allowed.
+    # When target_year is set, allow both target_year and current edition
+    # (user wants historical context but current is still relevant).
+    if current_wpam_year is not None:
+        allowed_years = {current_wpam_year}
+    else:
+        wpam_years = [
+            c.get("edition_year")
+            for c in result
+            if _is_wpam(c) and c.get("edition_year") is not None
+        ]
+        allowed_years = {max(wpam_years)} if wpam_years else set()
+
+    if target_year is not None:
+        allowed_years.add(target_year)
+
+    if allowed_years:
+        pre_filter = len(result)
+        result = [
+            c for c in result
+            if not _is_wpam(c)
+            or c.get("edition_year") is None
+            or c.get("edition_year") in allowed_years
+        ]
+        edition_drops = pre_filter - len(result)
+        if edition_drops:
+            logger.info(
+                "wpam_dedup: edition filter dropped %d chunks "
+                "(allowed_years=%s)",
+                edition_drops,
+                sorted(allowed_years),
+            )
+
     return result

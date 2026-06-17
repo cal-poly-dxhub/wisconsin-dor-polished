@@ -51,18 +51,75 @@ def test_target_year_not_present_falls_back_to_max():
     assert result[0]["edition_year"] == 2025
 
 
-def test_singleton_unique_to_one_edition_survives():
-    """Content that exists only in 2018 (no peer in any other year) must pass through."""
+def test_singleton_from_old_edition_dropped_when_no_target_year():
+    """Content unique to an old edition is dropped by the edition filter
+    when no target_year is set — users expect current guidance only."""
     chunks = [
         _wpam_chunk(2018, "Deprecated Topic Removed In 2019"),
         _wpam_chunk(2025, "Modern Section"),
     ]
     result = dedupe_wpam_chunks(chunks, target_year=None)
+    assert len(result) == 1
+    assert result[0]["heading"] == "Modern Section"
+
+
+def test_singleton_from_old_edition_survives_with_target_year():
+    """When target_year is set, the edition filter is skipped — old singletons
+    survive so the user can see what that edition contained."""
+    chunks = [
+        _wpam_chunk(2018, "Deprecated Topic Removed In 2019"),
+        _wpam_chunk(2025, "Modern Section"),
+    ]
+    result = dedupe_wpam_chunks(chunks, target_year=2018)
     assert len(result) == 2
     assert {c["heading"] for c in result} == {
         "Deprecated Topic Removed In 2019",
         "Modern Section",
     }
+
+
+def test_current_wpam_year_overrides_max_from_results():
+    """When current_wpam_year is provided, the edition filter uses it
+    instead of max(edition_year) from the result set. This handles the case
+    where Neptune returns only old-edition chunks."""
+    chunks = [
+        _wpam_chunk(2018, "Section A"),
+        _wpam_chunk(2022, "Section B"),
+    ]
+    # Without current_wpam_year, max from results is 2022
+    result = dedupe_wpam_chunks(chunks, target_year=None)
+    assert len(result) == 1
+    assert result[0]["edition_year"] == 2022
+
+    # With current_wpam_year=2026, both are old and get dropped
+    result = dedupe_wpam_chunks(chunks, target_year=None, current_wpam_year=2026)
+    assert len(result) == 0
+
+
+def test_current_wpam_year_keeps_matching_chunks():
+    """Chunks matching the current_wpam_year survive the filter."""
+    chunks = [
+        _wpam_chunk(2018, "Old Section"),
+        _wpam_chunk(2026, "Current Section"),
+        _wpam_chunk(2022, "Middle Section"),
+    ]
+    result = dedupe_wpam_chunks(chunks, target_year=None, current_wpam_year=2026)
+    assert len(result) == 1
+    assert result[0]["edition_year"] == 2026
+
+
+def test_target_year_allows_only_target_and_current():
+    """When target_year is set, allow target + current but drop everything else."""
+    chunks = [
+        _wpam_chunk(2018, "Section from 2018"),
+        _wpam_chunk(2020, "Section from 2020"),
+        _wpam_chunk(2022, "Section from 2022"),
+        _wpam_chunk(2026, "Section from 2026"),
+    ]
+    result = dedupe_wpam_chunks(chunks, target_year=2018, current_wpam_year=2026)
+    years = {c["edition_year"] for c in result}
+    assert years == {2018, 2026}
+    assert len(result) == 2
 
 
 def test_non_wpam_chunks_pass_through_unchanged():
