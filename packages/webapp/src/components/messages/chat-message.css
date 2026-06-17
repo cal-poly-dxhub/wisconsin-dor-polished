@@ -138,10 +138,18 @@
 .markdown-container blockquote {
   border-left: 3px solid var(--muted-foreground);
   background: transparent;
-  padding: 0.8em 1.2em;
+  padding: 0.3em 1.2em;
   margin: 1.5em 0;
   color: var(--foreground);
   font-style: normal;
+}
+
+.markdown-container blockquote p:first-child {
+  margin-top: 0;
+}
+
+.markdown-container blockquote p:last-child {
+  margin-bottom: 0;
 }
 
 /* Images */
