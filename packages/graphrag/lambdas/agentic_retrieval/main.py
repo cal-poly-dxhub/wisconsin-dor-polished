@@ -377,7 +377,11 @@ def _build_tool_result_summary(tool_name: str, result: dict) -> dict:
         doc = result.get("document")
         if doc:
             doc_ids = [doc.get("id")] if doc.get("id") else []
-            summary_text = f"Fetched {doc.get('doc_type', 'document')} {doc.get('id', '')}"
+            doc_id = doc.get("id", "")
+            doc_type = doc.get("doc_type") or (
+                "statute" if doc_id.startswith("WIS-STAT-") else "document"
+            )
+            summary_text = f"Fetched {doc_type} {doc_id}"
             metadata = {"documentCount": 1}
         else:
             summary_text = "Document not found"
@@ -1507,11 +1511,8 @@ def _collapse_case_law_by_title(
 def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
     """Build a RAGDocument for a fetched full court opinion.
 
-    Supersedes the one-chunk case-law stub card for this citation. The
-    resolver mints the presigned URL to the .txt at click time; this
-    function only carries the stable s3 reference. scholar_url remains
-    available on chunk metadata as a public fallback when the bot
-    surfaces the case but the .txt isn't in S3.
+    Supersedes the one-chunk case-law stub card for this citation. Prefers
+    the CourtListener URL from the Neptune node; falls back to Scholar.
     """
     citation = payload.get("citation", "")
     opinion_text = payload.get("text", "")
@@ -1521,17 +1522,15 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
     title = doc_info.get("title") or citation or stub_doc_id
     content_hash = hashlib.sha256(stub_doc_id.encode()).hexdigest()[:7]
 
+    node_url = doc_info.get("source_url")
+    public_url = node_url or payload_scholar_url or (scholar_url(citation) if citation else None)
+
     return RAGDocument(
         document_id=f"{stub_doc_id}-{content_hash}",
         title=title,
         content=opinion_text,
         source=citation or title,
-        # Always link the user to Google Scholar for the citation, even when
-        # the opinion .txt is archived in S3. The S3 object is a flat text
-        # blob with no page anchor, so linking to the public opinion loses
-        # nothing and gives a properly formatted, citable source. The opinion
-        # text still rides in `content` to inform synthesis.
-        source_url=payload_scholar_url or (scholar_url(citation) if citation else None),
+        source_url=public_url,
         s3_key=None,
         start_page=None,
         end_page=None,
@@ -1544,27 +1543,24 @@ def _build_opinion_card(stub_doc_id: str, payload: dict) -> RAGDocument:
 def _apply_case_law_links(
     docs_by_id: dict[str, RAGDocument], doc_infos: dict[str, dict]
 ) -> dict[str, RAGDocument]:
-    """Point every case-law stub card at Google Scholar and drop its S3 ref.
+    """Ensure case-law stub cards link to a public URL and drop S3 refs.
 
-    Single source of truth for the rule. Case-law S3 objects are flat .txt
-    with no page anchor, so the public Scholar search for the citation is
-    strictly better than a presigned link. Runs as one post-pass over the
-    built cards (rather than scattered through the build/merge loops) so the
-    invariant lives in exactly one place.
-
-    Only touches stub cards: fetched full opinions set their own Scholar link
-    in _build_opinion_card and are swapped in after this pass. A stub with no
-    citation to build a URL from is left unchanged.
+    Prefers the CourtListener URL stored on the Neptune node (95%+ of stubs
+    have one). Falls back to a Google Scholar search only when no source_url
+    exists on the node.
     """
     for doc_id, card in docs_by_id.items():
         if not _is_case_law_stub(doc_id):
             continue
-        citation = (doc_infos.get(doc_id) or {}).get("citation")
-        if not citation:
+        doc_info = doc_infos.get(doc_id) or {}
+        node_url = doc_info.get("source_url")
+        citation = doc_info.get("citation")
+        public_url = node_url or (scholar_url(citation) if citation else None)
+        if not public_url:
             continue
         docs_by_id[doc_id] = card.model_copy(
             update={
-                "source_url": scholar_url(citation),
+                "source_url": public_url,
                 "s3_key": None,
                 "start_page": None,
                 "end_page": None,
