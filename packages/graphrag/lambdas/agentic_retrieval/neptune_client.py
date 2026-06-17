@@ -75,6 +75,25 @@ class NeptuneClient:
             "neptune-graph",
             region_name=region or os.environ.get("AWS_REGION", "us-east-1"),
         )
+        self._current_wpam_year: int | None = None
+
+    @property
+    def current_wpam_year(self) -> int | None:
+        """The most recent WPAM edition year in the graph. Queried once on
+        first access and cached for the Lambda invocation lifetime."""
+        if self._current_wpam_year is None:
+            try:
+                results = self.query(
+                    "MATCH (d:Document)-[:BELONGS_TO]->(fw:Framework {id: 'FW-WPAM'}) "
+                    "RETURN max(d.edition_year) AS max_year",
+                    query_name="current_wpam_year",
+                )
+                if results and results[0].get("max_year") is not None:
+                    self._current_wpam_year = int(results[0]["max_year"])
+                    logger.info(f"current_wpam_year resolved to {self._current_wpam_year}")
+            except Exception:
+                logger.warning("Failed to resolve current_wpam_year", exc_info=True)
+        return self._current_wpam_year
 
     def query(
         self,
@@ -263,6 +282,7 @@ class NeptuneClient:
         edge_types: list[str] | None = None,
         direction: str = "both",
         limit: int = 50,
+        title_filter: str | None = None,
     ) -> list[dict]:
         """Get neighboring nodes via specified edge types."""
         if edge_types:
@@ -283,6 +303,14 @@ class NeptuneClient:
                 pattern = "MATCH (d {id: $id})-[r]-(n)"
             where_clause = " WHERE type(r) <> 'EXTRACTED_FROM'"
 
+        if title_filter:
+            conjunction = " AND " if where_clause else " WHERE "
+            where_clause += f"{conjunction}toLower(n.title) CONTAINS toLower($title_filter)"
+
+        params: dict[str, Any] = {"id": node_id}
+        if title_filter:
+            params["title_filter"] = title_filter
+
         results = self.query(
             f"{pattern}{where_clause} "
             "OPTIONAL MATCH (n)-[:BELONGS_TO]->(fw:Framework) "
@@ -295,7 +323,7 @@ class NeptuneClient:
             "fw.id AS framework_id, "
             "labels(n) AS labels "
             f"LIMIT {int(limit)}",
-            {"id": node_id},
+            params,
             query_name="get_neighbors",
         )
         return results
@@ -334,4 +362,128 @@ class NeptuneClient:
             {"doc_id": doc_id},
             query_name="get_chunks_for_doc",
         )
+        return results
+
+    def get_chunk_statute_ids(self, chunk_ids: list[str]) -> list[str]:
+        """Return statute IDs cited by the given chunks (via CITES edges)."""
+        if not chunk_ids:
+            return []
+        results = self.query(
+            "UNWIND $chunk_ids AS cid "
+            "MATCH (c:Chunk {id: cid})-[:CITES]->(s:Statute) "
+            "RETURN DISTINCT s.id AS statute_id",
+            {"chunk_ids": chunk_ids},
+            query_name="get_chunk_statute_ids",
+        )
+        return [r["statute_id"] for r in results if r.get("statute_id")]
+
+    def rank_neighbors_by_shared_statutes(
+        self,
+        neighbor_doc_ids: list[str],
+        chunk_statute_ids: list[str],
+        limit: int = 3,
+    ) -> list[str]:
+        """Rank neighbor docs by how many statutes they share with query chunks.
+
+        Returns doc IDs ordered by shared statute count (descending). Used to
+        pick the most topically relevant neighbors for citation scanning.
+        """
+        if not neighbor_doc_ids or not chunk_statute_ids:
+            return []
+        results = self.query(
+            "UNWIND $doc_ids AS did "
+            "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: did}) "
+            "MATCH (c)-[:CITES]->(s:Statute) "
+            "WHERE s.id IN $statute_ids "
+            "RETURN d.id AS doc_id, count(DISTINCT s) AS shared_statutes "
+            "ORDER BY shared_statutes DESC "
+            f"LIMIT {int(limit)}",
+            {"doc_ids": neighbor_doc_ids, "statute_ids": chunk_statute_ids},
+            query_name="rank_neighbors_by_shared_statutes",
+        )
+        return [r["doc_id"] for r in results if r.get("doc_id")]
+
+    def get_chunks_text_for_docs(self, doc_ids: list[str]) -> list[str]:
+        """Fetch chunk text for the given docs. Returns a flat list of text strings."""
+        if not doc_ids:
+            return []
+        results = self.query(
+            "UNWIND $doc_ids AS did "
+            "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: did}) "
+            "RETURN c.text AS text",
+            {"doc_ids": doc_ids},
+            query_name="get_chunks_text_for_docs",
+        )
+        return [r["text"] for r in results if r.get("text")]
+
+    def resolve_case_citations(self, citations: list[str]) -> list[dict]:
+        """Look up CaseLaw nodes by their normalized citation strings."""
+        if not citations:
+            return []
+        results = self.query(
+            "MATCH (n:CaseLaw) "
+            "WHERE n.citation IN $citations "
+            "RETURN n.id AS id, n.title AS title, n.citation AS citation, "
+            "n.doc_type AS doc_type, n.authority_level AS authority_level, "
+            "n.source_url AS source_url, labels(n) AS labels",
+            {"citations": citations},
+            query_name="resolve_case_citations",
+        )
+        return results
+
+    _CASE_SEARCH_STOP_WORDS = frozenset(
+        {"v", "vs", "of", "the", "in", "re", "ex", "rel", "et", "al", "state"}
+    )
+
+    def find_case_law(
+        self, search_text: str, statute_id: str | None = None, limit: int = 10
+    ) -> list[dict]:
+        """Find CaseLaw nodes by title, optionally scoped to a statute.
+
+        Splits search_text into significant terms (>2 chars, excluding common
+        legal connectors) and requires ALL terms appear in the title. This
+        handles variations like "Markarian v City" matching
+        "State Ex Rel. Markarian v. City of Cudahy".
+        """
+        terms = [
+            w.lower().rstrip(".,;:")
+            for w in search_text.split()
+            if len(w) > 2
+            and w.lower().rstrip(".,;:") not in self._CASE_SEARCH_STOP_WORDS
+        ]
+        if not terms:
+            terms = [search_text.lower()]
+
+        # Neptune Analytics doesn't support ALL() predicate, so build AND chain
+        params: dict[str, Any] = {}
+        where_parts: list[str] = []
+        for i, term in enumerate(terms):
+            key = f"term_{i}"
+            params[key] = term
+            where_parts.append(f"toLower(n.title) CONTAINS ${key}")
+        where_clause = " AND ".join(where_parts)
+
+        if statute_id:
+            params["statute_id"] = statute_id
+            results = self.query(
+                f"MATCH (s {{id: $statute_id}})-[:CITES]-(n:CaseLaw) "
+                f"WHERE {where_clause} "
+                "RETURN n.id AS id, n.title AS title, n.citation AS citation, "
+                "n.doc_type AS doc_type, n.authority_level AS authority_level, "
+                "n.source_url AS source_url, labels(n) AS labels "
+                f"LIMIT {int(limit)}",
+                params,
+                query_name="find_case_law",
+            )
+        else:
+            results = self.query(
+                "MATCH (n:CaseLaw) "
+                f"WHERE {where_clause} "
+                "RETURN n.id AS id, n.title AS title, n.citation AS citation, "
+                "n.doc_type AS doc_type, n.authority_level AS authority_level, "
+                "n.source_url AS source_url, labels(n) AS labels "
+                f"LIMIT {int(limit)}",
+                params,
+                query_name="find_case_law",
+            )
         return results
