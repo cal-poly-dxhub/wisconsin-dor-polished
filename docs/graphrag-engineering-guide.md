@@ -322,7 +322,7 @@ Both extractors emit the same contract the chunkers consume: `header_split` (tex
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `faq_search`          | Bedrock FAQ KB retrieve (`SEMANTIC`).                                                                                  |
 | `refine_query`        | LLM query rewrite + `target_wpam_year` extraction.                                                                     |
-| `vector_search`       | Titan-embed the query → Neptune vector index → WPAM dedup → **auto-enrich** top-3 parent doc_ids with `get_neighbors`. |
+| `vector_search`       | Titan-embed the query → Neptune vector index → WPAM dedup → **auto-enrich** top-3 parent doc_ids with `get_neighbors` → direct citation resolution → **neighbor-doc citation discovery**. |
 | `get_neighbors`       | Graph traversal; accepts `edge_types` filter.                                                                          |
 | `get_document`        | Node lookup; falls back to vector search on miss.                                                                      |
 | `get_authority_chain` | Walk `DERIVED_FROM`/`PART_OF` up and down.                                                                             |
@@ -333,6 +333,7 @@ Both extractors emit the same contract the chunkers consume: `header_split` (tex
 ### Key design decisions and footguns
 
 - **Auto-enrichment** (`1864142`): after `vector_search` returns chunks, the executor fetches `get_neighbors` for the top-3 distinct parent doc_ids and returns `{chunks, graph_context}`. The agent gets graph context for free without an extra turn. Best-effort — neighbor errors are swallowed.
+- **Neighbor-doc citation discovery** (`f87e6d7`): after auto-enrichment, `vector_search` runs an additional pass to surface case law mentioned in neighbor doc text but not in the directly-retrieved chunks. It filters neighbors to non-WPAM document nodes, ranks them by shared statute overlap with the query chunks (top 3), fetches their chunk text, regex-extracts case citations, and resolves them to CaseLaw nodes. The chunk text stays in the Lambda (regex only, never enters Claude's context). See `docs/co-cited-case-law-discovery.md` for the full traversal path. This replaced a pure graph-traversal approach that failed because high-degree statute nodes (1500+ CITES edges) made LIMIT-based discovery arbitrary.
 - **`cited_doc_ids` is the authoritative sidebar.** On `answer`, the returned cards are restricted to _exactly_ the agent's cited ids, not all discovered docs — auto-enrichment pulls in far more docs (case-law stubs CITES-linked to statutes) than the answer uses. The turn-budget fallback path is the exception (it returns all discovered ids).
 - **Tool exceptions never crash the loop** (`686da54`). The model once called `get_document` with `node_id` (the param used by `get_neighbors`) instead of `doc_id`; the handler indexed `tool_input["doc_id"]` directly, raised `KeyError`, crashed the Lambda, and stranded the user on "answering." Now: `get_document` accepts both keys via `.get()`, and any tool exception is converted to an `{"error": ...}` tool-result fed back so the model self-corrects.
 
@@ -374,18 +375,59 @@ Case law is **thin citation stubs only**. `extract.py::process_case_law_document
 - The **only** way the agent reaches a case is by traversing an inbound `CITES` edge from a statute it already found.
 - Full opinion text lives in S3 (`raw/case-law-{slug}/...txt`) and is fetched on demand by `fetch_case_opinion`, not stored in the graph.
 
-### How discovery is forced to work
+### How discovery works (three complementary paths)
 
-- **Mirror edge** (`aa99634`): phase 3 writes both `(CaseLaw)-[:CITES]->(Statute)` and the mirror `(Statute)-[:CITES]->(CaseLaw)`. Without the mirror, finding cases that interpret a statute required incoming-direction `get_neighbors` or vector-search luck on bulky 7K-char annotation chunks (Markarian, buried in a §70.32 chunk, failed both).
+Cases reach the agent through three paths, each catching what the others miss:
+
+1. **Mirror edge traversal** (`aa99634`): phase 3 writes both `(CaseLaw)-[:CITES]->(Statute)` and the mirror `(Statute)-[:CITES]->(CaseLaw)`. The agent's prompt mandates `get_neighbors` on the controlling statute with `edge_types=["CITES"]` (`dbb06c5`). This catches any case directly linked to a statute the agent already found.
+
+2. **Direct citation resolution**: after `vector_search` returns chunks, their text is regex-scanned for case citations (e.g., "45 Wis. 2d 683") and resolved to CaseLaw nodes via an exact-match property lookup. This catches cases mentioned in the chunks you already have — without traversing any graph edges.
+
+3. **Neighbor-doc citation discovery** (`f87e6d7`): catches cases mentioned only in *neighbor* doc text (not the directly-retrieved chunks). The motivating example: Peter Ogden (2019 WI 23) is cited in the Ag Assessment Guide's chunks but never in the WPAM ag chunks that vector search returns. The approach: use shared statutes to rank which neighbor docs are topically relevant, then read their chunk text and regex-extract citations. See `docs/co-cited-case-law-discovery.md` for the full implementation.
+
+   > **⚠️ The pure graph-traversal approach was tried and abandoned.** An earlier implementation traversed neighbor doc → shared statutes → case law (LIMIT 5). This failed because high-degree statute nodes like WIS-STAT-70.32 have 1500+ CITES edges to CaseLaw — no structural graph signal can pick the right 5. The distinction is in **text** (a specific doc literally cites "2019 WI 23"), not in graph topology. Do not re-attempt a graph-only path for this problem.
+
+### The citation extraction system (shared foundation for paths 2 and 3)
+
+Paths 2 and 3 — and also the `find_case_law` tool — share the same extraction-and-resolution machinery. The core insight: every CaseLaw node in Neptune carries a `citation` property set at ingestion time (e.g., `"45 Wis. 2d 683"`). Regex-extracting citations from text and matching them to that property is an O(1) lookup — no traversal needed, no LIMIT arbitrariness.
+
+**Regex extraction** (`tools.py::extract_citations`). Three compiled patterns cover Wisconsin case citation formats:
+
+| Pattern | Catches |
+| --- | --- |
+| `\d+\s+Wis\.?\s*2d\s+\d+` | Wisconsin Reports 2d (e.g., "45 Wis. 2d 683") |
+| `\d+\s+N\.W\.(?:2d\|3d)\s+\d+` | North Western Reporter (e.g., "985 N.W.2d 69") |
+| `\d{4}\s+WI(?:\s+App)?\s+\d+` | Public-domain cites (e.g., "2019 WI 23", "2025 WI App 43") |
+
+After matching, a normalization pass canonicalizes whitespace and `Wis.2d` → `Wis. 2d`. The function returns sorted, deduplicated citation strings.
+
+**Resolution** (`neptune_client.py::resolve_case_citations`). Takes the normalized citation list and does a single parameterized query:
+
+```cypher
+MATCH (n:CaseLaw) WHERE n.citation IN $citations
+RETURN n.id, n.title, n.citation, n.doc_type, n.authority_level, n.source_url, labels(n)
+```
+
+This works because ingestion stamped `citation` on every CaseLaw node. It's an exact property match — no CONTAINS, no fuzzy logic, no traversal.
+
+**Where it's used:**
+
+- **`vector_search` — direct citation resolution (path 2):** joins all retrieved chunk text → `extract_citations` → `resolve_case_citations`. Results populate `related_case_law` in the tool response.
+- **`vector_search` — neighbor-doc citation discovery (path 3):** fetches chunk text from topically-ranked neighbor docs → same `extract_citations` → same `resolve_case_citations`. New cases are appended to `related_case_law`.
+- **`find_case_law` tool:** if the user's `search_text` itself contains a citation pattern, `extract_citations` runs first and attempts resolution. Only if that yields nothing does it fall back to the slower title-substring search (`neptune.find_case_law`).
+
+**Why this replaced the prior approach:** previously, the only way to discover a case was by traversing graph edges from a statute (`get_neighbors` with CITES). But high-degree statute nodes (WIS-STAT-70.32 has 1500+ CITES edges to CaseLaw) made LIMIT-based discovery arbitrary — there was no structural signal to distinguish the right 5 cases from the other 1495. Citation extraction moved the discriminator from graph topology to **text** — a specific document literally writing "2019 WI 23" is the signal that the case matters in that context.
+
+**Supporting infrastructure:**
+
 - **Section-level `statute_refs`** (`6b28018`): refs are emitted at both chapter (`70`) and section (`70.32`) granularity by reading the running page header of the local statute PDF mirror in `docs/state-laws/`. Without section-level refs, `WIS-STAT-70.32` had zero case-law neighbors.
-- **Prompt mandate** (`dbb06c5`): workflow step 6 requires `get_neighbors` on the controlling statute with `edge_types=["CITES"]`, and a citation rule requires any case named in prose to appear in `cited_doc_ids` (or it gets no card).
-- **Always link to Google Scholar** (`6da060c`): both stub cards and fetched-opinion cards link to Scholar, never the S3 `.txt` (which has no page anchors). `_apply_case_law_links` enforces this in one post-pass; `_build_opinion_card` sets `s3_key=None`. Opinion text still rides in the card's `content` to inform synthesis — only the user-facing link changed.
+- **Always link to CourtListener/Scholar** (`6da060c`): both stub cards and fetched-opinion cards link to an external legal database, never the S3 `.txt` (which has no page anchors). ~95% of cases link to CourtListener; the remaining ~5% fall back to Google Scholar. `_apply_case_law_links` enforces this in one post-pass; `_build_opinion_card` sets `s3_key=None`. Opinion text still rides in the card's `content` to inform synthesis — only the user-facing link changed.
 - **Parallel-citation collapse** (`ce7e17c`, `93a229c`): one decision gets a separate node per reporter (N.W.2d + Wis.2d + WI App). `_collapse_case_law_by_title` merges them by normalized case-name + year.
 
 ### ⚠️ The reversals (do not resurrect)
 
 1. **First-class nodes → annotation-grounded chunks → thin stubs** (`c835f66`). Case law was once vector-searchable with its own embeddings and topics. An annotation-grounding pipeline was then built (and abandoned _the same day_) to store editorial summaries as case chunks. Both were deleted because (a) the annotation already lives on the citing statute's chunks, and (b) embedding the case let the agent answer "from the case" while bypassing the controlling statute — inverting legal authority. The pivot deleted ~180 lines. **Do not re-enable case-law embeddings or the LLM-summary fallback** (`07b2336`, `04e2447` are dead for case nodes). Only `case_annotations.extract_section_for_page` survives in the live path.
-2. **S3 `.txt` links → Google Scholar** (`6da060c`/`7ecaf0d`). The interim "link to the S3 `.txt` until PDF links land" (`6a9bdac`) was replaced. **Do not reintroduce `s3_key` on case-law cards.**
+2. **S3 `.txt` links → CourtListener/Scholar** (`6da060c`/`7ecaf0d`). The interim "link to the S3 `.txt` until PDF links land" (`6a9bdac`) was replaced. ~95% of cases link to CourtListener; the remainder fall back to Google Scholar. **Do not reintroduce `s3_key` on case-law cards.**
 3. **`fetch_case_opinion` plumbing** (`7677cbc`): the tool was called _zero times in 24h of production_ because `load.py`'s phase 2 omitted `d.citation`, so the agent never had the verbatim citation string the tool needs. The fix plumbed `citation` through phase 2 → `neptune_client` → prompt. All three layers are load-bearing; the slug derivation (`citation_to_raw_slug`) is the exact inverse of `upload_local_docs.make_doc_id`.
 
 > **Gotcha — silent degradation.** Section-level refs depend on the local PDF mirror in `docs/state-laws/` being present at extract time. If it's missing, `_derive_case_statute_refs` _silently_ falls back to chapter-only refs, and section-anchored CITES traversals find no cases. Not an error — a quiet quality drop.
@@ -396,15 +438,63 @@ Case law is **thin citation stubs only**. `extract.py::process_case_law_document
 
 ## 11. WPAM edition recency
 
-The Wisconsin Property Assessment Manual is republished annually (~15 editions, `wpam-...-2011` through `-2025`). Goal: show the agent only the newest edition's chunks for generic queries (or a user-named year) **without losing edition-only content**.
+The Wisconsin Property Assessment Manual is republished annually (the current edition is posted each December for the subsequent calendar year). The graph contains ~15 editions (`wpam-...-2011` through `-2026`). **DOR rule: ALWAYS use the most current WPAM unless the user explicitly asks about a specific year.** Old editions have different chapter structures (the WPAM was reorganized in 2017 — e.g., Chapter 9 changed from Commercial Valuation to Real Property Valuation, with commercial content moving to Chapter 13) and MUST NOT be cited for current guidance.
 
-**Stamp `edition_year` at load time.** `wpam_year.py::extract_wpam_year_from_doc_id` grabs the last 4-digit group from the doc_id, plausibility-gated (2010 .. current year + 1; the +1 covers a December-published edition). Both phase 2 (Doc nodes) and phase 7/`phase_8_chunks` (Chunk nodes) call it for `FW-WPAM` docs. `edition_year` is **denormalized onto every Chunk** (`05092f3`) so dedup needs no Neptune join.
+### 11.1 The problem
 
-**Dedup at retrieval time.** `wpam_dedup.py::dedupe_wpam_chunks(chunks, target_year=None)` groups eligible WPAM chunks by normalized heading, keeps **singletons untouched** (this is what preserves edition-only content), and for multi-chunk groups picks the `target_year` chunk if present else `max(edition_year)`. It runs after `vector_search` and `get_neighbors`. `refine_query` extracts `target_wpam_year` only when the user explicitly names a year in a WPAM context.
+Neptune Analytics `topKByEmbedding` has **no pre-filtering capability** — you cannot filter by `edition_year` before the vector search runs. With ~15 editions of semantically near-identical content, a naive `top_k=10` vector search returns mostly old-edition chunks (the sheer volume of historical editions dominates the vector space). Heading-based dedup alone was insufficient because the 2017 reorganization means old chapters have different headings that don't collapse with current ones.
 
-> **⚠️ The cosine dedup "pass B" was cut (YAGNI), and there are NO `SUPERSEDES` edges between editions.** Neptune's `vector_search`/`get_neighbors` Cypher returns only similarity _scores_, not raw chunk embeddings, so a cosine pass would need a second algo call + ~10-20KB extra payload per query (`cb13072`). Recency is handled purely at the retrieval layer (dedup picks `max(year)`), not as graph edges. The prompt mentions `SUPERSEDES` generically — do not assume edition-supersession is modeled as edges.
+### 11.2 The solution: over-fetch + strict edition filter
 
-> **`edition_year` now traverses the full wire path (fixed), but is still not rendered.** `edition_year` is carried by `RAGDocument`, set by the agentic Lambda, persisted by `save_chat_history`, copied into `websocket_utils.SourceDocument` by `resource_streaming`, and accepted by the Zod `SourceDocumentSchema` + frontend `Document` type. It reaches the browser store but **no UI component renders it yet** (wire-only v1). Adding an edition badge to the citation card is a frontend-only follow-up; the data is already there. (History note: until this fix, `websocket_utils.SourceDocument` lacked the field and `resource_streaming` didn't copy it, so the value was silently dropped at the WebSocket boundary — guarded now by `test_source_document_carries_edition_year` in `test_resource_streaming.py`.)
+Three layers enforce recency:
+
+1. **`current_wpam_year` — dynamic resolution from Neptune** (`neptune_client.py`). A cached property queries `max(d.edition_year)` across all `FW-WPAM` documents on Lambda cold start. This is the authoritative "what year is current" — no hardcoded year constant.
+
+2. **Over-fetch at retrieval time** (`tools.py`). When no `target_wpam_year` is set, `vector_search` requests `top_k * 3` chunks from Neptune (e.g., 30 instead of 10). This casts a wide enough net that current-edition chunks appear in the result set even when old editions dominate the top ranks. When a `target_wpam_year` IS set, no over-fetch (the user wants a specific edition, so old results are expected).
+
+3. **Two-pass dedup** (`wpam_dedup.py::dedupe_wpam_chunks`):
+   - **Pass 1 — heading collapse:** groups WPAM chunks by normalized heading, keeps one per group (prefer `target_year` if set, else `max(edition_year)`).
+   - **Pass 2 — strict edition filter:** `allowed_years = {current_wpam_year}`. If `target_year` is set, add it: `allowed_years = {current_wpam_year, target_year}`. Every WPAM chunk whose `edition_year ∉ allowed_years` is **dropped** — including singletons with unique headings from old editions. Non-WPAM chunks and WPAM chunks missing `edition_year` pass through unchanged.
+
+   After dedup, the result is truncated back to `top_k`.
+
+4. **Prompt reinforcement** (`prompt.py`): instructs Claude to ONLY cite the current WPAM edition, ignore any old-edition chunks that slip through, and pass `target_wpam_year` to subsequent tool calls when `refine_query` extracts one.
+
+### 11.3 The two retrieval paths
+
+**Default (no year in query):**
+
+1. User asks: "What information is used to determine my assessment?"
+2. `faq_search` runs on verbatim query (always first)
+3. Claude calls `vector_search(query="...")` — no `target_wpam_year`
+4. Neptune returns top 30 chunks (`top_k * 3` over-fetch)
+5. `dedupe_wpam_chunks` runs:
+   - Pass 1: heading collapse (same heading across editions → keep newest)
+   - Pass 2: edition filter — `allowed_years = {2026}` (from `neptune.current_wpam_year`). Everything not 2026 is dropped.
+6. Truncate to 10 chunks, return to Claude
+7. Claude only sees current WPAM + non-WPAM sources (statutes, admin rules, FAQs, etc.)
+
+**User specifies a year:**
+
+1. User asks: "What did the 2018 WPAM say about commercial valuation?"
+2. `faq_search` runs
+3. Claude calls `refine_query` → extracts `target_wpam_year: 2018`
+4. Claude calls `vector_search(query="...", target_wpam_year=2018)` — no over-fetch (`top_k` stays at 10)
+5. `dedupe_wpam_chunks` runs:
+   - Pass 1: heading collapse → prefers 2018 chunks
+   - Pass 2: edition filter — `allowed_years = {2026, 2018}`. Only these two editions survive; 2011, 2020, 2022, etc. are dropped.
+6. Claude sees both the requested historical edition and current for comparison
+7. Prompt tells Claude to cite what the user asked about
+
+### 11.4 Stamping `edition_year` at load time
+
+`wpam_year.py::extract_wpam_year_from_doc_id` grabs the last 4-digit group from the doc_id, plausibility-gated (2010 .. current year + 1; the +1 covers a December-published edition). Both phase 2 (Doc nodes) and phase 7/`phase_8_chunks` (Chunk nodes) call it for `FW-WPAM` docs. `edition_year` is **denormalized onto every Chunk** (`05092f3`) so dedup needs no Neptune join.
+
+### 11.5 Wire path
+
+`edition_year` is carried by `RAGDocument`, set by the agentic Lambda, persisted by `save_chat_history`, copied into `websocket_utils.SourceDocument` by `resource_streaming`, and accepted by the Zod `SourceDocumentSchema` + frontend `Document` type. It reaches the browser store but **no UI component renders it yet** (wire-only v1). Adding an edition badge to the citation card is a frontend-only follow-up; the data is already there. (History note: until this fix, `websocket_utils.SourceDocument` lacked the field and `resource_streaming` didn't copy it, so the value was silently dropped at the WebSocket boundary — guarded now by `test_source_document_carries_edition_year` in `test_resource_streaming.py`.)
+
+> **⚠️ The cosine dedup "pass B" was cut (YAGNI), and there are NO `SUPERSEDES` edges between editions.** Neptune's `vector_search`/`get_neighbors` Cypher returns only similarity _scores_, not raw chunk embeddings, so a cosine pass would need a second algo call + ~10-20KB extra payload per query (`cb13072`). Recency is handled purely at the retrieval layer (over-fetch + edition filter), not as graph edges. The prompt mentions `SUPERSEDES` generically — do not assume edition-supersession is modeled as edges.
 
 > **Gotcha — re-ingest is scoped here, not full.** Because `edition_year` is a property-only mutation (no edges change), populate it with `load.py --source-filter wpam- --start-phase 2 --stop-after-phase 2` then `--start-phase 7 --stop-after-phase 7`. Chunks loaded _before_ this feature have no `edition_year` and are dedup-ineligible (they pass through, never collapsed) — a mixed graph silently under-dedups until a full WPAM chunk re-ingest.
 
@@ -582,7 +672,8 @@ A single `query_id` threads through the handler → Step Function → streaming 
 | Deterministic turn-0 `faq_search` (bypass Claude)          | Claude paraphrase hurt KB recall                                        | `13a90c3`            |
 | Case law = thin stubs, no embeddings                       | annotation lives on the statute; embedding inverts authority            | `c835f66`            |
 | Statute→CaseLaw mirror edge                                | cases unreachable by outgoing traversal otherwise                       | `aa99634`            |
-| Case/opinion cards link to Google Scholar, not S3          | `.txt` has no page anchor                                               | `6da060c`            |
+| Neighbor-doc text scanning (not graph-only traversal)      | high-degree statutes (1500+ CITES) make LIMIT arbitrary; text has the signal | `f87e6d7`      |
+| Case/opinion cards link to CourtListener/Scholar, not S3   | `.txt` has no page anchor                                               | `6da060c`            |
 | On-demand citation resolver (no eager presigned URLs)      | URLs expire and rot into chat history                                   | `410b833`            |
 | `chooseSourceTarget`: PDF s3Key wins, `.txt` yields to URL | `.txt` has no `#page` anchor                                            | `876a6df`            |
 | Tool exception → error tool-result (no crash)              | one bad tool call killed the whole request                              | `686da54`            |
@@ -614,7 +705,19 @@ A single `query_id` threads through the handler → Step Function → streaming 
 
 ---
 
-_This guide documents the state of `feat/graphrag-migration` as of commit `2631d5f` (2026-06-02). When you change a subsystem, update its section here and add any new "do NOT revert" decision to §18.2 — that table is the cheapest insurance against re-breaking solved problems._
+## Known Issues / Future Cleanup
+
+### Duplicate CaseLaw nodes for parallel reporter citations
+
+The same court opinion often has multiple reporter citations (e.g., `45 Wis. 2d 683` and `173 N.W.2d 627` are both *State Ex Rel. Markarian v. City of Cudahy*). The ingestion pipeline creates a separate CaseLaw node for each citation, and may create duplicate CITES edges from the same statute to the same node across ingestion passes.
+
+**Impact:** `find_case_law` and `get_neighbors` return what appear to be duplicates (same title, different node IDs). The agent may cite both IDs, producing two source cards for one case.
+
+**Future fix:** Merge parallel reporter nodes into a single canonical node (keyed on the Wisconsin Reports citation when available, falling back to N.W.2d/3d). Store alternate citations as a list property. Deduplicate CITES edges during ingestion (idempotent upsert). This is a data model change in the load phase (`scripts/graphrag/load.py`) and would require a re-ingest or a one-off migration script.
+
+---
+
+_This guide documents the state of `feat/graphrag-migration` as of commit `f87e6d7` (2026-06-16). When you change a subsystem, update its section here and add any new "do NOT revert" decision to §18.2 — that table is the cheapest insurance against re-breaking solved problems._
 
 Other random notes from Jonah:
 during one of the client meetings, they noticed a message that asked them to allow their computer to discover other computers on the same network. This happens because they have their own cognito setup.
