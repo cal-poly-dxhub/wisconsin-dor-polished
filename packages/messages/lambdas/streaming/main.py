@@ -163,7 +163,10 @@ async def generate_response_async(
     )
 
     documents_text = (
-        "\n".join([d.model_dump_json() for d in documents.documents])
+        "\n".join([
+            d.model_dump_json(include={"document_id", "title", "content", "source", "source_url"})
+            for d in documents.documents
+        ])
         if documents
         else "No documents available."
     )

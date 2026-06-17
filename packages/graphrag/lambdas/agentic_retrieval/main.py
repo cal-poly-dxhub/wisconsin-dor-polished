@@ -1327,7 +1327,8 @@ def _generate_source_label(chunk: dict, doc_info: dict | None) -> str:
     source_url (when present) so users see something semantically
     meaningful, not the doc title.
     """
-    gov_source_url = chunk.get("source_url") or (doc_info or {}).get("source_url") or ""
+    raw_url = chunk.get("source_url") or (doc_info or {}).get("source_url") or ""
+    gov_source_url = raw_url if raw_url.startswith(("http://", "https://")) else ""
     return gov_source_url or (doc_info or {}).get("title", "")
 
 
@@ -1600,7 +1601,8 @@ def _build_rag_documents(
             title = (doc_info.get("title") if doc_info else None) or doc_id
             content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
             label = _generate_source_label(chunk, doc_info)
-            gov_url = chunk.get("source_url") or (doc_info or {}).get("source_url")
+            raw_url = chunk.get("source_url") or (doc_info or {}).get("source_url") or ""
+            gov_url = raw_url if raw_url.startswith(("http://", "https://")) else None
             s3_key = chunk.get("s3_key") or (doc_info or {}).get("s3_key")
 
             docs_by_id[doc_id] = RAGDocument(

@@ -907,7 +907,7 @@ def process_pdf_from_s3(
                 "metadata": {
                     "doc_id": doc_id,
                     "source": s3_file_path,
-                    "source_url": f"{document_url}#page={start_page}" if start_page else document_url,
+                    "source_url": f"{document_url}#page={start_page}" if (document_url and start_page) else document_url,
                     "chunk_index": out_idx,
                     "total_chunks": total_chunks,
                     "source_id": source_id,

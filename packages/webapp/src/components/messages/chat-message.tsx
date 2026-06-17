@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DocumentCard, type Document } from '../documents/document-card/document-card';
 import { FAQCard } from '../documents/document-card/faq-card';
+import { buildResolverUrl } from '@/lib/citation-resolver';
 import { useDevTrace } from '@/hooks/use-dev-trace';
 import type { AgentTraceEvent, ResourceItem, FAQ } from '@/stores/types';
 import type { QueryStatus } from '@/stores/types';
@@ -478,15 +479,26 @@ export function ChatMessage({
     return buildTraceSteps(agentTrace, devTrace);
   }, [agentTrace, devTrace, hasResources, items, isStreaming, streamingComplete]);
 
-  const docUrls = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const item of items ?? []) {
-      if (item.type === 'document') {
-        const doc = item.data as Document;
-        if (doc.sourceUrl) map[doc.documentId] = doc.sourceUrl;
+  const [docUrls, setDocUrls] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    async function build() {
+      const map: Record<string, string> = {};
+      for (const item of items ?? []) {
+        if (item.type === 'document') {
+          const doc = item.data as Document;
+          if (doc.sourceUrl) {
+            map[doc.documentId] = doc.sourceUrl;
+          } else if (doc.s3Key) {
+            const url = await buildResolverUrl(doc.s3Key, doc.startPage);
+            if (url) map[doc.documentId] = url;
+          }
+        }
       }
+      if (!cancelled) setDocUrls(map);
     }
-    return map;
+    build();
+    return () => { cancelled = true; };
   }, [items]);
 
   const memoizedResponse = useMemo(() => {
