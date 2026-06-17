@@ -332,6 +332,7 @@ def test_vector_search_applies_wpam_dedup():
     from tools import execute_tool
 
     mock_neptune = MagicMock()
+    mock_neptune.current_wpam_year = 2025
     mock_neptune.vector_search.return_value = [
         {"chunk_id": "wpam-2018-c1", "doc_id": "wpam-...-2018",
          "framework_id": "FW-WPAM", "edition_year": 2018,
@@ -382,6 +383,7 @@ def test_get_neighbors_applies_wpam_dedup():
     from tools import execute_tool
 
     mock_neptune = MagicMock()
+    mock_neptune.current_wpam_year = 2025
     mock_neptune.get_neighbors.return_value = [
         {"id": "wpam-2018-c1", "framework_id": "FW-WPAM", "edition_year": 2018,
          "heading": "Manufactured Homes", "relationship": "CITES"},
@@ -449,6 +451,7 @@ def test_vector_search_auto_enrichment_filters_chunks():
         {"id": "chunk-99", "title": None, "labels": ["Chunk"],
          "relationship": "EXTRACTED_FROM"},
     ]
+    mock_neptune.resolve_case_citations.return_value = []
 
     with patch("tools.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
@@ -457,3 +460,205 @@ def test_vector_search_auto_enrichment_filters_chunks():
     neighbors = result["graph_context"].get("doc-1", [])
     assert len(neighbors) == 1
     assert neighbors[0]["id"] == "related-doc"
+
+
+def test_vector_search_extracts_citations_and_resolves_case_law():
+    """vector_search should extract citations from chunk text and resolve
+    them to CaseLaw nodes via resolve_case_citations."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.vector_search.return_value = [
+        {"chunk_id": "c1", "doc_id": "wpam-2025", "score": 0.9,
+         "text": "See Markarian v City of Cudahy, 45 Wis.2d 683 (1970)."},
+    ]
+    mock_neptune.get_neighbors.return_value = []
+    mock_neptune.resolve_case_citations.return_value = [
+        {"id": "case-law-45-wis-2d-683",
+         "title": "State Ex Rel. Markarian v. City of Cudahy, 45 Wis. 2d 683",
+         "citation": "45 Wis. 2d 683", "labels": ["CaseLaw"]},
+    ]
+
+    with patch("tools.embed_query", return_value=[0.1] * 1024):
+        result = execute_tool("vector_search", {"query": "sale of subject"}, mock_neptune)
+
+    assert "related_case_law" in result
+    assert len(result["related_case_law"]) == 1
+    assert result["related_case_law"][0]["id"] == "case-law-45-wis-2d-683"
+    # Verify resolve_case_citations was called with normalized citation
+    mock_neptune.resolve_case_citations.assert_called_once()
+    citations_arg = mock_neptune.resolve_case_citations.call_args[0][0]
+    assert "45 Wis. 2d 683" in citations_arg
+
+
+def test_vector_search_no_related_case_law_when_no_citations():
+    """vector_search should not include related_case_law key when no
+    citations are found in chunk text and neighbor discovery finds nothing."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.vector_search.return_value = [
+        {"chunk_id": "c1", "doc_id": "wpam-2025", "score": 0.9,
+         "text": "The assessor shall consider all relevant factors."},
+    ]
+    mock_neptune.get_neighbors.return_value = []
+    mock_neptune.resolve_case_citations.return_value = []
+
+    with patch("tools.embed_query", return_value=[0.1] * 1024):
+        result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
+
+    assert "related_case_law" not in result
+
+
+def test_extract_citations():
+    """Test citation regex extraction and normalization."""
+    from tools import extract_citations
+
+    text = (
+        "See Markarian v City of Cudahy, 45 Wis.2d 683, 173 N.W.2d 627 (1970). "
+        "Also Lowe's v Delavan, 2023 WI 8, 405 Wis. 2d 616, 985 N.W.2d 69. "
+        "And Children's Hospital, 2025 WI App 43, 417 Wis. 2d 629, 24 N.W.3d 601."
+    )
+    citations = extract_citations(text)
+
+    # Check normalized forms
+    assert "45 Wis. 2d 683" in citations
+    assert "173 N.W.2d 627" in citations
+    assert "405 Wis. 2d 616" in citations
+    assert "985 N.W.2d 69" in citations
+    assert "2023 WI 8" in citations
+    assert "2025 WI App 43" in citations
+    assert "417 Wis. 2d 629" in citations
+    assert "24 N.W.3d 601" in citations
+
+
+def test_vector_search_neighbor_citation_discovery():
+    """vector_search should discover case law by scanning neighbor doc chunk
+    text for citations, using the top-ranked cross-framework neighbors."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.vector_search.return_value = [
+        {"chunk_id": "c1", "doc_id": "wpam-2025-ag", "score": 0.9,
+         "text": "Agricultural land classification under sec. 70.32."},
+        {"chunk_id": "c2", "doc_id": "wpam-2025-ag", "score": 0.85,
+         "text": "Land devoted primarily to agricultural use."},
+    ]
+    mock_neptune.get_neighbors.return_value = [
+        {"id": "gov_publications-ag-guide", "title": "Ag Assessment Guide",
+         "labels": ["Document"], "framework_id": "FW-GOV-PUBS",
+         "relationship": "SUPPLEMENTS"},
+    ]
+    # No citations in query chunk text, so resolve_case_citations is only
+    # called once — for the neighbor doc citations.
+    mock_neptune.resolve_case_citations.return_value = [
+        {"id": "case-law-2019-wi-23", "title": "Peter Ogden v. DOR",
+         "citation": "2019 WI 23", "doc_type": "case_law",
+         "authority_level": 3, "source_url": None, "labels": ["CaseLaw"]},
+    ]
+    mock_neptune.get_chunk_statute_ids.return_value = ["WIS-STAT-70.32"]
+    mock_neptune.rank_neighbors_by_shared_statutes.return_value = [
+        "gov_publications-ag-guide",
+    ]
+    mock_neptune.get_chunks_text_for_docs.return_value = [
+        "Agricultural classification per 2019 WI 23 requires land use.",
+    ]
+
+    with patch("tools.embed_query", return_value=[0.1] * 1024):
+        result = execute_tool("vector_search", {"query": "ag classification"}, mock_neptune)
+
+    assert "related_case_law" in result
+    assert len(result["related_case_law"]) == 1
+    assert result["related_case_law"][0]["id"] == "case-law-2019-wi-23"
+    mock_neptune.get_chunk_statute_ids.assert_called_once_with(["c1", "c2"])
+    mock_neptune.rank_neighbors_by_shared_statutes.assert_called_once_with(
+        ["gov_publications-ag-guide"], ["WIS-STAT-70.32"], limit=3
+    )
+    mock_neptune.get_chunks_text_for_docs.assert_called_once_with(
+        ["gov_publications-ag-guide"]
+    )
+
+
+def test_vector_search_neighbor_citation_deduplicates():
+    """Neighbor citation discovery should not duplicate cases already found
+    by direct citation resolution from the query chunks."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.vector_search.return_value = [
+        {"chunk_id": "c1", "doc_id": "wpam-2025", "score": 0.9,
+         "text": "See Markarian, 45 Wis. 2d 683."},
+    ]
+    mock_neptune.get_neighbors.return_value = [
+        {"id": "gov-pub-1", "title": "Guide", "labels": ["Document"],
+         "framework_id": "FW-GOV-PUBS", "relationship": "RELATED_TO"},
+    ]
+    # Direct citation resolution finds Markarian from query chunk text
+    # Second resolve call returns both Markarian (dupe) and Peter Ogden (new)
+    mock_neptune.resolve_case_citations.side_effect = [
+        [{"id": "case-law-45-wis-2d-683", "title": "Markarian",
+          "citation": "45 Wis. 2d 683", "labels": ["CaseLaw"]}],
+        [{"id": "case-law-45-wis-2d-683", "title": "Markarian",
+          "citation": "45 Wis. 2d 683", "labels": ["CaseLaw"]},
+         {"id": "case-law-2019-wi-23", "title": "Peter Ogden v. DOR",
+          "citation": "2019 WI 23", "labels": ["CaseLaw"]}],
+    ]
+    mock_neptune.get_chunk_statute_ids.return_value = ["WIS-STAT-70.32"]
+    mock_neptune.rank_neighbors_by_shared_statutes.return_value = ["gov-pub-1"]
+    mock_neptune.get_chunks_text_for_docs.return_value = [
+        "See Markarian, 45 Wis. 2d 683, and 2019 WI 23.",
+    ]
+
+    with patch("tools.embed_query", return_value=[0.1] * 1024):
+        result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
+
+    assert len(result["related_case_law"]) == 2
+    ids = [c["id"] for c in result["related_case_law"]]
+    assert "case-law-45-wis-2d-683" in ids
+    assert "case-law-2019-wi-23" in ids
+
+
+def test_find_case_law_tool_by_citation():
+    """find_case_law should try citation lookup first."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.resolve_case_citations.return_value = [
+        {"id": "case-law-45-wis-2d-683", "title": "Markarian",
+         "citation": "45 Wis. 2d 683", "labels": ["CaseLaw"]},
+    ]
+
+    result = execute_tool(
+        "find_case_law",
+        {"search_text": "45 Wis. 2d 683"},
+        mock_neptune,
+    )
+
+    assert len(result["cases"]) == 1
+    assert result["cases"][0]["id"] == "case-law-45-wis-2d-683"
+    mock_neptune.resolve_case_citations.assert_called_once()
+    # Should NOT fall back to find_case_law since citation lookup succeeded
+    mock_neptune.find_case_law.assert_not_called()
+
+
+def test_find_case_law_tool_falls_back_to_title_search():
+    """find_case_law should fall back to title search when no citation found."""
+    from tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.resolve_case_citations.return_value = []
+    mock_neptune.find_case_law.return_value = [
+        {"id": "case-law-45-wis-2d-683", "title": "Markarian v. City of Cudahy",
+         "citation": "45 Wis. 2d 683", "labels": ["CaseLaw"]},
+    ]
+
+    result = execute_tool(
+        "find_case_law",
+        {"search_text": "Markarian", "statute_id": "WIS-STAT-70.32"},
+        mock_neptune,
+    )
+
+    assert len(result["cases"]) == 1
+    mock_neptune.find_case_law.assert_called_once_with(
+        "Markarian", statute_id="WIS-STAT-70.32", limit=10
+    )

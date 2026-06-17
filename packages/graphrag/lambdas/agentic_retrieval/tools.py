@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -15,6 +16,29 @@ import boto3
 from case_opinion import fetch_case_opinion
 from neptune_client import NeptuneClient
 from wpam_dedup import dedupe_wpam_chunks
+
+# Regex patterns for Wisconsin case citations.
+# Matches: "45 Wis. 2d 683", "45 Wis.2d 683", "985 N.W.2d 69", "2025 WI App 43", "2019 WI 23"
+_CITATION_PATTERNS = [
+    re.compile(r"\d+\s+Wis\.?\s*2d\s+\d+"),
+    re.compile(r"\d+\s+N\.W\.(?:2d|3d)\s+\d+"),
+    re.compile(r"\d{4}\s+WI(?:\s+App)?\s+\d+"),
+]
+
+
+def extract_citations(text: str) -> list[str]:
+    """Extract unique normalized citation strings from text."""
+    raw: set[str] = set()
+    for pattern in _CITATION_PATTERNS:
+        for match in pattern.finditer(text):
+            raw.add(match.group())
+    normalized: set[str] = set()
+    for c in raw:
+        # Normalize "Wis.2d" -> "Wis. 2d", collapse whitespace
+        norm = re.sub(r"Wis\.?\s*2d", "Wis. 2d", c)
+        norm = re.sub(r"\s+", " ", norm).strip()
+        normalized.add(norm)
+    return sorted(normalized)
 
 logger = logging.getLogger(__name__)
 LOG_TOOL_TRACE = os.environ.get("LOG_TOOL_TRACE", "true").lower() == "true"
@@ -238,6 +262,17 @@ TOOL_DEFINITIONS = [
                             "description": "Edge direction (default: both)",
                             "default": "both",
                         },
+                        "title_filter": {
+                            "type": "string",
+                            "description": (
+                                "Optional. Filter neighbors to those whose title "
+                                "contains this substring (case-insensitive). Use "
+                                "when the node has many neighbors (e.g., a statute "
+                                "with hundreds of CITES edges) and you want a "
+                                "specific subset (e.g., title_filter='hospital' to "
+                                "find hospital-related cases citing a statute)."
+                            ),
+                        },
                         "target_wpam_year": {
                             "type": ["integer", "null"],
                             "description": (
@@ -294,6 +329,42 @@ TOOL_DEFINITIONS = [
                         }
                     },
                     "required": ["framework_id"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "find_case_law",
+            "description": (
+                "Search for a specific court case by name or citation. "
+                "Use this when: (1) the user's question names a specific case, "
+                "OR (2) retrieved chunks mention a case by name but you need "
+                "the case's node ID for citing. Searches CaseLaw node titles "
+                "and citations. Optionally scope to cases connected to a "
+                "specific statute for more targeted results."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "search_text": {
+                            "type": "string",
+                            "description": (
+                                "Case name, party name, or citation to search for "
+                                "(e.g., 'Markarian', '45 Wis. 2d 683', 'Lowe's v. Delavan')."
+                            ),
+                        },
+                        "statute_id": {
+                            "type": "string",
+                            "description": (
+                                "Optional. Statute node ID to scope the search "
+                                "(e.g., 'WIS-STAT-70.32'). Only returns cases "
+                                "connected to this statute via CITES edges."
+                            ),
+                        },
+                    },
+                    "required": ["search_text"],
                 }
             },
         }
@@ -515,11 +586,19 @@ def execute_tool(
     elif tool_name == "vector_search":
         embedding = embed_query(tool_input["query"])
         top_k = min(tool_input.get("top_k", 10), 20)
-        vector_started = time.perf_counter()
-        chunks = neptune.vector_search(embedding, top_k=top_k)
         target_year = tool_input.get("target_wpam_year")
+        # Over-fetch when filtering to current edition — old editions
+        # dominate the vector space, so we need a wider net to surface
+        # enough current-edition chunks after the edition filter runs.
+        fetch_k = top_k * 3 if target_year is None else top_k
+        vector_started = time.perf_counter()
+        chunks = neptune.vector_search(embedding, top_k=fetch_k)
         pre_dedup_count = len(chunks)
-        chunks = dedupe_wpam_chunks(chunks, target_year=target_year)
+        chunks = dedupe_wpam_chunks(
+            chunks, target_year=target_year,
+            current_wpam_year=neptune.current_wpam_year,
+        )
+        chunks = chunks[:top_k]
         _log_tool_event(
             "vector_search_neptune_complete",
             tool_name=tool_name,
@@ -570,6 +649,81 @@ def execute_tool(
                     exc_info=True,
                 )
 
+        # Case law discovery: extract citations from retrieved chunks and resolve
+        # them to CaseLaw nodes. This surfaces cases like Markarian that are
+        # mentioned in WPAM text but buried in 1500+ CITES neighbors of a statute.
+        related_case_law: list[dict] = []
+        try:
+            all_chunk_text = " ".join(c.get("text", "") for c in chunks)
+            citations = extract_citations(all_chunk_text)
+            if citations:
+                related_case_law = neptune.resolve_case_citations(citations)
+                _log_tool_event(
+                    "vector_search_case_law_resolved",
+                    tool_name=tool_name,
+                    citations_extracted=len(citations),
+                    cases_resolved=len(related_case_law),
+                    case_ids=[c.get("id") for c in related_case_law[:10]],
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning("case law citation resolution failed", exc_info=True)
+
+        # Neighbor-doc citation extraction: pick the most topically relevant
+        # non-WPAM neighbor docs (ranked by shared statutes with query chunks),
+        # read their chunk text, and extract case citations via regex. This
+        # surfaces cases like Peter Ogden (2019 WI 23) that are mentioned in
+        # neighbor doc text but not in the directly-retrieved chunks.
+        try:
+            neighbor_doc_ids = sorted({
+                n.get("id")
+                for neighbors in graph_context.values()
+                for n in neighbors
+                if n.get("id")
+                and n.get("framework_id") != "FW-WPAM"
+                and not any(
+                    lbl in (n.get("labels") or [])
+                    for lbl in ("CaseLaw", "Statute", "Framework", "Topic", "Chunk")
+                )
+            })
+            if neighbor_doc_ids:
+                chunk_ids = [c.get("chunk_id", "") for c in chunks if c.get("chunk_id")]
+                chunk_statute_ids = neptune.get_chunk_statute_ids(chunk_ids)
+                if chunk_statute_ids:
+                    ranked_docs = neptune.rank_neighbors_by_shared_statutes(
+                        neighbor_doc_ids, chunk_statute_ids, limit=3
+                    )
+                    if ranked_docs:
+                        neighbor_texts = neptune.get_chunks_text_for_docs(ranked_docs)
+                        neighbor_text_blob = " ".join(neighbor_texts)
+                        neighbor_citations = extract_citations(neighbor_text_blob)
+                        if neighbor_citations:
+                            existing_citations = set(citations) if citations else set()
+                            new_citations = [
+                                c for c in neighbor_citations
+                                if c not in existing_citations
+                            ]
+                            if new_citations:
+                                existing_ids = {c.get("id") for c in related_case_law}
+                                resolved = neptune.resolve_case_citations(new_citations)
+                                resolved = [
+                                    c for c in resolved
+                                    if c.get("id") not in existing_ids
+                                ]
+                                if resolved:
+                                    related_case_law.extend(resolved)
+                                    _log_tool_event(
+                                        "vector_search_neighbor_citation_discovery",
+                                        tool_name=tool_name,
+                                        ranked_neighbor_docs=ranked_docs,
+                                        neighbor_chunks_scanned=len(neighbor_texts),
+                                        citations_extracted=len(neighbor_citations),
+                                        new_citations=len(new_citations),
+                                        cases_resolved=len(resolved),
+                                        case_ids=[c.get("id") for c in resolved[:10]],
+                                    )
+        except Exception:  # noqa: BLE001
+            logger.warning("neighbor citation discovery failed", exc_info=True)
+
         _log_tool_event(
             "vector_search_complete",
             tool_name=tool_name,
@@ -577,10 +731,14 @@ def execute_tool(
             chunk_count=len(chunks),
             graph_context_doc_count=len(graph_context),
             graph_context_neighbor_count=sum(len(v) for v in graph_context.values()),
+            related_case_law_count=len(related_case_law),
             latency_ms=round((time.perf_counter() - started) * 1000),
             **_query_fields(tool_input["query"]),
         )
-        return {"chunks": chunks, "graph_context": graph_context}
+        result: dict[str, Any] = {"chunks": chunks, "graph_context": graph_context}
+        if related_case_law:
+            result["related_case_law"] = related_case_law
+        return result
 
     elif tool_name == "get_document":
         # The model occasionally passes `node_id` (the param name used by
@@ -627,9 +785,13 @@ def execute_tool(
             tool_input["node_id"],
             edge_types=tool_input.get("edge_types"),
             direction=tool_input.get("direction", "both"),
+            title_filter=tool_input.get("title_filter"),
         )
         target_year = tool_input.get("target_wpam_year")
-        neighbors = dedupe_wpam_chunks(neighbors, target_year=target_year)
+        neighbors = dedupe_wpam_chunks(
+            neighbors, target_year=target_year,
+            current_wpam_year=neptune.current_wpam_year,
+        )
         pre_filter_count = len(neighbors)
         neighbors = [n for n in neighbors if "Chunk" not in (n.get("labels") or [])]
         _log_tool_event(
@@ -670,6 +832,31 @@ def execute_tool(
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
         return {"documents": docs}
+
+    elif tool_name == "find_case_law":
+        search_text = tool_input.get("search_text", "")
+        statute_id = tool_input.get("statute_id")
+        # Try citation-based lookup first (most reliable)
+        citations = extract_citations(search_text)
+        cases: list[dict] = []
+        if citations:
+            cases = neptune.resolve_case_citations(citations)
+        # Fall back to title substring search
+        if not cases and search_text:
+            cases = neptune.find_case_law(
+                search_text, statute_id=statute_id, limit=10
+            )
+        _log_tool_event(
+            "find_case_law_complete",
+            tool_name=tool_name,
+            search_text=search_text,
+            statute_id=statute_id,
+            citations_extracted=len(citations),
+            case_count=len(cases),
+            case_ids=[c.get("id") for c in cases[:10]],
+            latency_ms=round((time.perf_counter() - started) * 1000),
+        )
+        return {"cases": cases}
 
     elif tool_name == "fetch_case_opinion":
         if not RAW_BUCKET:
