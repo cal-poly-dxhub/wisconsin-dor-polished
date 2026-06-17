@@ -132,6 +132,15 @@ def main():
         print(f"\n=== case_law (authority level 3) ===")
         with open(citations_file) as f:
             citations = json.load(f)
+
+        # Skip N.W.2d/3d parallel reporter citations — they duplicate the
+        # canonical Wis. 2d node for the same case.
+        nw_re = re.compile(r"\d+ N\.W\.(?:2d|3d) \d+")
+        skipped_nw = [e for e in citations if nw_re.search(e["citation"])]
+        citations = [e for e in citations if not nw_re.search(e["citation"])]
+        if skipped_nw:
+            print(f"  Skipped {len(skipped_nw)} N.W.2d/3d parallel reporter citations")
+
         print(f"  {len(citations)} case law citations to upload as metadata stubs")
 
         for entry in citations:
