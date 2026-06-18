@@ -1,0 +1,8 @@
+[project]
+name = "step-function-types"
+version = "0.1.0"
+description = "Step function types layer for Wisconsin SST"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0.0",
+]
