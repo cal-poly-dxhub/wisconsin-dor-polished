@@ -1,0 +1,42 @@
+@layer utilities {
+  .thin-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(156 163 175 / 0.3) transparent;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgb(156 163 175 / 0.3);
+    border-radius: 2px;
+    transition: all 0.2s ease;
+  }
+
+  .thin-scrollbar:hover::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  .thin-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(107 114 128 / 0.5);
+  }
+
+  .dark .thin-scrollbar {
+    scrollbar-color: rgb(75 85 99 / 0.3) transparent;
+  }
+
+  .dark .thin-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgb(75 85 99 / 0.3);
+  }
+
+  .dark .thin-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(107 114 128 / 0.5);
+  }
+} 
