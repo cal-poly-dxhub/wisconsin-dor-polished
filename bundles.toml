@@ -1,76 +1,75 @@
 # Directory to use as root when bundling. dest directories will be
 # relative to this directory.
-target_directory = "packages/infra/bundle"
+target_directory = "infra/bundle"
 
 # dest: a folder in the bundling target directory
 # sources: a list of folders or files to copy into the destination
 
 [[bundles]]
 dest = "chat_api"
-sources = ["./packages/sessions/lambdas/chat_api/"]
+sources = ["./backend/lambdas/chat_api/"]
 
 [[bundles]]
 dest = "step_function_types/python/step_function_types"
-sources = ["./packages/shared/lambda_layers/step_function_types/"]
+sources = ["./backend/layers/step_function_types/"]
 
 [[bundles]]
 dest = "websocket_utils/python/websocket_utils"
-sources = ["./packages/shared/lambda_layers/websocket_utils/"]
+sources = ["./backend/layers/websocket_utils/"]
 
 [[bundles]]
 dest = "connect"
 sources = [
-    "./packages/sessions/lambdas/websocket/connect.py",
-    "./packages/sessions/lambdas/websocket/websocket_errors.py",
-    "./packages/sessions/lambdas/websocket/response_utils.py",
-    "./packages/sessions/lambdas/websocket/validators.py",
-    "./packages/sessions/lambdas/websocket/__init__.py",
-    "./packages/sessions/lambdas/websocket/requirements.txt",
+    "./backend/lambdas/websocket/connect.py",
+    "./backend/lambdas/websocket/websocket_errors.py",
+    "./backend/lambdas/websocket/response_utils.py",
+    "./backend/lambdas/websocket/validators.py",
+    "./backend/lambdas/websocket/__init__.py",
+    "./backend/lambdas/websocket/requirements.txt",
 ]
 
 [[bundles]]
 dest = "disconnect"
 sources = [
-    "./packages/sessions/lambdas/websocket/disconnect.py",
-    "./packages/sessions/lambdas/websocket/websocket_errors.py",
-    "./packages/sessions/lambdas/websocket/response_utils.py",
-    "./packages/sessions/lambdas/websocket/validators.py",
-    "./packages/sessions/lambdas/websocket/__init__.py",
-    "./packages/sessions/lambdas/websocket/requirements.txt",
+    "./backend/lambdas/websocket/disconnect.py",
+    "./backend/lambdas/websocket/websocket_errors.py",
+    "./backend/lambdas/websocket/response_utils.py",
+    "./backend/lambdas/websocket/validators.py",
+    "./backend/lambdas/websocket/__init__.py",
+    "./backend/lambdas/websocket/requirements.txt",
 ]
 
 [[bundles]]
 dest = "default"
 sources = [
-    "./packages/sessions/lambdas/websocket/default.py",
-    "./packages/sessions/lambdas/websocket/websocket_errors.py",
-    "./packages/sessions/lambdas/websocket/response_utils.py",
-    "./packages/sessions/lambdas/websocket/validators.py",
-    "./packages/sessions/lambdas/websocket/__init__.py",
-    "./packages/sessions/lambdas/websocket/requirements.txt",
+    "./backend/lambdas/websocket/default.py",
+    "./backend/lambdas/websocket/websocket_errors.py",
+    "./backend/lambdas/websocket/response_utils.py",
+    "./backend/lambdas/websocket/validators.py",
+    "./backend/lambdas/websocket/__init__.py",
+    "./backend/lambdas/websocket/requirements.txt",
 ]
 
 [[bundles]]
 dest = "classifier"
-sources = ["./packages/messages/lambdas/classifier"]
+sources = ["./archive/messages-legacy/classifier"]
 
 [[bundles]]
 dest = "retrieval"
-sources = ["./packages/messages/lambdas/retrieval"]
+sources = ["./archive/messages-legacy/retrieval"]
 
 [[bundles]]
 dest = "resource_streaming"
-sources = ["./packages/messages/lambdas/resource_streaming"]
+sources = ["./backend/lambdas/resource_streaming"]
 
 [[bundles]]
 dest = "streaming"
-sources = ["./packages/messages/lambdas/streaming"]
+sources = ["./backend/lambdas/streaming"]
 
 [[bundles]]
 dest = "agentic_retrieval"
-sources = ["./packages/graphrag/lambdas/agentic_retrieval"]
+sources = ["./backend/lambdas/agentic_retrieval"]
 
 [[bundles]]
 dest = "citation_resolver"
-sources = ["./packages/sessions/lambdas/citation_resolver"]
-
+sources = ["./backend/lambdas/citation_resolver"]
