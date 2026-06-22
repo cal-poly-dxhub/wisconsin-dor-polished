@@ -221,7 +221,7 @@ export function StreamResponse({
   return (
     <div className={`chat-response font-sans ${className || ''}`}>
       <div className="markdown-container">
-        <AnimatedMarkdown content={content} animate={!streamingComplete} docUrls={docUrls} />
+        <AnimatedMarkdown content={content} animate={false} docUrls={docUrls} />
       </div>
     </div>
   );
