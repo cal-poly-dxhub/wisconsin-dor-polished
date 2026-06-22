@@ -1,6 +1,7 @@
 'use client';
 
 import { useChatStore } from '@/stores/chat-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { ChatMessage } from './chat-message';
 import { ChevronDown } from 'lucide-react';
@@ -19,6 +20,8 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
     // Use currentQueryId from store instead of selectedMessageId
     const selectedMessageId = currentQueryId;
     const setSelectedMessageId = setCurrentQueryId;
+
+    const autoScroll = useSettingsStore((s) => s.autoScroll);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const userScrolledUpRef = useRef(false);
@@ -103,11 +106,12 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
     // it to true, because scrollHeight grew before scrollTop caught up) and
     // pin to the bottom so the streaming effect below can take over.
     useEffect(() => {
+      if (!autoScroll) return;
       userScrolledUpRef.current = false;
       if (containerRef.current) {
         containerRef.current.scrollTop = containerRef.current.scrollHeight;
       }
-    }, [orderedQueries.length]);
+    }, [orderedQueries.length, autoScroll]);
 
     // Auto-scroll to bottom during streaming unless user scrolled up
     const currentQuery = currentQueryId ? queries[currentQueryId] : null;
@@ -117,9 +121,10 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
     const isActive = queryStatus === 'streaming' || queryStatus === 'pending' || queryStatus === 'completed';
 
     useEffect(() => {
+      if (!autoScroll) return;
       if (!containerRef.current || !isActive || userScrolledUpRef.current) return;
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }, [streamContent, queryStatus, isActive, agentTrace]);
+    }, [streamContent, queryStatus, isActive, agentTrace, autoScroll]);
 
     return (
       <div className="relative h-full w-full">
