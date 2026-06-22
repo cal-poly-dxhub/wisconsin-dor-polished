@@ -1,5 +1,6 @@
 """Integration tests for handler and run_agentic_loop."""
 
+import json
 import sys
 import os
 import itertools
@@ -61,6 +62,38 @@ models_mock.FAQResource = FakeFAQResource
 errors_mock = sys.modules["step_function_types.errors"]
 errors_mock.ValidationError = Exception
 errors_mock.report_error = MagicMock()
+
+
+def _converse_response_to_stream(response):
+    """Convert a converse() response dict into a fake converse_stream() response.
+
+    This allows existing test fixtures (written for converse()) to work
+    with the new converse_stream() code path.
+    """
+    events = []
+    message = response["output"]["message"]
+    events.append({"messageStart": {"role": message.get("role", "assistant")}})
+
+    for idx, block in enumerate(message.get("content", [])):
+        if "text" in block:
+            events.append({"contentBlockStart": {"contentBlockIndex": idx, "start": {}}})
+            events.append({"contentBlockDelta": {"delta": {"text": block["text"]}}})
+            events.append({"contentBlockStop": {"contentBlockIndex": idx}})
+        elif "toolUse" in block:
+            tool = block["toolUse"]
+            events.append({
+                "contentBlockStart": {
+                    "contentBlockIndex": idx,
+                    "start": {"toolUse": {"toolUseId": tool["toolUseId"], "name": tool["name"]}},
+                }
+            })
+            input_json = json.dumps(tool["input"])
+            events.append({"contentBlockDelta": {"delta": {"toolUse": {"input": input_json}}}})
+            events.append({"contentBlockStop": {"contentBlockIndex": idx}})
+
+    events.append({"messageStop": {"stopReason": response.get("stopReason", "")}})
+    events.append({"metadata": {"usage": response.get("usage", {})}})
+    return {"stream": iter(events)}
 
 
 def _import_main():
@@ -134,7 +167,9 @@ class TestRunAgenticLoop:
                 "metrics": {"latencyMs": 120},
             },
         ]
-        main.bedrock.converse = MagicMock(side_effect=responses)
+        main.bedrock.converse_stream = MagicMock(
+            side_effect=[_converse_response_to_stream(r) for r in responses]
+        )
 
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "vector_search":
@@ -193,7 +228,9 @@ class TestRunAgenticLoop:
                 "metrics": {"latencyMs": 120},
             },
         ]
-        main.bedrock.converse = MagicMock(side_effect=responses)
+        main.bedrock.converse_stream = MagicMock(
+            side_effect=[_converse_response_to_stream(r) for r in responses]
+        )
 
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "get_document":
@@ -210,13 +247,13 @@ class TestRunAgenticLoop:
             return _noop()
         mock_ws.send_json = capture
 
-        answer, cited, rag_docs, faq_resource, _trace = main.run_agentic_loop(
+        answer, cited, rag_docs, faq_resource, _trace, _streamed = main.run_agentic_loop(
             "what is use value?",
             query_id="q-1", session_id="s-1",
             ws_server=mock_ws, trace_seq=itertools.count(1).__next__,
         )
         assert answer == "Recovered."
-        assert main.bedrock.converse.call_count == 2
+        assert main.bedrock.converse_stream.call_count == 2
 
     def test_high_confidence_faq_continues_into_graph(self, monkeypatch):
         main = _import_main()
@@ -254,7 +291,9 @@ class TestRunAgenticLoop:
                 "metrics": {"latencyMs": 120},
             },
         ]
-        main.bedrock.converse = MagicMock(side_effect=responses)
+        main.bedrock.converse_stream = MagicMock(
+            side_effect=[_converse_response_to_stream(r) for r in responses]
+        )
 
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "vector_search":
@@ -273,13 +312,13 @@ class TestRunAgenticLoop:
             return _noop()
         mock_ws.send_json = capture
 
-        answer, cited, rag_docs, faq_resource, _trace = main.run_agentic_loop(
+        answer, cited, rag_docs, faq_resource, _trace, _streamed = main.run_agentic_loop(
             "what is TID?",
             query_id="q-1", session_id="s-1",
             ws_server=mock_ws, trace_seq=itertools.count(1).__next__,
         )
 
-        assert main.bedrock.converse.call_count == 2
+        assert main.bedrock.converse_stream.call_count == 2
         assert faq_resource is not None
         assert faq_resource.faqs[0].faq_id == "faq_1"
         kinds = [m.kind for m in sent]
@@ -292,7 +331,7 @@ class TestHandler:
         main = _import_main()
         mock_ws = MagicMock()
         monkeypatch.setattr(main, "get_ws_connection_from_session", MagicMock(return_value=mock_ws))
-        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None, [])))
+        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None, [], False)))
         monkeypatch.setattr(main, "get_chat_history", lambda sid: [])
         monkeypatch.setattr(main, "save_chat_history", lambda *a, **kw: None)
         monkeypatch.setattr(main, "process_event", lambda e: SimpleNamespace(
@@ -310,7 +349,7 @@ class TestHandler:
     def test_runs_with_ws_none_on_session_lookup_failure(self, monkeypatch):
         main = _import_main()
         monkeypatch.setattr(main, "get_ws_connection_from_session", MagicMock(side_effect=RuntimeError("no session")))
-        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None, [])))
+        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None, [], False)))
         monkeypatch.setattr(main, "get_chat_history", lambda sid: [])
         monkeypatch.setattr(main, "save_chat_history", lambda *a, **kw: None)
         monkeypatch.setattr(main, "process_event", lambda e: SimpleNamespace(

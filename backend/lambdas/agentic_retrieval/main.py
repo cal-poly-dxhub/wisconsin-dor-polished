@@ -12,6 +12,7 @@ Runs Claude's agentic loop with Neptune-backed tools:
 
 import asyncio
 import itertools
+import json
 import logging
 import os
 import time
@@ -19,6 +20,7 @@ from typing import Any
 
 import boto3
 import pydantic
+from bedrock_streaming import StreamResult, process_converse_stream
 from case_law_handling import is_case_law_stub
 from case_opinion import citation_to_raw_slug, fetch_case_opinion
 from chat_history import get_chat_history, save_chat_history
@@ -32,7 +34,6 @@ from prompt import SYSTEM_PROMPT
 from rag_documents import build_rag_documents
 from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
-    DocumentResource,
     FAQResource,
     RAGDocument,
     UserQuery,
@@ -43,7 +44,6 @@ from trace_summaries import (
     build_tool_result_summary,
     discovery_summary,
     summarize_assistant_message,
-    summarize_bedrock_response,
 )
 from tracing import (
     emit_trace,
@@ -57,6 +57,8 @@ from websocket_utils.models import (
     AnswerEventType,
     FAQContent,
     FAQMessage,
+    FragmentContent,
+    FragmentMessage,
     SourceDocument,
 )
 from websocket_utils.utils import WebSocketServer, get_ws_connection_from_session
@@ -139,7 +141,7 @@ def run_agentic_loop(
     request_id: str = "",
     ws_server=None,
     trace_seq=None,
-) -> tuple[str, list[str], list[RAGDocument], FAQResource | None, list[dict]]:
+) -> tuple[str, list[str], list[RAGDocument], FAQResource | None, list[dict], bool]:
     """Run Claude's agentic loop against Neptune.
 
     Turn 0 is hardcoded: run `faq_search` with the verbatim user query. The
@@ -147,7 +149,8 @@ def run_agentic_loop(
     graph work.
 
     Returns:
-        (answer_text, cited_doc_ids, rag_documents, faq_resource, trace_log)
+        (answer_text, cited_doc_ids, rag_documents, faq_resource, trace_log, answer_streamed)
+        answer_streamed: True if the answer was already streamed to WebSocket in real-time
     """
     chat_history = chat_history or []
     if trace_seq is None:
@@ -157,6 +160,7 @@ def run_agentic_loop(
     discovery: dict[str, str] = {}
     fetched_opinions: dict[str, dict] = {}
     trace_log: list[dict] = []
+    answer_was_streamed = False
 
     def _record_trace(kind: str, turn: int | None = None, **data) -> None:
         trace_log.append({"kind": kind, "turn": turn, "ts": int(time.time() * 1000), **data})
@@ -382,8 +386,32 @@ def run_agentic_loop(
             )
 
         converse_started = time.perf_counter()
+
+        def _send_ws_fragment(text: str) -> None:
+            """Send a real-time answer fragment over WebSocket."""
+            if not ws_server:
+                return
+            msg = FragmentMessage(
+                query_id=query_id,
+                content=FragmentContent(fragment=text),
+            )
+            ws_server.client.post_to_connection(
+                ConnectionId=ws_server.connection_id,
+                Data=json.dumps({"streamId": "answer", "body": msg.model_dump(by_alias=True)}),
+            )
+
+        def _on_answer_start() -> None:
+            """Signal the frontend that answer streaming is beginning."""
+            if not ws_server:
+                return
+            start_msg = AnswerEventType(event="start", query_id=query_id)
+            ws_server.client.post_to_connection(
+                ConnectionId=ws_server.connection_id,
+                Data=json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)}),
+            )
+
         try:
-            response = bedrock.converse(
+            stream_response = bedrock.converse_stream(
                 modelId=AGENTIC_MODEL_ID,
                 messages=messages,
                 system=[{"text": SYSTEM_PROMPT}],
@@ -400,18 +428,27 @@ def run_agentic_loop(
                 error=str(exc),
             )
             raise
+
+        stream_result = process_converse_stream(
+            stream_response,
+            on_answer_fragment=_send_ws_fragment,
+            on_answer_start=_on_answer_start,
+        )
+        if stream_result.answer_streamed:
+            answer_was_streamed = True
         converse_latency_ms = round((time.perf_counter() - converse_started) * 1000)
 
-        assistant_message = response["output"]["message"]
+        assistant_message = stream_result.assistant_message
         messages.append(assistant_message)
-        stop_reason = response.get("stopReason", "")
+        stop_reason = stream_result.stop_reason
         asst_summary = _assistant_summary(assistant_message)
         _log(
             "agent_turn_model_response",
             **trace_context,
             turn=turn_number,
             bedrock_latency_ms=converse_latency_ms,
-            **summarize_bedrock_response(response),
+            stop_reason=stop_reason,
+            usage=stream_result.usage,
             assistant=asst_summary,
         )
         if asst_summary["text_preview"]:
@@ -687,7 +724,7 @@ def run_agentic_loop(
                         "citedDocCount": len(cited),
                     },
                 )
-                return answer, list(cited), rag_docs, cited_faq_resource, trace_log
+                return answer, list(cited), rag_docs, cited_faq_resource, trace_log, answer_was_streamed
 
             tool_results.append({
                 "toolResult": {
@@ -759,20 +796,23 @@ def run_agentic_loop(
             "citedDocCount": len(all_doc_ids),
         },
     )
-    return answer, list(all_doc_ids), rag_docs, high_confidence_faq, trace_log
+    return answer, list(all_doc_ids), rag_docs, high_confidence_faq, trace_log, answer_was_streamed
 
 
-_ANSWER_FRAGMENT_SIZE = 80
-
-
-async def _stream_response(
+def _send_resources_and_finalize(
     ws_server: WebSocketServer,
     query_id: str,
     answer: str,
     rag_documents: list[RAGDocument],
     faq_resource: FAQResource | None,
+    answer_already_streamed: bool,
 ) -> None:
-    """Stream documents, FAQs, and answer fragments over WebSocket."""
+    """Send documents, FAQs, and (if needed) answer over WebSocket.
+
+    When answer_already_streamed=True, the answer text was already sent
+    in real-time during the Bedrock stream. We only need to send the
+    stop event. Otherwise, fall back to chunked replay.
+    """
     source_documents = [
         SourceDocument(
             document_id=doc.document_id,
@@ -791,7 +831,8 @@ async def _stream_response(
     ]
 
     for msg in batch_documents_for_ws(source_documents, query_id):
-        await ws_server.send_json(msg)
+        data = json.dumps({"streamId": "resources", "body": msg.model_dump(by_alias=True)})
+        ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
 
     if faq_resource:
         faq_message = FAQMessage(
@@ -808,16 +849,28 @@ async def _stream_response(
                 ]
             ),
         )
-        await ws_server.send_json(faq_message)
+        data = json.dumps({"streamId": "resources", "body": faq_message.model_dump(by_alias=True)})
+        ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
 
-    await ws_server.send_json(AnswerEventType(event="start", query_id=query_id))
+    if not answer_already_streamed:
+        # Fallback: answer wasn't streamed live (e.g., text-only response
+        # without answer tool, or turn budget exhaustion). Replay it.
+        start_msg = AnswerEventType(event="start", query_id=query_id)
+        data = json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)})
+        ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
 
-    async def _answer_fragments():
-        for i in range(0, len(answer), _ANSWER_FRAGMENT_SIZE):
-            yield answer[i : i + _ANSWER_FRAGMENT_SIZE]
+        _FALLBACK_FRAGMENT_SIZE = 80
+        for i in range(0, len(answer), _FALLBACK_FRAGMENT_SIZE):
+            fragment = answer[i : i + _FALLBACK_FRAGMENT_SIZE]
+            frag_msg = FragmentMessage(
+                query_id=query_id, content=FragmentContent(fragment=fragment)
+            )
+            frag_data = json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)})
+            ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=frag_data)
 
-    await ws_server.stream_fragments(_answer_fragments(), query_id)
-    await ws_server.send_json(AnswerEventType(event="stop", query_id=query_id))
+    stop_msg = AnswerEventType(event="stop", query_id=query_id)
+    data = json.dumps({"streamId": "answer-event", "body": stop_msg.model_dump(by_alias=True)})
+    ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
 
 
 def handler(event: dict, context) -> dict[str, Any]:
@@ -872,7 +925,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                 },
             )
 
-        answer, cited_doc_ids, rag_documents, faq_resource, trace_log = run_agentic_loop(
+        answer, cited_doc_ids, rag_documents, faq_resource, trace_log, answer_streamed = run_agentic_loop(
             user_query.query,
             chat_history=chat_history,
             query_id=user_query.query_id,
@@ -891,17 +944,17 @@ def handler(event: dict, context) -> dict[str, Any]:
             cited_doc_count=len(cited_doc_ids),
             rag_document_count=len(rag_documents),
             faq_count=len(faq_resource.faqs) if faq_resource else 0,
+            answer_streamed=answer_streamed,
         )
 
         if ws_server:
-            asyncio.run(
-                _stream_response(
-                    ws_server,
-                    user_query.query_id,
-                    answer,
-                    rag_documents,
-                    faq_resource,
-                )
+            _send_resources_and_finalize(
+                ws_server,
+                user_query.query_id,
+                answer,
+                rag_documents,
+                faq_resource,
+                answer_already_streamed=answer_streamed,
             )
 
         save_chat_history(
