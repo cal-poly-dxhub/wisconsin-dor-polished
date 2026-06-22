@@ -10,6 +10,7 @@ import { DocumentCard, type Document } from '../documents/document-card/document
 import { FAQCard } from '../documents/document-card/faq-card';
 import { buildResolverUrl } from '@/lib/citation-resolver';
 import { useDevTrace } from '@/hooks/use-dev-trace';
+import { useSettingsStore } from '@/stores/settings-store';
 import type { AgentTraceEvent, ResourceItem, FAQ } from '@/stores/types';
 import type { QueryStatus } from '@/stores/types';
 
@@ -463,7 +464,8 @@ export function ChatMessage({
   const hasCompleted = status === 'streaming' || status === 'completed';
   const showThinkingLabel = isThinking || hasCompleted;
   const hasResources = (items?.length ?? 0) > 0;
-  const [stepsOpen, setStepsOpen] = useState(true);
+  const detailedTrace = useSettingsStore(s => s.detailedTrace);
+  const [stepsOpen, setStepsOpen] = useState(detailedTrace);
   const agentTrace = useChatStore(s => s.queries[queryId]?.agentTrace);
   const devTrace = useDevTrace();
 

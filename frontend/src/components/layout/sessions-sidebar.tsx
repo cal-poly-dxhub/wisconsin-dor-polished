@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { ChevronLeft, MessageSquare, Moon, Sun, LogOut, Loader2, Plus, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { ChevronLeft, MessageSquare, Moon, Sun, LogOut, Loader2, Plus, MoreHorizontal, Pencil, Trash2, Settings } from 'lucide-react';
 import Image from 'next/image';
 import { useTheme } from 'next-themes';
 import {
@@ -22,11 +22,13 @@ import { useSessionsList, useDeleteSession, useRenameSession } from '@/hooks/api
 import { getSessionHistory } from '@/api/chat-api';
 import { useChatStore } from '@/stores/chat-store';
 import { formatDistanceToNow } from 'date-fns';
+import { SettingsModal } from '@/components/settings/settings-modal';
 
 export function SessionsSidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -402,6 +404,15 @@ export function SessionsSidebar() {
                     </p>
                   </div>
 
+                  {/* Settings */}
+                  <button
+                    onClick={() => { setSettingsOpen(true); setPopoverOpen(false); }}
+                    className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-foreground transition-colors hover:bg-muted cursor-pointer"
+                  >
+                    <Settings className="h-4 w-4" />
+                    <span>Settings</span>
+                  </button>
+
                   {/* Theme Toggle */}
                   <button
                     onClick={toggleTheme}
@@ -460,6 +471,15 @@ export function SessionsSidebar() {
                   </p>
                 </div>
 
+                {/* Settings */}
+                <button
+                  onClick={() => { setSettingsOpen(true); setPopoverOpen(false); }}
+                  className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-foreground transition-colors hover:bg-muted cursor-pointer"
+                >
+                  <Settings className="h-4 w-4" />
+                  <span>Settings</span>
+                </button>
+
                 {/* Theme Toggle */}
                 <button
                   onClick={toggleTheme}
@@ -485,6 +505,8 @@ export function SessionsSidebar() {
             </PopoverContent>
           </Popover>
         )}
+
+        <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
       </div>
     </div>
   );
