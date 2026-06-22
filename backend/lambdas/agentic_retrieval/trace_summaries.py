@@ -1,0 +1,323 @@
+"""Human-readable summaries of tool calls and results for UI trace."""
+
+from typing import Any
+
+from tracing import truncate_text
+
+
+def summarize_assistant_message(message: dict, max_chars: int) -> dict[str, Any]:
+    content = message.get("content") or []
+    text_blocks = [block.get("text", "") for block in content if "text" in block]
+    tool_names = [
+        block["toolUse"].get("name", "")
+        for block in content
+        if "toolUse" in block
+    ]
+    return {
+        "content_blocks": len(content),
+        "text_block_count": len(text_blocks),
+        "text_preview": truncate_text("\n".join(text_blocks), max_chars) if text_blocks else "",
+        "tool_use_count": len(tool_names),
+        "tool_names": tool_names,
+    }
+
+
+def summarize_bedrock_response(response: dict) -> dict[str, Any]:
+    usage = response.get("usage") or {}
+    metrics = response.get("metrics") or {}
+    return {
+        "stop_reason": response.get("stopReason", ""),
+        "input_tokens": usage.get("inputTokens"),
+        "output_tokens": usage.get("outputTokens"),
+        "total_tokens": usage.get("totalTokens"),
+        "model_latency_ms": metrics.get("latencyMs"),
+    }
+
+
+def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
+    if "error" in result:
+        return {
+            "tool_name": tool_name,
+            "status": "error",
+            "error": result.get("error"),
+            "fallback_match_count": len(result.get("fallback_matches", [])),
+        }
+
+    if tool_name == "faq_search":
+        scores = [round(faq.get("score", 0.0), 4) for faq in result.get("faqs", [])[:5]]
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "faq_count": result.get("count", 0),
+            "top_scores": scores,
+        }
+
+    if tool_name == "vector_search":
+        chunks = result.get("chunks", [])
+        graph_context = result.get("graph_context", {})
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "chunk_count": len(chunks),
+            "top_doc_ids": [chunk.get("doc_id") for chunk in chunks[:5]],
+            "graph_context_doc_count": len(graph_context),
+            "graph_context_neighbor_count": sum(len(v) for v in graph_context.values()),
+        }
+
+    if tool_name == "search_document":
+        chunks = result.get("chunks", [])
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "doc_id": result.get("doc_id"),
+            "chunk_count": len(chunks),
+        }
+
+    if tool_name == "get_neighbors":
+        neighbors = result.get("neighbors", [])
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "neighbor_count": len(neighbors),
+            "relationships": sorted({
+                n.get("relationship", "") for n in neighbors if n.get("relationship")
+            }),
+            "neighbor_ids": [n.get("id") for n in neighbors[:10]],
+        }
+
+    if tool_name == "get_document":
+        doc = result.get("document")
+        return {
+            "tool_name": tool_name,
+            "status": "ok" if doc else "miss",
+            "document_id": (doc or {}).get("id"),
+            "document_type": (doc or {}).get("doc_type"),
+            "authority_level": (doc or {}).get("authority_level"),
+        }
+
+    if tool_name == "get_authority_chain":
+        chain = result.get("authority_chain", [])
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "chain_length": len(chain),
+            "chain_ids": [node.get("id") for node in chain[:10]],
+        }
+
+    if tool_name == "list_framework_docs":
+        docs = result.get("documents", [])
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "document_count": len(docs),
+            "document_ids": [doc.get("id") for doc in docs[:10]],
+        }
+
+    if tool_name == "fetch_case_opinion":
+        return {
+            "tool_name": tool_name,
+            "status": "ok" if result.get("found") else "miss",
+            "citation": result.get("citation"),
+            "raw_key": result.get("raw_key", ""),
+            "opinion_chars": len(result.get("text", "")),
+        }
+
+    if tool_name == "answer":
+        return {
+            "tool_name": tool_name,
+            "status": "terminal",
+            "response_chars": len(result.get("response", "")),
+            "cited_doc_count": len(result.get("cited_doc_ids", [])),
+            "cited_doc_ids": result.get("cited_doc_ids", [])[:20],
+        }
+
+    return {"tool_name": tool_name, "status": "ok", "result_keys": sorted(result.keys())}
+
+
+def build_tool_call_summary(tool_name: str, tool_input: dict) -> str:
+    """Short prose describing a tool call for the UI trace."""
+    if tool_name in ("vector_search", "faq_search", "refine_query"):
+        query = tool_input.get("query", "")
+        return f'"{query}"' if query else ""
+    if tool_name == "search_document":
+        doc_id = tool_input.get("doc_id", "")
+        query = tool_input.get("query", "")
+        return f'{doc_id}: "{query}"' if query else doc_id
+    if tool_name == "get_neighbors":
+        doc_id = tool_input.get("doc_id", "")
+        return f"doc {doc_id}" if doc_id else ""
+    if tool_name == "get_document":
+        doc_id = tool_input.get("doc_id", "")
+        return doc_id
+    if tool_name == "get_authority_chain":
+        doc_id = tool_input.get("doc_id", "")
+        return f"doc {doc_id}" if doc_id else ""
+    if tool_name == "list_framework_docs":
+        framework = tool_input.get("framework_name", "")
+        return framework
+    if tool_name == "fetch_case_opinion":
+        citation = tool_input.get("citation", "")
+        return citation
+    if tool_name == "answer":
+        cited = tool_input.get("cited_doc_ids", []) or []
+        return f"with {len(cited)} cited doc(s)"
+    return ""
+
+
+def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> dict:
+    """Build a UI-friendly summary of a tool result.
+
+    Returns a dict with:
+      - status: 'ok' | 'error' | 'miss' | 'terminal'
+      - summary_text: one-line human-readable string
+      - doc_ids: list of up to 10 document IDs referenced in the result
+      - doc_titles: list aligned with doc_ids
+      - metadata: camelCase dict of counts/scores for the UI subtitle
+      - raw: output of summarize_tool_result (dev-mode payload)
+    """
+    import logging
+
+    raw = summarize_tool_result(tool_name, result)
+    status = raw.get("status", "ok")
+    doc_ids: list[str] = []
+    summary_text = ""
+    metadata: dict[str, Any] = {}
+
+    if "error" in result:
+        return {
+            "status": "error",
+            "summary_text": str(result.get("error") or "tool error"),
+            "doc_ids": [],
+            "doc_titles": [],
+            "metadata": {},
+            "raw": raw,
+        }
+
+    if tool_name == "vector_search":
+        chunks = result.get("chunks", [])
+        seen_docs: set[str] = set()
+        ordered_docs: list[str] = []
+        for chunk in chunks:
+            doc_id = chunk.get("doc_id")
+            if doc_id and doc_id not in seen_docs:
+                seen_docs.add(doc_id)
+                ordered_docs.append(doc_id)
+        doc_ids = ordered_docs[:10]
+        summary_text = (
+            f"Found {len(chunks)} chunks across {len(ordered_docs)} doc(s)"
+        )
+        top_score = max(
+            (float(c.get("score", 0.0)) for c in chunks),
+            default=0.0,
+        )
+        graph_context = result.get("graph_context", {}) or {}
+        metadata = {
+            "chunkCount": len(chunks),
+            "docCount": len(ordered_docs),
+            "neighborCount": sum(len(v) for v in graph_context.values()),
+            "topScore": round(top_score, 4),
+        }
+
+    elif tool_name == "search_document":
+        chunks = result.get("chunks", [])
+        target_doc = result.get("doc_id", "")
+        doc_ids = [target_doc] if target_doc else []
+        summary_text = f"Found {len(chunks)} chunk(s) in {target_doc}"
+        metadata = {"chunkCount": len(chunks), "docId": target_doc}
+
+    elif tool_name == "faq_search":
+        faqs = result.get("faqs", [])
+        top = faqs[0].get("score", 0.0) if faqs else 0.0
+        summary_text = (
+            f"FAQ top score {top:.2f} ({len(faqs)} hit(s))"
+            if faqs
+            else "No FAQ matches"
+        )
+        metadata = {"faqCount": len(faqs), "topScore": round(float(top), 4)}
+
+    elif tool_name == "get_neighbors":
+        neighbors = result.get("neighbors", [])
+        doc_ids = [n["id"] for n in neighbors if n.get("id")][:10]
+        summary_text = f"Pulled {len(neighbors)} neighbor(s)"
+        metadata = {"neighborCount": len(neighbors)}
+
+    elif tool_name == "get_document":
+        doc = result.get("document")
+        if doc:
+            doc_ids = [doc.get("id")] if doc.get("id") else []
+            doc_id = doc.get("id", "")
+            doc_type = doc.get("doc_type") or (
+                "statute" if doc_id.startswith("WIS-STAT-") else "document"
+            )
+            summary_text = f"Fetched {doc_type} {doc_id}"
+            metadata = {"documentCount": 1}
+        else:
+            summary_text = "Document not found"
+            status = "miss"
+            metadata = {"documentCount": 0}
+
+    elif tool_name == "get_authority_chain":
+        chain = result.get("authority_chain", [])
+        doc_ids = [n["id"] for n in chain if n.get("id")][:10]
+        summary_text = f"Walked authority chain ({len(chain)} node(s))"
+        metadata = {"chainLength": len(chain)}
+
+    elif tool_name == "list_framework_docs":
+        docs = result.get("documents", [])
+        doc_ids = [d["id"] for d in docs if d.get("id")][:10]
+        summary_text = f"Listed {len(docs)} framework doc(s)"
+        metadata = {"documentCount": len(docs)}
+
+    elif tool_name == "fetch_case_opinion":
+        citation = result.get("citation", "")
+        if result.get("found"):
+            summary_text = f"Fetched opinion for {citation}"
+            metadata = {"opinionChars": len(result.get("text", ""))}
+        else:
+            summary_text = f"No opinion found for {citation}"
+            status = "miss"
+            metadata = {"opinionChars": 0}
+
+    elif tool_name == "refine_query":
+        refined = result.get("refined_query", "")
+        summary_text = f'Refined to "{refined}"' if refined else "No refinement"
+        metadata = {"refined": bool(refined)}
+
+    elif tool_name == "answer":
+        cited = result.get("cited_doc_ids", []) or []
+        doc_ids = list(cited)[:10]
+        summary_text = f"Answer with {len(cited)} cited doc(s)"
+        status = "terminal"
+        metadata = {"citedDocCount": len(cited)}
+
+    else:
+        summary_text = f"{tool_name} complete"
+
+    doc_titles: list[str] = []
+    for doc_id in doc_ids:
+        try:
+            info = neptune_client.get_document(doc_id)
+            doc_titles.append((info or {}).get("title") or doc_id)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "title resolution failed for doc_id=%s: %s",
+                doc_id,
+                type(exc).__name__,
+            )
+            doc_titles.append(doc_id)
+
+    return {
+        "status": status,
+        "summary_text": summary_text,
+        "doc_ids": doc_ids,
+        "doc_titles": doc_titles,
+        "metadata": metadata,
+        "raw": raw,
+    }
+
+
+def discovery_summary(discovery: dict[str, str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for tag in discovery.values():
+        counts[tag] = counts.get(tag, 0) + 1
+    return counts
