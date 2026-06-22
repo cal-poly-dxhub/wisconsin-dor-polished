@@ -15,6 +15,7 @@ class FakeAgentEventMessage:
 # (e.g., running all of backend/ where layers/ has the real modules on path).
 _LAYER_STUBS = {
     "websocket_utils": MagicMock(),
+    "websocket_utils.batching": MagicMock(),
     "websocket_utils.models": MagicMock(),
     "websocket_utils.utils": MagicMock(),
     "step_function_types": MagicMock(),

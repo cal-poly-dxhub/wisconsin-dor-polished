@@ -1,7 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
-import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
@@ -16,8 +14,6 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   neptuneGraphId: string;
   neptuneGraphEndpoint: string;
   rawBucketName: string;
-  responseStreamingFunction: lambda.IFunction;
-  resourceStreamingFunction: lambda.IFunction;
   enabled: boolean;
   faqKnowledgeBaseId: string;
   faqUrlTable: cdk.aws_dynamodb.ITable;
@@ -25,7 +21,6 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
 }
 
 export class GraphRAGMessagesStack extends cdk.NestedStack {
-  public readonly graphragStateMachine: sfn.StateMachine;
 
   constructor(scope: Construct, id: string, props: GraphRAGMessagesStackProps) {
     super(scope, id, props);
@@ -80,8 +75,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
     );
 
     // Read-write access to chat history: the agent reads prior turns to
-    // resolve follow-ups and writes the current turn as a persistence
-    // fallback before ResponseStreaming runs.
+    // resolve follow-ups and writes the current turn after streaming.
     props.chatHistoryTable.grantReadWriteData(agenticRetrievalHandler);
 
     // Read access to the sessions table + permission to post to
@@ -166,111 +160,9 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
       })
     );
 
-    // Step Functions: AgenticRetrieval -> Parallel(ResourceStreaming, ResponseStreaming)
-    const agenticRetrievalTask = new tasks.LambdaInvoke(
-      this,
-      'AgenticRetrievalTask',
-      {
-        lambdaFunction: agenticRetrievalHandler,
-        outputPath: '$.Payload',
-      }
-    );
-
-    // Build StreamResourcesJob from the flat AgenticRetrieval output.
-    // Shape: { query_id, session_id, faqs, documents }
-    const selectResourceStreamingJob = new sfn.Pass(
-      this,
-      'SelectResourceStreamingJob',
-      {
-        parameters: {
-          'query_id.$': '$.query_id',
-          'session_id.$': '$.session_id',
-          'faqs.$': '$.faqs',
-          'documents.$': '$.documents',
-        },
-      }
-    );
-
-    // Build GenerateResponseJob from the flat AgenticRetrieval output.
-    // Shape: { query, query_id, session_id, faqs, documents }
-    const selectGenerateResponseJob = new sfn.Pass(
-      this,
-      'SelectGenerateResponseJob',
-      {
-        parameters: {
-          'query.$': '$.query',
-          'query_id.$': '$.query_id',
-          'session_id.$': '$.session_id',
-          'faqs.$': '$.faqs',
-          'documents.$': '$.documents',
-        },
-      }
-    );
-
-    const resourceStreamingTask = new tasks.LambdaInvoke(
-      this,
-      'ResourceStreamingTask',
-      {
-        lambdaFunction: props.resourceStreamingFunction,
-        outputPath: '$.Payload',
-      }
-    );
-
-    const responseStreamingTask = new tasks.LambdaInvoke(
-      this,
-      'ResponseStreamingTask',
-      {
-        lambdaFunction: props.responseStreamingFunction,
-        outputPath: '$.Payload',
-      }
-    );
-
-    const checkSuccess = new sfn.Choice(this, 'CheckRetrievalSuccess')
-      .when(
-        sfn.Condition.booleanEquals('$.successful', false),
-        new sfn.Fail(this, 'RetrievalFailed', {
-          error: 'Agentic retrieval failed',
-          cause:
-            'The agentic retrieval lambda returned successful=false',
-        })
-      )
-      .otherwise(
-        new sfn.Parallel(this, 'ParallelGraphRAGStreaming')
-          .branch(
-            selectResourceStreamingJob.next(resourceStreamingTask)
-          )
-          .branch(
-            selectGenerateResponseJob.next(responseStreamingTask)
-          )
-      );
-
-    const definition = agenticRetrievalTask.next(checkSuccess);
-
-    this.graphragStateMachine = new sfn.StateMachine(
-      this,
-      'GraphRAGStateMachine',
-      {
-        definition,
-        stateMachineName: 'GraphRAGStreamingStateMachine',
-        timeout: cdk.Duration.minutes(5),
-        tracingEnabled: true,
-        logs: {
-          destination: new cdk.aws_logs.LogGroup(
-            this,
-            'GraphRAGStateMachineLogs',
-            {
-              logGroupName: `/aws/states/GraphRAGStreamingStateMachine`,
-              retention: cdk.aws_logs.RetentionDays.ONE_WEEK,
-            }
-          ),
-          level: sfn.LogLevel.ALL,
-          includeExecutionData: true,
-        },
-      }
-    );
-
-    // EventBridge Rule (MUTUALLY EXCLUSIVE with existing rule)
-    // Uses $.detail to extract just the UserQuery payload
+    // EventBridge Rule — invokes AgenticRetrieval directly (no Step Function).
+    // The Lambda handles retrieval, answer streaming, and resource delivery
+    // all in one invocation over WebSocket.
     const triggerGraphRAGProcessing = new events.Rule(
       this,
       'TriggerGraphRAGProcessing',
@@ -285,19 +177,16 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
     );
 
     triggerGraphRAGProcessing.addTarget(
-      new targets.SfnStateMachine(this.graphragStateMachine, {
-        input: events.RuleTargetInput.fromEventPath('$.detail'),
+      new targets.LambdaFunction(agenticRetrievalHandler, {
+        event: events.RuleTargetInput.fromEventPath('$.detail'),
+        maxEventAge: cdk.Duration.minutes(3),
+        retryAttempts: 0,
       })
     );
 
     new cdk.CfnOutput(this, 'AgenticRetrievalFunctionArn', {
       value: agenticRetrievalHandler.functionArn,
       description: 'ARN of the Agentic Retrieval Lambda function',
-    });
-
-    new cdk.CfnOutput(this, 'GraphRAGStateMachineArn', {
-      value: this.graphragStateMachine.stateMachineArn,
-      description: 'ARN of the GraphRAG Step Functions state machine',
     });
   }
 }

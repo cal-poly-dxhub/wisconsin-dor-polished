@@ -7,21 +7,22 @@
 | 1 | Disambiguate generic queries before full retrieval | [Response A](#response-a) |
 | 2 | Fixing linking issues | — |
 | 3 | Tune model tone — reduce overconfident statements | — |
-| 4 | Replace Step Function with direct Lambda invoke | — |
 | 5 | Replace LLM classification with structural parsers | — |
 | 6 | Reduce PDF chunk size for consistency and precision | — |
 | 8 | Add boilerplate stripping before chunking | — |
 | 9 | Reduce topic clustering batch size | — |
-| 12 | Fix WebSocket streaming hang on background tabs | — |
-| 13 | Harden authority hierarchy enforcement beyond prompt compliance | — |
+| 14 | Improve case law discovery in vector_search auto-enrichment | [Response B](#response-b) |
 
 ## Done
 
 | # | Task |
 |---|------|
+| 4 | Replace Step Function with direct Lambda invoke |
 | 7 | Refactor agentic retrieval Lambda (main.py) |
 | 10 | Externalize prompts from Lambda code |
 | 11 | Add managed compute for ingestion (Fargate) |
+| 12 | Fix WebSocket streaming hang on background tabs |
+| 13 | Harden authority hierarchy enforcement (authority-aware re-ranking) |
 
 ---
 
@@ -157,6 +158,30 @@ Each Neptune Document node already carries an `authority_level` integer (1–9),
 
 ---
 
+### Task 14: Improve case law discovery in vector_search auto-enrichment
+
+**Problem:** The `vector_search` tool's auto-enrichment does not reliably surface relevant case law — especially recent decisions connected to statutes via `CITES` edges. The current approach depends on: (1) text regex citation extraction from retrieved chunks, and (2) `get_neighbors` on parent docs with a hard cap of 50 and no ordering. For heavily-connected nodes like `statutes-70` (hundreds of CITES edges), which 50 neighbors are returned is non-deterministic. This causes critical case law (e.g., *Children's Hospital of Wisconsin v. City of Wauwatosa*, 2025 WI App 43) to appear in some runs but not others for the same query.
+
+**Evidence:** Same query ("Is the expansion of a non-profit hospital that is under construction on the assessment date qualify for an exemption from property tax?") run on 06/18 and 06/21. On 06/18 the agent happened to call `get_neighbors` on `WIS-STAT-70.11` with `title_filter: "hospital"`, found the 2025 case, fetched its full opinion from S3, and produced an excellent answer citing the case's facts and holding. On 06/21 the agent took a different tool path, never discovered the case, and produced a weaker generic answer. The auto-enrichment surfaced the same 5 generic cases both times — Children's Hospital was never in them because it's connected via graph edge (CITES), not mentioned in the chunk text.
+
+**Root Cause:** The auto-enrichment resolves cases from *text mentions* (regex) but not from *graph structure* (CITES edges to statute subsections). The `get_neighbors` call on parent docs is too broad (entire statute doc) and too small (50 cap, no ordering) to reliably capture the right cases.
+
+**Direction (ranked by effectiveness):**
+
+1. **Chunk → Statute subsection → CaseLaw path** — Retrieved chunks already have `CITES` edges to specific statute subsection nodes (e.g., `WIS-STAT-70.11`). Add a step: collect the statute subsection IDs cited by the top chunks, then query for CaseLaw nodes that also have `CITES` edges to those same subsections. This is deterministic, targeted, and uses exactly the graph structure built during ingestion.
+
+2. **Order the 50-cap by recency** — Add `ORDER BY n.effective_date DESC` to the `get_neighbors` query. Newer cases (2025) always beat older ones (1967) for a slot in the cap. Simple one-line change.
+
+3. **Label-aware budget splitting** — Reserve a portion of the 50 neighbor slots specifically for CaseLaw nodes. Currently the 50 slots may be dominated by Documents/Frameworks, pushing case law out entirely.
+
+4. **Prompt nudge** — Instruct the agent to always call `get_neighbors` with `title_filter` on relevant statutes. Cheapest to implement but fundamentally unreliable — the same prompt produced different behavior on 06/18 vs 06/21.
+
+**Key files:**
+- `backend/lambdas/agentic_retrieval/tools.py` — auto-enrichment logic (lines 665–791)
+- `backend/lambdas/agentic_retrieval/neptune_client.py` — `get_neighbors()` (line 279), `resolve_case_citations()`, would need new method for subsection→CaseLaw traversal
+
+---
+
 ## Flawed Responses
 
 ### Response A
@@ -182,5 +207,45 @@ Each Neptune Document node already carries an `authority_level` integer (1–9),
 > **Property Record Data** — The 2025 Wisconsin Property Assessment Manual outlines data sources (physical view, public area view, owner-requested data, other info such as listings/permits).
 >
 > **Sales Ratio Studies and Market Analysis** — assessors analyze sales through assessment/sales ratio studies, monitor zoning changes, building permits, and land use factors.
+
+</details>
+
+---
+
+### Response B
+
+**Query:** Is the expansion of a non-profit hospital that is under construction on the assessment date qualify for an exemption from property tax?
+
+**Issue:** On 06/21, the system failed to discover and cite *Children's Hospital of Wisconsin, Inc. v. City of Wauwatosa* (2025 WI App 43) — the most directly on-point case — despite it existing in the graph with a CITES edge to WIS-STAT-70.11. The 06/18 run of the same query correctly found and cited it, producing a substantially better answer with the case's specific facts and holding.
+
+<details>
+<summary>06/21 response (missing Children's Hospital)</summary>
+
+> # Nonprofit Hospital Expansion Under Construction: Property Tax Exemption
+>
+> ## Short Answer
+>
+> **Generally, no.** A hospital expansion that is still under construction on the January 1 assessment date typically does **not** qualify for the property tax exemption under Wis. Stat. § 70.11(4m)(a), because the property is not yet being **"owned and used"** exclusively for hospital purposes on that date. However, the analysis is fact-specific and depends on the degree to which the property is actually being put to hospital use.
+>
+> [cites Covenant Healthcare (2011 WI 80), Saint Joseph's Hospital (276 Wis. 2d 574), but NOT Children's Hospital (2025 WI App 43)]
+
+</details>
+
+<details>
+<summary>06/18 response (correctly cites Children's Hospital)</summary>
+
+> # Non-Profit Hospital Expansion Under Construction: Property Tax Exemption
+>
+> ## Short Answer
+>
+> **Generally, no** — a non-profit hospital expansion that is only partially constructed on the January 1 assessment date does **not** qualify for the property tax exemption under Wis. Stat. § 70.11(4m). However, a fully constructed expansion that is in the **final stages of being readied** for hospital use (but not yet operational) **may** qualify under the "readying rule."
+>
+> ### The 2025 Court of Appeals Decision — Directly On Point
+>
+> In ***Children's Hospital of Wisconsin, Inc. v. City of Wauwatosa*, 2025 WI App 43**, the Court of Appeals addressed precisely the question you are asking: whether a non-profit hospital's **expansion tower under construction** on the assessment date qualifies for the § 70.11(4m) exemption.
+>
+> **Facts:** Children's Hospital of Wisconsin (CHW) began constructing the "North Tower" addition to its existing hospital complex. On January 1, 2020 (the assessment date), the North Tower was only approximately **14% completed** (excavation, footings, foundation walls, some exterior walls). CHW argued the property was exempt because it was being "readied" for use as a nonprofit hospital.
+>
+> **Holding:** The Court of Appeals **affirmed** the City of Wauwatosa's denial of the exemption...
 
 </details>

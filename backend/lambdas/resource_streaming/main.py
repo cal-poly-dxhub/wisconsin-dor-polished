@@ -11,10 +11,10 @@ from step_function_types.models import (
     StreamResourcesJob,
     StreamResourcesResult,
 )
+from websocket_utils.batching import batch_documents_for_ws
 from websocket_utils.errors import WebSocketError
 from websocket_utils.models import (
     FAQ,
-    DocumentsContent,
     DocumentsMessage,
     FAQContent,
     FAQMessage,
@@ -24,16 +24,6 @@ from websocket_utils.utils import WebSocketServer, get_ws_connection_from_sessio
 
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
-
-# API Gateway WebSocket caps a single PostToConnection frame at 128 KB.
-# We batch documents into multiple frames with headroom for the JSON envelope
-# and for UTF-8 escape expansion.
-_WS_FRAME_BUDGET_BYTES = 100_000
-# Cap any individual document's content so a single oversized chunk can't
-# exceed the per-frame budget on its own. Citation cards only need enough
-# content for a preview; the title + source URL carry the click-through.
-_MAX_DOC_CONTENT_BYTES = 60_000
-_TRUNCATION_SUFFIX = "\n\n… [content truncated]"
 
 
 def process_event(event: dict) -> StreamResourcesJob:
@@ -45,62 +35,6 @@ def process_event(event: dict) -> StreamResourcesJob:
     except pydantic.ValidationError as e:
         logger.error(f"Error processing event: {e}")
         raise ValidationError() from e
-
-
-def _truncate_doc_content(doc: SourceDocument) -> SourceDocument:
-    """Cap a single document's content at _MAX_DOC_CONTENT_BYTES (UTF-8)."""
-    content = doc.content or ""
-    encoded = content.encode("utf-8")
-    if len(encoded) <= _MAX_DOC_CONTENT_BYTES:
-        return doc
-    # Trim on a character boundary, not mid-codepoint.
-    truncated = encoded[:_MAX_DOC_CONTENT_BYTES].decode("utf-8", errors="ignore")
-    return doc.model_copy(update={"content": truncated + _TRUNCATION_SUFFIX})
-
-
-def _batch_documents_for_ws(
-    docs: list[SourceDocument],
-    query_id: str,
-) -> list[DocumentsMessage]:
-    """Pack documents into DocumentsMessage batches under the frame budget.
-
-    The API Gateway WebSocket frame limit is 128 KB. Sending all docs at
-    once for large result sets raises a 413, which drops every citation.
-    The frontend appends on each 'documents' message, so multiple frames
-    merge seamlessly on the client.
-    """
-    batches: list[DocumentsMessage] = []
-    current: list[SourceDocument] = []
-    current_size = 0
-
-    for doc in docs:
-        safe_doc = _truncate_doc_content(doc)
-        doc_bytes = len(safe_doc.model_dump_json(by_alias=True).encode("utf-8"))
-
-        # +1 for list separator; negligible but keeps accounting honest.
-        projected = current_size + doc_bytes + (1 if current else 0)
-        if current and projected > _WS_FRAME_BUDGET_BYTES:
-            batches.append(
-                DocumentsMessage(
-                    query_id=query_id,
-                    content=DocumentsContent(documents=current),
-                )
-            )
-            current = [safe_doc]
-            current_size = doc_bytes
-        else:
-            current.append(safe_doc)
-            current_size = projected
-
-    if current:
-        batches.append(
-            DocumentsMessage(
-                query_id=query_id,
-                content=DocumentsContent(documents=current),
-            )
-        )
-
-    return batches
 
 
 async def _stream_resources_async(job: StreamResourcesJob, ws_connect: WebSocketServer):
@@ -129,7 +63,7 @@ async def _stream_resources_async(job: StreamResourcesJob, ws_connect: WebSocket
             )
             for doc in documents_resource.documents
         ]
-        documents_messages = _batch_documents_for_ws(source_documents, job.query_id)
+        documents_messages = batch_documents_for_ws(source_documents, job.query_id)
         if len(documents_messages) > 1:
             logger.info(
                 f"Splitting {len(source_documents)} documents into "

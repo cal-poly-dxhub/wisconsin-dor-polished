@@ -210,7 +210,7 @@ class TestRunAgenticLoop:
             return _noop()
         mock_ws.send_json = capture
 
-        answer, cited, rag_docs, faq_resource = main.run_agentic_loop(
+        answer, cited, rag_docs, faq_resource, _trace = main.run_agentic_loop(
             "what is use value?",
             query_id="q-1", session_id="s-1",
             ws_server=mock_ws, trace_seq=itertools.count(1).__next__,
@@ -273,7 +273,7 @@ class TestRunAgenticLoop:
             return _noop()
         mock_ws.send_json = capture
 
-        answer, cited, rag_docs, faq_resource = main.run_agentic_loop(
+        answer, cited, rag_docs, faq_resource, _trace = main.run_agentic_loop(
             "what is TID?",
             query_id="q-1", session_id="s-1",
             ws_server=mock_ws, trace_seq=itertools.count(1).__next__,
@@ -292,13 +292,13 @@ class TestHandler:
         main = _import_main()
         mock_ws = MagicMock()
         monkeypatch.setattr(main, "get_ws_connection_from_session", MagicMock(return_value=mock_ws))
-        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None)))
+        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None, [])))
         monkeypatch.setattr(main, "get_chat_history", lambda sid: [])
         monkeypatch.setattr(main, "save_chat_history", lambda *a, **kw: None)
         monkeypatch.setattr(main, "process_event", lambda e: SimpleNamespace(
             query="q", query_id="q-1", session_id="s-1"
         ))
-        monkeypatch.setattr(main, "DocumentResource", MagicMock())
+        monkeypatch.setattr(main.asyncio, "run", lambda coro: coro.close())
 
         ctx = SimpleNamespace(aws_request_id="r-1")
         main.handler({"query": "q", "query_id": "q-1", "session_id": "s-1"}, ctx)
@@ -310,13 +310,13 @@ class TestHandler:
     def test_runs_with_ws_none_on_session_lookup_failure(self, monkeypatch):
         main = _import_main()
         monkeypatch.setattr(main, "get_ws_connection_from_session", MagicMock(side_effect=RuntimeError("no session")))
-        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None)))
+        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None, [])))
         monkeypatch.setattr(main, "get_chat_history", lambda sid: [])
         monkeypatch.setattr(main, "save_chat_history", lambda *a, **kw: None)
         monkeypatch.setattr(main, "process_event", lambda e: SimpleNamespace(
             query="q", query_id="q-1", session_id="s-1"
         ))
-        monkeypatch.setattr(main, "DocumentResource", MagicMock())
+        monkeypatch.setattr(main.asyncio, "run", lambda coro: coro.close())
 
         ctx = SimpleNamespace(aws_request_id="r-1")
         main.handler({"query": "q", "query_id": "q-1", "session_id": "s-1"}, ctx)

@@ -105,9 +105,9 @@ Controlled by CDK context flag `useGraphRAG`. EventBridge rule `wisconsin-dor.ch
 
 **Legacy path** (`useGraphRAG=false`): EventBridge → `MessagesStack` Step Function → Classifier Lambda (queries Bedrock FAQ KB, classifies as faq/rag) → branch to either FAQ response or RAG retrieval (OpenSearch) → Parallel(ResourceStreaming, ResponseStreaming)
 
-**GraphRAG path** (`useGraphRAG=true`): EventBridge → `GraphRAGMessagesStack` Step Function → AgenticRetrieval Lambda (Claude tool loop: faq_search → Neptune vector_search/get_neighbors/get_authority_chain → answer) → Parallel(ResourceStreaming, ResponseStreaming)
+**GraphRAG path** (`useGraphRAG=true`): EventBridge → AgenticRetrieval Lambda directly (no Step Function). The Lambda runs the Claude tool loop (faq_search → Neptune vector_search/get_neighbors/get_authority_chain → answer), then streams documents, FAQs, and answer fragments over WebSocket itself. Single Lambda, single DynamoDB write.
 
-Both paths share the same ResponseStreaming and ResourceStreaming Lambdas from `MessagesStack`.
+The legacy path still uses ResponseStreaming and ResourceStreaming Lambdas from `MessagesStack`.
 
 ### Directory Responsibilities
 
@@ -115,7 +115,7 @@ Both paths share the same ResponseStreaming and ResourceStreaming Lambdas from `
   - `stacks/sessions-stack.ts` — Cognito auth, HTTP API, WebSocket API, DynamoDB sessions/chat history
   - `stacks/messages-stack.ts` — Legacy retrieval: classifier, retrieval, streaming Lambdas + Step Function
   - `stacks/graphrag-stack.ts` — Neptune Analytics graph, Bedrock FAQ KB
-  - `stacks/graphrag-messages-stack.ts` — Agentic retrieval Lambda + Step Function
+  - `stacks/graphrag-messages-stack.ts` — Agentic retrieval Lambda + EventBridge trigger
   - `stacks/webapp-stack.ts` — Next.js frontend (deployed via CloudFront + `cdk-nextjs-standalone`)
   - `stacks/ingestion-stack.ts` — Fargate compute for ingestion (VPC, ECS cluster, task def, ECR)
   - `stacks/lambda-layers-stack.ts` — Shared Lambda layers
@@ -181,6 +181,45 @@ Any change to messages sent over WebSocket (adding fields, changing `responseTyp
 3. **Handler** — The `messageHandler` switch in `frontend/src/hooks/use-websocket-chat.ts`
 
 The frontend validates every WebSocket message via `WebSocketMessageSchema.parse()`. If the backend sends a `responseType` or shape that isn't in the Zod union, the message is rejected and an error is shown to the user. This applies to trace/logging messages too — they flow through the same validated WebSocket path.
+
+## Chat History & Activity Data (DynamoDB)
+
+The **ChatHistoryTable** stores every user query and bot response. When the user asks for recent queries, chat responses, or activity data, query DynamoDB directly rather than parsing CloudWatch logs — DynamoDB has the complete structured data.
+
+**Table name:** `WisconsinBotGraphRAG-WisconsinSessionsStackNestedStackWisconsinSessionsStackNestedStac-1P3H46X50M51H-ChatHistoryTableA22BA13C-GTH2UH9SGD0W`
+
+**Schema:**
+- Partition key: `queryId` (String, UUID)
+- GSI `sessionIdKey`: partition `sessionId`, sort `timestamp`
+- Attributes: `queryId`, `sessionId`, `query`, `answer`, `timestamp` (ISO 8601), `resources`, `faqs`, `documents`
+- Feedback attributes (set via `POST /session/{id}/feedback`): `thumbUp` (BOOL), `feedback` (String)
+
+**CLI examples:**
+```bash
+# Get all items (full scan):
+AWS_PROFILE=widor AWS_REGION=us-east-1 aws dynamodb scan \
+  --table-name "WisconsinBotGraphRAG-WisconsinSessionsStackNestedStackWisconsinSessionsStackNestedStac-1P3H46X50M51H-ChatHistoryTableA22BA13C-GTH2UH9SGD0W" \
+  --output json > /tmp/chat_history.json
+
+# Filter to recent items (e.g. last week):
+AWS_PROFILE=widor AWS_REGION=us-east-1 aws dynamodb scan \
+  --table-name "WisconsinBotGraphRAG-WisconsinSessionsStackNestedStackWisconsinSessionsStackNestedStac-1P3H46X50M51H-ChatHistoryTableA22BA13C-GTH2UH9SGD0W" \
+  --filter-expression "#ts >= :cutoff" \
+  --expression-attribute-names '{"#ts": "timestamp"}' \
+  --expression-attribute-values '{":cutoff": {"S": "2026-06-14"}}' \
+  --output json
+
+# Get items with thumbs-down feedback:
+AWS_PROFILE=widor AWS_REGION=us-east-1 aws dynamodb scan \
+  --table-name "WisconsinBotGraphRAG-WisconsinSessionsStackNestedStackWisconsinSessionsStackNestedStac-1P3H46X50M51H-ChatHistoryTableA22BA13C-GTH2UH9SGD0W" \
+  --filter-expression "thumbUp = :val" \
+  --expression-attribute-values '{":val": {"BOOL": false}}' \
+  --output json
+```
+
+**Admin dashboard:** `/admin/activity` route in the frontend (dev-only, Cognito-gated). Fetches all items via `GET /admin/activity` API endpoint, caches locally for 1 hour with manual sync override. Supports filtering by time range, feedback status, and text search.
+
+**When user asks about recent queries or chat activity:** Prefer DynamoDB scan over CloudWatch logs — it returns structured data with the full question, answer, feedback, and timestamps. Offer to use the admin API endpoint or direct CLI scan depending on context.
 
 ## Prompt Management
 

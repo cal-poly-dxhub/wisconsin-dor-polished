@@ -51,7 +51,15 @@ from tracing import (
     log_agent_event,
     query_log_fields,
 )
-from websocket_utils.utils import get_ws_connection_from_session
+from websocket_utils.batching import batch_documents_for_ws
+from websocket_utils.models import (
+    FAQ,
+    AnswerEventType,
+    FAQContent,
+    FAQMessage,
+    SourceDocument,
+)
+from websocket_utils.utils import WebSocketServer, get_ws_connection_from_session
 
 MAX_TURNS = 10
 
@@ -131,7 +139,7 @@ def run_agentic_loop(
     request_id: str = "",
     ws_server=None,
     trace_seq=None,
-) -> tuple[str, list[str], list[RAGDocument], FAQResource | None]:
+) -> tuple[str, list[str], list[RAGDocument], FAQResource | None, list[dict]]:
     """Run Claude's agentic loop against Neptune.
 
     Turn 0 is hardcoded: run `faq_search` with the verbatim user query. The
@@ -139,7 +147,7 @@ def run_agentic_loop(
     graph work.
 
     Returns:
-        (answer_text, cited_doc_ids, rag_documents, faq_resource)
+        (answer_text, cited_doc_ids, rag_documents, faq_resource, trace_log)
     """
     chat_history = chat_history or []
     if trace_seq is None:
@@ -148,6 +156,10 @@ def run_agentic_loop(
     all_chunks: list[dict] = []
     discovery: dict[str, str] = {}
     fetched_opinions: dict[str, dict] = {}
+    trace_log: list[dict] = []
+
+    def _record_trace(kind: str, turn: int | None = None, **data) -> None:
+        trace_log.append({"kind": kind, "turn": turn, "ts": int(time.time() * 1000), **data})
 
     # Turn 0 refinement: rewrite context-dependent follow-ups against history.
     search_query = query
@@ -174,6 +186,13 @@ def run_agentic_loop(
             )
             search_query = refined
         refine_summary = _tool_result_summary("refine_query", refine_result)
+        _record_trace(
+            "tool_result", turn=0,
+            toolName="refine_query",
+            status=refine_summary["status"],
+            summary=refine_summary["summary_text"],
+            metadata=refine_summary["metadata"],
+        )
         _emit(
             ws_server,
             trace_seq,
@@ -233,6 +252,15 @@ def run_agentic_loop(
         f"threshold={FAQ_SCORE_THRESHOLD}"
     )
     faq_summary = _tool_result_summary("faq_search", faq_result)
+    _record_trace(
+        "tool_result", turn=0,
+        toolName="faq_search",
+        status=faq_summary["status"],
+        summary=faq_summary["summary_text"],
+        docIds=faq_summary["doc_ids"],
+        docTitles=faq_summary["doc_titles"],
+        metadata=faq_summary["metadata"],
+    )
     _emit(
         ws_server,
         trace_seq,
@@ -526,6 +554,16 @@ def run_agentic_loop(
                     discovery[stub_doc_id] = "opinion-fetched"
 
             tool_result_summary = _tool_result_summary(tool_name, result)
+            _record_trace(
+                "tool_result", turn=turn_number,
+                toolName=tool_name,
+                status=tool_result_summary["status"],
+                summary=tool_result_summary["summary_text"],
+                docIds=tool_result_summary["doc_ids"],
+                docTitles=tool_result_summary["doc_titles"],
+                metadata=tool_result_summary["metadata"],
+                latencyMs=tool_latency_ms,
+            )
             _log(
                 "agent_tool_result",
                 **trace_context,
@@ -628,6 +666,15 @@ def run_agentic_loop(
                     faq_count=len(cited_faq_resource.faqs) if cited_faq_resource else 0,
                     discovery=discovery_summary(cited_discovery),
                 )
+                _record_trace(
+                    "loop_complete", turn=turn_number,
+                    terminalReason="answer_tool",
+                    turnsUsed=turn_number,
+                    elapsedMs=round((time.perf_counter() - loop_started) * 1000),
+                    citedDocCount=len(cited),
+                    citedDocIds=list(cited)[:20],
+                    discovery=discovery_summary(cited_discovery),
+                )
                 _emit(
                     ws_server,
                     trace_seq,
@@ -640,7 +687,7 @@ def run_agentic_loop(
                         "citedDocCount": len(cited),
                     },
                 )
-                return answer, list(cited), rag_docs, cited_faq_resource
+                return answer, list(cited), rag_docs, cited_faq_resource, trace_log
 
             tool_results.append({
                 "toolResult": {
@@ -691,6 +738,15 @@ def run_agentic_loop(
         rag_document_count=len(rag_docs),
         discovery=discovery_summary(discovery),
     )
+    _record_trace(
+        "loop_complete",
+        terminalReason="assistant_text_or_fallback",
+        turnsUsed=MAX_TURNS,
+        elapsedMs=round((time.perf_counter() - loop_started) * 1000),
+        citedDocCount=len(all_doc_ids),
+        citedDocIds=list(all_doc_ids)[:20],
+        discovery=discovery_summary(discovery),
+    )
     _emit(
         ws_server,
         trace_seq,
@@ -703,13 +759,71 @@ def run_agentic_loop(
             "citedDocCount": len(all_doc_ids),
         },
     )
-    return answer, list(all_doc_ids), rag_docs, high_confidence_faq
+    return answer, list(all_doc_ids), rag_docs, high_confidence_faq, trace_log
+
+
+_ANSWER_FRAGMENT_SIZE = 80
+
+
+async def _stream_response(
+    ws_server: WebSocketServer,
+    query_id: str,
+    answer: str,
+    rag_documents: list[RAGDocument],
+    faq_resource: FAQResource | None,
+) -> None:
+    """Stream documents, FAQs, and answer fragments over WebSocket."""
+    source_documents = [
+        SourceDocument(
+            document_id=doc.document_id,
+            title=doc.title,
+            content=doc.content,
+            source=doc.source,
+            source_url=doc.source_url,
+            discovery_tag=doc.discovery_tag,
+            authority_level=doc.authority_level,
+            s3_key=doc.s3_key,
+            start_page=doc.start_page,
+            end_page=doc.end_page,
+            edition_year=doc.edition_year,
+        )
+        for doc in rag_documents
+    ]
+
+    for msg in batch_documents_for_ws(source_documents, query_id):
+        await ws_server.send_json(msg)
+
+    if faq_resource:
+        faq_message = FAQMessage(
+            query_id=query_id,
+            content=FAQContent(
+                faqs=[
+                    FAQ(
+                        faq_id=faq.faq_id,
+                        question=faq.question,
+                        answer=faq.answer,
+                        source_url=faq.source_url,
+                    )
+                    for faq in faq_resource.faqs
+                ]
+            ),
+        )
+        await ws_server.send_json(faq_message)
+
+    await ws_server.send_json(AnswerEventType(event="start", query_id=query_id))
+
+    async def _answer_fragments():
+        for i in range(0, len(answer), _ANSWER_FRAGMENT_SIZE):
+            yield answer[i : i + _ANSWER_FRAGMENT_SIZE]
+
+    await ws_server.stream_fragments(_answer_fragments(), query_id)
+    await ws_server.send_json(AnswerEventType(event="stop", query_id=query_id))
 
 
 def handler(event: dict, context) -> dict[str, Any]:
     """
     Lambda handler. Processes a UserQuery via agentic retrieval,
-    returns a RetrieveResult compatible with the existing Step Functions flow.
+    streams resources and answer directly over WebSocket.
     """
     session_id: str | None = None
     request_id = getattr(context, "aws_request_id", "") if context else ""
@@ -758,7 +872,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                 },
             )
 
-        answer, cited_doc_ids, rag_documents, faq_resource = run_agentic_loop(
+        answer, cited_doc_ids, rag_documents, faq_resource, trace_log = run_agentic_loop(
             user_query.query,
             chat_history=chat_history,
             query_id=user_query.query_id,
@@ -768,16 +882,6 @@ def handler(event: dict, context) -> dict[str, Any]:
             trace_seq=trace_seq,
         )
 
-        save_chat_history(
-            session_id,
-            user_query.query_id,
-            user_query.query,
-            answer,
-            rag_documents=rag_documents,
-            faq_resource=faq_resource,
-        )
-
-        documents = DocumentResource(documents=rag_documents)
         _log(
             "agentic_retrieval_response_ready",
             request_id=request_id,
@@ -789,14 +893,26 @@ def handler(event: dict, context) -> dict[str, Any]:
             faq_count=len(faq_resource.faqs) if faq_resource else 0,
         )
 
-        return {
-            "successful": True,
-            "query": user_query.query,
-            "query_id": user_query.query_id,
-            "session_id": user_query.session_id,
-            "faqs": faq_resource.model_dump() if faq_resource else None,
-            "documents": documents.model_dump(),
-        }
+        if ws_server:
+            asyncio.run(
+                _stream_response(
+                    ws_server,
+                    user_query.query_id,
+                    answer,
+                    rag_documents,
+                    faq_resource,
+                )
+            )
+
+        save_chat_history(
+            session_id,
+            user_query.query_id,
+            user_query.query,
+            answer,
+            rag_documents=rag_documents,
+            faq_resource=faq_resource,
+            trace_log=trace_log,
+        )
 
     except Exception as e:
         _log(

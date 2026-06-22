@@ -73,7 +73,7 @@ export class WisconsinBotStack extends cdk.Stack {
       'WisconsinGraphRAGMessagesStack',
       {
         description:
-          'GraphRAG messaging services (agentic retrieval + state machine).',
+          'GraphRAG messaging services (agentic retrieval via EventBridge).',
         stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
         websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
         sessionsTable: sessionsStack.sessionsTable,
@@ -82,8 +82,6 @@ export class WisconsinBotStack extends cdk.Stack {
         neptuneGraphId: graphRAGStack.neptuneGraphId,
         neptuneGraphEndpoint: graphRAGStack.neptuneGraphEndpoint,
         rawBucketName: graphRAGStack.rawBucketName,
-        responseStreamingFunction: messagesStack.responseStreamingFunction,
-        resourceStreamingFunction: messagesStack.resourceStreamingFunction,
         enabled: USE_GRAPHRAG,
         faqKnowledgeBaseId: graphRAGStack.faqKnowledgeBaseId,
         faqUrlTable: graphRAGStack.faqUrlTable,
@@ -189,11 +187,6 @@ export class WisconsinBotStack extends cdk.Stack {
       exportName: 'WisconsinBot-NeptuneGraphId',
     });
 
-    new cdk.CfnOutput(this, 'GraphRAGStateMachineArn', {
-      value: graphRAGMessagesStack.graphragStateMachine.stateMachineArn,
-      description: 'ARN of the GraphRAG Step Functions state machine',
-      exportName: 'WisconsinBot-GraphRAGStateMachineArn',
-    });
 
     new cdk.CfnOutput(this, 'GraphRAGFaqKnowledgeBaseId', {
       value: graphRAGStack.faqKnowledgeBaseId,

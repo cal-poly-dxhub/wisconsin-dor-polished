@@ -5,16 +5,16 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "layers"))
 
-from main import (
-    _MAX_DOC_CONTENT_BYTES,
-    _WS_FRAME_BUDGET_BYTES,
-    _batch_documents_for_ws,
-    _truncate_doc_content,
-    handler,
-)
+from main import handler
 from step_function_types.errors import UnknownResourceType
 from step_function_types.models import (
     StreamResourcesResult,
+)
+from websocket_utils.batching import (
+    MAX_DOC_CONTENT_BYTES as _MAX_DOC_CONTENT_BYTES,
+    WS_FRAME_BUDGET_BYTES as _WS_FRAME_BUDGET_BYTES,
+    batch_documents_for_ws as _batch_documents_for_ws,
+    truncate_doc_content as _truncate_doc_content,
 )
 from websocket_utils.models import SourceDocument
 
