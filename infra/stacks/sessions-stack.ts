@@ -482,6 +482,13 @@ export class SessionsStack extends cdk.NestedStack {
     });
 
     httpApi.addRoutes({
+      path: '/admin/activity',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
       path: '/citation',
       methods: [apigatewayv2.HttpMethod.GET],
       integration: new apigatewayv2Integrations.HttpLambdaIntegration(

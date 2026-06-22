@@ -399,6 +399,54 @@ def get_session_history_handler(session_id: str) -> dict[str, Any]:
         return create_api_response(500, error_response)
 
 
+@app.get("/admin/activity")
+def activity_handler() -> dict[str, Any]:
+    """Return all chat history items for the admin activity dashboard."""
+    try:
+        items = []
+        scan_kwargs: dict[str, Any] = {"TableName": message_table_name}
+        while True:
+            response = dynamodb.scan(**scan_kwargs)
+            items.extend(response.get("Items", []))
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+        deserializer = TypeDeserializer()
+        results = []
+        for item in items:
+            deserialized = {k: deserializer.deserialize(v) for k, v in item.items()}
+            trace_raw = deserialized.get("trace")
+            trace = None
+            if trace_raw and isinstance(trace_raw, str):
+                try:
+                    trace = json.loads(trace_raw)
+                except (json.JSONDecodeError, TypeError):
+                    trace = None
+            elif isinstance(trace_raw, list):
+                trace = trace_raw
+            results.append({
+                "queryId": deserialized.get("queryId", ""),
+                "sessionId": deserialized.get("sessionId", ""),
+                "query": deserialized.get("query", ""),
+                "answer": deserialized.get("answer", ""),
+                "timestamp": deserialized.get("timestamp", ""),
+                "thumbUp": deserialized.get("thumbUp"),
+                "feedback": deserialized.get("feedback"),
+                "trace": trace,
+            })
+
+        results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        return create_api_response(200, {"items": results, "count": len(results)})
+
+    except ChatAPIError as e:
+        return create_api_response(e.status_code, e.to_response())
+    except Exception as e:
+        logger.error(f"Unexpected error in activity_handler: {e}")
+        error_response = create_error_body(e)
+        return create_api_response(500, error_response)
+
+
 @app.post("/session/<session_id>/feedback")
 def feedback_handler(session_id) -> dict[str, Any]:
     """Assign feedback to a particular query."""
