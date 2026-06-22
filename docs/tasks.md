@@ -8,9 +8,12 @@
 | 2 | Fixing linking issues | — |
 | 5 | Replace LLM classification with structural parsers | — |
 | 6 | Reduce PDF chunk size for consistency and precision | — |
-| 8 | Add boilerplate stripping before chunking | — |
 | 9 | Reduce topic clustering batch size | — |
 | 14 | Improve case law discovery in vector_search auto-enrichment | [Response B](#response-b) |
+| 16 | Support URL-based session routing and preserve "new chat" state on reload | — |
+| 17 | Handle multipart queries (split or unified answering strategy) | — |
+| 18 | Show traversed sources in UI during agentic retrieval | — |
+| 19 | Fix train-of-thought flicker on sidebar session hover | — |
 
 ## Done
 
@@ -23,6 +26,7 @@
 | 12 | Fix WebSocket streaming hang on background tabs |
 | 13 | Harden authority hierarchy enforcement (authority-aware re-ranking) |
 | 3 | Tune model tone — reduce overconfident statements |
+| 8 | Add boilerplate stripping before chunking |
 | 15 | Add settings modal with detailed trace toggle |
 
 ---
@@ -271,3 +275,61 @@ Each Neptune Document node already carries an `authority_level` integer (1–9),
 > **Holding:** The Court of Appeals **affirmed** the City of Wauwatosa's denial of the exemption...
 
 </details>
+
+---
+
+### Task 16: Support URL-based session routing and preserve "new chat" state on reload
+
+**Problem:** Sessions are not reflected in the URL. Users cannot link to or bookmark a specific chat session, and refreshing the page loses the current navigation state. Additionally, if a user is on the "start new chat" page and reloads, they are not returned to that state.
+
+**Direction:**
+
+1. **URL query/route for sessions** — Reflect the active session ID in the URL (e.g., `/?session=<id>` or `/chat/<id>`). Clicking a session in the sidebar should update the URL; navigating directly to a session URL should load that session.
+2. **Preserve "new chat" state on reload** — If the user is on the blank "new chat" page (no active session selected), persist that state so a page reload returns them to the same empty-chat view rather than auto-selecting the most recent session.
+
+---
+
+### Task 17: Handle multipart queries (split or unified answering strategy)
+
+**Problem:** Users sometimes ask multipart questions (e.g., "What's the deadline for filing my assessment appeal, and what documents do I need?"). The system currently treats the entire input as a single query for retrieval, which can cause one part to dominate search results and the other part to get a shallow or missing answer.
+
+**Direction (needs further design):**
+
+- **Detection** — Add a prefilter step that scans the incoming query for multipart structure (multiple questions, conjunctions joining distinct topics, numbered sub-questions).
+- **Strategy options (TBD):**
+  - *Answer all at once* — Keep as a single retrieval pass but ensure the agent explicitly addresses each sub-question in its response. May require prompt reinforcement.
+  - *Sequential split* — Decompose into separate sub-queries, run retrieval independently for each, then synthesize a combined response. Better retrieval precision but higher latency and token cost.
+  - *Ask the user to narrow* — If the parts are too divergent (different topic areas), prompt the user to ask one at a time.
+- **Open questions:** Where does the split happen — before or after FAQ search? Does the agent's existing tool loop already handle this well enough with the right prompt nudge, or does it need structural intervention?
+
+---
+
+### Task 18: Show traversed sources in UI during agentic retrieval
+
+**Problem:** While the agent is performing retrieval (tool loop running), the user only sees the train-of-thought trace steps. There's no visual indication of which specific sources/documents the agent has looked at or traversed so far. This makes the wait feel opaque and doesn't build confidence that the system is finding relevant material.
+
+**Direction:**
+
+- **Live source feed** — As the agent calls `vector_search`, `get_neighbors`, or `get_authority_chain`, stream the document titles/names it encounters back to the frontend and display them in a lightweight UI element (e.g., a scrolling list of source chips, a sidebar panel, or inline badges under the trace).
+- **Progressive accumulation** — Sources should accumulate as retrieval progresses, giving the user a sense of the breadth of material being consulted before the final answer arrives.
+- **Tie into existing trace stream** — The backend already streams tool call metadata over WebSocket. Extract document titles from tool results and emit them as a dedicated message type (or enrich existing trace messages) so the frontend can render them distinctly from the reasoning steps.
+- **Design considerations:** Keep it non-intrusive — it should enhance the waiting experience without overwhelming the UI. Consider collapsibility or a compact chip/pill format that expands on hover/click.
+
+---
+
+### Task 19: Fix train-of-thought flicker on sidebar session hover
+
+**Problem:** When viewing an active session with the train-of-thought trace visible, hovering over session cards in the sidebar causes the trace section in the chat window to flicker. Reproducible by moving the cursor back and forth between the chat window and a non-selected session card (the one that shows a light hover rectangle).
+
+**Attempted fixes (did not resolve):**
+- Narrowing sidebar `transition-all` to `transition-[width]`
+- Wrapping `ChatMessage` in `React.memo` with stable `EMPTY_RESOURCES` array ref
+- Replacing the outer `<motion.div>` wrapper on `ChatMessage` with a plain `<div>`
+- Adding `initial={false}` to the trace `AnimatePresence` and `layout={false}` to the trace `motion.div`
+
+**Key files:**
+- `frontend/src/components/messages/chat-message.tsx` — trace rendering (`AnimatePresence` + `motion.div` with `height: 'auto'`)
+- `frontend/src/components/messages/chat-container.tsx` — scroll handler that calls `setSelectedMessageId`
+- `frontend/src/components/layout/sessions-sidebar.tsx` — sidebar with hover state + width transition
+
+**Likely direction:** The root cause may be deeper than framer-motion re-renders — possibly CSS `hover:bg-muted` on the sidebar cards triggering a reflow that propagates through the flex layout to the chat container, causing the scroll handler or a resize observer to fire and update state. Needs profiling with React DevTools and/or Chrome Performance tab to identify the exact re-render trigger.
