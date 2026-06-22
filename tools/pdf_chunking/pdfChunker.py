@@ -25,7 +25,7 @@ s3 = boto3.client("s3")
 session = boto3.session.Session()
 REGION_NAME = session.region_name
 
-MEDIA_BUCKET_NAME = "textract-chunk-result-dhgoel"
+MEDIA_BUCKET_NAME = os.environ.get("TEXTRACT_STAGING_BUCKET", "textract-chunk-result-dhgoel")
 
 # Debug flag to control chunk logging
 DEBUG = True  # Set to False to disable chunk logging

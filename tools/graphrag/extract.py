@@ -24,9 +24,14 @@ import boto3
 import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from pdf_chunking.pdfChunker import process_pdf_from_s3
-from tools.graphrag.case_annotations import extract_section_for_page
+
+try:
+    from tools.graphrag.case_annotations import extract_section_for_page
+except ImportError:
+    from case_annotations import extract_section_for_page
 
 # Local mirror of the statute PDFs the case-law metadata references.
 # We need these to read the running header that identifies which section

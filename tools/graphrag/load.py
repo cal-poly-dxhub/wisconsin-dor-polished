@@ -181,7 +181,10 @@ def resolve_authority_level(doc: dict, config: dict) -> int | None:
 def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config: dict):
     logger.info("Phase 2: Creating document nodes...")
 
-    from wpam_year import extract_wpam_year_from_doc_id
+    try:
+        from wpam_year import extract_wpam_year_from_doc_id
+    except ImportError:
+        from tools.graphrag.wpam_year import extract_wpam_year_from_doc_id
 
     doc_type_to_label = config.get("doc_types", {})
     count = 0

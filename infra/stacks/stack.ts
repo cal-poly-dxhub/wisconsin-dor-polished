@@ -5,6 +5,7 @@ import { MessagesStack } from './messages-stack';
 import { LambdaLayersStack } from './lambda-layers-stack';
 import { GraphRAGStack } from './graphrag-stack';
 import { GraphRAGMessagesStack } from './graphrag-messages-stack';
+import { IngestionStack } from './ingestion-stack';
 import { CloudWatchIam } from './cloudwatch-iam';
 import { WebAppStack } from './webapp-stack';
 
@@ -86,8 +87,17 @@ export class WisconsinBotStack extends cdk.Stack {
         enabled: USE_GRAPHRAG,
         faqKnowledgeBaseId: graphRAGStack.faqKnowledgeBaseId,
         faqUrlTable: graphRAGStack.faqUrlTable,
+        modelConfigTable: messagesStack.modelConfigTable,
       }
     );
+
+    const ingestionStack = new IngestionStack(this, 'WisconsinIngestionStack', {
+      description:
+        'Managed Fargate compute for GraphRAG ingestion pipeline.',
+      rawBucketName: graphRAGStack.rawBucketName,
+      workBucketName: graphRAGStack.workBucketName,
+      neptuneGraphId: graphRAGStack.neptuneGraphId,
+    });
 
     const cloudWatchIam = new CloudWatchIam(this, 'WisconsinCloudWatchIam', {
       resetCloudWatchIamRole: RESET_ClOUDWATCH_IAM_ROLE,
@@ -201,6 +211,18 @@ export class WisconsinBotStack extends cdk.Stack {
       value: graphRAGStack.faqDataSourceId,
       description: 'FAQ Bedrock KB Data Source ID (GraphRAG)',
       exportName: 'WisconsinBot-GraphRAGFaqDataSourceId',
+    });
+
+    new cdk.CfnOutput(this, 'IngestionClusterArn', {
+      value: ingestionStack.cluster.clusterArn,
+      description: 'Ingestion ECS Cluster ARN',
+      exportName: 'WisconsinBot-IngestionClusterArn',
+    });
+
+    new cdk.CfnOutput(this, 'IngestionTaskDefinitionArn', {
+      value: ingestionStack.taskDefinition.taskDefinitionArn,
+      description: 'Ingestion Fargate Task Definition ARN',
+      exportName: 'WisconsinBot-IngestionTaskDefinitionArn',
     });
   }
 }

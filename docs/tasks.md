@@ -1,20 +1,27 @@
 # Task List
 
-| # | Task | Status | Related Responses |
-|---|------|--------|-------------------|
-| 1 | Disambiguate generic queries before full retrieval | TODO | [Response A](#response-a) |
-| 2 | Fixing linking issues | TODO | — |
-| 3 | Tune model tone — reduce overconfident statements | TODO | — |
-| 4 | Replace Step Function with direct Lambda invoke | TODO | — |
-| 5 | Replace LLM classification with structural parsers | TODO | — |
-| 6 | Reduce PDF chunk size for consistency and precision | TODO | — |
-| 7 | Refactor agentic retrieval Lambda (main.py) | DONE | — |
-| 8 | Add boilerplate stripping before chunking | TODO | — |
-| 9 | Reduce topic clustering batch size | TODO | — |
-| 10 | Externalize prompts from Lambda code | DONE | — |
-| 11 | Add managed compute for ingestion (Fargate) | DONE | — |
-| 12 | Fix WebSocket streaming hang on background tabs | TODO | — |
-| 13 | Harden authority hierarchy enforcement beyond prompt compliance | TODO | — |
+## TODO
+
+| # | Task | Related Responses |
+|---|------|-------------------|
+| 1 | Disambiguate generic queries before full retrieval | [Response A](#response-a) |
+| 2 | Fixing linking issues | — |
+| 3 | Tune model tone — reduce overconfident statements | — |
+| 4 | Replace Step Function with direct Lambda invoke | — |
+| 5 | Replace LLM classification with structural parsers | — |
+| 6 | Reduce PDF chunk size for consistency and precision | — |
+| 8 | Add boilerplate stripping before chunking | — |
+| 9 | Reduce topic clustering batch size | — |
+| 12 | Fix WebSocket streaming hang on background tabs | — |
+| 13 | Harden authority hierarchy enforcement beyond prompt compliance | — |
+
+## Done
+
+| # | Task |
+|---|------|
+| 7 | Refactor agentic retrieval Lambda (main.py) |
+| 10 | Externalize prompts from Lambda code |
+| 11 | Add managed compute for ingestion (Fargate) |
 
 ---
 

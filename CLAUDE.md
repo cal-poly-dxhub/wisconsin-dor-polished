@@ -11,13 +11,13 @@ Wisconsin DOR Chatbot — a property tax Q&A assistant for the Wisconsin Departm
 ### Build & Deploy
 ```bash
 bun install                    # install all workspace deps
-bun run bundle                 # copy Python lambdas to packages/infra/bundle/ (uses bundles.toml)
+bun run bundle                 # copy Python lambdas to infra/bundle/ (uses bundles.toml)
 bun run deploy                 # bundle + cdk deploy (uses --profile and region from env)
 
-# CDK must be run from packages/infra/:
-cd packages/infra
-AWS_PROFILE=wisco AWS_REGION=us-east-1 cdk diff -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG
-AWS_PROFILE=wisco AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
+# CDK must be run from infra/:
+cd infra
+AWS_PROFILE=widor AWS_REGION=us-east-1 cdk diff -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG
+AWS_PROFILE=widor AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
 ```
 
 ### Testing
@@ -37,43 +37,67 @@ uv run ruff format .           # Python formatting
 
 ### Frontend
 ```bash
-cd packages/webapp
+cd frontend
 bun dev                        # local dev server (Next.js + Turbopack)
 ```
 
-### GraphRAG Ingestion Pipeline
+### GraphRAG Ingestion Pipeline (Fargate — preferred)
 ```bash
-# Requires venv with deps: uv venv .venv && uv pip install -r scripts/graphrag/requirements.txt
+# First-time: deploy infra + build/push Docker image
+cd infra
+AWS_PROFILE=widor AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
+cd ../tools/graphrag
+./build_and_push.sh              # builds container image and pushes to ECR
+
+# Run full pipeline (extract → embed → load) on Fargate:
+./tools/graphrag/run_full_ingest.sh
+
+# Run a single phase:
+./tools/graphrag/run_fargate.sh extract
+./tools/graphrag/run_fargate.sh embed
+./tools/graphrag/run_fargate.sh load
+
+# Common options:
+./tools/graphrag/run_fargate.sh extract --source-filter wpam- --force
+./tools/graphrag/run_fargate.sh load --start-phase 5 --stop-after-phase 8
+
+# Monitor logs:
+aws logs tail /ecs/wis-dor-ingestion --follow --profile widor --region us-east-1
+```
+
+### GraphRAG Ingestion Pipeline (local — alternative)
+```bash
+# Requires venv with deps: uv venv .venv && uv pip install -r tools/graphrag/requirements.txt
 # Always set SSL certs (Python 3.14 on macOS needs this):
 export CERT=$(.venv/bin/python3 -c "import certifi; print(certifi.where())")
 
 # Phase 1: Upload local docs to S3
-AWS_REGION=us-east-1 AWS_PROFILE=wisco .venv/bin/python3 scripts/graphrag/upload_local_docs.py \
-  --bucket wis-raw-bucket-c8e69250 --profile wisco --region us-east-1
+AWS_REGION=us-east-1 AWS_PROFILE=widor .venv/bin/python3 tools/graphrag/upload_local_docs.py \
+  --bucket wis-raw-bucket-c8e69250 --profile widor --region us-east-1
 
 # Phase 2: Extract + classify (PyMuPDF first, Textract fallback, LLM classification)
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=wisco .venv/bin/python3 scripts/graphrag/extract.py \
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor .venv/bin/python3 tools/graphrag/extract.py \
   --raw-bucket wis-raw-bucket-c8e69250 --work-bucket wis-work-bucket-c8e69250 \
-  --config scripts/graphrag/ingest_config.yaml --max-workers 3
+  --config tools/graphrag/ingest_config.yaml --max-workers 3
 
 # Phase 3: Embed chunks with Titan Embed v2
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=wisco .venv/bin/python3 scripts/graphrag/embed.py \
-  --work-bucket wis-work-bucket-c8e69250 --config scripts/graphrag/ingest_config.yaml
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor .venv/bin/python3 tools/graphrag/embed.py \
+  --work-bucket wis-work-bucket-c8e69250 --config tools/graphrag/ingest_config.yaml
 
 # Phase 4: Load into Neptune graph (11 sub-phases)
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=wisco .venv/bin/python3 scripts/graphrag/load.py \
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor .venv/bin/python3 tools/graphrag/load.py \
   --work-bucket wis-work-bucket-c8e69250 --graph-id g-ndvl4j73v4 \
-  --config scripts/graphrag/ingest_config.yaml
+  --config tools/graphrag/ingest_config.yaml
 
 # FAQ sync
-./scripts/graphrag/sync_faq_bucket.sh  # sync FAQ files + trigger KB ingestion
+./tools/graphrag/sync_faq_bucket.sh  # sync FAQ files + trigger KB ingestion
 ```
 
 ## Architecture
 
 ### Monorepo Structure
 
-Bun workspaces with 5 packages under `packages/`. Python deps managed by uv (pyproject.toml at root). Lambda bundling is defined in `bundles.toml` — a Python script copies lambda source into `packages/infra/bundle/` before CDK synth.
+Flat layout: `backend/` (lambdas + layers), `infra/` (CDK stacks), `frontend/` (Next.js app), `tools/` (ingestion scripts), `config/`. Python deps managed by uv (pyproject.toml at root). Lambda bundling is defined in `bundles.toml` — a Python script copies lambda source into `infra/bundle/` before CDK synth.
 
 ### Two Retrieval Paths (Mutually Exclusive)
 
@@ -85,19 +109,26 @@ Controlled by CDK context flag `useGraphRAG`. EventBridge rule `wisconsin-dor.ch
 
 Both paths share the same ResponseStreaming and ResourceStreaming Lambdas from `MessagesStack`.
 
-### Package Responsibilities
+### Directory Responsibilities
 
-- **infra** — Root CDK stack (`WisconsinBotStack`), instantiates all nested stacks. Entry point: `bin/wisconsin-app.ts`
-- **sessions** — Cognito auth, HTTP API, WebSocket API, DynamoDB sessions/chat history
-- **messages** — Legacy retrieval: classifier, retrieval, streaming Lambdas + Step Function
-- **knowledge-base** — Bedrock Knowledge Bases (FAQ + RAG) backed by OpenSearch Serverless
-- **graphrag** — Neptune Analytics graph, Bedrock FAQ KB, agentic retrieval Lambda + Step Function
-- **webapp** — Next.js frontend (deployed via CloudFront + `cdk-nextjs-standalone`)
-- **shared** — Lambda layers: `step_function_types` (Pydantic models) and `websocket_utils`
+- **infra/** — CDK stacks (root stack `WisconsinBotStack` in `stacks/stack.ts`). Entry point: `infra/bin/wisconsin-app.ts`
+  - `stacks/sessions-stack.ts` — Cognito auth, HTTP API, WebSocket API, DynamoDB sessions/chat history
+  - `stacks/messages-stack.ts` — Legacy retrieval: classifier, retrieval, streaming Lambdas + Step Function
+  - `stacks/graphrag-stack.ts` — Neptune Analytics graph, Bedrock FAQ KB
+  - `stacks/graphrag-messages-stack.ts` — Agentic retrieval Lambda + Step Function
+  - `stacks/webapp-stack.ts` — Next.js frontend (deployed via CloudFront + `cdk-nextjs-standalone`)
+  - `stacks/ingestion-stack.ts` — Fargate compute for ingestion (VPC, ECS cluster, task def, ECR)
+  - `stacks/lambda-layers-stack.ts` — Shared Lambda layers
+- **backend/lambdas/** — Lambda source code (agentic_retrieval, chat_api, streaming, etc.)
+- **backend/layers/** — Lambda layers: `step_function_types` (Pydantic models) and `websocket_utils`
+- **frontend/** — Next.js frontend app
+- **tools/graphrag/** — GraphRAG ingestion pipeline scripts
+- **tools/pdf_chunking/** — PDF extraction and chunking utilities
+- **config/** — Shared configuration (model configs, etc.)
 
 ### Shared Types (Critical)
 
-`packages/shared/lambda_layers/step_function_types/models.py` defines all inter-Lambda contracts: `UserQuery`, `ClassifierResult`, `RetrieveResult`, `GenerateResponseJob`, `StreamResourcesJob`, `FAQ`, `RAGDocument`. All Lambdas import from this layer. Changes here affect the entire pipeline.
+`backend/layers/step_function_types/models.py` defines all inter-Lambda contracts: `UserQuery`, `ClassifierResult`, `RetrieveResult`, `GenerateResponseJob`, `StreamResourcesJob`, `FAQ`, `RAGDocument`. All Lambdas import from this layer. Changes here affect the entire pipeline.
 
 ### WebSocket Streaming
 
@@ -120,40 +151,53 @@ Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM 
 
 **S3 bucket structure:** `raw/{category}-{clean-name}/{category}-{clean-name}.pdf` + `.metadata.json`
 
-**Ingestion config:** `scripts/graphrag/ingest_config.yaml` — defines frameworks, doc types, chunking params, source-to-framework mappings.
+**Ingestion config:** `tools/graphrag/ingest_config.yaml` — defines frameworks, doc types, chunking params, source-to-framework mappings.
 
-### PDF Processing Pipeline (`pdf_chunking/`)
+### PDF Processing Pipeline (`tools/pdf_chunking/`)
 
 PyMuPDF-first extraction with Textract fallback. `pdfChunker.py` routes by source type (`CHUNKER_BY_SOURCE` dict) to strategy-specific chunking (statute, wpam, general). Each chunk gets `start_page`/`end_page` metadata for citation linking. Quality gate in `pymupdf_extractor.py` (`extraction_looks_good()`) triggers Textract fallback.
 
 ### Citation Support
 
-Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeline. At query time, `agentic_retrieval/main.py` generates presigned S3 URLs with `#page=N` fragments so users get direct links to specific PDF pages. Case law is metadata stubs with Google Scholar links (no full opinion text).
+Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeline. At query time, `backend/lambdas/agentic_retrieval/main.py` generates presigned S3 URLs with `#page=N` fragments so users get direct links to specific PDF pages. Case law is metadata stubs with Google Scholar links (no full opinion text).
 
 ## Key Conventions
 
 - **Python Lambdas use Pydantic v2** for input validation and serialization. Models use `BaseModel` with `model_validate()` / `model_dump()`.
 - **CamelCase serialization** — `CamelCaseModel` base class in shared types converts snake_case Python to camelCase JSON via alias generator.
-- **Lambda bundling** — Python deps are installed during CDK synth via Docker bundling (pip install in bundling image). Each Lambda has its own `requirements.txt`.
+- **Lambda bundling** — Python deps are installed during CDK synth via Docker bundling (pip install in bundling image). Each Lambda in `backend/lambdas/` has its own `requirements.txt`.
 - **CDK context flags** — `useGraphRAG`, `stackName`, `domainName`, `hostedZoneName`, `hostedZoneId` are passed via `-c` flag.
 - **Embedding model** — Titan Embed Text V2 (1024 dimensions) used throughout for both Bedrock KBs and Neptune vector search.
 - **Bedrock model IDs** — Inference profiles require the full format: `us.anthropic.claude-sonnet-4-6` (not bare model IDs or old `-v1:0` suffix forms). Check `aws bedrock list-inference-profiles` for valid IDs.
-- **Region in scripts** — `scripts/graphrag/*.py` use `os.environ.get("AWS_REGION", "us-east-1")` for boto3 clients. Always set `AWS_REGION` explicitly when running locally.
+- **Region in scripts** — `tools/graphrag/*.py` use `os.environ.get("AWS_REGION", "us-east-1")` for boto3 clients. Always set `AWS_REGION` explicitly when running locally.
 - **SSL certs on macOS** — Set `AWS_CA_BUNDLE` to the certifi cert path when running ingestion scripts. Without this, Python 3.13+/3.14 may fail with `SSLError: [Errno 2] No such file or directory` after ~200 S3 calls.
 
 ## WebSocket Contract
 
 Any change to messages sent over WebSocket (adding fields, changing `responseType` values, adding new message types, modifying trace/logging payloads) **must** update both sides:
 
-1. **Backend** — Python models in `packages/shared/lambda_layers/websocket_utils/models.py` and the `send_json` router in `utils.py`
-2. **Frontend** — Zod schemas in `packages/messages/types/message-types.ts` (the `MessageUnionSchema` discriminated union and `WebSocketMessageSchema`)
-3. **Handler** — The `messageHandler` switch in `packages/webapp/src/hooks/use-websocket-chat.ts`
+1. **Backend** — Python models in `backend/layers/websocket_utils/models.py` and the `send_json` router in `backend/layers/websocket_utils/utils.py`
+2. **Frontend** — Zod schemas in `frontend/types/message-types.ts` (the `MessageUnionSchema` discriminated union and `WebSocketMessageSchema`)
+3. **Handler** — The `messageHandler` switch in `frontend/src/hooks/use-websocket-chat.ts`
 
 The frontend validates every WebSocket message via `WebSocketMessageSchema.parse()`. If the backend sends a `responseType` or shape that isn't in the Zod union, the message is rejected and an error is shown to the user. This applies to trace/logging messages too — they flow through the same validated WebSocket path.
 
+## Prompt Management
+
+All LLM prompts are externalized to `config/model_configs.toml` and loaded from DynamoDB at Lambda cold-start. The TOML is the source of truth; DynamoDB is the runtime store.
+
+**Entries:** `agenticRetrieval` (agentic system prompt), `ragResponse` (legacy RAG generation), `faqResponse` (FAQ synthesis).
+
+**Iteration workflow:**
+```bash
+# Edit the prompt in the TOML, then push to DynamoDB without a full deploy:
+AWS_PROFILE=widor AWS_REGION=us-east-1 python tools/upload_model_configs.py --only agenticRetrieval
+```
+
+**Convention:** When committing changes to `config/model_configs.toml`, always run `tools/upload_model_configs.py` afterward so DynamoDB matches git. `cdk deploy` does NOT write prompt content to DynamoDB — only the upload script does. `cdk deploy` is only needed when the infra itself changes (new env vars, table permissions, etc.).
+
 ## Deployment
 
-- **us-west-2** — Production stack. Do not deploy from feature branches.
-- **us-east-1** — GraphRAG test stack (`WisconsinBotGraphRAG`). All GraphRAG development deploys here.
-- Always use `--profile wisco` for AWS commands.
+- **us-east-1** — GraphRAG production stack (`WisconsinBotGraphRAG`). All GraphRAG development deploys here.
+- Always use `--profile widor` for AWS commands.
 - Run `cdk diff` before every deploy to verify only additive changes.
