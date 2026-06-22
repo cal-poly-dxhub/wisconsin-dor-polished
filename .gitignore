@@ -1,7 +1,4 @@
-/packages/infra/cdk_out_dir
-/packages/infra/cdk_out_east1/
-/packages/infra/cdk_out_main/
-/packages/infra/cdk_out_revert/
+infra/cdk_out_dir/
 
 # Source documents (too large for git, uploaded to S3 separately)
 docs/**/*.pdf

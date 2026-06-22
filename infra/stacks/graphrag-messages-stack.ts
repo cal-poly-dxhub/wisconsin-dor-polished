@@ -21,6 +21,7 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   enabled: boolean;
   faqKnowledgeBaseId: string;
   faqUrlTable: cdk.aws_dynamodb.ITable;
+  modelConfigTable: cdk.aws_dynamodb.ITable;
 }
 
 export class GraphRAGMessagesStack extends cdk.NestedStack {
@@ -64,6 +65,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           RAW_BUCKET: props.rawBucketName,
           FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBaseId,
           FAQ_URL_TABLE_NAME: props.faqUrlTable.tableName,
+          MODEL_CONFIG_TABLE_NAME: props.modelConfigTable.tableName,
           LOG_LEVEL: 'INFO',
           LOG_AGENT_TRACE: 'true',
           LOG_TOOL_TRACE: 'true',
@@ -90,6 +92,9 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
     // Read access to the FAQ-URL table so _build_faq_resource can attach the
     // public revenue.wi.gov link to each FAQ at query time.
     props.faqUrlTable.grantReadData(agenticRetrievalHandler);
+
+    // Read access to the model config table for externalized system prompt.
+    props.modelConfigTable.grantReadData(agenticRetrievalHandler);
 
     agenticRetrievalHandler.addToRolePolicy(
       new iam.PolicyStatement({

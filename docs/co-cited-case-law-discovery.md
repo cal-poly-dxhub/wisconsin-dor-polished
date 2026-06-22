@@ -186,6 +186,23 @@ If any gate fails, the discovery exits early with no error — it's purely addit
 
 The shared-statute ranking ensures we read chunks from topically relevant neighbors (not random docs). The regex extraction finds the exact citations without needing an LLM call. The resolution confirms those citations exist as CaseLaw nodes in the graph.
 
+## Downstream: Opinion Backfill
+
+Neighbor-doc citation discovery is the **upstream** mechanism — it surfaces case law to the agent. But discovered cases arrive as metadata stubs (title, citation, source_url) with no chunk text or summary. The agent can synthesize a rich answer using these stubs alongside WPAM context, but its answer text is **not** passed downstream. ResponseStreaming regenerates the final answer from the `RAGDocuments` list, and a stub with an empty `content` field means the holding can't be incorporated into the streamed answer.
+
+The **opinion backfill** step closes this gap. After the agent calls `answer`, a deterministic post-answer step checks `cited_doc_ids` for case-law stubs that weren't already fetched via `fetch_case_opinion`. For up to 3 such stubs, it resolves the citation from Neptune and fetches the full opinion text from S3 (the same `.txt` files that `fetch_case_opinion` reads). This runs before `_build_rag_documents`, so ResponseStreaming receives substantive content for cited case law.
+
+**The complete flow for a discovered case like Peter Ogden:**
+
+1. Neighbor citation discovery surfaces `case-law-2019-wi-23` → added to `related_case_law`
+2. Agent sees it, incorporates the holding into its answer, and includes the node ID in `cited_doc_ids`
+3. Opinion backfill detects that `case-law-2019-wi-23` is in `cited_doc_ids` but was never fetched
+4. Backfill resolves the citation from Neptune, derives the S3 key, fetches the `.txt`
+5. `_build_rag_documents` produces a `RAGDocument` with the full opinion text as `content`
+6. ResponseStreaming regenerates the answer with the holding available
+
+Without this companion mechanism, the agent knows about the case (step 2) but ResponseStreaming doesn't (step 5 would produce an empty card). The backfill only fires for cases in `cited_doc_ids` — uncited graph-neighbor noise is never fetched. Capped at 3 to bound latency; best-effort (failures logged and skipped). Discovery tag: `opinion-backfill`.
+
 ## Files
 
 - `packages/graphrag/lambdas/agentic_retrieval/neptune_client.py` — `get_chunk_statute_ids`, `rank_neighbors_by_shared_statutes`, `get_chunks_text_for_docs`

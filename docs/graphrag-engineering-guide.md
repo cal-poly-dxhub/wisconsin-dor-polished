@@ -322,19 +322,23 @@ Both extractors emit the same contract the chunkers consume: `header_split` (tex
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `faq_search`          | Bedrock FAQ KB retrieve (`SEMANTIC`).                                                                                  |
 | `refine_query`        | LLM query rewrite + `target_wpam_year` extraction.                                                                     |
-| `vector_search`       | Titan-embed the query → Neptune vector index → WPAM dedup → **auto-enrich** top-3 parent doc_ids with `get_neighbors` → direct citation resolution → **neighbor-doc citation discovery**. |
+| `vector_search`       | Titan-embed the query → Neptune vector index → **5× over-fetch** → **diversity cap (3 chunks/doc)** → WPAM dedup → **auto-enrich** top-3 parent doc_ids with `get_neighbors` → direct citation resolution → **neighbor-doc citation discovery**. |
 | `get_neighbors`       | Graph traversal; accepts `edge_types` filter.                                                                          |
 | `get_document`        | Node lookup; falls back to vector search on miss.                                                                      |
 | `get_authority_chain` | Walk `DERIVED_FROM`/`PART_OF` up and down.                                                                             |
 | `list_framework_docs` | Enumerate a framework's docs.                                                                                          |
 | `fetch_case_opinion`  | Last-resort: read full opinion `.txt` from S3 (§10).                                                                   |
+| `search_document`     | Semantic search within a single document's chunks. Params: `doc_id`, `query`, optional `top_k` (default 3, max 5). Use when `vector_search` surfaced a relevant doc but the diversity cap limited it to 1–2 chunks and the agent needs a specific section. |
 | `answer`              | Terminal; returns its input.                                                                                           |
 
 ### Key design decisions and footguns
 
+- **5× over-fetch + diversity cap** (`tools.py:627`): WPAM editions are ~79% of all chunks, so a naive `top_k=10` returns almost exclusively WPAM. When no `target_year` is set, `vector_search` requests `top_k * 5` from Neptune (was 3×). After WPAM dedup, a **per-document cap of 3 chunks** (`DIVERSITY_CAP_PER_DOC` env var, default 3) prevents any single source from crowding out others. The agent sees a diverse survey; it can drill deeper with `search_document`. When `target_year` IS set, no over-fetch (the user wants a specific edition).
+- **`search_document` — on-demand depth** (`tools.py:794`): embeds the sub-query with Titan v2 and runs a global vector search filtered to chunks belonging to the target `doc_id`. Returns up to `top_k` (max 5) chunks from that document. This replaces the depth lost by the diversity cap — the agent gets breadth by default and depth on demand. The system prompt instructs the agent to call it when `vector_search` surfaced only 1–2 chunks from a highly relevant doc (e.g., a WPAM chapter or assessment guide).
 - **Auto-enrichment** (`1864142`): after `vector_search` returns chunks, the executor fetches `get_neighbors` for the top-3 distinct parent doc_ids and returns `{chunks, graph_context}`. The agent gets graph context for free without an extra turn. Best-effort — neighbor errors are swallowed.
 - **Neighbor-doc citation discovery** (`f87e6d7`): after auto-enrichment, `vector_search` runs an additional pass to surface case law mentioned in neighbor doc text but not in the directly-retrieved chunks. It filters neighbors to non-WPAM document nodes, ranks them by shared statute overlap with the query chunks (top 3), fetches their chunk text, regex-extracts case citations, and resolves them to CaseLaw nodes. The chunk text stays in the Lambda (regex only, never enters Claude's context). See `docs/co-cited-case-law-discovery.md` for the full traversal path. This replaced a pure graph-traversal approach that failed because high-degree statute nodes (1500+ CITES edges) made LIMIT-based discovery arbitrary.
 - **`cited_doc_ids` is the authoritative sidebar.** On `answer`, the returned cards are restricted to _exactly_ the agent's cited ids, not all discovered docs — auto-enrichment pulls in far more docs (case-law stubs CITES-linked to statutes) than the answer uses. The turn-budget fallback path is the exception (it returns all discovered ids).
+- **Opinion backfill for graph-discovered case law.** After the agent calls `answer`, a deterministic post-answer step checks `cited_doc_ids` for case-law stubs that weren't already fetched via `fetch_case_opinion`. For up to 3 such stubs, it resolves the citation from Neptune and fetches the full opinion text from S3. This ensures ResponseStreaming (which regenerates the answer from the RAGDocuments) has substantive content for cited case law — without it, graph-discovered cases have empty `content` fields and their holdings can't be incorporated into the streamed answer. Capped at 3 to bound latency; best-effort (failures logged and skipped). Discovery tag: `opinion-backfill`.
 - **Tool exceptions never crash the loop** (`686da54`). The model once called `get_document` with `node_id` (the param used by `get_neighbors`) instead of `doc_id`; the handler indexed `tool_input["doc_id"]` directly, raised `KeyError`, crashed the Lambda, and stranded the user on "answering." Now: `get_document` accepts both keys via `.get()`, and any tool exception is converted to an `{"error": ...}` tool-result fed back so the model self-corrects.
 
 > **⚠️ Do NOT revert** the StreamingBody parse (§5.1), the inlined-literal Cypher (§5.2), or the `node_id`/`doc_id` alias. Each is a dead design's replacement.
@@ -423,6 +427,7 @@ This works because ingestion stamped `citation` on every CaseLaw node. It's an e
 - **Section-level `statute_refs`** (`6b28018`): refs are emitted at both chapter (`70`) and section (`70.32`) granularity by reading the running page header of the local statute PDF mirror in `docs/state-laws/`. Without section-level refs, `WIS-STAT-70.32` had zero case-law neighbors.
 - **Always link to CourtListener/Scholar** (`6da060c`): both stub cards and fetched-opinion cards link to an external legal database, never the S3 `.txt` (which has no page anchors). ~95% of cases link to CourtListener; the remaining ~5% fall back to Google Scholar. `_apply_case_law_links` enforces this in one post-pass; `_build_opinion_card` sets `s3_key=None`. Opinion text still rides in the card's `content` to inform synthesis — only the user-facing link changed.
 - **Parallel-citation collapse** (`ce7e17c`, `93a229c`): one decision gets a separate node per reporter (N.W.2d + Wis.2d + WI App). `_collapse_case_law_by_title` merges them by normalized case-name + year.
+- **Post-answer opinion backfill**: case law discovered through graph traversal or neighbor-doc citation discovery (paths 1–3 above) arrives as metadata stubs — title, citation, and source_url, but **no chunks and no summary**. The agent synthesizes a rich answer using these stubs _plus_ WPAM chunk context, but the agent's answer is not passed downstream; ResponseStreaming regenerates from RAGDocuments. Without content in the case-law card, the regenerated answer can't incorporate the holding. The backfill step (after `answer`, before `_build_rag_documents`) fetches up to 3 cited-but-unfetched opinion texts from S3, closing the gap between what the agent knew and what ResponseStreaming receives. Only fires for cases in `cited_doc_ids`, never for uncited graph-neighbor noise.
 
 ### ⚠️ The reversals (do not resurrect)
 
@@ -450,7 +455,7 @@ Three layers enforce recency:
 
 1. **`current_wpam_year` — dynamic resolution from Neptune** (`neptune_client.py`). A cached property queries `max(d.edition_year)` across all `FW-WPAM` documents on Lambda cold start. This is the authoritative "what year is current" — no hardcoded year constant.
 
-2. **Over-fetch at retrieval time** (`tools.py`). When no `target_wpam_year` is set, `vector_search` requests `top_k * 3` chunks from Neptune (e.g., 30 instead of 10). This casts a wide enough net that current-edition chunks appear in the result set even when old editions dominate the top ranks. When a `target_wpam_year` IS set, no over-fetch (the user wants a specific edition, so old results are expected).
+2. **Over-fetch at retrieval time** (`tools.py`). When no `target_wpam_year` is set, `vector_search` requests `top_k * 5` chunks from Neptune (e.g., 50 instead of 10). WPAM editions are ~79% of all chunks, so the 5× multiplier gives the dedup + diversity filters enough runway to surface non-WPAM results. When a `target_wpam_year` IS set, no over-fetch (the user wants a specific edition, so old results are expected).
 
 3. **Two-pass dedup** (`wpam_dedup.py::dedupe_wpam_chunks`):
    - **Pass 1 — heading collapse:** groups WPAM chunks by normalized heading, keeps one per group (prefer `target_year` if set, else `max(edition_year)`).
@@ -467,7 +472,7 @@ Three layers enforce recency:
 1. User asks: "What information is used to determine my assessment?"
 2. `faq_search` runs on verbatim query (always first)
 3. Claude calls `vector_search(query="...")` — no `target_wpam_year`
-4. Neptune returns top 30 chunks (`top_k * 3` over-fetch)
+4. Neptune returns top 50 chunks (`top_k * 5` over-fetch)
 5. `dedupe_wpam_chunks` runs:
    - Pass 1: heading collapse (same heading across editions → keep newest)
    - Pass 2: edition filter — `allowed_years = {2026}` (from `neptune.current_wpam_year`). Everything not 2026 is dropped.
