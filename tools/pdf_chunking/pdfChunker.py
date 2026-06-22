@@ -14,6 +14,7 @@ from pdf_chunking.pymupdf_extractor import (
     extract_raw_text_with_pymupdf,
     extraction_looks_good,
 )
+from pdf_chunking.boilerplate import strip_boilerplate
 from pdf2image import convert_from_path
 from PIL import Image
 from pdf_chunking.flowchart_tools import extract_flowcharts_from_document
@@ -826,6 +827,14 @@ def process_pdf_from_s3(
                 media_bucket, prefix = parse_s3_uri(textract_output_path)
                 delete_s3_prefix(s3, media_bucket, prefix)
             raise
+
+    # --- Strip boilerplate (all doc types) ---
+    line_page_mapping = strip_boilerplate(line_page_mapping, strategy=strategy)
+    if is_statute:
+        header_split = ["\n".join(text for text, _ in line_page_mapping)]
+    else:
+        full_text = "\n".join(text for text, _ in line_page_mapping)
+        header_split = full_text.split("<titles>")
 
     try:
         # --- Run chunking ---

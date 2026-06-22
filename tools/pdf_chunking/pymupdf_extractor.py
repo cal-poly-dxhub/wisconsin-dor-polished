@@ -255,10 +255,6 @@ def extract_with_pymupdf(
 
     doc.close()
 
-    if is_statute:
-        line_page_mapping = strip_statute_noise(line_page_mapping)
-        all_tagged_lines = [l for l, _ in line_page_mapping]
-
     full_text = "\n".join(all_tagged_lines)
     if is_statute:
         header_split = [full_text]
