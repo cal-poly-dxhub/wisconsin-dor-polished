@@ -650,6 +650,18 @@ def execute_tool(
                 diverse_chunks.append(chunk)
             chunks = diverse_chunks
         chunks = chunks[:top_k]
+        # Authority-aware tiebreaking: among chunks with similar relevance
+        # scores, prefer higher-authority sources (lower authority_level int).
+        # Chunks are bucketed by score — within the same bucket, authority wins.
+        # Between buckets, relevance wins.
+        _AUTH_TIE_THRESHOLD = 0.03
+        if chunks:
+            for i, chunk in enumerate(chunks):
+                score = chunk.get("score", 0)
+                bucket = int(score / _AUTH_TIE_THRESHOLD)
+                auth = chunk.get("authority_level") or 9
+                chunks[i]["_sort_key"] = (-bucket, auth)
+            chunks.sort(key=lambda c: c.pop("_sort_key"))
         _log_tool_event(
             "vector_search_neptune_complete",
             tool_name=tool_name,

@@ -58,12 +58,14 @@ def save_chat_history(
     answer: str,
     rag_documents: list[RAGDocument] | None = None,
     faq_resource: "FAQResource | None" = None,
+    trace_log: list[dict] | None = None,
 ) -> None:
-    """Persist a query/answer pair (with resources) to the chat history table."""
+    """Persist a query/answer pair (with resources and trace) to the chat history table."""
     if not CHAT_HISTORY_TABLE or not session_id:
         return
     try:
         import datetime
+        import json
 
         item: dict = {
             "queryId": query_id,
@@ -72,6 +74,9 @@ def save_chat_history(
             "query": query,
             "answer": answer,
         }
+
+        if trace_log:
+            item["trace"] = json.dumps(trace_log)
 
         resources: list[dict] = []
         if rag_documents:

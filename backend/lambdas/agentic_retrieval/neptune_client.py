@@ -214,6 +214,7 @@ class NeptuneClient:
             "node.heading AS heading, node.subheading AS subheading, "
             "node.edition_year AS edition_year, "
             "fw.id AS framework_id, "
+            "parent.authority_level AS authority_level, "
             "parent.effective_date AS effective_date, score",
             query_name="vector_search",
         )
