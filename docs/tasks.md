@@ -6,7 +6,6 @@
 |---|------|-------------------|
 | 1 | Disambiguate generic queries before full retrieval | [Response A](#response-a) |
 | 2 | Fixing linking issues | — |
-| 3 | Tune model tone — reduce overconfident statements | — |
 | 5 | Replace LLM classification with structural parsers | — |
 | 6 | Reduce PDF chunk size for consistency and precision | — |
 | 8 | Add boilerplate stripping before chunking | — |
@@ -23,6 +22,7 @@
 | 11 | Add managed compute for ingestion (Fargate) |
 | 12 | Fix WebSocket streaming hang on background tabs |
 | 13 | Harden authority hierarchy enforcement (authority-aware re-ranking) |
+| 3 | Tune model tone — reduce overconfident statements |
 | 15 | Add settings modal with detailed trace toggle |
 
 ---
@@ -44,7 +44,7 @@
 **Sub-issues:**
 
 - [ ] **Link TTL** — Harden presigned URL expiration so links don't expire, or find an alternative solution so sources are always accessible to the user.
-- [ ] **Page anchors** — Ensure all source documents can link to correct page numbers and anchors. Testers reported also an off-by-one issue where the link took them to the page after the relevant page. May need to reingest if chunk metadata (start_page/end_page) is sloppy.
+- [ ] **Page anchors** — Ensure all source documents can link to correct page numbers and anchors. Testers reported also an off-by-one issue where the link took them to the page after the relevant page. May need to reingest if chunk metadata (start_page/end_page) is sloppy. Additionally, inline citations point to the parent doc's first-chunk page rather than the specific section being cited — e.g., citing "Wis. Stat. § 70.47" links to page 1 of the statutes-70 PDF instead of the page where § 70.47 actually begins. This requires either per-subsection page metadata in Neptune or a smarter page lookup at link-resolution time.
 - [ ] **Inline citations** — All sources cited as cards at the bottom of a response must also be mentioned as inline links within the answer text.
 - [ ] **Remove redundant source list** — The chatbot should not additionally list sources as a line of text at the end of its response (the cards are sufficient).
 

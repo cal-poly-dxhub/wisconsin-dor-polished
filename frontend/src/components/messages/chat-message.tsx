@@ -489,11 +489,26 @@ export function ChatMessage({
       for (const item of items ?? []) {
         if (item.type === 'document') {
           const doc = item.data as Document;
-          if (doc.sourceUrl) {
-            map[doc.documentId] = doc.sourceUrl;
-          } else if (doc.s3Key) {
-            const url = await buildResolverUrl(doc.s3Key, doc.startPage);
-            if (url) map[doc.documentId] = url;
+          let url: string | undefined;
+          // Match source-card logic: PDFs go through citation resolver
+          // (presigned URL with #page=N), non-PDFs prefer public sourceUrl.
+          const isPdf = !!doc.s3Key && /\.pdf$/i.test(doc.s3Key);
+          if (doc.s3Key && (isPdf || !doc.sourceUrl)) {
+            url = (await buildResolverUrl(doc.s3Key, doc.startPage)) ?? undefined;
+          } else if (doc.sourceUrl) {
+            url = doc.sourceUrl;
+          }
+          if (url) {
+            map[doc.documentId] = url;
+            // Also key by raw doc_id (strip the trailing -<7char hash>)
+            // so inline citations written as doc:<raw-id> resolve correctly.
+            const rawId = doc.documentId.replace(/-[a-f0-9]{7}$/, '');
+            if (rawId !== doc.documentId) map[rawId] = url;
+          }
+        } else if (item.type === 'faq') {
+          const faq = item.data as FAQ;
+          if (faq.sourceUrl) {
+            map[faq.faqId] = faq.sourceUrl;
           }
         }
       }
