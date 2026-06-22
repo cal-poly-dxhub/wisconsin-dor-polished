@@ -23,6 +23,7 @@
 | 11 | Add managed compute for ingestion (Fargate) |
 | 12 | Fix WebSocket streaming hang on background tabs |
 | 13 | Harden authority hierarchy enforcement (authority-aware re-ranking) |
+| 15 | Add settings modal with detailed trace toggle |
 
 ---
 
@@ -179,6 +180,27 @@ Each Neptune Document node already carries an `authority_level` integer (1–9),
 **Key files:**
 - `backend/lambdas/agentic_retrieval/tools.py` — auto-enrichment logic (lines 665–791)
 - `backend/lambdas/agentic_retrieval/neptune_client.py` — `get_neighbors()` (line 279), `resolve_case_citations()`, would need new method for subsection→CaseLaw traversal
+
+---
+
+### Task 15: Add settings modal with detailed trace toggle
+
+**Problem:** The agent trace UI streams detailed expanded steps (tool calls, reasoning, metadata) to the frontend. This is useful for developers but noisy for end users in production.
+
+**Solution (implemented):** Two-tier trace display controlled by a user-facing setting:
+- **Dev mode (localhost):** Trace starts expanded by default — detailed steps stream in real-time
+- **Prod/default:** Trace starts collapsed — user sees "Thought for Xs" with a chevron to expand manually
+- **User override:** Settings modal (accessible from profile menu) lets users toggle "Detailed agent trace" on/off, persisted in localStorage
+
+**Files added:**
+- `frontend/src/stores/settings-store.ts` — Zustand store with localStorage persistence (`wisco:settings`)
+- `frontend/src/components/ui/dialog.tsx` — Radix Dialog primitive
+- `frontend/src/components/ui/switch.tsx` — Radix Switch primitive
+- `frontend/src/components/settings/settings-modal.tsx` — Settings modal with toggle
+
+**Files modified:**
+- `frontend/src/components/layout/sessions-sidebar.tsx` — Added "Settings" item to profile popover
+- `frontend/src/components/messages/chat-message.tsx` — `stepsOpen` defaults to `detailedTrace` setting
 
 ---
 

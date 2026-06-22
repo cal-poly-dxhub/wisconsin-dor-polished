@@ -1,6 +1,6 @@
 # GraphRAG Engineering Guide
 
-This document covers the work done on the `feat/graphrag-migration` branch since the project was inherited from the original Cal Poly DxHub team. The branch diverged from the inherited codebase at commit `dc34139` (2026-02-13); the first new commit is `5d40004` (2026-04-14). What follows is **209 commits** of work that replaced a legacy OpenSearch RAG pipeline with a Neptune-Analytics GraphRAG system, an agentic retrieval Lambda, a live agent-trace UI, multi-session chat, and a click-time citation resolver.
+This document covers the work done on the `feat/graphrag-migration` branch since the project was inherited from the original Cal Poly DxHub team. The branch diverged from the inherited codebase at commit `dc34139` (2026-02-13); the first new commit is `5d40004` (2026-04-14). What follows is **234 commits** of work that replaced a legacy OpenSearch RAG pipeline with a Neptune-Analytics GraphRAG system, a single agentic retrieval Lambda (handling retrieval + streaming in one invocation), a live agent-trace UI, multi-session chat, and a click-time citation resolver.
 
 ---
 
@@ -37,42 +37,33 @@ This document covers the work done on the `feat/graphrag-migration` branch since
 
 ## 1. Orientation
 
-The chatbot answers property-tax questions for the Wisconsin Department of Revenue. It has **two mutually exclusive retrieval paths**, selected at deploy time by the CDK context flag `useGraphRAG`:
-
-- **Legacy path** (`useGraphRAG=false`): EventBridge → `MessagesStack` Step Function → Classifier Lambda → OpenSearch RAG or FAQ branch → streaming. This is the original team's design.
-- **GraphRAG path** (`useGraphRAG=true`): EventBridge → `GraphRAGMessagesStack` Step Function → a single **agentic retrieval Lambda** that runs Claude in a tool loop against a Neptune Analytics knowledge graph → streaming.
-
-**Only the GraphRAG path is live and under active development.** The legacy path still ships and is not deleted, but no new features go into `packages/messages/lambdas/` (classifier/retrieval). The crucial exception: **both paths share the same two streaming Lambdas** — `ResponseStreaming` (synthesizes and streams the answer) and `ResourceStreaming` (streams citation cards) — which live in `MessagesStack` and are passed into the GraphRAG stack as props. If you touch those, you touch both paths. (Jonah's note: this means that the two versions of the backend use the same avenues to communicate with the frontend; currently, we have the GraphRAG backend hooked up to talk to the frontend)
-
-Selection is enforced structurally, not with an `if` inside one rule. Each stack creates its **own** EventBridge rule with an identical event pattern (`source: wisconsin-dor.chat-api`, `detailType: ChatMessageReceived`) but `enabled: props.enabled`. Exactly one rule is enabled per deploy, so the two Step Functions can never both fire on one event (`cf8ca85`). This is the project's core invariant in physical form: **GraphRAG was added without modifying the legacy path.**
+The chatbot answers property-tax questions for the Wisconsin Department of Revenue. The live architecture is a single **agentic retrieval Lambda** invoked directly by EventBridge — no Step Function, no separate streaming Lambdas.
 
 ```
                         ┌─────────────────────────────────────┐
    Chat API ──emit──▶   │ EventBridge: ChatMessageReceived     │
    (POST /message)      └───────────────┬──────────────────────┘
-                                        │  (exactly one rule enabled)
-                 ┌──────────────────────┴───────────────────────┐
-                 ▼                                               ▼
-   ┌──────────────────────────┐                  ┌──────────────────────────────┐
-   │ Legacy Step Function     │                  │ GraphRAG Step Function        │
-   │  Classifier → RAG/FAQ    │                  │  AgenticRetrieval (Claude loop │
-   │  (OpenSearch)            │                  │   over Neptune) → Choice       │
-   └───────────┬──────────────┘                  └──────────────┬───────────────┘
-               │                                                 │  flat payload
-               └──────────────┬──────────────────────────────────┘
-                              ▼
-              ┌──────────────────────────────────────┐
-              │ Parallel: ResourceStreaming +         │  ← SHARED by both paths
-              │           ResponseStreaming           │
-              └──────────────────┬────────────────────┘
-                                 ▼  WebSocket (API Gateway)
-                            Frontend (Next.js)
+                                        │
+                                        ▼
+                         ┌──────────────────────────────────┐
+                         │ AgenticRetrieval Lambda           │
+                         │  Claude tool loop over Neptune    │
+                         │  Streams docs + FAQs + answer     │
+                         │  over WebSocket directly          │
+                         └──────────────┬───────────────────┘
+                                        │  WebSocket (API Gateway)
+                                        ▼
+                                  Frontend (Next.js)
 ```
+
+EventBridge invokes the Lambda with `retryAttempts: 0` and `maxEventAge: 3 min`. The Lambda runs the agentic loop, then streams citation cards, FAQ cards, and answer text fragments directly over the existing WebSocket connection — all in one invocation, one DynamoDB write (`dab9f09`).
+
+A legacy OpenSearch path (`useGraphRAG=false`) still exists in the codebase but is **not deployed and not under active development**. It uses a separate Step Function + ResponseStreaming/ResourceStreaming Lambdas in `MessagesStack`. Do not delete it (the CDK flag gates it), but do not invest in it either.
 
 Deployment regions matter and are easy to get wrong:
 
 - **us-west-2** = production (the legacy OpenSearch stack). **Do not deploy from feature branches.**
-- **us-east-1** = the GraphRAG test stack `WisconsinBotGraphRAG`. All GraphRAG development deploys here. The live graph is `g-ndvl4j73v4`.
+- **us-east-1** = the GraphRAG stack `WisconsinBotGraphRAG`. All GraphRAG development deploys here. The live graph is `g-ndvl4j73v4`.
 
 ---
 
@@ -92,7 +83,7 @@ Before the subsystems, internalize the engineering patterns. They recur in nearl
 
 **Backend is the source of truth; the frontend stays dumb.** The Lambda pre-formats every human-readable trace string and emits camelCase metadata. The UI only picks a verb and renders. Citation cards are restricted to exactly the agent's `cited_doc_ids` on the backend.
 
-**Bound everything that talks to a metered service.** These limits are first-class design inputs, not afterthoughts: Step Functions 256 KB I/O (flat Lambda payload + `Pass`-state projection), API Gateway 128 KB per WebSocket frame (devPayload truncation), Titan v2's 8000-char silent truncation (`CHUNK_MAX_CHARS=7500`), Neptune per-query memory (byte-capped UNWIND), and the Bedrock turn budget (`MAX_TURNS=10` + degraded fallback).
+**Bound everything that talks to a metered service.** These limits are first-class design inputs, not afterthoughts: API Gateway 128 KB per WebSocket frame (document batching in `websocket_utils.batching`), Titan v2's 8000-char silent truncation (`CHUNK_MAX_CHARS=7500`), Neptune per-query memory (byte-capped UNWIND), and the Bedrock turn budget (`MAX_TURNS=10` + degraded fallback).
 
 **Root-cause before fixing; prove it end-to-end.** The history repeatedly shows a first plausible fix being insufficient and a second independent cause found (phase 4 produced 0 edges for _two_ unrelated reasons; the discovery-tag no-op hid a second crash once fixed). Fixes ship with regression tests and verified counts ("1,742 PART_OF edges, was 0").
 
@@ -104,20 +95,22 @@ Before the subsystems, internalize the engineering patterns. They recur in nearl
 
 ## 3. The request lifecycle (happy path)
 
-One worked trace, GraphRAG path, before the subsystem deep-dives.
+One worked trace before the subsystem deep-dives.
 
 1. **Frontend → API.** The user sends a message. The webapp `POST`s `/session/{id}/message` on the Sessions HTTP API (Cognito-authenticated). The handler emits an EventBridge event `wisconsin-dor.chat-api : ChatMessageReceived` carrying a `UserQuery {query, query_id, session_id}` in `detail`, bumps `lastMessageAt`, and sets the session title from the first message.
-2. **EventBridge → Step Function.** The enabled GraphRAG rule forwards `$.detail` (just the `UserQuery`, not the envelope) into `GraphRAGStreamingStateMachine`.
-3. **AgenticRetrieval Lambda.** It loads up to 5 prior turns of chat history, looks up the WebSocket connection (best-effort, for trace), and runs `run_agentic_loop`:
+2. **EventBridge → Lambda.** The EventBridge rule forwards `$.detail` (just the `UserQuery`, not the envelope) directly to the AgenticRetrieval Lambda (`retryAttempts: 0`).
+3. **AgenticRetrieval Lambda — retrieval phase.** It loads up to 5 prior turns of chat history, looks up the WebSocket connection (best-effort, for trace), and runs `run_agentic_loop`:
    - **Turn 0a** (only if history exists): `refine_query` rewrites a context-dependent follow-up.
    - **Turn 0b**: a deterministic, Claude-bypassing `faq_search` on the verbatim query. Its result is _seeded_ into the message list. If the top score ≥ 0.70, a steering message marks the FAQ as primary truth.
    - **Turns 1–10**: `bedrock.converse` with the tool set; Claude calls `vector_search` (auto-enriched with graph neighbors), `get_neighbors`, `get_authority_chain`, etc., then calls the terminal `answer` tool.
-4. **Flat return.** The Lambda returns `{successful, query, query_id, session_id, faqs, documents}` — a **flat** payload (`main.py:~1825`).
-5. **Choice + Parallel.** `CheckRetrievalSuccess`: if `successful=false` → `Fail`. Otherwise → `Parallel` with two branches, each fed by a `Pass` state that projects a subset of the flat payload (`SelectResourceStreamingJob`, `SelectGenerateResponseJob`).
-6. **Streaming.** `ResourceStreaming` emits citation cards over the WebSocket; `ResponseStreaming` synthesizes and streams the answer text. Both are the shared legacy Lambdas.
-7. **Frontend.** Each WebSocket frame is Zod-validated; fragments drive the streaming markdown, `documents`/`faq` frames drive inline source cards, `agent-event` frames drive the live trace.
+4. **Streaming phase (same Lambda).** After the loop returns, `_stream_response` sends everything over WebSocket in sequence:
+   - **Document cards** — batched into multiple frames via `batch_documents_for_ws` (shared `websocket_utils.batching` layer) to stay under the 128 KB API Gateway frame limit.
+   - **FAQ card** — a single `FAQMessage` frame if a high-confidence FAQ was found.
+   - **Answer text** — `answer-event:start`, chunked text fragments (80 chars each via `stream_fragments`), then `answer-event:stop`.
+5. **Persistence.** `save_chat_history` writes the query, answer, documents, FAQs, and trace log to DynamoDB — one write, after streaming completes.
+6. **Frontend.** Each WebSocket frame is Zod-validated; fragments drive the streaming markdown, `documents`/`faq` frames drive inline source cards, `agent-event` frames drive the live trace.
 
-> **Gotcha — the flat payload contract.** The agentic Lambda returns flat keys _specifically_ to avoid duplicating the (potentially large) `documents` array into two nested job objects and blowing the 256 KB Step Functions limit (`4f0e95a`). If you change the keys it returns, you must update **both** `Pass` states in `graphrag-messages-stack.ts` or the streaming branches break with a JSONPath error.
+> **⚠️ Reversed / Do NOT revert — direct invoke replaces Step Function (`dab9f09`).** The prior design used a Step Function (AgenticRetrieval → Choice → Parallel(ResourceStreaming, ResponseStreaming)). This introduced a gap between retrieval completion and streaming start that caused the "hang on background tabs" bug (Task 12), required a second Bedrock call in ResponseStreaming to regenerate the answer, and produced a double DynamoDB write. The direct-invoke design eliminates all three issues. **Do not reintroduce a Step Function for the GraphRAG path.**
 
 ---
 
@@ -305,14 +298,24 @@ Both extractors emit the same contract the chunkers consume: `header_split` (tex
 
 ## 8. The agentic retrieval Lambda
 
-`run_agentic_loop` in `packages/graphrag/lambdas/agentic_retrieval/main.py` is the heart of the GraphRAG path. It replaced the legacy classifier + retrieval Lambdas with a single bounded Claude tool loop.
+`run_agentic_loop` in `backend/lambdas/agentic_retrieval/main.py` is the heart of the system. It handles **both** retrieval and streaming — there is no separate streaming Lambda for the GraphRAG path. After the loop completes, `_stream_response` (same file) delivers documents, FAQs, and answer fragments over WebSocket.
 
 ### The loop, step by step
 
 - **Turn 0a — `refine_query`** runs only when `chat_history` exists (fresh sessions skip it to save a Bedrock call). It rewrites context-dependent follow-ups ("what about agriculture") and extracts an optional `target_wpam_year` (see §11).
 - **Turn 0b — deterministic `faq_search`.** A hardcoded, Claude-bypassing FAQ search on the verbatim (or history-refined) query. Its result is **seeded** into the message list as a synthetic `toolUse`/`toolResult` pair (id `faq_search_turn0`) so Claude enters the loop already seeing FAQ context without re-invoking the tool. (Why: Claude paraphrases queries, which measurably hurt KB recall — §9.)
 - **Turns 1–10** (`MAX_TURNS=10`): `bedrock.converse(modelId=AGENTIC_MODEL_ID, maxTokens=4096, temperature=0.0)` with `SYSTEM_PROMPT` and the tool set. Each turn appends the assistant message, executes every `toolUse` block, and appends `toolResult`s.
-- **Termination** is the `answer` tool. The loop returns `(answer_text, cited_doc_ids, rag_documents, faq_resource)`.
+- **Termination** is the `answer` tool. The loop returns `(answer_text, cited_doc_ids, rag_documents, faq_resource, trace_log)`.
+
+### Post-loop streaming (`_stream_response`)
+
+After the loop returns, the handler calls `_stream_response` which delivers results over the same WebSocket connection used for agent-trace events:
+
+1. **Document cards** — `batch_documents_for_ws` (from `websocket_utils.batching`) splits documents into multiple `DocumentsMessage` frames to stay under the 128 KB API Gateway limit. Each doc's content is capped at 60 KB (`truncate_doc_content`).
+2. **FAQ card** — a single `FAQMessage` if a high-confidence FAQ resource exists.
+3. **Answer fragments** — `answer-event:start`, then 80-char text chunks via `stream_fragments`, then `answer-event:stop`.
+
+This eliminates the second Bedrock call that ResponseStreaming previously made to regenerate the answer, and removes the Step Function transition gap that caused streaming hangs on background tabs.
 
 **Turn budget and degradation** (`8d45e04`): at loop index `turn == 7` (the 8th turn — `turn_number = turn + 1`) a "running low on turns" message is injected. If the `for` exhausts without `answer`, a degraded fallback extracts the last assistant text and appends `_(Response incomplete: turn budget reached)_`. On the no-tool path, a `max_tokens` stop reason appends `_(Response may be incomplete)_`. Turn 0 is _outside_ this loop and doesn't count against `MAX_TURNS`.
 
@@ -334,11 +337,12 @@ Both extractors emit the same contract the chunkers consume: `header_split` (tex
 ### Key design decisions and footguns
 
 - **5× over-fetch + diversity cap** (`tools.py:627`): WPAM editions are ~79% of all chunks, so a naive `top_k=10` returns almost exclusively WPAM. When no `target_year` is set, `vector_search` requests `top_k * 5` from Neptune (was 3×). After WPAM dedup, a **per-document cap of 3 chunks** (`DIVERSITY_CAP_PER_DOC` env var, default 3) prevents any single source from crowding out others. The agent sees a diverse survey; it can drill deeper with `search_document`. When `target_year` IS set, no over-fetch (the user wants a specific edition).
+- **Authority-aware tiebreaking** (`tools.py:652`): after WPAM dedup + diversity cap + `top_k` truncation, chunks are re-sorted so higher-authority sources appear first _among similarly-scored results_. Similarity scores are bucketed (threshold 0.03); within the same bucket, lower `authority_level` wins (1=Constitution beats 9=USPAP). Between buckets, relevance wins — a highly relevant FAQ still beats a tangentially related statute. This exploits the model's primacy bias: authoritative sources appear earlier in context, making the prompt-level hierarchy instructions more effective. `authority_level` is resolved from the parent Document node via the `EXTRACTED_FROM` join already present in the Neptune query. Missing authority defaults to 9 (lowest priority). The `_sort_key` is popped during sort so it never reaches Claude's context.
 - **`search_document` — on-demand depth** (`tools.py:794`): embeds the sub-query with Titan v2 and runs a global vector search filtered to chunks belonging to the target `doc_id`. Returns up to `top_k` (max 5) chunks from that document. This replaces the depth lost by the diversity cap — the agent gets breadth by default and depth on demand. The system prompt instructs the agent to call it when `vector_search` surfaced only 1–2 chunks from a highly relevant doc (e.g., a WPAM chapter or assessment guide).
 - **Auto-enrichment** (`1864142`): after `vector_search` returns chunks, the executor fetches `get_neighbors` for the top-3 distinct parent doc_ids and returns `{chunks, graph_context}`. The agent gets graph context for free without an extra turn. Best-effort — neighbor errors are swallowed.
 - **Neighbor-doc citation discovery** (`f87e6d7`): after auto-enrichment, `vector_search` runs an additional pass to surface case law mentioned in neighbor doc text but not in the directly-retrieved chunks. It filters neighbors to non-WPAM document nodes, ranks them by shared statute overlap with the query chunks (top 3), fetches their chunk text, regex-extracts case citations, and resolves them to CaseLaw nodes. The chunk text stays in the Lambda (regex only, never enters Claude's context). See `docs/co-cited-case-law-discovery.md` for the full traversal path. This replaced a pure graph-traversal approach that failed because high-degree statute nodes (1500+ CITES edges) made LIMIT-based discovery arbitrary.
 - **`cited_doc_ids` is the authoritative sidebar.** On `answer`, the returned cards are restricted to _exactly_ the agent's cited ids, not all discovered docs — auto-enrichment pulls in far more docs (case-law stubs CITES-linked to statutes) than the answer uses. The turn-budget fallback path is the exception (it returns all discovered ids).
-- **Opinion backfill for graph-discovered case law.** After the agent calls `answer`, a deterministic post-answer step checks `cited_doc_ids` for case-law stubs that weren't already fetched via `fetch_case_opinion`. For up to 3 such stubs, it resolves the citation from Neptune and fetches the full opinion text from S3. This ensures ResponseStreaming (which regenerates the answer from the RAGDocuments) has substantive content for cited case law — without it, graph-discovered cases have empty `content` fields and their holdings can't be incorporated into the streamed answer. Capped at 3 to bound latency; best-effort (failures logged and skipped). Discovery tag: `opinion-backfill`.
+- **Opinion backfill for graph-discovered case law.** After the agent calls `answer`, a deterministic post-answer step checks `cited_doc_ids` for case-law stubs that weren't already fetched via `fetch_case_opinion`. For up to 3 such stubs, it resolves the citation from Neptune and fetches the full opinion text from S3. This ensures the streamed answer has substantive content for cited case law — without it, graph-discovered cases have empty `content` fields and their holdings can't be incorporated. Capped at 3 to bound latency; best-effort (failures logged and skipped). Discovery tag: `opinion-backfill`.
 - **Tool exceptions never crash the loop** (`686da54`). The model once called `get_document` with `node_id` (the param used by `get_neighbors`) instead of `doc_id`; the handler indexed `tool_input["doc_id"]` directly, raised `KeyError`, crashed the Lambda, and stranded the user on "answering." Now: `get_document` accepts both keys via `.get()`, and any tool exception is converted to an `{"error": ...}` tool-result fed back so the model self-corrects.
 
 > **⚠️ Do NOT revert** the StreamingBody parse (§5.1), the inlined-literal Cypher (§5.2), or the `node_id`/`doc_id` alias. Each is a dead design's replacement.
@@ -427,7 +431,7 @@ This works because ingestion stamped `citation` on every CaseLaw node. It's an e
 - **Section-level `statute_refs`** (`6b28018`): refs are emitted at both chapter (`70`) and section (`70.32`) granularity by reading the running page header of the local statute PDF mirror in `docs/state-laws/`. Without section-level refs, `WIS-STAT-70.32` had zero case-law neighbors.
 - **Always link to CourtListener/Scholar** (`6da060c`): both stub cards and fetched-opinion cards link to an external legal database, never the S3 `.txt` (which has no page anchors). ~95% of cases link to CourtListener; the remaining ~5% fall back to Google Scholar. `_apply_case_law_links` enforces this in one post-pass; `_build_opinion_card` sets `s3_key=None`. Opinion text still rides in the card's `content` to inform synthesis — only the user-facing link changed.
 - **Parallel-citation collapse** (`ce7e17c`, `93a229c`): one decision gets a separate node per reporter (N.W.2d + Wis.2d + WI App). `_collapse_case_law_by_title` merges them by normalized case-name + year.
-- **Post-answer opinion backfill**: case law discovered through graph traversal or neighbor-doc citation discovery (paths 1–3 above) arrives as metadata stubs — title, citation, and source_url, but **no chunks and no summary**. The agent synthesizes a rich answer using these stubs _plus_ WPAM chunk context, but the agent's answer is not passed downstream; ResponseStreaming regenerates from RAGDocuments. Without content in the case-law card, the regenerated answer can't incorporate the holding. The backfill step (after `answer`, before `_build_rag_documents`) fetches up to 3 cited-but-unfetched opinion texts from S3, closing the gap between what the agent knew and what ResponseStreaming receives. Only fires for cases in `cited_doc_ids`, never for uncited graph-neighbor noise.
+- **Post-answer opinion backfill**: case law discovered through graph traversal or neighbor-doc citation discovery (paths 1–3 above) arrives as metadata stubs — title, citation, and source_url, but **no chunks and no summary**. The backfill step (after `answer`, before `_build_rag_documents`) fetches up to 3 cited-but-unfetched opinion texts from S3 so that the streamed answer has substantive case-law content. Only fires for cases in `cited_doc_ids`, never for uncited graph-neighbor noise.
 
 ### ⚠️ The reversals (do not resurrect)
 
@@ -526,29 +530,28 @@ Citation cards carry a **stable reference** (`s3_key`, `start_page`, `end_page`)
 
 ### Inline prose citations
 
-The response LLM writes `[Title](doc:documentId)` instead of embedding 500-char presigned URLs that broke the markdown parser (`37f0c9c`). The frontend's `animated-markdown.tsx::resolveHref` rewrites `doc:<id>` to a URL from a per-message `docUrls` map. That map is built from `sourceUrl` **only**, so a PDF-only doc (s3Key, no sourceUrl) renders a non-clickable inline span — its click-through is the citation card's resolver path, not the inline link. Intentional but surprising.
+The agentic retrieval answer uses `[Title](doc:documentId)` instead of embedding 500-char presigned URLs that broke the markdown parser (`37f0c9c`). The frontend's `animated-markdown.tsx::resolveHref` rewrites `doc:<id>` to a URL from a per-message `docUrls` map. That map is built from `sourceUrl` **only**, so a PDF-only doc (s3Key, no sourceUrl) renders a non-clickable inline span — its click-through is the citation card's resolver path, not the inline link. Intentional but surprising.
 
 ---
 
 ## 13. The shared-contract discipline
 
-This is the most error-prone cross-boundary concern in the codebase. Inter-Lambda contracts live in `packages/shared/lambda_layers/step_function_types/models.py` (Pydantic). The `CamelCaseModel` base converts snake_case Python to camelCase JSON via an alias generator — so `start_page` becomes `startPage` on the wire.
+This is the most error-prone cross-boundary concern in the codebase. Shared models live in `backend/layers/step_function_types/models.py` (Pydantic). The `CamelCaseModel` base converts snake_case Python to camelCase JSON via an alias generator — so `start_page` becomes `startPage` on the wire.
 
 **The frontend hard-rejects unknown shapes.** Every WebSocket message is validated by `WebSocketMessageSchema.parse()` against a Zod discriminated union. A backend-only field addition, or a shape the union doesn't know, **drops the entire frame** and shows the user an error. This applies to trace and logging messages too.
 
-> **⚠️ Adding a citation field requires editing FIVE places** or it silently drops on some path:
+> **⚠️ Adding a citation field requires editing FOUR places** or it silently drops on some path:
 >
 > 1. `RAGDocument` (`step_function_types/models.py`)
 > 2. `SourceDocument` (`websocket_utils/models.py`) — note this is a _second_, hand-duplicated `CamelCaseModel`
-> 3. `resource_streaming`'s `SourceDocument` construction
-> 4. **Both** chat-history writers (`agentic_retrieval.save_chat_history` _and_ legacy `messages/streaming.log_chat_history`)
-> 5. the Zod `SourceDocumentSchema`
+> 3. `_stream_response` in `agentic_retrieval/main.py` (constructs `SourceDocument` from `RAGDocument`) and `save_chat_history`
+> 4. the Zod `SourceDocumentSchema` in the frontend
 >
-> (Worked example: `editionYear` was added to places 1, 4, and 5 but missed places 2–3, so it was silently dropped at the wire boundary until a follow-up added it to `websocket_utils.SourceDocument` and `resource_streaming`. See §11.)
+> (Worked example: `editionYear` was added to places 1 and 4 but missed places 2–3, so it was silently dropped at the wire boundary until a follow-up added it to `websocket_utils.SourceDocument` and the streaming construction. See §11.)
 
 > **⚠️ Use `.nullish()`, not `.optional()`, for new Zod optional fields.** Pydantic serializes an unset `Optional` as JSON `null`, but `z.optional()` accepts only `undefined` (key absent). A single `null` on `s3Key` once rejected the _entire_ documents frame and dropped every citation card (`7bd99e0`). The helpers `optStr`/`optInt`/`optNum` do `.nullish().transform(v => v ?? undefined)`.
 
-The CLAUDE.md "WebSocket Contract" section is the canonical statement of this rule for runtime messages; this section extends it to the persistence and resource paths.
+The CLAUDE.md "WebSocket Contract" section is the canonical statement of this rule for runtime messages; this section extends it to the persistence path.
 
 ---
 
@@ -570,7 +573,7 @@ The agent's per-turn reasoning and tool calls stream to the chat UI as a live, c
 
 > **⚠️ The metadata allow-list is duplicated and must stay in lockstep:** `ALLOWED_METADATA_KEYS` (`main.py`) mirrors a Set in `trace-metadata.ts`. This is defense-in-depth so a future edit can't leak raw query/chunk text into the UI. A new key added to only one side is silently dropped. (Three env flags govern this area and are distinct: `EMIT_AGENT_TRACE` = WebSocket kill switch, `LOG_AGENT_TRACE` = CloudWatch logging, `LOG_QUERY_TEXT` = raw query preview in logs.)
 
-> **Gotcha — trace is not persisted.** `agentTrace` is per-Query and dropped on reset. Resuming a past conversation from DynamoDB shows the static 3-step placeholder, not the real trace.
+> **Trace persistence.** `run_agentic_loop` now accumulates a `trace_log` (list of dicts with `kind`, `turn`, `ts`, tool name, status, etc.) and returns it alongside the answer. `save_chat_history` persists it to the `traceLog` attribute in DynamoDB. However, the frontend does not yet re-render persisted trace on session resume — it still shows the static placeholder for restored conversations.
 
 ---
 
@@ -581,11 +584,11 @@ Cognito-authenticated users get a sidebar of past chats they can resume, rename,
 - **SessionTable** — PK `sessionId`; `userIdIndex` GSI (PK `userId`, SK `lastMessageAt`) for per-user listing; `connectionId` GSI for WebSocket.
 - **ChatHistoryTable** — PK `queryId`; `sessionIdKey` GSI (PK `sessionId`, SK `timestamp`) for per-session reads and the delete cascade.
 
-All session/history handlers live in one Powertools Lambda (`packages/sessions/lambdas/chat_api/main.py`) behind an HTTP API with a Cognito JWT authorizer. Routes: `POST /session`, `GET /sessions`, `PATCH /session/{id}`, `DELETE /session/{id}`, `POST /session/{id}/message`, `GET /session/{id}/history`, `POST /session/{id}/feedback`, and the separately-authorized `GET /citation` (§12).
+All session/history handlers live in one Powertools Lambda (`backend/lambdas/chat_api/main.py`) behind an HTTP API with a Cognito JWT authorizer. Routes: `POST /session`, `GET /sessions`, `PATCH /session/{id}`, `DELETE /session/{id}`, `POST /session/{id}/message`, `GET /session/{id}/history`, `POST /session/{id}/feedback`, and the separately-authorized `GET /citation` (§12).
 
-**Chat history is written by the GraphRAG path itself.** `agentic_retrieval::save_chat_history` persists `{queryId, sessionId, timestamp, query, answer, resources}` **after the loop returns but before ResponseStreaming runs**, so resume works even if streaming fails. DynamoDB is the source of truth for resume; the WebSocket stream is a live optimization. `get_chat_history` reads back, caps at `MAX_HISTORY_TURNS=5`, and (legacy path) accepts `exclude_query_id` so the in-progress turn isn't fed back into the model.
+**Chat history is written after streaming completes.** `agentic_retrieval::save_chat_history` persists `{queryId, sessionId, timestamp, query, answer, resources, traceLog}` after `_stream_response` finishes. DynamoDB is the source of truth for resume; the WebSocket stream is the live delivery mechanism. `get_chat_history` reads back and caps at `MAX_HISTORY_TURNS=5`.
 
-> **⚠️ Adding a `RAGDocument` field requires adding it to `save_chat_history`'s field-by-field rebuild,** or resumed cards silently lose it. This bit twice: `authorityLevel` + `content` were omitted (cards resumed with no badge, blank preview — `b49c6fb`), and `discoveryTag` on the legacy path (`d695792`). Both have regression tests now.
+> **⚠️ Adding a `RAGDocument` field requires adding it to `save_chat_history`'s field-by-field rebuild,** or resumed cards silently lose it. This bit twice: `authorityLevel` + `content` were omitted (cards resumed with no badge, blank preview — `b49c6fb`), and `discoveryTag` (`d695792`). Both have regression tests now.
 
 > **⚠️ JWT accessor: `request_context.authorizer.jwt_claim`** (the flat Powertools property), **not `.jwt.claims`** (which raises `AttributeError` and 500s every authenticated request — `8a00aff`). Easy to "correct" the wrong way.
 
@@ -622,7 +625,7 @@ Next.js + Zustand (immer) + a WebSocket hook. Per query, `ChatMessage` renders f
 | **us-west-2** | Production (legacy OpenSearch)   | **Do not deploy from feature branches.** |
 | **us-east-1** | `WisconsinBotGraphRAG` (Neptune) | All GraphRAG development.                |
 
-Always use `--profile wisco`. Always run `cdk diff` before deploy to confirm only additive changes. GraphRAG changes must be purely additive — the existing stack is protected.
+Always use `--profile widor`. Always run `cdk diff` before deploy to confirm only additive changes. GraphRAG changes must be purely additive — the existing stack is protected.
 
 ### First-time bring-up checklist
 
@@ -630,7 +633,7 @@ The pieces are scattered; here is the consolidated order for a fresh GraphRAG st
 
 1. `cdk bootstrap` the account/region (us-east-1).
 2. `bun install`, `bun run bundle`, then `cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG`.
-3. **Seed `ModelConfigTable`.** On a fresh stack this table is empty, and an unseeded config makes `ResponseStreaming` fail _silently_ after sending `answer-event:start` — the frontend hangs on "loading." The `ragResponse` config (model id, system prompt) lives in `config/model_configs.toml`. (This is a known footgun recorded in project memory, not yet in any per-subsystem doc.)
+3. **Seed `ModelConfigTable`.** On a fresh stack this table is empty, and an unseeded config makes the agentic retrieval Lambda use its fallback prompt. The `agenticRetrieval` config (system prompt) lives in `config/model_configs.toml`. Upload with `tools/upload_model_configs.py`.
 4. **Sync FAQs + ingest the KB:** `sync_faq_bucket.sh` (copies us-west-2 → us-east-1, triggers Bedrock `StartIngestionJob`).
 5. **Seed `FaqUrlTable`:** `seed_faq_url_table.py` from `documents/faqs.json`.
 6. **Run the full ingestion** (§6) to populate Neptune: scrape → extract → embed → load.
@@ -651,7 +654,7 @@ Ingestion runs on your machine, not the EC2 instance, unless asked otherwise. Tw
 
 ### Observability — tracing one query
 
-A single `query_id` threads through the handler → Step Function → streaming Lambdas → WebSocket. To debug a failed query: read the agent trace (if `EMIT_AGENT_TRACE`), then CloudWatch structured logs (gated by `LOG_AGENT_TRACE`/`LOG_QUERY_TEXT`). The recurring error signatures to recognize: a silent `[]` from an undecoded Neptune payload (§5.1), a dropped WebSocket frame from a Zod rejection (§13), and a 404 popup from a rotated/re-prefixed raw bucket (§12).
+A single `query_id` threads through the handler → WebSocket. To debug a failed query: read the agent trace (if `EMIT_AGENT_TRACE`), then CloudWatch structured logs (gated by `LOG_AGENT_TRACE`/`LOG_QUERY_TEXT`). The recurring error signatures to recognize: a silent `[]` from an undecoded Neptune payload (§5.1), a dropped WebSocket frame from a Zod rejection (§13), and a 404 popup from a rotated/re-prefixed raw bucket (§12).
 
 ---
 
@@ -688,13 +691,12 @@ A single `query_id` threads through the handler → Step Function → streaming 
 | `update_item` on `$connect` (not `put_item`)               | put_item clobbers userId/title                                          | `8a00aff`            |
 | JWT via `jwt_claim` (not `.jwt.claims`)                    | the latter 500s every request                                           | `8a00aff`            |
 | Authority level defaults to `None`, never a number         | a `6` default badged 607 nodes as FAQ                                   | `f1fc513`            |
+| Direct Lambda invoke (no Step Function for GraphRAG)       | Step Function gap caused streaming hang; second Bedrock call was wasteful; double DDB write | `dab9f09` |
 
 ### 18.3 Known-stale docs (do not trust at face value)
 
 | Doc                                                          | What's stale                                                                                                                            | Reality                                                                                                                                                                                                                        |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `CLAUDE.md:131` (Citation Support)                           | "generates presigned S3 URLs"                                                                                                           | Eager minting was removed; URLs resolve at click time via `citation_resolver` (§12).                                                                                                                                           |
-| `docs/graphrag.md`                                           | Domain examples are **healthcare/PII compliance** (FedRAMP, MARS-E, SAM-5340); claims the prompt is externalized to `system_prompt.txt` | This is an inherited philosophy doc from a sibling project. The WI prompt is **inline** in `prompt.py`; the WI edge types are §4's. Read it for _principles_ (auto-enrichment, anti-hallucination), not for WI-specific facts. |
 | `docs/superpowers/specs/2026-04-30-agent-trace-ui-design.md` | Pre-replacement schema, a `faq_short_circuit` terminalReason, and `totalInputTokens`/`totalOutputTokens` dev fields                     | None match shipped code (§14).                                                                                                                                                                                                 |
 | `docs/superpowers/plans/2026-05-24-wpam-edition-recency.md`  | Shows `datetime.utcnow()`                                                                                                               | Shipped code uses `datetime.now(UTC)`.                                                                                                                                                                                         |
 | `README.md`                                                  | Last touched by the original team (2026-02-13)                                                                                          | Predates the entire GraphRAG migration.                                                                                                                                                                                        |
@@ -722,7 +724,7 @@ The same court opinion often has multiple reporter citations (e.g., `45 Wis. 2d 
 
 ---
 
-_This guide documents the state of `feat/graphrag-migration` as of commit `f87e6d7` (2026-06-16). When you change a subsystem, update its section here and add any new "do NOT revert" decision to §18.2 — that table is the cheapest insurance against re-breaking solved problems._
+_This guide documents the state of `feat/graphrag-migration` as of commit `dab9f09` (2026-06-21). When you change a subsystem, update its section here and add any new "do NOT revert" decision to §18.2 — that table is the cheapest insurance against re-breaking solved problems._
 
 Other random notes from Jonah:
 during one of the client meetings, they noticed a message that asked them to allow their computer to discover other computers on the same network. This happens because they have their own cognito setup.
