@@ -70,6 +70,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           LOG_MAX_TEXT_CHARS: '500',
           LOG_MAX_QUERY_CHARS: '1000',
           EMIT_AGENT_TRACE: 'true',
+          ENABLE_DISAMBIGUATION: 'false',
         },
       }
     );

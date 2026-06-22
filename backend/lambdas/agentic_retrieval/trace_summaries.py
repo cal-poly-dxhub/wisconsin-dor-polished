@@ -122,6 +122,13 @@ def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
             "opinion_chars": len(result.get("text", "")),
         }
 
+    if tool_name == "clarify":
+        return {
+            "tool_name": tool_name,
+            "status": "terminal",
+            "question_chars": len(result.get("question", "")),
+        }
+
     if tool_name == "answer":
         return {
             "tool_name": tool_name,
@@ -158,6 +165,9 @@ def build_tool_call_summary(tool_name: str, tool_input: dict) -> str:
     if tool_name == "fetch_case_opinion":
         citation = tool_input.get("citation", "")
         return citation
+    if tool_name == "clarify":
+        question = tool_input.get("question", "")
+        return f'"{question[:60]}"' if question else ""
     if tool_name == "answer":
         cited = tool_input.get("cited_doc_ids", []) or []
         return f"with {len(cited)} cited doc(s)"
@@ -282,6 +292,12 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         refined = result.get("refined_query", "")
         summary_text = f'Refined to "{refined}"' if refined else "No refinement"
         metadata = {"refined": bool(refined)}
+
+    elif tool_name == "clarify":
+        question = result.get("question", "")
+        summary_text = f"Asking user: {question[:80]}"
+        status = "terminal"
+        metadata = {"questionChars": len(question)}
 
     elif tool_name == "answer":
         cited = result.get("cited_doc_ids", []) or []

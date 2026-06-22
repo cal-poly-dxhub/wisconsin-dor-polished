@@ -85,6 +85,57 @@ def _is_document_neighbor(neighbor: dict) -> bool:
     return not any(label in _NON_DOCUMENT_LABELS for label in labels)
 
 
+# Property-type detection for disambiguation. When retrieved chunks discuss
+# 3+ distinct property classifications and the user didn't specify one, the
+# agent is nudged to call the clarify tool.
+_PROPERTY_TYPE_KEYWORDS: dict[str, list[str]] = {
+    "manufacturing": [
+        "manufacturing property", "manufacturing assessment",
+        "manufacturing classification", "manufacturer",
+    ],
+    "agricultural": [
+        "agricultural property", "agricultural land", "agricultural assessment",
+        "use-value", "use value assessment", "farmland", "agricultural classification",
+    ],
+    "residential": [
+        "residential property", "residential assessment", "residential classification",
+        "single-family", "single family home",
+    ],
+    "commercial": [
+        "commercial property", "commercial assessment", "commercial classification",
+        "income approach", "commercial valuation",
+    ],
+    "personal property": [
+        "personal property", "business personal property", "statement of personal property",
+    ],
+}
+
+
+def _detect_property_type_breadth(chunks: list[dict], doc_ids: set[str]) -> list[str]:
+    """Return distinct property-type categories present in chunk text or doc IDs."""
+    text_blob = " ".join(c.get("text", "") for c in chunks).lower()
+    doc_ids_lower = " ".join(doc_ids).lower()
+    search_text = text_blob + " " + doc_ids_lower
+
+    matched: list[str] = []
+    for category, keywords in _PROPERTY_TYPE_KEYWORDS.items():
+        if any(kw in search_text for kw in keywords):
+            matched.append(category)
+    return matched
+
+
+def _query_specifies_property_type(query: str) -> bool:
+    """True if the user's query already names a specific property type."""
+    q = query.lower()
+    type_keywords = [
+        "manufacturing", "agricultural", "agriculture", "farmland", "farm land",
+        "residential", "commercial", "personal property", "exempt",
+    ]
+    return any(kw in q for kw in type_keywords)
+
+
+ENABLE_DISAMBIGUATION = os.environ.get("ENABLE_DISAMBIGUATION", "false").lower() == "true"
+
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
 
@@ -141,7 +192,7 @@ def run_agentic_loop(
     request_id: str = "",
     ws_server=None,
     trace_seq=None,
-) -> tuple[str, list[str], list[RAGDocument], FAQResource | None, list[dict], bool]:
+) -> tuple[str, list[str], list[RAGDocument], FAQResource | None, list[dict], bool, bool]:
     """Run Claude's agentic loop against Neptune.
 
     Turn 0 is hardcoded: run `faq_search` with the verbatim user query. The
@@ -149,8 +200,8 @@ def run_agentic_loop(
     graph work.
 
     Returns:
-        (answer_text, cited_doc_ids, rag_documents, faq_resource, trace_log, answer_streamed)
-        answer_streamed: True if the answer was already streamed to WebSocket in real-time
+        (answer_text, cited_doc_ids, rag_documents, faq_resource, trace_log,
+         answer_streamed, connection_alive)
     """
     chat_history = chat_history or []
     if trace_seq is None:
@@ -161,14 +212,21 @@ def run_agentic_loop(
     fetched_opinions: dict[str, dict] = {}
     trace_log: list[dict] = []
     answer_was_streamed = False
+    ws_connection_alive = [True]
 
     def _record_trace(kind: str, turn: int | None = None, **data) -> None:
         trace_log.append({"kind": kind, "turn": turn, "ts": int(time.time() * 1000), **data})
 
+    def _emit_safe(ws, trace_seq_fn, **kwargs) -> None:
+        """Emit trace only if WebSocket connection is still alive."""
+        if not ws_connection_alive[0]:
+            return
+        _emit(ws, trace_seq_fn, **kwargs)
+
     # Turn 0 refinement: rewrite context-dependent follow-ups against history.
     search_query = query
     if chat_history:
-        _emit(
+        _emit_safe(
             ws_server,
             trace_seq,
             query_id=query_id,
@@ -197,7 +255,7 @@ def run_agentic_loop(
             summary=refine_summary["summary_text"],
             metadata=refine_summary["metadata"],
         )
-        _emit(
+        _emit_safe(
             ws_server,
             trace_seq,
             query_id=query_id,
@@ -227,7 +285,7 @@ def run_agentic_loop(
         max_turns=MAX_TURNS,
         **_query_fields(query),
     )
-    _emit(
+    _emit_safe(
         ws_server,
         trace_seq,
         query_id=query_id,
@@ -236,7 +294,7 @@ def run_agentic_loop(
     )
 
     # Turn 0: deterministic FAQ search.
-    _emit(
+    _emit_safe(
         ws_server,
         trace_seq,
         query_id=query_id,
@@ -265,7 +323,7 @@ def run_agentic_loop(
         docTitles=faq_summary["doc_titles"],
         metadata=faq_summary["metadata"],
     )
-    _emit(
+    _emit_safe(
         ws_server,
         trace_seq,
         query_id=query_id,
@@ -389,26 +447,34 @@ def run_agentic_loop(
 
         def _send_ws_fragment(text: str) -> None:
             """Send a real-time answer fragment over WebSocket."""
-            if not ws_server:
+            if not ws_server or not ws_connection_alive[0]:
                 return
             msg = FragmentMessage(
                 query_id=query_id,
                 content=FragmentContent(fragment=text),
             )
-            ws_server.client.post_to_connection(
-                ConnectionId=ws_server.connection_id,
-                Data=json.dumps({"streamId": "answer", "body": msg.model_dump(by_alias=True)}),
-            )
+            try:
+                ws_server.client.post_to_connection(
+                    ConnectionId=ws_server.connection_id,
+                    Data=json.dumps({"streamId": "answer", "body": msg.model_dump(by_alias=True)}),
+                )
+            except Exception:
+                logger.info("WebSocket connection gone; continuing without streaming")
+                ws_connection_alive[0] = False
 
         def _on_answer_start() -> None:
             """Signal the frontend that answer streaming is beginning."""
-            if not ws_server:
+            if not ws_server or not ws_connection_alive[0]:
                 return
             start_msg = AnswerEventType(event="start", query_id=query_id)
-            ws_server.client.post_to_connection(
-                ConnectionId=ws_server.connection_id,
-                Data=json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)}),
-            )
+            try:
+                ws_server.client.post_to_connection(
+                    ConnectionId=ws_server.connection_id,
+                    Data=json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)}),
+                )
+            except Exception:
+                logger.info("WebSocket connection gone; continuing without streaming")
+                ws_connection_alive[0] = False
 
         try:
             stream_response = bedrock.converse_stream(
@@ -452,7 +518,7 @@ def run_agentic_loop(
             assistant=asst_summary,
         )
         if asst_summary["text_preview"]:
-            _emit(
+            _emit_safe(
                 ws_server,
                 trace_seq,
                 query_id=query_id,
@@ -498,7 +564,7 @@ def run_agentic_loop(
                 tool_use_id=tool_use_id,
                 tool_input=tool_input,
             )
-            _emit(
+            _emit_safe(
                 ws_server,
                 trace_seq,
                 query_id=query_id,
@@ -612,12 +678,12 @@ def run_agentic_loop(
                 discovery=discovery_summary(discovery),
                 tool_result_summary=tool_result_summary["raw"],
             )
-            if tool_name != "answer":
+            if tool_name not in ("answer", "clarify"):
                 result_metadata = dict(tool_result_summary["metadata"])
                 if tool_latency_ms is not None:
                     result_metadata["latencyMs"] = tool_latency_ms
                 result_metadata = filter_metadata(result_metadata)
-                _emit(
+                _emit_safe(
                     ws_server,
                     trace_seq,
                     query_id=query_id,
@@ -636,6 +702,35 @@ def run_agentic_loop(
                         "toolLatencyMs": tool_latency_ms,
                     },
                 )
+
+            if tool_name == "clarify":
+                answer = result.get("question", "")
+                _log(
+                    "agent_loop_complete",
+                    **trace_context,
+                    terminal_reason="clarify_tool",
+                    turns_used=turn_number,
+                    elapsed_ms=round((time.perf_counter() - loop_started) * 1000),
+                    answer_chars=len(answer),
+                    discovered_doc_count=len(all_doc_ids),
+                )
+                _record_trace(
+                    "loop_complete", turn=turn_number,
+                    terminalReason="clarify_tool",
+                    turnsUsed=turn_number,
+                    elapsedMs=round((time.perf_counter() - loop_started) * 1000),
+                )
+                _emit_safe(
+                    ws_server, trace_seq, query_id=query_id,
+                    kind="loop_complete",
+                    payload={
+                        "terminalReason": "clarify_tool",
+                        "turnsUsed": turn_number,
+                        "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
+                        "citedDocCount": 0,
+                    },
+                )
+                return answer, [], [], None, trace_log, False, ws_connection_alive[0]
 
             if tool_name == "answer":
                 answer = result.get("response", "")
@@ -712,7 +807,7 @@ def run_agentic_loop(
                     citedDocIds=list(cited)[:20],
                     discovery=discovery_summary(cited_discovery),
                 )
-                _emit(
+                _emit_safe(
                     ws_server,
                     trace_seq,
                     query_id=query_id,
@@ -724,7 +819,7 @@ def run_agentic_loop(
                         "citedDocCount": len(cited),
                     },
                 )
-                return answer, list(cited), rag_docs, cited_faq_resource, trace_log, answer_was_streamed
+                return answer, list(cited), rag_docs, cited_faq_resource, trace_log, answer_was_streamed, ws_connection_alive[0]
 
             tool_results.append({
                 "toolResult": {
@@ -784,7 +879,7 @@ def run_agentic_loop(
         citedDocIds=list(all_doc_ids)[:20],
         discovery=discovery_summary(discovery),
     )
-    _emit(
+    _emit_safe(
         ws_server,
         trace_seq,
         query_id=query_id,
@@ -796,7 +891,7 @@ def run_agentic_loop(
             "citedDocCount": len(all_doc_ids),
         },
     )
-    return answer, list(all_doc_ids), rag_docs, high_confidence_faq, trace_log, answer_was_streamed
+    return answer, list(all_doc_ids), rag_docs, high_confidence_faq, trace_log, answer_was_streamed, ws_connection_alive[0]
 
 
 def _send_resources_and_finalize(
@@ -925,7 +1020,53 @@ def handler(event: dict, context) -> dict[str, Any]:
                 },
             )
 
-        answer, cited_doc_ids, rag_documents, faq_resource, trace_log, answer_streamed = run_agentic_loop(
+        # Pre-loop disambiguation: if enabled, check whether the query is
+        # a generic property assessment question that needs classification.
+        if ENABLE_DISAMBIGUATION:
+            from disambiguation import CLARIFICATION_QUESTION, should_disambiguate
+
+            needs_disambiguation = should_disambiguate(user_query.query, chat_history)
+            _emit(
+                ws_server,
+                trace_seq,
+                query_id=user_query.query_id,
+                kind="phase",
+                payload={
+                    "phase": "generality_classified",
+                    "label": "Classified prompt generality — asking for property type"
+                    if needs_disambiguation
+                    else "Classified prompt generality — specific enough to proceed",
+                    "result": "disambiguate" if needs_disambiguation else "proceed",
+                },
+            )
+
+            if needs_disambiguation:
+                _log(
+                    "disambiguation_short_circuit",
+                    request_id=request_id,
+                    query_id=user_query.query_id,
+                    session_id=user_query.session_id,
+                    **_query_fields(user_query.query),
+                )
+                answer = CLARIFICATION_QUESTION
+                if ws_server:
+                    _send_resources_and_finalize(
+                        ws_server,
+                        user_query.query_id,
+                        answer,
+                        rag_documents=[],
+                        faq_resource=None,
+                        answer_already_streamed=False,
+                    )
+                save_chat_history(
+                    session_id,
+                    user_query.query_id,
+                    user_query.query,
+                    answer,
+                )
+                return {"successful": True}
+
+        answer, cited_doc_ids, rag_documents, faq_resource, trace_log, answer_streamed, connection_alive = run_agentic_loop(
             user_query.query,
             chat_history=chat_history,
             query_id=user_query.query_id,
@@ -947,15 +1088,19 @@ def handler(event: dict, context) -> dict[str, Any]:
             answer_streamed=answer_streamed,
         )
 
-        if ws_server:
-            _send_resources_and_finalize(
-                ws_server,
-                user_query.query_id,
-                answer,
-                rag_documents,
-                faq_resource,
-                answer_already_streamed=answer_streamed,
-            )
+        if ws_server and connection_alive:
+            try:
+                _send_resources_and_finalize(
+                    ws_server,
+                    user_query.query_id,
+                    answer,
+                    rag_documents,
+                    faq_resource,
+                    answer_already_streamed=answer_streamed,
+                )
+            except Exception:
+                logger.info("WebSocket connection lost during finalize; answer saved to DB")
+                connection_alive = False
 
         save_chat_history(
             session_id,

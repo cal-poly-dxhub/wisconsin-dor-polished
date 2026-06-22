@@ -967,6 +967,15 @@ def execute_tool(
         )
         return result
 
+    elif tool_name == "clarify":
+        _log_tool_event(
+            "clarify_tool_complete",
+            tool_name=tool_name,
+            question_chars=len(tool_input.get("question", "")),
+            latency_ms=round((time.perf_counter() - started) * 1000),
+        )
+        return tool_input
+
     elif tool_name == "answer":
         _log_tool_event(
             "answer_tool_complete",

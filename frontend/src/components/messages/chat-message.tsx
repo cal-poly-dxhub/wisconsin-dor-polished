@@ -121,6 +121,11 @@ function renderTraceStep(
     const error = status === 'error';
     return { label: summary, done, error, missed, detail, devJson };
   }
+  if (event.kind === 'phase') {
+    const label = event.payload.label ? String(event.payload.label) : '';
+    if (!label) return null;
+    return { label, done: true, detail, devJson };
+  }
   return null;
 }
 
