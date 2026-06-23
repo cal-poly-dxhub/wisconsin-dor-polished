@@ -213,11 +213,11 @@ export function DocumentCardCompact({
             size,
             state: 'default',
           }),
-          'flex flex-col rounded-lg',
+          'flex flex-col rounded-lg overflow-hidden',
           className
         )}
       >
-        <CardHeader className="px-4 pt-3 pb-1.5">
+        <CardHeader className="px-4 pt-3.5 pb-0">
           <div className="flex items-start gap-2">
             <DocumentHeader
               title={document.title}
@@ -237,29 +237,34 @@ export function DocumentCardCompact({
               <Maximize2 className="h-3.5 w-3.5" />
             </button>
           </div>
+          {(document.authorityLevel !== undefined || (document.discoveryTag && document.discoveryTag !== 'unknown')) && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1.5">
+              {document.authorityLevel !== undefined && (
+                <AuthorityBadge authorityLevel={document.authorityLevel} size="sm" />
+              )}
+              {document.discoveryTag && document.discoveryTag !== 'unknown' && (
+                <DiscoveryBadge tag={document.discoveryTag} size="sm" />
+              )}
+            </div>
+          )}
+        </CardHeader>
+
+        <CardContent className="px-4 pt-2.5 pb-3">
           <CardDescription className="line-clamp-2 text-xs">
             {contentPreview}
           </CardDescription>
-        </CardHeader>
+        </CardContent>
 
-        <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pb-3">
-          {document.authorityLevel !== undefined && (
-            <AuthorityBadge authorityLevel={document.authorityLevel} size="sm" />
-          )}
-          {document.discoveryTag && document.discoveryTag !== 'unknown' && (
-            <DiscoveryBadge tag={document.discoveryTag} size="sm" />
-          )}
-          {document.source && (document.sourceUrl || document.s3Key) && (
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground ml-auto inline-flex items-center gap-1 text-xs transition-colors cursor-pointer"
-              onClick={onSourceClick}
-            >
-              <span>{getSourceActionLabel(document)}</span>
-              <ExternalLink className="h-3 w-3" />
-            </button>
-          )}
-        </div>
+        {document.source && (document.sourceUrl || document.s3Key) && (
+          <button
+            type="button"
+            className="mt-auto w-full border-t border-border/50 bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-colors cursor-pointer inline-flex items-center justify-end gap-1.5"
+            onClick={onSourceClick}
+          >
+            <span>{getSourceActionLabel(document)}</span>
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        )}
       </Card>
     </motion.div>
   );
