@@ -74,8 +74,21 @@ def build_rag_documents(
             existing = docs_by_id[doc_id]
             if existing.s3_key:
                 merged_s3_key = existing.s3_key
-                merged_start_page = existing.start_page
-                merged_end_page = existing.end_page
+                # Use the earliest page across all merged chunks so the
+                # source card links to the first relevant section, not an
+                # arbitrary chunk.
+                chunk_start = chunk.get("start_page")
+                chunk_end = chunk.get("end_page")
+                existing_start = existing.start_page
+                existing_end = existing.end_page
+                if chunk_start is not None and existing_start is not None:
+                    merged_start_page = min(existing_start, chunk_start)
+                else:
+                    merged_start_page = existing_start if existing_start is not None else chunk_start
+                if chunk_end is not None and existing_end is not None:
+                    merged_end_page = max(existing_end, chunk_end)
+                else:
+                    merged_end_page = existing_end if existing_end is not None else chunk_end
             else:
                 merged_s3_key = chunk.get("s3_key")
                 merged_start_page = chunk.get("start_page")

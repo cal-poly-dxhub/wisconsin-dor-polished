@@ -254,17 +254,26 @@ class NeptuneClient:
         Returns the parent doc plus the page range from the citing chunk,
         or None if no chapter doc cites the stub.
         """
+        # Derive the expected parent chapter ID from the stub ID.
+        # e.g. "WIS-STAT-70.32" → "statutes-70", "WIS-STAT-77.04" → "statutes-77"
+        parent_hint = ""
+        if stub_id.startswith("WIS-STAT-"):
+            chapter = stub_id.split("-", 2)[2].split(".")[0]  # "70"
+            parent_hint = f"statutes-{chapter}"
+
         results = self.query(
             "MATCH (stub {id: $id}) "
             "OPTIONAL MATCH (stub)-[:BELONGS_TO]->(stub_fw:Framework) "
             "WITH stub, stub_fw "
             "MATCH (c:Chunk)-[:CITES]->(stub) "
             "MATCH (c)-[:EXTRACTED_FROM]->(parent) "
-            "WHERE parent.summary IS NOT NULL "
+            "WHERE parent.summary IS NOT NULL AND c.start_page > 2 "
             "OPTIONAL MATCH (parent)-[:BELONGS_TO]->(parent_fw:Framework) "
             "WITH parent, c, "
-            "  CASE WHEN stub_fw IS NOT NULL AND parent_fw IS NOT NULL "
-            "    AND parent_fw.id = stub_fw.id THEN 0 ELSE 1 END AS rank "
+            "  CASE WHEN parent.id = $parent_hint THEN 0 "
+            "    WHEN stub_fw IS NOT NULL AND parent_fw IS NOT NULL "
+            "      AND parent_fw.id = stub_fw.id THEN 1 "
+            "    ELSE 2 END AS rank "
             "ORDER BY rank ASC, c.start_page ASC "
             "RETURN parent.id AS id, parent.title AS title, "
             "parent.summary AS summary, parent.source_url AS source_url, "
@@ -272,7 +281,7 @@ class NeptuneClient:
             "parent.authority_level AS authority_level, "
             "c.start_page AS start_page, c.end_page AS end_page "
             "LIMIT 1",
-            {"id": stub_id},
+            {"id": stub_id, "parent_hint": parent_hint},
             query_name="find_stub_promotion",
         )
         return results[0] if results else None

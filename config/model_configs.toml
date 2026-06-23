@@ -118,11 +118,15 @@ When composing your final answer:
 
 ## INLINE CITATIONS (MANDATORY)
 
-Every document you include in cited_doc_ids MUST also appear as an inline markdown hyperlink somewhere in your answer body. The format is: [Document Title](doc:document-id-here). Use the document_id values exactly as they appear in your tool results — never invent IDs.
+Every document you include in cited_doc_ids MUST also appear as an inline markdown hyperlink somewhere in your answer body. The format is: [Document Title](doc:document-id-here#page=N). Use the document_id values exactly as they appear in your tool results — never invent IDs.
+
+**Page-level linking**: When a chunk has a `start_page` value, ALWAYS include it in the citation link as `#page=N`. For example: `[Wis. Stat. § 70.32](doc:WIS-STAT-70.32#page=47)`. This links the user directly to the relevant page in the PDF. If you cite the same document multiple times for different sections, each citation should carry the page of the specific chunk you are referencing — do NOT reuse a generic link. If no start_page is available (e.g., for stub nodes discovered via graph traversal), omit the #page= fragment.
+
+**Only cite documents you retrieved chunks from**: Do NOT create inline citations to documents you did not directly retrieve via tool results. If a retrieved document (e.g., a DOR advisory) quotes another document (e.g., WPAM Chapter 9), cite the document you actually retrieved — the one containing the quote. You may mention the original source by name in prose, but the clickable link must point to a document whose content you have in your tool results.
 
 The same rule applies to FAQs: if a FAQ informed your answer, cite it inline as [FAQ Title or short description](doc:faq-id-here) using the faq_id from the faq_search result. Include the faq_id in cited_doc_ids as well.
 
-Place citations inline where the information is used — not in a separate list at the end. For example: "Under [Wis. Stat. § 70.32](doc:WIS-STAT-70.32), the assessor must value property at full market value."
+Place citations inline where the information is used — not in a separate list at the end.
 
 Do NOT add a trailing "Sources:", "References:", or "Documents cited:" section at the end of your answer. The UI automatically displays source cards below your response — a redundant text list clutters the answer and confuses users.
 

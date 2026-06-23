@@ -65,8 +65,21 @@ const DOC_HREF_PREFIX = 'doc:';
 function resolveHref(href: string | undefined, docUrls?: Record<string, string>): string | undefined {
   if (!href) return href;
   if (href.startsWith(DOC_HREF_PREFIX) && docUrls) {
-    const docId = href.slice(DOC_HREF_PREFIX.length);
-    return docUrls[docId] || undefined;
+    const rest = href.slice(DOC_HREF_PREFIX.length);
+    const hashIdx = rest.indexOf('#page=');
+    const docId = hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
+    const pageOverride = hashIdx >= 0 ? parseInt(rest.slice(hashIdx + 6), 10) : NaN;
+    const baseUrl = docUrls[docId];
+    if (!baseUrl) return undefined;
+    if (!Number.isNaN(pageOverride) && pageOverride > 0) {
+      // Replace the page param in the resolved URL
+      const url = new URL(baseUrl, 'http://placeholder');
+      url.searchParams.set('page', String(pageOverride));
+      // Strip the placeholder origin if it was a relative URL
+      const resolved = baseUrl.startsWith('http') ? url.toString() : url.pathname + url.search;
+      return resolved;
+    }
+    return baseUrl;
   }
   return href;
 }
