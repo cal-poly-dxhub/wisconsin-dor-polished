@@ -35,13 +35,14 @@ type TraceStep = {
 };
 
 const TOOL_VERBS: Record<string, string> = {
-  vector_search: 'Searching for',
-  get_neighbors: 'Expanding graph from',
+  vector_search: 'Searching knowledge graph for',
+  search_document: 'Searching',
+  get_neighbors: 'Exploring related documents from',
   get_document: 'Fetching document',
   faq_search: 'Checking FAQs for',
   fetch_case_opinion: 'Fetching opinion for',
-  get_authority_chain: 'Walking authority chain from',
-  list_framework_docs: 'Listing framework docs for',
+  get_authority_chain: 'Tracing authority chain from',
+  list_framework_docs: 'Listing framework documents for',
   refine_query: 'Refining query',
   answer: 'Answering',
 };
@@ -165,11 +166,13 @@ function buildTraceSteps(
     // The agent often issues 2-3 vector_searches in a row; without this, the
     // trace shows the same "Searched the knowledge graph" entry repeated
     // with partial counts. Merging sums the counts and keeps one row.
+    // Skip search_document — each targets a different doc and should stay separate.
     if (
       prev &&
       prev.isCompletedResult &&
       isCompletedResult &&
       toolName &&
+      toolName !== 'search_document' &&
       prev.toolName === toolName
     ) {
       const merged = mergeTraceMetadata(prev.metadata, metadata);
@@ -217,16 +220,63 @@ interface MessageOptionsBarProps {
   items: ResourceItem[];
 }
 
+const CHARS_PER_SECOND = 150;
+const TICK_MS = 16;
+const CHARS_PER_TICK = Math.max(1, Math.round((CHARS_PER_SECOND * TICK_MS) / 1000));
+
+function useProgressiveReveal(content: string, streaming: boolean): string {
+  const [visibleLen, setVisibleLen] = useState(() => streaming ? 0 : content.length);
+  const rafRef = useRef<number | null>(null);
+  const lastTickRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!streaming || !content) {
+      return;
+    }
+
+    const target = content.length;
+
+    function tick(now: number) {
+      if (!lastTickRef.current) lastTickRef.current = now;
+      const elapsed = now - lastTickRef.current;
+      if (elapsed >= TICK_MS) {
+        const ticks = Math.floor(elapsed / TICK_MS);
+        setVisibleLen(prev => {
+          const next = Math.min(prev + CHARS_PER_TICK * ticks, target);
+          if (next >= target) return target;
+          return next;
+        });
+        lastTickRef.current = now;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    }
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [content, streaming]);
+
+  if (!streaming) return content;
+  if (visibleLen >= content.length) return content;
+  let end = visibleLen;
+  while (end < content.length && content[end] !== ' ' && content[end] !== '\n') {
+    end++;
+    if (end - visibleLen > 20) { end = visibleLen; break; }
+  }
+  return content.slice(0, end);
+}
+
 export function StreamResponse({
   content,
   className,
   streamingComplete,
   docUrls,
 }: StreamResponseProps) {
+  const visibleContent = useProgressiveReveal(content, !streamingComplete);
   return (
     <div className={`chat-response font-sans ${className || ''}`}>
       <div className="markdown-container">
-        <AnimatedMarkdown content={content} animate={false} docUrls={docUrls} />
+        <AnimatedMarkdown content={visibleContent} animate={false} docUrls={docUrls} />
       </div>
     </div>
   );
@@ -247,7 +297,7 @@ function InlineSources({ items, streamingComplete }: { items: ResourceItem[]; st
     <div className="mt-4">
       <button
         onClick={() => setOpen(prev => !prev)}
-        className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer mb-3"
+        className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-[color,background-color,border-color] cursor-pointer mb-3"
       >
         <FileText className="h-3.5 w-3.5" />
         <span>Sources ({parts.join(', ')})</span>
@@ -573,7 +623,7 @@ export function ChatMessage({
                 onClick={
                   steps.length > 0 ? () => setStepsOpen(prev => !prev) : undefined
                 }
-                className={`flex items-center gap-1.5 text-muted-foreground transition-colors ${
+                className={`flex items-center gap-1.5 text-muted-foreground transition-[color,background-color,border-color] ${
                   steps.length > 0 ? 'cursor-pointer hover:text-foreground' : ''
                 }`}
               >
@@ -617,7 +667,7 @@ export function ChatMessage({
                         >
                           <div className="flex items-start gap-2.5">
                             <div
-                              className={`mt-[0.45em] h-[7px] w-[7px] shrink-0 rounded-full transition-colors duration-500 ${
+                              className={`mt-[0.45em] h-[7px] w-[7px] shrink-0 rounded-full transition-[color,background-color,border-color] duration-500 ${
                                 step.error
                                   ? 'bg-destructive'
                                   : step.missed

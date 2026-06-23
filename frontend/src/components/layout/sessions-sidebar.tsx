@@ -210,10 +210,10 @@ export function SessionsSidebar() {
 
   return (
     <div
-      className="flex h-full flex-col border-r border-border bg-card transition-all duration-300 ease-in-out"
+      className="flex h-full flex-col border-r border-border bg-card transition-[width] duration-300 ease-in-out"
       style={{ width: isCollapsed ? '64px' : '256px' }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseEnter={isCollapsed ? () => setIsHovered(true) : undefined}
+      onMouseLeave={isCollapsed ? () => setIsHovered(false) : undefined}
     >
       {/* Header with Logo/Collapse Button */}
       <div className="flex items-center justify-center border-b border-border px-4 py-4"
@@ -223,7 +223,7 @@ export function SessionsSidebar() {
           isHovered ? (
             <button
               onClick={() => setIsCollapsed(false)}
-              className="rounded-md p-1.5 text-muted-foreground transition-all duration-200 hover:bg-muted hover:text-foreground cursor-pointer"
+              className="rounded-md p-1.5 text-muted-foreground transition-[color,background-color,border-color] duration-200 hover:bg-muted hover:text-foreground cursor-pointer"
               aria-label="Expand sidebar"
             >
               <ChevronLeft
@@ -254,7 +254,7 @@ export function SessionsSidebar() {
             </div>
             <button
               onClick={() => { setIsCollapsed(true); setIsHovered(false); }}
-              className="rounded-md p-1.5 text-muted-foreground transition-all duration-200 hover:bg-muted hover:text-foreground cursor-pointer"
+              className="rounded-md p-1.5 text-muted-foreground transition-[color,background-color,border-color] duration-200 hover:bg-muted hover:text-foreground cursor-pointer"
               aria-label="Collapse sidebar"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -336,7 +336,7 @@ export function SessionsSidebar() {
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
-                          className="shrink-0 w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-70 hover:!opacity-90 data-[state=open]:opacity-70 transition-opacity cursor-pointer"
+                          className="shrink-0 w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-70 hover:!opacity-90 data-[state=open]:opacity-70 cursor-pointer"
                           aria-label="Session options"
                           onClick={(e) => e.stopPropagation()}
                         >
@@ -379,7 +379,7 @@ export function SessionsSidebar() {
             <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
               <PopoverTrigger asChild>
                 <button
-                  className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground transition-all duration-200 hover:bg-muted/80 hover:ring-2 hover:ring-muted-foreground/20 cursor-pointer"
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground transition-[color,background-color,border-color,box-shadow] duration-200 hover:bg-muted/80 hover:ring-2 hover:ring-muted-foreground/20 cursor-pointer"
                   aria-label="User menu"
                 >
                   {userInitial}
@@ -433,7 +433,7 @@ export function SessionsSidebar() {
           <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
             <PopoverTrigger asChild>
               <button
-                className="flex w-full items-center gap-3 px-4 py-4 text-left transition-all duration-200 hover:bg-foreground/5 cursor-pointer"
+                className="flex w-full items-center gap-3 px-4 py-4 text-left transition-[color,background-color,border-color] duration-200 hover:bg-foreground/5 cursor-pointer"
                 aria-label="User menu"
               >
                 {/* Avatar */}

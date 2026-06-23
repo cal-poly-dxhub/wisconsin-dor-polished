@@ -46,7 +46,7 @@ function AppShell() {
       <div className="flex h-screen w-screen overflow-hidden">
         <SessionsSidebar />
 
-        <div className="flex min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1" style={{ contain: 'layout paint' }}>
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             {loading || switchingSession ? (
               <ChatSkeleton />

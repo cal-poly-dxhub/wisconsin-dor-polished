@@ -159,7 +159,12 @@ The page anchor off-by-one and same-page-for-different-sections issues trace to 
 
 ### Task 19: Fix train-of-thought flicker on sidebar session hover
 
-**Problem:** When viewing an active session with the train-of-thought trace visible, hovering over session cards in the sidebar causes the trace section in the chat window to flicker. Reproducible by moving the cursor back and forth between the chat window and a non-selected session card (the one that shows a light hover rectangle).
+**Problem:** When viewing an active session with the train-of-thought trace visible, hovering over session cards in the sidebar causes multiple UI elements in the chat window to flicker. Reproducible by moving the cursor back and forth between the chat window and a non-selected session card (the one that shows a light hover rectangle).
+
+**Affected elements:**
+- Train-of-thought trace section flickers
+- Source cards' title font color flickers
+- Feedback buttons (thumbs up/down) underneath the chat response — their border and background flicker
 
 **Attempted fixes (did not resolve):**
 - Narrowing sidebar `transition-all` to `transition-[width]`

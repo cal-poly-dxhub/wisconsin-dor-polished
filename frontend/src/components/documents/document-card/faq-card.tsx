@@ -18,7 +18,7 @@ import { AuthorityBadge } from './authority-badge';
 export type { FAQ };
 
 const faqCardVariants = cva(
-  'group cursor-pointer font-sans transition-colors duration-200 ease-in-out hover:border-primary/40 hover:shadow-md focus-within:border-primary/50',
+  'group cursor-pointer font-sans transition-[color,background-color,border-color,box-shadow] duration-200 ease-in-out hover:border-primary/40 hover:shadow-md focus-within:border-primary/50',
   {
     variants: {
       variant: {
@@ -169,7 +169,7 @@ export function FAQCardCompact({
                 event.stopPropagation();
                 onClick();
               }}
-              className="text-muted-foreground hover:bg-accent hover:text-foreground -mt-0.5 -mr-0.5 cursor-pointer rounded-md p-1 transition-colors"
+              className="text-muted-foreground hover:bg-accent hover:text-foreground -mt-0.5 -mr-0.5 cursor-pointer rounded-md p-1 transition-[color,background-color,border-color]"
               aria-label="Expand FAQ card"
             >
               <Maximize2 className="h-3.5 w-3.5" />

@@ -37,7 +37,7 @@ export interface Document {
 }
 
 const documentCardVariants = cva(
-  'group cursor-pointer font-sans transition-all duration-200 ease-in-out border-black/15 dark:border-border hover:border-primary/60 hover:shadow-md hover:bg-accent/70 focus-within:border-primary/50 shadow-none dark:shadow-sm',
+  'group cursor-pointer font-sans transition-[color,background-color,border-color,box-shadow] duration-200 ease-in-out border-black/15 dark:border-border hover:border-primary/60 hover:shadow-md hover:bg-accent/70 focus-within:border-primary/50 shadow-none dark:shadow-sm',
   {
     variants: {
       variant: {
@@ -231,7 +231,7 @@ export function DocumentCardCompact({
                 event.stopPropagation();
                 onClick();
               }}
-              className="text-muted-foreground hover:bg-accent hover:text-foreground -mt-0.5 -mr-0.5 cursor-pointer rounded-md p-1 transition-colors"
+              className="text-muted-foreground hover:bg-accent hover:text-foreground -mt-0.5 -mr-0.5 cursor-pointer rounded-md p-1 transition-[color,background-color,border-color]"
               aria-label="Expand document card"
             >
               <Maximize2 className="h-3.5 w-3.5" />
@@ -258,7 +258,7 @@ export function DocumentCardCompact({
         {document.source && (document.sourceUrl || document.s3Key) && (
           <button
             type="button"
-            className="mt-auto w-full border-t border-border/50 bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-colors cursor-pointer inline-flex items-center justify-end gap-1.5"
+            className="mt-auto w-full border-t border-border/50 bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-[color,background-color,border-color] cursor-pointer inline-flex items-center justify-end gap-1.5"
             onClick={onSourceClick}
           >
             <span>{getSourceActionLabel(document)}</span>
@@ -349,7 +349,7 @@ function DocumentCardModal({
               {document.source && (document.sourceUrl || document.s3Key) && (
                 <button
                   type="button"
-                  className="w-full border-t border-border bg-muted/70 px-4 py-2.5 text-sm font-medium text-primary hover:bg-muted transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5"
+                  className="w-full border-t border-border bg-muted/70 px-4 py-2.5 text-sm font-medium text-primary hover:bg-muted transition-[color,background-color,border-color] cursor-pointer inline-flex items-center justify-center gap-1.5"
                   onClick={onSourceClick}
                 >
                   <span>{getSourceActionLabel(document)}</span>

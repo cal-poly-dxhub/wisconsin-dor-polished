@@ -163,7 +163,7 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
         {/* Scroll to bottom button */}
         <button
           onClick={scrollToBottom}
-          className={`absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-card/95 border-2 border-primary/20 shadow-xl hover:bg-card hover:border-primary/40 hover:shadow-2xl cursor-pointer backdrop-blur-sm transition-all duration-200 ease-out ${
+          className={`absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-card/95 border-2 border-primary/20 shadow-xl hover:bg-card hover:border-primary/40 hover:shadow-2xl cursor-pointer backdrop-blur-sm transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-200 ease-out ${
             showScrollButton
               ? 'opacity-100 translate-y-0 pointer-events-auto'
               : 'opacity-0 translate-y-2 pointer-events-none'
