@@ -72,6 +72,50 @@ export function useSessionResume(): { loading: boolean } {
 
     const resume = async () => {
       try {
+        const url = new URL(window.location.href);
+        const urlSessionId = url.searchParams.get('session');
+
+        if (urlSessionId) {
+          try {
+            const history = await getSessionHistory(urlSessionId);
+            clearHistory();
+            if (history.messages && history.messages.length > 0) {
+              history.messages.forEach(msg => {
+                const isPending = !msg.answer || msg.answer.trim() === '';
+                const query: Query = {
+                  queryId: msg.queryId,
+                  query: msg.query,
+                  type: 'outbound',
+                  timestamp: msg.timestamp || new Date().toISOString(),
+                  status: isPending ? 'pending' : 'completed',
+                  response: { type: 'stream', content: msg.answer || '' },
+                  resources: msg.resources,
+                };
+                addQuery(query);
+              });
+
+              const lastMsg = history.messages[history.messages.length - 1];
+              if (!lastMsg.answer || lastMsg.answer.trim() === '') {
+                useChatStore.getState().setCurrentQueryId(lastMsg.queryId);
+                useChatStore.getState().setChatState('waiting_for_response');
+                pollForAnswer(urlSessionId, lastMsg.queryId);
+              }
+            }
+            setSessionId(urlSessionId);
+            return;
+          } catch {
+            const cleanUrl = new URL(window.location.href);
+            cleanUrl.searchParams.delete('session');
+            window.history.replaceState(null, '', cleanUrl.toString());
+            return;
+          }
+        }
+
+        if (sessionStorage.getItem('explicit-new-chat') === 'true') {
+          sessionStorage.removeItem('explicit-new-chat');
+          return;
+        }
+
         const { sessions } = await getSessions();
         if (!sessions || sessions.length === 0) return;
 

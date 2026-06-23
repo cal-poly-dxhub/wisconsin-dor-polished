@@ -7,6 +7,7 @@ import { SessionsSidebar } from '@/components/layout/sessions-sidebar';
 import { useChatStore } from '@/stores/chat-store';
 import { useWebSocketChat } from '@/hooks/use-websocket-chat';
 import { useSessionResume } from '@/hooks/use-session-resume';
+import { useSessionUrlSync } from '@/hooks/use-session-url-sync';
 import { Toaster } from '@/components/ui/sonner';
 import { GradientBackground } from '@/components/ui/gradient-background';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -33,6 +34,7 @@ export default function App() {
 
 function AppShell() {
   const { loading } = useSessionResume();
+  useSessionUrlSync();
   const switchingSession = useChatStore(state => state.switchingSession);
   const queryOrder = useChatStore(state => state.queryOrder);
   const isEmpty = queryOrder.length === 0;

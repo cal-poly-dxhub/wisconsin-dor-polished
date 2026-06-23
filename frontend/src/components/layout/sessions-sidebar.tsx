@@ -84,6 +84,7 @@ export function SessionsSidebar() {
     clearHistory();
     reset();
     refetch();
+    sessionStorage.setItem('explicit-new-chat', 'true');
   };
 
   const handleStartRename = (sessionId: string, currentTitle: string) => {
