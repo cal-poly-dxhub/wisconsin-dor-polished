@@ -10,7 +10,6 @@
 | 6 | Reduce PDF chunk size for consistency and precision | — |
 | 9 | Reduce topic clustering batch size | — |
 | 14 | Improve case law discovery in vector_search auto-enrichment | [Response B](#response-b) |
-| 16 | Support URL-based session routing and preserve "new chat" state on reload | — |
 | 17 | Handle multipart queries (split or unified answering strategy) | — |
 | 18 | Show traversed sources in UI during agentic retrieval | — |
 | 19 | Fix train-of-thought flicker on sidebar session hover | — |
@@ -19,15 +18,16 @@
 
 | # | Task |
 |---|------|
+| 3 | Tune model tone — reduce overconfident statements |
 | 4 | Replace Step Function with direct Lambda invoke |
 | 7 | Refactor agentic retrieval Lambda (main.py) |
+| 8 | Add boilerplate stripping before chunking |
 | 10 | Externalize prompts from Lambda code |
 | 11 | Add managed compute for ingestion (Fargate) |
 | 12 | Fix WebSocket streaming hang on background tabs |
 | 13 | Harden authority hierarchy enforcement (authority-aware re-ranking) |
-| 3 | Tune model tone — reduce overconfident statements |
-| 8 | Add boilerplate stripping before chunking |
 | 15 | Add settings modal with detailed trace toggle |
+| 16 | Support URL-based session routing and preserve "new chat" state on reload |
 
 ---
 
@@ -51,57 +51,15 @@
 - [ ] **Page anchors** — Ensure all source documents can link to correct page numbers and anchors. Testers reported also an off-by-one issue where the link took them to the page after the relevant page. May need to reingest if chunk metadata (start_page/end_page) is sloppy. Additionally, inline citations point to the parent doc's first-chunk page rather than the specific section being cited — e.g., citing "Wis. Stat. § 70.47" links to page 1 of the statutes-70 PDF instead of the page where § 70.47 actually begins. This requires either per-subsection page metadata in Neptune or a smarter page lookup at link-resolution time.
 - [ ] **Inline citations** — All sources cited as cards at the bottom of a response must also be mentioned as inline links within the answer text.
 - [ ] **Remove redundant source list** — The chatbot should not additionally list sources as a line of text at the end of its response (the cards are sufficient).
+- [ ] **Inline ↔ card reconciliation** — The model writes more inline `[Title](doc:id)` links than it puts in `cited_doc_ids`, so those links render in the answer but have no matching source card below. Need a post-filter to enforce the 1:1 invariant programmatically (the model drifts on this bookkeeping despite prompt instructions).
 
----
+  **Options:**
+  1. **Post-filter (recommended)** — After the model finishes, regex-extract all `doc:ID` patterns from the answer body and union them into `cited_doc_ids` before sending resource cards. Deterministic, guarantees consistency regardless of model drift.
+  2. **Prompt reinforcement** — Strengthen the existing system prompt instruction. Cheaper but unreliable — the model is already juggling complex instructions and will continue to drift on mechanical bookkeeping.
 
-### Task 11: Add managed compute for ingestion (Fargate)
+  **Direction question:** Should the filter *add missing IDs to `cited_doc_ids`* (so cards appear for everything linked inline) or *strip orphan inline links* (remove links that don't have cards)? Adding is better UX — the user sees a link, they should be able to click a card for it.
 
-**Problem:** The ingestion pipeline runs as local Python scripts with manual AWS credentials. No Fargate task, no managed compute. This means:
-- Dependent on the developer's machine staying online
-- No automatic retry or recovery
-- Concurrency limited by local resources
-
-**Direction:** Add a Fargate task definition to the CDK stack for ingestion. Package the scripts as a container and trigger via `aws ecs run-task`. This makes ingestion reproducible, observable (CloudWatch), and eliminates points of failure that occur without beefy machines.
-
----
-
-### Task 10: Externalize prompts from Lambda code
-
-**Problem:** The system prompt in `prompt.py` is a Python string in code. Changing it requires re-bundling and redeploying the Lambda. Minor issue but adds friction to prompt iteration.
-
-**Direction:** Load the prompt from S3 or SSM Parameter Store at cold-start. This allows iterating on prompt wording without any deployment. For ingestion prompts (`LLM_CLASSIFY_PROMPT` in `extract.py`), externalize to YAML or `.txt` files.
-
----
-
-### Task 9: Reduce topic clustering batch size
-
-**Problem:** The app sends 200 topics per LLM call for synonym clustering. The output can easily exceed `maxTokens: 4096` and get truncated.
-
-**Direction:** Reduce batch size to 50–80 topics per LLM call.
-
----
-
-### Task 8: Add boilerplate stripping before chunking
-
-**Problem:** No boilerplate removal before chunking. Common headers, footers, navigation text, and repeated legal disclaimers from PDF/HTML sources get embedded and pollute vector search. This caused major issues in retrieval — polishing this step heavily boosts performance and reduces quantity of chunks.
-
-**Direction:** Add boilerplate patterns specific to Wisconsin sources — DOR headers/footers, publication dates repeated on every page, "Department of Revenue" navigation text, etc. Strip them before chunking. Will require reingestion.
-
----
-
-### Task 7: Refactor agentic retrieval Lambda (main.py)
-
-**Problem:** `main.py` is massive and mixes agent orchestration, citation resolution, FAQ handling, chat history, logging/tracing, resource building, and WebSocket management in one file. This makes iteration expensive — any change requires redeploying the entire Lambda.
-
-**Notes:** The prompt is already externalized to `prompt.py`, but `_build_tool_result_summary`, `_build_tool_call_summary`, tracing infrastructure, and FAQ handling are overhead that should be separated into dedicated modules.
-
----
-
-### Task 6: Reduce PDF chunk size for consistency and precision
-
-**Problem:** `pdfChunker.py` uses `CHUNK_MAX_CHARS=7500` for PDFs (most of the corpus) while `extract.py` uses 2000 for non-PDFs. Large tool results bloat the agent's context window per turn, and each `vector_search` result returns massive chunks that consume tokens.
-
-**Direction:** Reduce PDF chunk size to 2000–2500 chars max. More chunks but they'll be fully embedded, more precise for retrieval, and cheaper at query time (fewer tokens in tool results). The existing approach of keeping page metadata (`start_page`/`end_page`) is already good — just be more granular. Will require reingestion.
+  **Key file:** `backend/lambdas/agentic_retrieval/main.py` — where `cited_doc_ids` is assembled after the tool loop completes.
 
 ---
 
@@ -113,53 +71,19 @@
 
 ---
 
-### Task 4: Replace Step Function with direct Lambda invoke
+### Task 6: Reduce PDF chunk size for consistency and precision
 
-**Problem:** The Step Function architecture adds cold-start latency, state-machine transition costs, and unnecessary complexity. The multi-hop orchestration (agentic retrieval → separate ResponseStreaming + ResourceStreaming Lambdas) means the agent's output is re-serialized, re-transmitted, and re-parsed.
+**Problem:** `pdfChunker.py` uses `CHUNK_MAX_CHARS=7500` for PDFs (most of the corpus) while `extract.py` uses 2000 for non-PDFs. Large tool results bloat the agent's context window per turn, and each `vector_search` result returns massive chunks that consume tokens.
 
-**Direction:** Collapse the Step Function into a direct async Lambda invoke. The agentic retrieval Lambda already streams via WebSocket — stream directly from it instead of routing through separate streaming Lambdas.
-
----
-
-### Task 3: Tune model tone — reduce overconfident statements
-
-**Problem:** The model makes aggressively confident statements like "the bottom line is...X" when property assessment is most of the time not that definitive or concrete. Answers should reflect the nuance and conditionality inherent in property tax guidance.
-
-**Direction:** Adjust the system prompt to discourage definitive/absolute phrasing and encourage hedging where appropriate (e.g., "generally," "depending on your situation," "the manual states..."). The tone should be informative and helpful without overstating certainty.
+**Direction:** Reduce PDF chunk size to 2000–2500 chars max. More chunks but they'll be fully embedded, more precise for retrieval, and cheaper at query time (fewer tokens in tool results). The existing approach of keeping page metadata (`start_page`/`end_page`) is already good — just be more granular. Will require reingestion.
 
 ---
 
-### Task 12: Fix WebSocket streaming hang on background tabs
+### Task 9: Reduce topic clustering batch size
 
-**Problem:** Sometimes the agentic retrieval streams traces all the way to "Answering with N cited docs" but then hangs — the answer never streams to the frontend. On page refresh the answer is there (persisted in DynamoDB). Reproduces most often when the browser tab is not in focus.
+**Problem:** The app sends 200 topics per LLM call for synonym clustering. The output can easily exceed `maxTokens: 4096` and get truncated.
 
-**Root Cause:** Browser-backgrounded tabs close WebSocket connections (TCP idle timeout or browser suspension). When the Step Function transitions from AgenticRetrieval → ResponseStreaming, the ResponseStreaming Lambda looks up the now-stale `connectionId` from DynamoDB and calls `post_to_connection`. API Gateway returns 410 GoneException (connection dead). The code has no GoneException handling — it raises `MessageDeliveryError`, ResponseStreaming returns `successful: false`, and the frontend stays stuck in "streaming" state. The answer IS saved because `save_chat_history()` runs inside the agentic retrieval Lambda (before the Step Function transition), so refresh loads it from DynamoDB.
-
-**Contributing factors:**
-- `websocket_utils/utils.py` has no handling for 410 GoneException — treats all `post_to_connection` failures the same
-- PartySocket reconnects with a new `connectionId`, but by then the Step Function already failed
-- No frontend mechanism to detect "stuck in streaming state" and recover
-
-**Direction:** Multi-layer fix:
-1. **Frontend recovery**: On WebSocket reconnect, if there's an in-flight query stuck in "streaming" status, poll the chat history API for the answer and hydrate the UI.
-2. **Backend resilience**: In ResponseStreaming, catch 410 GoneException specifically — the answer is already in DynamoDB, so log and exit gracefully instead of crashing.
-3. **Longer term (Task 4)**: Collapsing the Step Function eliminates the transition gap entirely — the agentic retrieval Lambda would stream the answer directly.
-
----
-
-### Task 13: Harden authority hierarchy enforcement beyond prompt compliance
-
-**Problem:** The authority hierarchy (Constitution > Statutes > Case Law > Admin Rules > WPAM > FAQs > Guides > IAAO > USPAP) is currently enforced entirely through system prompt instructions. The agent is told the hierarchy in prose and trusted to apply it when selecting citations and framing answers. There is no programmatic check that higher-authority sources are prioritized, no re-ranking by authority level, and no guardrail preventing the agent from citing a FAQ over a controlling statute.
-
-Each Neptune Document node already carries an `authority_level` integer (1–9), and `get_authority_chain` lets the agent inspect the governance tree — but nothing in the code validates or adjusts the agent's final output based on these signals.
-
-**Risk:** If the model drifts, misweighs, or ignores the prompt hierarchy (especially under complex multi-source queries), the user could receive an answer grounded in informal guidance (FAQ, IAAO) when binding law (statute, admin rule) is directly on point.
-
-**Direction (investigation needed):**
-- **Post-loop validation**: After the agent calls the `answer` tool, inspect `cited_doc_ids` and their `authority_level` properties. Flag or log when the answer cites only low-authority sources for a query where higher-authority documents were retrieved but not cited.
-- **Re-ranking tool results**: Weight vector search results by authority level before returning them to the agent, so higher-authority chunks appear first and are more likely to be selected.
-- **Structured output enforcement**: Require the `answer` tool to include a `primary_authority_level` field and reject answers where the stated level doesn't match the cited documents.
-- **Prompt-level reinforcement**: Add worked examples to the system prompt showing correct authority selection, or inject a turn-N reminder about hierarchy when the agent appears to be citing only low-authority sources.
+**Direction:** Reduce batch size to 50–80 topics per LLM call.
 
 ---
 
@@ -187,24 +111,50 @@ Each Neptune Document node already carries an `authority_level` integer (1–9),
 
 ---
 
-### Task 15: Add settings modal with detailed trace toggle
+### Task 17: Handle multipart queries (split or unified answering strategy)
 
-**Problem:** The agent trace UI streams detailed expanded steps (tool calls, reasoning, metadata) to the frontend. This is useful for developers but noisy for end users in production.
+**Problem:** Users sometimes ask multipart questions (e.g., "What's the deadline for filing my assessment appeal, and what documents do I need?"). The system currently treats the entire input as a single query for retrieval, which can cause one part to dominate search results and the other part to get a shallow or missing answer.
 
-**Solution (implemented):** Two-tier trace display controlled by a user-facing setting:
-- **Dev mode (localhost):** Trace starts expanded by default — detailed steps stream in real-time
-- **Prod/default:** Trace starts collapsed — user sees "Thought for Xs" with a chevron to expand manually
-- **User override:** Settings modal (accessible from profile menu) lets users toggle "Detailed agent trace" on/off, persisted in localStorage
+**Direction (needs further design):**
 
-**Files added:**
-- `frontend/src/stores/settings-store.ts` — Zustand store with localStorage persistence (`wisco:settings`)
-- `frontend/src/components/ui/dialog.tsx` — Radix Dialog primitive
-- `frontend/src/components/ui/switch.tsx` — Radix Switch primitive
-- `frontend/src/components/settings/settings-modal.tsx` — Settings modal with toggle
+- **Detection** — Add a prefilter step that scans the incoming query for multipart structure (multiple questions, conjunctions joining distinct topics, numbered sub-questions).
+- **Strategy options (TBD):**
+  - *Answer all at once* — Keep as a single retrieval pass but ensure the agent explicitly addresses each sub-question in its response. May require prompt reinforcement.
+  - *Sequential split* — Decompose into separate sub-queries, run retrieval independently for each, then synthesize a combined response. Better retrieval precision but higher latency and token cost.
+  - *Ask the user to narrow* — If the parts are too divergent (different topic areas), prompt the user to ask one at a time.
+- **Open questions:** Where does the split happen — before or after FAQ search? Does the agent's existing tool loop already handle this well enough with the right prompt nudge, or does it need structural intervention?
 
-**Files modified:**
-- `frontend/src/components/layout/sessions-sidebar.tsx` — Added "Settings" item to profile popover
-- `frontend/src/components/messages/chat-message.tsx` — `stepsOpen` defaults to `detailedTrace` setting
+---
+
+### Task 18: Show traversed sources in UI during agentic retrieval
+
+**Problem:** While the agent is performing retrieval (tool loop running), the user only sees the train-of-thought trace steps. There's no visual indication of which specific sources/documents the agent has looked at or traversed so far. This makes the wait feel opaque and doesn't build confidence that the system is finding relevant material.
+
+**Direction:**
+
+- **Live source feed** — As the agent calls `vector_search`, `get_neighbors`, or `get_authority_chain`, stream the document titles/names it encounters back to the frontend and display them in a lightweight UI element (e.g., a scrolling list of source chips, a sidebar panel, or inline badges under the trace).
+- **Progressive accumulation** — Sources should accumulate as retrieval progresses, giving the user a sense of the breadth of material being consulted before the final answer arrives.
+- **Tie into existing trace stream** — The backend already streams tool call metadata over WebSocket. Extract document titles from tool results and emit them as a dedicated message type (or enrich existing trace messages) so the frontend can render them distinctly from the reasoning steps.
+- **Design considerations:** Keep it non-intrusive — it should enhance the waiting experience without overwhelming the UI. Consider collapsibility or a compact chip/pill format that expands on hover/click.
+
+---
+
+### Task 19: Fix train-of-thought flicker on sidebar session hover
+
+**Problem:** When viewing an active session with the train-of-thought trace visible, hovering over session cards in the sidebar causes the trace section in the chat window to flicker. Reproducible by moving the cursor back and forth between the chat window and a non-selected session card (the one that shows a light hover rectangle).
+
+**Attempted fixes (did not resolve):**
+- Narrowing sidebar `transition-all` to `transition-[width]`
+- Wrapping `ChatMessage` in `React.memo` with stable `EMPTY_RESOURCES` array ref
+- Replacing the outer `<motion.div>` wrapper on `ChatMessage` with a plain `<div>`
+- Adding `initial={false}` to the trace `AnimatePresence` and `layout={false}` to the trace `motion.div`
+
+**Key files:**
+- `frontend/src/components/messages/chat-message.tsx` — trace rendering (`AnimatePresence` + `motion.div` with `height: 'auto'`)
+- `frontend/src/components/messages/chat-container.tsx` — scroll handler that calls `setSelectedMessageId`
+- `frontend/src/components/layout/sessions-sidebar.tsx` — sidebar with hover state + width transition
+
+**Likely direction:** The root cause may be deeper than framer-motion re-renders — possibly CSS `hover:bg-muted` on the sidebar cards triggering a reflow that propagates through the flex layout to the chat container, causing the scroll handler or a resize observer to fire and update state. Needs profiling with React DevTools and/or Chrome Performance tab to identify the exact re-render trigger.
 
 ---
 
@@ -278,58 +228,124 @@ Each Neptune Document node already carries an `authority_level` integer (1–9),
 
 ---
 
+## Completed Task Details
+
+### Task 3: Tune model tone — reduce overconfident statements
+
+**Problem:** The model makes aggressively confident statements like "the bottom line is...X" when property assessment is most of the time not that definitive or concrete. Answers should reflect the nuance and conditionality inherent in property tax guidance.
+
+**Direction:** Adjust the system prompt to discourage definitive/absolute phrasing and encourage hedging where appropriate (e.g., "generally," "depending on your situation," "the manual states..."). The tone should be informative and helpful without overstating certainty.
+
+---
+
+### Task 4: Replace Step Function with direct Lambda invoke
+
+**Problem:** The Step Function architecture adds cold-start latency, state-machine transition costs, and unnecessary complexity. The multi-hop orchestration (agentic retrieval → separate ResponseStreaming + ResourceStreaming Lambdas) means the agent's output is re-serialized, re-transmitted, and re-parsed.
+
+**Direction:** Collapse the Step Function into a direct async Lambda invoke. The agentic retrieval Lambda already streams via WebSocket — stream directly from it instead of routing through separate streaming Lambdas.
+
+---
+
+### Task 7: Refactor agentic retrieval Lambda (main.py)
+
+**Problem:** `main.py` is massive and mixes agent orchestration, citation resolution, FAQ handling, chat history, logging/tracing, resource building, and WebSocket management in one file. This makes iteration expensive — any change requires redeploying the entire Lambda.
+
+**Notes:** The prompt is already externalized to `prompt.py`, but `_build_tool_result_summary`, `_build_tool_call_summary`, tracing infrastructure, and FAQ handling are overhead that should be separated into dedicated modules.
+
+---
+
+### Task 8: Add boilerplate stripping before chunking
+
+**Problem:** No boilerplate removal before chunking. Common headers, footers, navigation text, and repeated legal disclaimers from PDF/HTML sources get embedded and pollute vector search. This caused major issues in retrieval — polishing this step heavily boosts performance and reduces quantity of chunks.
+
+**Direction:** Add boilerplate patterns specific to Wisconsin sources — DOR headers/footers, publication dates repeated on every page, "Department of Revenue" navigation text, etc. Strip them before chunking. Will require reingestion.
+
+---
+
+### Task 10: Externalize prompts from Lambda code
+
+**Problem:** The system prompt in `prompt.py` is a Python string in code. Changing it requires re-bundling and redeploying the Lambda. Minor issue but adds friction to prompt iteration.
+
+**Direction:** Load the prompt from S3 or SSM Parameter Store at cold-start. This allows iterating on prompt wording without any deployment. For ingestion prompts (`LLM_CLASSIFY_PROMPT` in `extract.py`), externalize to YAML or `.txt` files.
+
+---
+
+### Task 11: Add managed compute for ingestion (Fargate)
+
+**Problem:** The ingestion pipeline runs as local Python scripts with manual AWS credentials. No Fargate task, no managed compute. This means:
+- Dependent on the developer's machine staying online
+- No automatic retry or recovery
+- Concurrency limited by local resources
+
+**Direction:** Add a Fargate task definition to the CDK stack for ingestion. Package the scripts as a container and trigger via `aws ecs run-task`. This makes ingestion reproducible, observable (CloudWatch), and eliminates points of failure that occur without beefy machines.
+
+---
+
+### Task 12: Fix WebSocket streaming hang on background tabs
+
+**Problem:** Sometimes the agentic retrieval streams traces all the way to "Answering with N cited docs" but then hangs — the answer never streams to the frontend. On page refresh the answer is there (persisted in DynamoDB). Reproduces most often when the browser tab is not in focus.
+
+**Root Cause:** Browser-backgrounded tabs close WebSocket connections (TCP idle timeout or browser suspension). When the Step Function transitions from AgenticRetrieval → ResponseStreaming, the ResponseStreaming Lambda looks up the now-stale `connectionId` from DynamoDB and calls `post_to_connection`. API Gateway returns 410 GoneException (connection dead). The code has no GoneException handling — it raises `MessageDeliveryError`, ResponseStreaming returns `successful: false`, and the frontend stays stuck in "streaming" state. The answer IS saved because `save_chat_history()` runs inside the agentic retrieval Lambda (before the Step Function transition), so refresh loads it from DynamoDB.
+
+**Contributing factors:**
+- `websocket_utils/utils.py` has no handling for 410 GoneException — treats all `post_to_connection` failures the same
+- PartySocket reconnects with a new `connectionId`, but by then the Step Function already failed
+- No frontend mechanism to detect "stuck in streaming state" and recover
+
+**Direction:** Multi-layer fix:
+1. **Frontend recovery**: On WebSocket reconnect, if there's an in-flight query stuck in "streaming" status, poll the chat history API for the answer and hydrate the UI.
+2. **Backend resilience**: In ResponseStreaming, catch 410 GoneException specifically — the answer is already in DynamoDB, so log and exit gracefully instead of crashing.
+3. **Longer term (Task 4)**: Collapsing the Step Function eliminates the transition gap entirely — the agentic retrieval Lambda would stream the answer directly.
+
+---
+
+### Task 13: Harden authority hierarchy enforcement beyond prompt compliance
+
+**Problem:** The authority hierarchy (Constitution > Statutes > Case Law > Admin Rules > WPAM > FAQs > Guides > IAAO > USPAP) is currently enforced entirely through system prompt instructions. The agent is told the hierarchy in prose and trusted to apply it when selecting citations and framing answers. There is no programmatic check that higher-authority sources are prioritized, no re-ranking by authority level, and no guardrail preventing the agent from citing a FAQ over a controlling statute.
+
+Each Neptune Document node already carries an `authority_level` integer (1–9), and `get_authority_chain` lets the agent inspect the governance tree — but nothing in the code validates or adjusts the agent's final output based on these signals.
+
+**Risk:** If the model drifts, misweighs, or ignores the prompt hierarchy (especially under complex multi-source queries), the user could receive an answer grounded in informal guidance (FAQ, IAAO) when binding law (statute, admin rule) is directly on point.
+
+**Direction (investigation needed):**
+- **Post-loop validation**: After the agent calls the `answer` tool, inspect `cited_doc_ids` and their `authority_level` properties. Flag or log when the answer cites only low-authority sources for a query where higher-authority documents were retrieved but not cited.
+- **Re-ranking tool results**: Weight vector search results by authority level before returning them to the agent, so higher-authority chunks appear first and are more likely to be selected.
+- **Structured output enforcement**: Require the `answer` tool to include a `primary_authority_level` field and reject answers where the stated level doesn't match the cited documents.
+- **Prompt-level reinforcement**: Add worked examples to the system prompt showing correct authority selection, or inject a turn-N reminder about hierarchy when the agent appears to be citing only low-authority sources.
+
+---
+
+### Task 15: Add settings modal with detailed trace toggle
+
+**Problem:** The agent trace UI streams detailed expanded steps (tool calls, reasoning, metadata) to the frontend. This is useful for developers but noisy for end users in production.
+
+**Solution (implemented):** Two-tier trace display controlled by a user-facing setting:
+- **Dev mode (localhost):** Trace starts expanded by default — detailed steps stream in real-time
+- **Prod/default:** Trace starts collapsed — user sees "Thought for Xs" with a chevron to expand manually
+- **User override:** Settings modal (accessible from profile menu) lets users toggle "Detailed agent trace" on/off, persisted in localStorage
+
+**Files added:**
+- `frontend/src/stores/settings-store.ts` — Zustand store with localStorage persistence (`wisco:settings`)
+- `frontend/src/components/ui/dialog.tsx` — Radix Dialog primitive
+- `frontend/src/components/ui/switch.tsx` — Radix Switch primitive
+- `frontend/src/components/settings/settings-modal.tsx` — Settings modal with toggle
+
+**Files modified:**
+- `frontend/src/components/layout/sessions-sidebar.tsx` — Added "Settings" item to profile popover
+- `frontend/src/components/messages/chat-message.tsx` — `stepsOpen` defaults to `detailedTrace` setting
+
+---
+
 ### Task 16: Support URL-based session routing and preserve "new chat" state on reload
 
 **Problem:** Sessions are not reflected in the URL. Users cannot link to or bookmark a specific chat session, and refreshing the page loses the current navigation state. Additionally, if a user is on the "start new chat" page and reloads, they are not returned to that state.
 
-**Direction:**
+**Solution (implemented):** Query-param routing (`?session=<uuid>`) with `window.history.replaceState` to sync URL with active session. A `sessionStorage` flag preserves "new chat" state across reloads without polluting the browser history stack.
 
-1. **URL query/route for sessions** — Reflect the active session ID in the URL (e.g., `/?session=<id>` or `/chat/<id>`). Clicking a session in the sidebar should update the URL; navigating directly to a session URL should load that session.
-2. **Preserve "new chat" state on reload** — If the user is on the blank "new chat" page (no active session selected), persist that state so a page reload returns them to the same empty-chat view rather than auto-selecting the most recent session.
+**Files added:**
+- `frontend/src/hooks/use-session-url-sync.ts` — Store→URL sync hook (replaceState on sessionId change)
 
----
-
-### Task 17: Handle multipart queries (split or unified answering strategy)
-
-**Problem:** Users sometimes ask multipart questions (e.g., "What's the deadline for filing my assessment appeal, and what documents do I need?"). The system currently treats the entire input as a single query for retrieval, which can cause one part to dominate search results and the other part to get a shallow or missing answer.
-
-**Direction (needs further design):**
-
-- **Detection** — Add a prefilter step that scans the incoming query for multipart structure (multiple questions, conjunctions joining distinct topics, numbered sub-questions).
-- **Strategy options (TBD):**
-  - *Answer all at once* — Keep as a single retrieval pass but ensure the agent explicitly addresses each sub-question in its response. May require prompt reinforcement.
-  - *Sequential split* — Decompose into separate sub-queries, run retrieval independently for each, then synthesize a combined response. Better retrieval precision but higher latency and token cost.
-  - *Ask the user to narrow* — If the parts are too divergent (different topic areas), prompt the user to ask one at a time.
-- **Open questions:** Where does the split happen — before or after FAQ search? Does the agent's existing tool loop already handle this well enough with the right prompt nudge, or does it need structural intervention?
-
----
-
-### Task 18: Show traversed sources in UI during agentic retrieval
-
-**Problem:** While the agent is performing retrieval (tool loop running), the user only sees the train-of-thought trace steps. There's no visual indication of which specific sources/documents the agent has looked at or traversed so far. This makes the wait feel opaque and doesn't build confidence that the system is finding relevant material.
-
-**Direction:**
-
-- **Live source feed** — As the agent calls `vector_search`, `get_neighbors`, or `get_authority_chain`, stream the document titles/names it encounters back to the frontend and display them in a lightweight UI element (e.g., a scrolling list of source chips, a sidebar panel, or inline badges under the trace).
-- **Progressive accumulation** — Sources should accumulate as retrieval progresses, giving the user a sense of the breadth of material being consulted before the final answer arrives.
-- **Tie into existing trace stream** — The backend already streams tool call metadata over WebSocket. Extract document titles from tool results and emit them as a dedicated message type (or enrich existing trace messages) so the frontend can render them distinctly from the reasoning steps.
-- **Design considerations:** Keep it non-intrusive — it should enhance the waiting experience without overwhelming the UI. Consider collapsibility or a compact chip/pill format that expands on hover/click.
-
----
-
-### Task 19: Fix train-of-thought flicker on sidebar session hover
-
-**Problem:** When viewing an active session with the train-of-thought trace visible, hovering over session cards in the sidebar causes the trace section in the chat window to flicker. Reproducible by moving the cursor back and forth between the chat window and a non-selected session card (the one that shows a light hover rectangle).
-
-**Attempted fixes (did not resolve):**
-- Narrowing sidebar `transition-all` to `transition-[width]`
-- Wrapping `ChatMessage` in `React.memo` with stable `EMPTY_RESOURCES` array ref
-- Replacing the outer `<motion.div>` wrapper on `ChatMessage` with a plain `<div>`
-- Adding `initial={false}` to the trace `AnimatePresence` and `layout={false}` to the trace `motion.div`
-
-**Key files:**
-- `frontend/src/components/messages/chat-message.tsx` — trace rendering (`AnimatePresence` + `motion.div` with `height: 'auto'`)
-- `frontend/src/components/messages/chat-container.tsx` — scroll handler that calls `setSelectedMessageId`
-- `frontend/src/components/layout/sessions-sidebar.tsx` — sidebar with hover state + width transition
-
-**Likely direction:** The root cause may be deeper than framer-motion re-renders — possibly CSS `hover:bg-muted` on the sidebar cards triggering a reflow that propagates through the flex layout to the chat container, causing the scroll handler or a resize observer to fire and update state. Needs profiling with React DevTools and/or Chrome Performance tab to identify the exact re-render trigger.
+**Files modified:**
+- `frontend/src/hooks/use-session-resume.ts` — Reads URL on mount to determine initial state
+- `frontend/src/components/layout/sessions-sidebar.tsx` — Sets sessionStorage flag on "New Chat"
+- `frontend/src/app/page.tsx` — Wires up `useSessionUrlSync` hook
