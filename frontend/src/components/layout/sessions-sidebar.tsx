@@ -18,6 +18,13 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { useSessionsList, useDeleteSession, useRenameSession } from '@/hooks/api/chat';
 import { getSessionHistory } from '@/api/chat-api';
 import { useChatStore } from '@/stores/chat-store';
@@ -29,8 +36,9 @@ export function SessionsSidebar() {
   const [isHovered, setIsHovered] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameModal, setRenameModal] = useState<{ sessionId: string; title: string } | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [deleteModal, setDeleteModal] = useState<{ sessionId: string; title: string } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const { signOut, session } = useAuth();
   const router = useRouter();
@@ -62,7 +70,7 @@ export function SessionsSidebar() {
 
   const renameSessionMutation = useRenameSession({
     onSuccess: () => {
-      setRenamingSessionId(null);
+      setRenameModal(null);
       refetch();
     },
     onError: () => {
@@ -71,11 +79,11 @@ export function SessionsSidebar() {
   });
 
   useEffect(() => {
-    if (renamingSessionId && renameInputRef.current) {
+    if (renameModal && renameInputRef.current) {
       renameInputRef.current.focus();
       renameInputRef.current.select();
     }
-  }, [renamingSessionId]);
+  }, [renameModal]);
 
   const handleNewChat = () => {
     if (currentSessionId) {
@@ -88,23 +96,28 @@ export function SessionsSidebar() {
   };
 
   const handleStartRename = (sessionId: string, currentTitle: string) => {
-    setRenamingSessionId(sessionId);
     setRenameValue(currentTitle || '');
+    setTimeout(() => setRenameModal({ sessionId, title: currentTitle || '' }), 150);
   };
 
-  const handleConfirmRename = (sessionId: string) => {
+  const handleConfirmRename = () => {
+    if (!renameModal) return;
     const trimmed = renameValue.trim();
     if (trimmed) {
-      renameSessionMutation.mutate({ sessionId, title: trimmed });
+      renameSessionMutation.mutate({ sessionId: renameModal.sessionId, title: trimmed });
     } else {
-      setRenamingSessionId(null);
+      setRenameModal(null);
     }
   };
 
-  const handleDeleteSession = (sessionId: string) => {
-    if (confirm('Are you sure you want to delete this session?')) {
-      deleteSessionMutation.mutate(sessionId);
-    }
+  const handleDeleteSession = (sessionId: string, title: string) => {
+    setTimeout(() => setDeleteModal({ sessionId, title: title || 'New chat' }), 150);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deleteModal) return;
+    deleteSessionMutation.mutate(deleteModal.sessionId);
+    setDeleteModal(null);
   };
 
   const handleSessionSelect = async (sessionId: string) => {
@@ -298,78 +311,54 @@ export function SessionsSidebar() {
                 sessionsData.sessions.map((session) => (
                   <div
                     key={session.sessionId}
-                    onClick={() => {
-                      if (renamingSessionId !== session.sessionId) {
-                        handleSessionSelect(session.sessionId);
-                      }
-                    }}
+                    onClick={() => handleSessionSelect(session.sessionId)}
                     className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted group cursor-pointer ${
                       currentSessionId === session.sessionId
                         ? 'bg-muted text-foreground'
                         : 'text-muted-foreground'
                     }`}
                   >
-                    {renamingSessionId === session.sessionId ? (
-                      <div className="flex flex-1 items-center gap-2 min-w-0">
-                        <MessageSquare className="h-4 w-4 shrink-0" />
-                        <input
-                          ref={renameInputRef}
-                          type="text"
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onBlur={() => handleConfirmRename(session.sessionId)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleConfirmRename(session.sessionId);
-                            if (e.key === 'Escape') setRenamingSessionId(null);
-                          }}
-                          className="flex-1 min-w-0 bg-transparent border-b border-primary text-sm outline-none"
-                        />
+                    <div className="flex flex-1 items-center gap-3 min-w-0">
+                      <MessageSquare className="h-4 w-4 shrink-0" />
+                      <div className="flex-1 overflow-hidden text-left">
+                        <p className="truncate text-sm">
+                          {session.title || 'New chat'}
+                        </p>
+                        {session.lastMessageAt && (
+                          <p className="truncate text-xs text-muted-foreground">
+                            {formatDistanceToNow(new Date(session.lastMessageAt), {
+                              addSuffix: true,
+                            })}
+                          </p>
+                        )}
                       </div>
-                    ) : (
-                      <>
-                        <div className="flex flex-1 items-center gap-3 min-w-0">
-                          <MessageSquare className="h-4 w-4 shrink-0" />
-                          <div className="flex-1 overflow-hidden text-left">
-                            <p className="truncate text-sm">
-                              {session.title || 'New chat'}
-                            </p>
-                            {session.lastMessageAt && (
-                              <p className="truncate text-xs text-muted-foreground">
-                                {formatDistanceToNow(new Date(session.lastMessageAt), {
-                                  addSuffix: true,
-                                })}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              className="shrink-0 w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-70 hover:!opacity-90 data-[state=open]:opacity-70 transition-opacity cursor-pointer"
-                              aria-label="Session options"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <MoreHorizontal className="h-4.5 w-4.5" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent side="right" align="start">
-                            <DropdownMenuItem
-                              onClick={() => handleStartRename(session.sessionId, session.title || '')}
-                            >
-                              <Pencil className="h-4 w-4" />
-                              Rename
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleDeleteSession(session.sessionId)}
-                              className="text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </>
-                    )}
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          className="shrink-0 w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-70 hover:!opacity-90 data-[state=open]:opacity-70 transition-opacity cursor-pointer"
+                          aria-label="Session options"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <MoreHorizontal className="h-4.5 w-4.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent side="right" align="start" onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenuItem
+                          onClick={() => handleStartRename(session.sessionId, session.title || '')}
+                        >
+                          <Pencil className="h-4 w-4" />
+                          Rename
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handleDeleteSession(session.sessionId, session.title || '')}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 ))
               ) : (
@@ -508,6 +497,69 @@ export function SessionsSidebar() {
         )}
 
         <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+        {/* Rename Modal */}
+        <Dialog open={!!renameModal} onOpenChange={(open) => { if (!open) setRenameModal(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Rename session</DialogTitle>
+              <DialogDescription>Enter a new name for this session.</DialogDescription>
+            </DialogHeader>
+            <div className="mt-4 space-y-4">
+              <input
+                ref={renameInputRef}
+                type="text"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleConfirmRename();
+                }}
+                className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setRenameModal(null)}
+                  className="rounded-md px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmRename}
+                  disabled={!renameValue.trim()}
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50 cursor-pointer"
+                >
+                  Rename
+                </button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Confirmation Modal */}
+        <Dialog open={!!deleteModal} onOpenChange={(open) => { if (!open) setDeleteModal(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete session</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete &ldquo;{deleteModal?.title}&rdquo;? This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setDeleteModal(null)}
+                className="rounded-md px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90 cursor-pointer"
+              >
+                Delete
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

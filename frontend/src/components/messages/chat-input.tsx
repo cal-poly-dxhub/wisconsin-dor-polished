@@ -70,7 +70,7 @@ export function ChatInput({
           placeholder={disabled ? 'Please wait...' : placeholder}
           disabled={disabled}
           rows={1}
-          className="resize-none self-center bg-transparent pl-2 pr-2 text-foreground placeholder:text-muted-foreground/60 outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          className="resize-none self-center bg-transparent pl-2 pr-2 text-foreground placeholder:text-muted-foreground/70 outline-none disabled:cursor-not-allowed disabled:opacity-50"
           style={{
             gridArea: 'primary',
             fontSize: 'clamp(0.9rem, 1vw + 0.5rem, 1.05rem)',
