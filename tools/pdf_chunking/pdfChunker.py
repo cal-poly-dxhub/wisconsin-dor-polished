@@ -54,6 +54,10 @@ CHUNKER_BY_SOURCE = {
 }
 
 def get_chunking_strategy(source_id: str) -> str:
+    if source_id.startswith("wpam-"):
+        return "wpam"
+    if source_id.startswith(("statutes-", "admin_rules-")):
+        return "statute"
     return CHUNKER_BY_SOURCE.get(source_id, "general")
 
 def encode_image_to_base64(img: Image.Image) -> str:
@@ -197,7 +201,7 @@ _LEADER_IN_LINE = re.compile(r"(?:\.[ \t\xa0]*){5,}\.")
 # the match decision. 7500 leaves a margin for character-counting imprecision
 # between the chunker (which measures the buffer) and the final joined text
 # (which includes heading prefixes added at flush time).
-CHUNK_MAX_CHARS = 7500
+CHUNK_MAX_CHARS = 2500
 
 
 def _count_chars_in_buffer(buffer: list[tuple[str, int]]) -> int:
@@ -446,7 +450,37 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
     chunks = []
 
     # --- Patterns ---
-    chapter_pattern = re.compile(r"^Chapter\s+\d+", re.IGNORECASE)
+    _chapter_re = re.compile(r"^Chapter\s+(\d+)(\S*)", re.IGNORECASE)
+
+    def _is_chapter_heading(line: str) -> bool:
+        """Detect real WPAM chapter headings while rejecting mid-prose references.
+
+        Real titles: "Chapter 17", "Chapter 14 – Agricultural Valuation",
+        "Chapter 50 Facilities – Sec. 70.11(4)(a), Wis. Stats."
+
+        False positives: "Chapter 10 explains that...",
+        "Chapter 9. The cost approach is often called...",
+        "Chapter 14 of the WPAM, Agricultural Valuation, includes..."
+        """
+        m = _chapter_re.match(line)
+        if not m:
+            return False
+        suffix = m.group(2)
+        remainder = line[m.end():].strip()
+        if suffix and not re.match(r"^[–—.:]*[A-D]?$", suffix):
+            return False
+        if not remainder:
+            return True
+        if suffix == ".":
+            return False
+        if remainder[0] in ",)|(":
+            return False
+        first_word = remainder.split()[0] if remainder.split() else ""
+        if first_word and first_word[0].islower():
+            return False
+        if len(line) >= 80:
+            return False
+        return True
 
     # Section-header detection. WPAM headings are typically one of:
     #   - All-caps, short ("OVERVIEW", "INTRODUCTION", "DEFINITIONS")
@@ -563,7 +597,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
                     buffer = []
                 continue
 
-            if chapter_pattern.match(line):
+            if _is_chapter_heading(line):
                 flush_chunk(buffer, current_chapter, current_section)
                 current_chapter, current_section, buffer = line, None, []
                 continue

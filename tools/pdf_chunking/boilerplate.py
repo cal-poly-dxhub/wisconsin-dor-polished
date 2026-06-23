@@ -34,6 +34,7 @@ STATUTE_PATTERNS = [
 WPAM_PATTERNS = [
     re.compile(r"^Wisconsin\s+Property\s+Assessment\s+Manual\s*$", re.IGNORECASE),
     re.compile(r"^Vol\.?\s*\d+,?\s*page\s+\d+-\d+\s*$", re.IGNORECASE),
+    re.compile(r"^Chapter\s+\d+\s*$"),
 ]
 
 # --- Guide-specific patterns ---
