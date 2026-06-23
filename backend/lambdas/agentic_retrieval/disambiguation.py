@@ -55,6 +55,7 @@ Answer "DISAMBIGUATE" ONLY when ALL of these are true:
 Answer "PROCEED" when ANY of these are true:
 - The question names a specific property type (residential, manufacturing, agricultural, etc.)
 - The question is about a topic that has the same answer regardless of property type (e.g., Board of Review procedures, assessment dates, general rights)
+- The question is about an ownership category or exemption class (Native American/tribal, religious/church, government, nonprofit, veteran) — these depend on ownership or legal status, not property classification
 - The question references a specific statute, form, or document
 - The question is not about property assessment at all (out of scope)
 - The question is a follow-up to a previous conversation
@@ -78,7 +79,15 @@ def should_disambiguate(query: str, chat_history: list[dict]) -> bool:
         "farm land", "residential", "commercial", "personal property",
         "forest land", "undeveloped",
     ]
+    ownership_keywords = [
+        "native american", "tribal", "indian", "reservation",
+        "trust land", "church", "religious", "nonprofit", "non-profit",
+        "government", "municipal", "county-owned", "state-owned",
+        "federal", "exempt organization", "veteran",
+    ]
     if any(kw in q for kw in type_keywords):
+        return False
+    if any(kw in q for kw in ownership_keywords):
         return False
 
     try:
