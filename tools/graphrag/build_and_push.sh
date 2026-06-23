@@ -52,7 +52,7 @@ aws ecr get-login-password --region "$REGION" --profile "$PROFILE" | \
 # Build the image from repo root (Dockerfile references tools/ paths)
 echo ""
 echo "Building Docker image..."
-docker build -t wis-dor-ingestion:latest -f "$SCRIPT_DIR/Dockerfile" "$REPO_ROOT"
+docker build --platform linux/amd64 -t wis-dor-ingestion:latest -f "$SCRIPT_DIR/Dockerfile" "$REPO_ROOT"
 
 # Tag and push
 echo ""
