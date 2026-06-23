@@ -189,8 +189,8 @@ TOOL_DEFINITIONS = [
                         },
                         "top_k": {
                             "type": "integer",
-                            "description": "Number of results to return (default: 10, max: 20)",
-                            "default": 10,
+                            "description": "Number of results to return (default: 15, max: 25)",
+                            "default": 15,
                         },
                         "target_wpam_year": {
                             "type": ["integer", "null"],
@@ -229,14 +229,18 @@ TOOL_DEFINITIONS = [
                             "type": "string",
                             "description": (
                                 "A targeted sub-query for the specific section you need. "
-                                "Be specific — e.g., 'classification appeal process Board of Review' "
-                                "rather than a broad topic."
+                                "IMPORTANT: Always include the document's title or distinguishing "
+                                "keywords in your query (e.g., 'manufacturing property assessment "
+                                "guide valuation methods' not just 'valuation methods'). "
+                                "This is a global search filtered to the target doc — without "
+                                "document-specific terms, larger documents will dominate results "
+                                "and this tool will return nothing."
                             ),
                         },
                         "top_k": {
                             "type": "integer",
-                            "description": "Number of chunks to return (default: 3, max: 5)",
-                            "default": 3,
+                            "description": "Number of chunks to return (default: 5, max: 10)",
+                            "default": 5,
                         },
                     },
                     "required": ["doc_id", "query"],
@@ -622,12 +626,12 @@ def execute_tool(
 
     elif tool_name == "vector_search":
         embedding = embed_query(tool_input["query"])
-        top_k = min(tool_input.get("top_k", 10), 20)
+        top_k = min(tool_input.get("top_k", 15), 25)
         target_year = tool_input.get("target_wpam_year")
-        # Over-fetch: WPAM editions dominate the vector space (~79% of all
-        # chunks). fetch_k=top_k*5 gives the dedup + diversity filters enough
-        # runway to surface non-WPAM results that would otherwise be crowded out.
-        fetch_k = top_k * 5 if target_year is None else top_k
+        # Over-fetch: WPAM editions dominate the vector space. fetch_k gives
+        # the dedup + diversity filters enough runway to surface non-WPAM
+        # results that would otherwise be crowded out.
+        fetch_k = top_k * 6 if target_year is None else top_k
         vector_started = time.perf_counter()
         chunks = neptune.vector_search(embedding, top_k=fetch_k)
         pre_dedup_count = len(chunks)
@@ -635,10 +639,7 @@ def execute_tool(
             chunks, target_year=target_year,
             current_wpam_year=neptune.current_wpam_year,
         )
-        # Diversity cap: max 3 chunks per document to prevent a single source
-        # from crowding out other relevant documents. The agent can use
-        # search_document to drill deeper into any doc that needs more coverage.
-        max_per_doc = int(os.environ.get("DIVERSITY_CAP_PER_DOC", "3"))
+        max_per_doc = int(os.environ.get("DIVERSITY_CAP_PER_DOC", "5"))
         if max_per_doc > 0:
             doc_counts: dict[str, int] = {}
             diverse_chunks: list[dict] = []
@@ -806,13 +807,13 @@ def execute_tool(
     elif tool_name == "search_document":
         target_doc_id = tool_input.get("doc_id") or tool_input.get("node_id") or ""
         sub_query = tool_input.get("query", "")
-        top_k = min(tool_input.get("top_k", 3), 5)
+        top_k = min(tool_input.get("top_k", 5), 10)
         if not target_doc_id or not sub_query:
             return {"error": "Both doc_id and query are required"}
         embedding = embed_query(sub_query)
         # Over-fetch globally and filter to target doc — Neptune's
         # topKByEmbedding doesn't support WHERE after YIELD.
-        search_doc_fetch_k = int(os.environ.get("SEARCH_DOCUMENT_FETCH_K", "100"))
+        search_doc_fetch_k = int(os.environ.get("SEARCH_DOCUMENT_FETCH_K", "800"))
         raw_chunks = neptune.vector_search(embedding, top_k=search_doc_fetch_k)
         matched = [c for c in raw_chunks if c.get("doc_id") == target_doc_id][:top_k]
         _log_tool_event(
@@ -826,12 +827,35 @@ def execute_tool(
             latency_ms=round((time.perf_counter() - started) * 1000),
             **_query_fields(sub_query),
         )
+        keyword_fallback = False
         if not matched:
-            return {
-                "error": f"No chunks found for document '{target_doc_id}' matching this query",
-                "suggestion": "Try a different sub-query or use vector_search with broader terms",
-            }
-        return {"chunks": matched, "doc_id": target_doc_id}
+            max_fallback_chunks = int(os.environ.get("SEARCH_DOC_FALLBACK_MAX", "150"))
+            all_chunks = neptune.get_chunks_for_doc(target_doc_id)
+            if all_chunks and len(all_chunks) <= max_fallback_chunks:
+                terms = set(sub_query.lower().split())
+                scored = []
+                for chunk in all_chunks:
+                    text_lower = (chunk.get("text") or "").lower()
+                    score = sum(1 for t in terms if t in text_lower)
+                    if score > 0:
+                        scored.append((score, chunk))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                matched = [chunk for _, chunk in scored[:top_k]]
+                keyword_fallback = bool(matched)
+                _log_tool_event(
+                    "search_document_keyword_fallback",
+                    tool_name=tool_name,
+                    doc_id=target_doc_id,
+                    total_chunks=len(all_chunks),
+                    keyword_matches=len(scored),
+                    returned=len(matched),
+                )
+            if not matched:
+                return {
+                    "error": f"No chunks found for document '{target_doc_id}' matching this query",
+                    "suggestion": "Try a different sub-query or use vector_search with broader terms",
+                }
+        return {"chunks": matched, "doc_id": target_doc_id, "keyword_fallback": keyword_fallback}
 
     elif tool_name == "get_document":
         # The model occasionally passes `node_id` (the param name used by

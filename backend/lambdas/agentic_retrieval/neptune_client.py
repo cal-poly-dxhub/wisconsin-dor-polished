@@ -363,10 +363,13 @@ class NeptuneClient:
         return results
 
     def get_chunks_for_doc(self, doc_id: str) -> list[dict]:
-        """Get all chunks for a document."""
+        """Get all chunks for a document with full metadata."""
         results = self.query(
             "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: $doc_id}) "
-            "RETURN c.id AS chunk_id, c.text AS text, c.source_url AS source_url, "
+            "RETURN c.id AS chunk_id, c.text AS text, c.doc_id AS doc_id, "
+            "c.source_url AS source_url, c.s3_key AS s3_key, "
+            "c.start_page AS start_page, c.end_page AS end_page, "
+            "c.heading AS heading, c.subheading AS subheading, "
             "c.chunk_index AS chunk_index "
             "ORDER BY c.chunk_index",
             {"doc_id": doc_id},
