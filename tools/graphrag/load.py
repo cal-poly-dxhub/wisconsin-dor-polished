@@ -500,7 +500,7 @@ def phase_5_topic_merging(client, graph_id: str, documents: list[dict], config: 
     if not all_topics:
         return
 
-    batch_size = 200
+    batch_size = 60
     canonical_map = {}
     llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-20250514")
 
@@ -518,7 +518,7 @@ def phase_5_topic_merging(client, graph_id: str, documents: list[dict], config: 
         response = bedrock.converse(
             modelId=llm_model,
             messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+            inferenceConfig={"maxTokens": 8192, "temperature": 0.0},
         )
 
         result_text = response["output"]["message"]["content"][0]["text"]
@@ -615,8 +615,8 @@ def phase_6_7_hierarchy(client, graph_id: str, documents: list[dict]):
     logger.info("  Hierarchy links complete")
 
 
-PHASE_8_BATCH_SIZE = 50
-PHASE_8_MAX_PAIRS_PER_FLUSH = 400
+PHASE_8_BATCH_SIZE = 10
+PHASE_8_MAX_PAIRS_PER_FLUSH = 80
 # Chunk text dominates the UNWIND payload memory cost. Case-law opinion
 # chunks can be up to OPINION_CHUNK_SIZE (2000) chars each; 50 of those in
 # one flush sends ~100KB of text through Neptune's per-query memory budget,

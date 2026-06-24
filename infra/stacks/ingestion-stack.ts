@@ -106,6 +106,7 @@ export class IngestionStack extends cdk.NestedStack {
           'neptune-graph:ExecuteQuery',
           'neptune-graph:ReadDataViaQuery',
           'neptune-graph:WriteDataViaQuery',
+          'neptune-graph:DeleteDataViaQuery',
           'neptune-graph:GetGraph',
         ],
         resources: [
