@@ -23,6 +23,7 @@ import { ButtonGroup } from '../ui/button-group';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { FeedbackModal } from './feedback-modal';
 import { RetrievalModal } from './retrieval-modal';
+import { ChoiceChips } from './choice-chips';
 
 type TraceStep = {
   label: string;
@@ -216,6 +217,7 @@ export interface ChatMessageProps {
   streamingComplete?: boolean;
   selected?: boolean;
   items?: ResourceItem[];
+  onSendMessage?: (message: string) => void;
 }
 
 interface StreamResponseProps {
@@ -233,63 +235,32 @@ interface MessageOptionsBarProps {
   items: ResourceItem[];
 }
 
-const CHARS_PER_SECOND = 150;
-const TICK_MS = 16;
-const CHARS_PER_TICK = Math.max(1, Math.round((CHARS_PER_SECOND * TICK_MS) / 1000));
-
-function useProgressiveReveal(content: string, streaming: boolean): string {
-  const [visibleLen, setVisibleLen] = useState(() => streaming ? 0 : content.length);
-  const rafRef = useRef<number | null>(null);
-  const lastTickRef = useRef<number>(0);
-
-  useEffect(() => {
-    if (!streaming || !content) {
-      return;
-    }
-
-    const target = content.length;
-
-    function tick(now: number) {
-      if (!lastTickRef.current) lastTickRef.current = now;
-      const elapsed = now - lastTickRef.current;
-      if (elapsed >= TICK_MS) {
-        const ticks = Math.floor(elapsed / TICK_MS);
-        setVisibleLen(prev => {
-          const next = Math.min(prev + CHARS_PER_TICK * ticks, target);
-          if (next >= target) return target;
-          return next;
-        });
-        lastTickRef.current = now;
-      }
-      rafRef.current = requestAnimationFrame(tick);
-    }
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
-  }, [content, streaming]);
-
-  if (!streaming) return content;
-  if (visibleLen >= content.length) return content;
-  let end = visibleLen;
-  while (end < content.length && content[end] !== ' ' && content[end] !== '\n') {
-    end++;
-    if (end - visibleLen > 20) { end = visibleLen; break; }
-  }
-  return content.slice(0, end);
-}
-
 export function StreamResponse({
   content,
   className,
-  streamingComplete,
+  streamingComplete: _streamingComplete,
   docUrls,
 }: StreamResponseProps) {
-  const visibleContent = useProgressiveReveal(content, !streamingComplete);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const prevContentRef = useRef('');
+
+  useEffect(() => {
+    if (content && content !== prevContentRef.current && containerRef.current) {
+      const el = containerRef.current;
+      el.classList.remove('md-stagger-in');
+      el.classList.add('md-stagger-hidden');
+      requestAnimationFrame(() => {
+        el.classList.remove('md-stagger-hidden');
+        el.classList.add('md-stagger-in');
+      });
+      prevContentRef.current = content;
+    }
+  }, [content]);
+
   return (
     <div className={`chat-response font-sans ${className || ''}`}>
-      <div className="markdown-container">
-        <AnimatedMarkdown content={visibleContent} animate={false} docUrls={docUrls} />
+      <div ref={containerRef} className={`markdown-container ${content ? 'md-stagger-in' : ''}`}>
+        <AnimatedMarkdown content={content} animate={false} docUrls={docUrls} />
       </div>
     </div>
   );
@@ -514,6 +485,7 @@ export function ChatMessage({
   streamingComplete,
   selected = true,
   items,
+  onSendMessage,
 }: ChatMessageProps) {
   const messageRef = useRef<HTMLDivElement>(null);
 
@@ -560,6 +532,7 @@ export function ChatMessage({
   const [stepsOpen, setStepsOpen] = useState(detailedTrace);
   const agentTrace = useChatStore(s => s.queries[queryId]?.agentTrace);
   const devTrace = useDevTrace();
+  const choices = useChatStore(s => s.queries[queryId]?.choices);
   const [retrievalModalOpen, setRetrievalModalOpen] = useState(false);
 
   const steps = useMemo<TraceStep[]>(() => {
@@ -571,8 +544,15 @@ export function ChatMessage({
         streamingComplete,
       });
     }
-    return buildTraceSteps(agentTrace, devTrace);
-  }, [agentTrace, devTrace, hasResources, items, isStreaming, streamingComplete]);
+    const built = buildTraceSteps(agentTrace, devTrace);
+    if (isThinking && built.length > 0) {
+      const last = built[built.length - 1];
+      if (last.done && !last.error) {
+        built.push({ label: 'Thinking...', done: false });
+      }
+    }
+    return built;
+  }, [agentTrace, devTrace, hasResources, items, isStreaming, streamingComplete, isThinking]);
 
   const [docUrls, setDocUrls] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -760,6 +740,13 @@ export function ChatMessage({
 
           {/* Response Paragraph */}
           {memoizedResponse}
+
+          {/* Choice chips for disambiguation */}
+          {choices && choices.length > 0 && streamingComplete && (
+            <div className="chat-response-aligned">
+              <ChoiceChips queryId={queryId} choices={choices} onSelect={onSendMessage} />
+            </div>
+          )}
 
           {/* Info icon with hover card displaying chat information */}
           <MessageOptionsBar

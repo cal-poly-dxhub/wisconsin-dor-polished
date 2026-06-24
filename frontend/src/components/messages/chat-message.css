@@ -277,3 +277,35 @@
 .inline-sources-row > div > div > div {
   height: 100%;
 }
+
+/* Block-level staggered fade-in for markdown content */
+.md-stagger-hidden > * {
+  opacity: 0;
+}
+
+.md-stagger-in > * {
+  animation: md-fade-up 0.4s ease-out both;
+}
+
+.md-stagger-in > *:nth-child(1) { animation-delay: 0ms; }
+.md-stagger-in > *:nth-child(2) { animation-delay: 60ms; }
+.md-stagger-in > *:nth-child(3) { animation-delay: 120ms; }
+.md-stagger-in > *:nth-child(4) { animation-delay: 180ms; }
+.md-stagger-in > *:nth-child(5) { animation-delay: 240ms; }
+.md-stagger-in > *:nth-child(6) { animation-delay: 300ms; }
+.md-stagger-in > *:nth-child(7) { animation-delay: 360ms; }
+.md-stagger-in > *:nth-child(8) { animation-delay: 420ms; }
+.md-stagger-in > *:nth-child(9) { animation-delay: 480ms; }
+.md-stagger-in > *:nth-child(10) { animation-delay: 540ms; }
+.md-stagger-in > *:nth-child(n+11) { animation-delay: 600ms; }
+
+@keyframes md-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
