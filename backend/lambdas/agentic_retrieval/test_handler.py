@@ -159,8 +159,9 @@ class TestRunAgenticLoop:
             },
             {
                 "output": {"message": {"content": [
-                    {"toolUse": {"toolUseId": "t2", "name": "answer",
-                                 "input": {"response": "Use value is...", "cited_doc_ids": ["doc-a"]}}},
+                    {"text": "Use value is..."},
+                    {"toolUse": {"toolUseId": "t2", "name": "cite_documents",
+                                 "input": {"cited_doc_ids": ["doc-a"]}}},
                 ]}},
                 "stopReason": "tool_use",
                 "usage": {"inputTokens": 15, "outputTokens": 30, "totalTokens": 45},
@@ -174,8 +175,8 @@ class TestRunAgenticLoop:
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "vector_search":
                 return {"chunks": [{"doc_id": "doc-a", "text": "..."}], "graph_context": {}}
-            if name == "answer":
-                return {"response": input_.get("response", ""), "cited_doc_ids": input_.get("cited_doc_ids", [])}
+            if name == "cite_documents":
+                return {"cited_doc_ids": input_.get("cited_doc_ids", [])}
             return {}
         monkeypatch.setattr(main, "execute_tool", fake_execute)
 
@@ -202,9 +203,9 @@ class TestRunAgenticLoop:
         seqs = [m.seq for m in sent]
         assert seqs == sorted(seqs)
         assert seqs[0] == 1
-        # The answer tool must NOT emit a tool_result.
-        answer_results = [m for m in sent if m.kind == "tool_result" and m.payload.get("toolName") == "answer"]
-        assert answer_results == []
+        # The cite_documents tool must NOT emit a tool_result trace.
+        cite_results = [m for m in sent if m.kind == "tool_result" and m.payload.get("toolName") == "cite_documents"]
+        assert cite_results == []
 
     def test_recovers_from_tool_exception(self, monkeypatch):
         main = self._setup_main(monkeypatch)
@@ -220,8 +221,9 @@ class TestRunAgenticLoop:
             },
             {
                 "output": {"message": {"content": [
-                    {"toolUse": {"toolUseId": "t2", "name": "answer",
-                                 "input": {"response": "Recovered.", "cited_doc_ids": []}}},
+                    {"text": "Recovered."},
+                    {"toolUse": {"toolUseId": "t2", "name": "cite_documents",
+                                 "input": {"cited_doc_ids": []}}},
                 ]}},
                 "stopReason": "tool_use",
                 "usage": {"inputTokens": 15, "outputTokens": 30, "totalTokens": 45},
@@ -235,8 +237,8 @@ class TestRunAgenticLoop:
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "get_document":
                 raise KeyError("doc_id")
-            if name == "answer":
-                return {"response": input_.get("response", ""), "cited_doc_ids": input_.get("cited_doc_ids", [])}
+            if name == "cite_documents":
+                return {"cited_doc_ids": input_.get("cited_doc_ids", [])}
             return {}
         monkeypatch.setattr(main, "execute_tool", fake_execute)
 
@@ -247,7 +249,7 @@ class TestRunAgenticLoop:
             return _noop()
         mock_ws.send_json = capture
 
-        answer, cited, rag_docs, faq_resource, _trace, _streamed = main.run_agentic_loop(
+        answer, cited, rag_docs, faq_resource, _trace, _streamed, _alive = main.run_agentic_loop(
             "what is use value?",
             query_id="q-1", session_id="s-1",
             ws_server=mock_ws, trace_seq=itertools.count(1).__next__,
@@ -283,8 +285,9 @@ class TestRunAgenticLoop:
             },
             {
                 "output": {"message": {"content": [
-                    {"toolUse": {"toolUseId": "t2", "name": "answer",
-                                 "input": {"response": "A TID is...", "cited_doc_ids": ["doc-stat"]}}},
+                    {"text": "A TID is..."},
+                    {"toolUse": {"toolUseId": "t2", "name": "cite_documents",
+                                 "input": {"cited_doc_ids": ["doc-stat"]}}},
                 ]}},
                 "stopReason": "tool_use",
                 "usage": {"inputTokens": 15, "outputTokens": 30, "totalTokens": 45},
@@ -298,8 +301,8 @@ class TestRunAgenticLoop:
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "vector_search":
                 return {"chunks": [{"doc_id": "doc-stat", "text": "..."}], "graph_context": {}}
-            if name == "answer":
-                return {"response": input_.get("response", ""), "cited_doc_ids": input_.get("cited_doc_ids", [])}
+            if name == "cite_documents":
+                return {"cited_doc_ids": input_.get("cited_doc_ids", [])}
             return {}
         monkeypatch.setattr(main, "execute_tool", fake_execute)
 
@@ -312,7 +315,7 @@ class TestRunAgenticLoop:
             return _noop()
         mock_ws.send_json = capture
 
-        answer, cited, rag_docs, faq_resource, _trace, _streamed = main.run_agentic_loop(
+        answer, cited, rag_docs, faq_resource, _trace, _streamed, _alive = main.run_agentic_loop(
             "what is TID?",
             query_id="q-1", session_id="s-1",
             ws_server=mock_ws, trace_seq=itertools.count(1).__next__,
@@ -323,7 +326,7 @@ class TestRunAgenticLoop:
         assert faq_resource.faqs[0].faq_id == "faq_1"
         kinds = [m.kind for m in sent]
         assert kinds[-1] == "loop_complete"
-        assert sent[-1].payload["terminalReason"] == "answer_tool"
+        assert sent[-1].payload["terminalReason"] == "cite_documents"
 
 
 class TestHandler:
@@ -331,7 +334,7 @@ class TestHandler:
         main = _import_main()
         mock_ws = MagicMock()
         monkeypatch.setattr(main, "get_ws_connection_from_session", MagicMock(return_value=mock_ws))
-        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None, [], False)))
+        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None, [], False, True)))
         monkeypatch.setattr(main, "get_chat_history", lambda sid: [])
         monkeypatch.setattr(main, "save_chat_history", lambda *a, **kw: None)
         monkeypatch.setattr(main, "process_event", lambda e: SimpleNamespace(
@@ -349,7 +352,7 @@ class TestHandler:
     def test_runs_with_ws_none_on_session_lookup_failure(self, monkeypatch):
         main = _import_main()
         monkeypatch.setattr(main, "get_ws_connection_from_session", MagicMock(side_effect=RuntimeError("no session")))
-        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None, [], False)))
+        monkeypatch.setattr(main, "run_agentic_loop", MagicMock(return_value=("ans", [], [], None, [], False, True)))
         monkeypatch.setattr(main, "get_chat_history", lambda sid: [])
         monkeypatch.setattr(main, "save_chat_history", lambda *a, **kw: None)
         monkeypatch.setattr(main, "process_event", lambda e: SimpleNamespace(

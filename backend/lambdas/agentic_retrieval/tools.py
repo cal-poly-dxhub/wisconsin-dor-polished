@@ -446,27 +446,23 @@ TOOL_DEFINITIONS = [
     },
     {
         "toolSpec": {
-            "name": "answer",
+            "name": "cite_documents",
             "description": (
-                "Provide the final answer to the user's question with citations. "
-                "Call this tool when you have gathered enough information. "
-                "Include specific document references and section numbers."
+                "After writing your answer as text, call this tool with the IDs of "
+                "all documents you cited. This is REQUIRED — always call it after "
+                "writing your answer."
             ),
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
-                        "response": {
-                            "type": "string",
-                            "description": "The complete answer with citations in Markdown",
-                        },
                         "cited_doc_ids": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "List of document IDs cited in the response",
+                            "description": "List of document IDs cited in the answer text",
                         },
                     },
-                    "required": ["response", "cited_doc_ids"],
+                    "required": ["cited_doc_ids"],
                 }
             },
         }
@@ -1000,11 +996,10 @@ def execute_tool(
         )
         return tool_input
 
-    elif tool_name == "answer":
+    elif tool_name == "cite_documents":
         _log_tool_event(
-            "answer_tool_complete",
+            "cite_documents_tool_complete",
             tool_name=tool_name,
-            response_chars=len(tool_input.get("response", "")),
             cited_doc_count=len(tool_input.get("cited_doc_ids", [])),
             latency_ms=round((time.perf_counter() - started) * 1000),
         )

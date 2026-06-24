@@ -1,8 +1,9 @@
 """Process Bedrock converse_stream() responses.
 
 Accumulates stream events into the same message structure that converse()
-returns, with the ability to forward the answer tool's response field as
-real-time WebSocket fragments.
+returns. Text blocks are streamed in real-time via on_answer_fragment
+callbacks — Bedrock delivers text deltas token-by-token, giving true
+incremental streaming over WebSocket.
 """
 
 from __future__ import annotations
@@ -11,8 +12,6 @@ import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
-
-from stream_parser import AnswerToolStreamParser
 
 logger = logging.getLogger(__name__)
 
@@ -35,26 +34,24 @@ def process_converse_stream(
     on_answer_fragment: Callable[[str], None] | None = None,
     on_answer_start: Callable[[], None] | None = None,
     on_text_block: Callable[[str], None] | None = None,
+    is_answer_turn: bool = False,
 ) -> StreamResult:
     """Consume a converse_stream() response and reconstruct the message.
 
-    When the answer tool is detected:
-      - Calls on_answer_start() when the answer tool's response field begins streaming
-      - Calls on_answer_fragment(text) with buffered fragments of the response value
-      - Text fragments are buffered to ~40+ chars to avoid excessive WebSocket calls
+    When is_answer_turn=True, text blocks are streamed in real-time:
+      - Calls on_answer_start() when the first text delta arrives
+      - Calls on_answer_fragment(text) with buffered fragments (~40+ chars)
 
-    For non-answer tools and text blocks, accumulates normally.
+    For non-answer turns, text blocks are accumulated normally.
     Returns a StreamResult with the full reconstructed message.
     """
     result = StreamResult()
     content_blocks: list[dict[str, Any]] = []
-    current_block_index = -1
     current_block_type: str | None = None  # "text" or "toolUse"
     current_text = ""
     current_tool_use_id = ""
     current_tool_name = ""
     current_tool_input_json = ""
-    answer_parser: AnswerToolStreamParser | None = None
     fragment_buffer = ""
     answer_started_emitted = False
 
@@ -72,7 +69,6 @@ def process_converse_stream(
 
         elif "contentBlockStart" in event:
             block_start = event["contentBlockStart"]
-            current_block_index = block_start.get("contentBlockIndex", 0)
             start = block_start.get("start", {})
 
             if "toolUse" in start:
@@ -80,8 +76,6 @@ def process_converse_stream(
                 current_tool_use_id = start["toolUse"].get("toolUseId", "")
                 current_tool_name = start["toolUse"].get("name", "")
                 current_tool_input_json = ""
-                if current_tool_name == "answer":
-                    answer_parser = AnswerToolStreamParser()
             else:
                 current_block_type = "text"
                 current_text = ""
@@ -90,38 +84,32 @@ def process_converse_stream(
             delta = event["contentBlockDelta"].get("delta", {})
 
             if current_block_type == "text" and "text" in delta:
-                current_text += delta["text"]
+                text_chunk = delta["text"]
+                current_text += text_chunk
+
+                if is_answer_turn and on_answer_fragment:
+                    if not answer_started_emitted and on_answer_start:
+                        on_answer_start()
+                        answer_started_emitted = True
+                        result.answer_streamed = True
+
+                    fragment_buffer += text_chunk
+                    while len(fragment_buffer) >= _STREAM_FRAGMENT_MIN_SIZE:
+                        on_answer_fragment(fragment_buffer[:_STREAM_FRAGMENT_MIN_SIZE])
+                        fragment_buffer = fragment_buffer[_STREAM_FRAGMENT_MIN_SIZE:]
 
             elif current_block_type == "toolUse" and "toolUse" in delta:
-                input_chunk = delta["toolUse"].get("input", "")
-                current_tool_input_json += input_chunk
-
-                if answer_parser and input_chunk:
-                    fragments = answer_parser.feed(input_chunk)
-                    if fragments:
-                        if not answer_started_emitted and on_answer_start:
-                            on_answer_start()
-                            answer_started_emitted = True
-                            result.answer_streamed = True
-
-                        fragment_buffer += "".join(fragments)
-                        if len(fragment_buffer) >= _STREAM_FRAGMENT_MIN_SIZE:
-                            if on_answer_fragment:
-                                on_answer_fragment(fragment_buffer)
-                            fragment_buffer = ""
+                current_tool_input_json += delta["toolUse"].get("input", "")
 
         elif "contentBlockStop" in event:
             if current_block_type == "text":
                 content_blocks.append({"text": current_text})
+                if is_answer_turn and fragment_buffer and on_answer_fragment:
+                    on_answer_fragment(fragment_buffer)
+                    fragment_buffer = ""
                 if current_text and on_text_block:
                     on_text_block(current_text)
             elif current_block_type == "toolUse":
-                # Flush remaining answer fragment buffer
-                if answer_parser and fragment_buffer:
-                    if on_answer_fragment:
-                        on_answer_fragment(fragment_buffer)
-                    fragment_buffer = ""
-
                 try:
                     parsed_input = json.loads(current_tool_input_json) if current_tool_input_json else {}
                 except json.JSONDecodeError:

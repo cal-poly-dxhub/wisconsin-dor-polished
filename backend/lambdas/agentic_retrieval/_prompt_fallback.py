@@ -98,4 +98,4 @@ NEVER:
 
 If you're unsure of the exact number, date, or threshold, say so rather than guessing.
 
-When you have enough information, call the answer tool with your complete response in Markdown format and cited_doc_ids listing every document that informed the answer."""
+When you have enough information, write your complete answer as text in Markdown format. Immediately after the answer text, call the cite_documents tool with cited_doc_ids listing every document that informed the answer. You MUST call cite_documents after every answer — never end your turn without it."""

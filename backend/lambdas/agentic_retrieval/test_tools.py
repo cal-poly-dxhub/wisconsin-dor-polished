@@ -71,15 +71,14 @@ def test_execute_tool_get_document_missing_id_returns_error_not_keyerror():
     assert "error" in result
 
 
-def test_execute_tool_answer_is_terminal():
+def test_execute_tool_cite_documents_is_terminal():
     from tools import execute_tool
 
     mock_neptune = MagicMock()
-    input_data = {"response": "The answer is...", "cited_doc_ids": ["doc-1"]}
+    input_data = {"cited_doc_ids": ["doc-1"]}
 
-    result = execute_tool("answer", input_data, mock_neptune)
+    result = execute_tool("cite_documents", input_data, mock_neptune)
 
-    assert result["response"] == "The answer is..."
     assert result["cited_doc_ids"] == ["doc-1"]
 
 

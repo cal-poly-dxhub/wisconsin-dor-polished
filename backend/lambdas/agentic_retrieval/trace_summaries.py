@@ -129,11 +129,10 @@ def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
             "question_chars": len(result.get("question", "")),
         }
 
-    if tool_name == "answer":
+    if tool_name == "cite_documents":
         return {
             "tool_name": tool_name,
             "status": "terminal",
-            "response_chars": len(result.get("response", "")),
             "cited_doc_count": len(result.get("cited_doc_ids", [])),
             "cited_doc_ids": result.get("cited_doc_ids", [])[:20],
         }
@@ -141,7 +140,7 @@ def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
     return {"tool_name": tool_name, "status": "ok", "result_keys": sorted(result.keys())}
 
 
-def build_tool_call_summary(tool_name: str, tool_input: dict) -> str:
+def build_tool_call_summary(tool_name: str, tool_input: dict, neptune_client=None) -> str:
     """Short prose describing a tool call for the UI trace."""
     if tool_name in ("vector_search", "faq_search", "refine_query"):
         query = tool_input.get("query", "")
@@ -149,16 +148,39 @@ def build_tool_call_summary(tool_name: str, tool_input: dict) -> str:
     if tool_name == "search_document":
         doc_id = tool_input.get("doc_id", "")
         query = tool_input.get("query", "")
-        return f'{doc_id}: "{query}"' if query else doc_id
+        title = doc_id
+        if doc_id and neptune_client:
+            try:
+                info = neptune_client.get_document(doc_id)
+                title = (info or {}).get("title") or doc_id
+            except Exception:
+                pass
+        if query:
+            return f'"{query}" in {title}'
+        return title
     if tool_name == "get_neighbors":
         doc_id = tool_input.get("doc_id", "")
-        return f"doc {doc_id}" if doc_id else ""
+        title = doc_id
+        if doc_id and neptune_client:
+            try:
+                info = neptune_client.get_document(doc_id)
+                title = (info or {}).get("title") or doc_id
+            except Exception:
+                pass
+        return title
     if tool_name == "get_document":
         doc_id = tool_input.get("doc_id", "")
         return doc_id
     if tool_name == "get_authority_chain":
         doc_id = tool_input.get("doc_id", "")
-        return f"doc {doc_id}" if doc_id else ""
+        title = doc_id
+        if doc_id and neptune_client:
+            try:
+                info = neptune_client.get_document(doc_id)
+                title = (info or {}).get("title") or doc_id
+            except Exception:
+                pass
+        return title
     if tool_name == "list_framework_docs":
         framework = tool_input.get("framework_name", "")
         return framework
@@ -168,9 +190,10 @@ def build_tool_call_summary(tool_name: str, tool_input: dict) -> str:
     if tool_name == "clarify":
         question = tool_input.get("question", "")
         return f'"{question[:60]}"' if question else ""
-    if tool_name == "answer":
+    if tool_name == "cite_documents":
         cited = tool_input.get("cited_doc_ids", []) or []
-        return f"with {len(cited)} cited doc(s)"
+        n = len(cited)
+        return f"with {n} cited {'source' if n == 1 else 'sources'}"
     return ""
 
 
@@ -213,18 +236,22 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
                 seen_docs.add(doc_id)
                 ordered_docs.append(doc_id)
         doc_ids = ordered_docs[:10]
+        n_chunks = len(chunks)
+        n_docs = len(ordered_docs)
         summary_text = (
-            f"Found {len(chunks)} chunks across {len(ordered_docs)} doc(s)"
+            f"Found {n_chunks} {'chunk' if n_chunks == 1 else 'chunks'} "
+            f"across {n_docs} {'source' if n_docs == 1 else 'sources'}"
         )
         top_score = max(
             (float(c.get("score", 0.0)) for c in chunks),
             default=0.0,
         )
         graph_context = result.get("graph_context", {}) or {}
+        neighbor_count = sum(len(v) for v in graph_context.values())
         metadata = {
-            "chunkCount": len(chunks),
-            "docCount": len(ordered_docs),
-            "neighborCount": sum(len(v) for v in graph_context.values()),
+            "chunkCount": n_chunks,
+            "docCount": n_docs,
+            "neighborCount": neighbor_count,
             "topScore": round(top_score, 4),
         }
 
@@ -232,14 +259,29 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         chunks = result.get("chunks", [])
         target_doc = result.get("doc_id", "")
         doc_ids = [target_doc] if target_doc else []
-        summary_text = f"Found {len(chunks)} chunk(s) in {target_doc}"
+        doc_title = target_doc
+        if target_doc:
+            try:
+                info = neptune_client.get_document(target_doc)
+                doc_title = (info or {}).get("title") or target_doc
+            except Exception:
+                pass
+        if not chunks:
+            status = "miss"
+        fallback_used = result.get("keyword_fallback", False)
+        if fallback_used:
+            summary_text = f"Keyword fallback: found {len(chunks)} chunks in {doc_title}"
+        else:
+            summary_text = f"Searched {doc_title}"
         metadata = {"chunkCount": len(chunks), "docId": target_doc}
+        if fallback_used:
+            metadata["keywordFallback"] = True
 
     elif tool_name == "faq_search":
         faqs = result.get("faqs", [])
         top = faqs[0].get("score", 0.0) if faqs else 0.0
         summary_text = (
-            f"FAQ top score {top:.2f} ({len(faqs)} hit(s))"
+            f"FAQ semantic match score {top:.2f}"
             if faqs
             else "No FAQ matches"
         )
@@ -248,7 +290,8 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
     elif tool_name == "get_neighbors":
         neighbors = result.get("neighbors", [])
         doc_ids = [n["id"] for n in neighbors if n.get("id")][:10]
-        summary_text = f"Pulled {len(neighbors)} neighbor(s)"
+        n = len(neighbors)
+        summary_text = f"Retrieved {n} related {'document' if n == 1 else 'documents'} from graph"
         metadata = {"neighborCount": len(neighbors)}
 
     elif tool_name == "get_document":
@@ -269,13 +312,15 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
     elif tool_name == "get_authority_chain":
         chain = result.get("authority_chain", [])
         doc_ids = [n["id"] for n in chain if n.get("id")][:10]
-        summary_text = f"Walked authority chain ({len(chain)} node(s))"
+        n = len(chain)
+        summary_text = f"Traced {n} authority {'step' if n == 1 else 'steps'}"
         metadata = {"chainLength": len(chain)}
 
     elif tool_name == "list_framework_docs":
         docs = result.get("documents", [])
         doc_ids = [d["id"] for d in docs if d.get("id")][:10]
-        summary_text = f"Listed {len(docs)} framework doc(s)"
+        n = len(docs)
+        summary_text = f"Listed {n} framework {'document' if n == 1 else 'documents'}"
         metadata = {"documentCount": len(docs)}
 
     elif tool_name == "fetch_case_opinion":
@@ -299,10 +344,11 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         status = "terminal"
         metadata = {"questionChars": len(question)}
 
-    elif tool_name == "answer":
+    elif tool_name == "cite_documents":
         cited = result.get("cited_doc_ids", []) or []
         doc_ids = list(cited)[:10]
-        summary_text = f"Answer with {len(cited)} cited doc(s)"
+        n = len(cited)
+        summary_text = f"Citing {n} {'source' if n == 1 else 'sources'}"
         status = "terminal"
         metadata = {"citedDocCount": len(cited)}
 

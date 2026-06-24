@@ -15,7 +15,11 @@ def _make_stream_events(content_blocks, stop_reason="end_turn", usage=None):
     for idx, block in enumerate(content_blocks):
         if block["type"] == "text":
             events.append({"contentBlockStart": {"contentBlockIndex": idx, "start": {}}})
-            events.append({"contentBlockDelta": {"delta": {"text": block["text"]}}})
+            # Split text into chunks to simulate real streaming
+            text = block["text"]
+            chunk_size = block.get("chunk_size", len(text))
+            for i in range(0, len(text), chunk_size):
+                events.append({"contentBlockDelta": {"delta": {"text": text[i:i + chunk_size]}}})
             events.append({"contentBlockStop": {"contentBlockIndex": idx}})
         elif block["type"] == "toolUse":
             events.append({
@@ -25,7 +29,6 @@ def _make_stream_events(content_blocks, stop_reason="end_turn", usage=None):
                 }
             })
             input_json = json.dumps(block["input"])
-            # Split into chunks to simulate real streaming
             mid = len(input_json) // 2
             events.append({"contentBlockDelta": {"delta": {"toolUse": {"input": input_json[:mid]}}}})
             events.append({"contentBlockDelta": {"delta": {"toolUse": {"input": input_json[mid:]}}}})
@@ -59,14 +62,13 @@ class TestProcessConverseStream:
         assert content[0]["toolUse"]["input"] == {"query": "property tax"}
         assert not result.answer_streamed
 
-    def test_answer_tool_streams_response(self):
+    def test_text_block_streams_when_answer_turn(self):
+        """Text blocks stream fragments in real-time when is_answer_turn=True."""
         answer_text = "This is the answer with enough text to exceed the buffer threshold for streaming."
-        events = _make_stream_events([{
-            "type": "toolUse",
-            "id": "t1",
-            "name": "answer",
-            "input": {"response": answer_text, "cited_doc_ids": ["doc-1"]},
-        }])
+        events = _make_stream_events([
+            {"type": "text", "text": answer_text, "chunk_size": 10},
+            {"type": "toolUse", "id": "t1", "name": "cite_documents", "input": {"cited_doc_ids": ["doc-1"]}},
+        ], stop_reason="tool_use")
 
         fragments = []
         start_called = []
@@ -75,15 +77,36 @@ class TestProcessConverseStream:
             {"stream": iter(events)},
             on_answer_fragment=lambda f: fragments.append(f),
             on_answer_start=lambda: start_called.append(True),
+            is_answer_turn=True,
         )
 
         assert result.answer_streamed
         assert start_called == [True]
         assert "".join(fragments) == answer_text
-        # The full tool input is still parsed correctly
-        tool_input = result.assistant_message["content"][0]["toolUse"]["input"]
-        assert tool_input["response"] == answer_text
+        # Text is still accumulated correctly
+        assert result.assistant_message["content"][0] == {"text": answer_text}
+        # Tool input is parsed
+        tool_input = result.assistant_message["content"][1]["toolUse"]["input"]
         assert tool_input["cited_doc_ids"] == ["doc-1"]
+
+    def test_text_block_does_not_stream_when_not_answer_turn(self):
+        """Text blocks are accumulated without streaming when is_answer_turn=False."""
+        events = _make_stream_events([
+            {"type": "text", "text": "Let me search for that."},
+            {"type": "toolUse", "id": "t1", "name": "vector_search", "input": {"query": "tax"}},
+        ], stop_reason="tool_use")
+
+        fragments = []
+        result = process_converse_stream(
+            {"stream": iter(events)},
+            on_answer_fragment=lambda f: fragments.append(f),
+            on_answer_start=lambda: None,
+            is_answer_turn=False,
+        )
+
+        assert not result.answer_streamed
+        assert fragments == []
+        assert result.assistant_message["content"][0] == {"text": "Let me search for that."}
 
     def test_mixed_text_and_tools(self):
         events = _make_stream_events([
@@ -102,6 +125,58 @@ class TestProcessConverseStream:
         assert content[0] == {"text": "Let me search."}
         assert content[1]["toolUse"]["name"] == "vector_search"
         assert text_blocks == ["Let me search."]
+
+    def test_large_text_sends_multiple_fragments(self):
+        """When a large text block arrives, it should be split into multiple sends."""
+        answer_text = "A" * 200
+        # Deliver as one big delta (simulates large chunk)
+        events = [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockStart": {"contentBlockIndex": 0, "start": {}}},
+            {"contentBlockDelta": {"delta": {"text": answer_text}}},
+            {"contentBlockStop": {"contentBlockIndex": 0}},
+            {"messageStop": {"stopReason": "end_turn"}},
+            {"metadata": {"usage": {}}},
+        ]
+
+        fragments = []
+        result = process_converse_stream(
+            {"stream": iter(events)},
+            on_answer_fragment=lambda f: fragments.append(f),
+            on_answer_start=lambda: None,
+            is_answer_turn=True,
+        )
+
+        assert result.answer_streamed
+        assert "".join(fragments) == answer_text
+        assert len(fragments) >= 4
+        for frag in fragments[:-1]:
+            assert len(frag) == 40
+
+    def test_incremental_text_streaming(self):
+        """Token-by-token text delivery produces smooth fragment output."""
+        answer_text = "The assessment ratio for residential property is 100%."
+        # Simulate token-by-token delivery (small chunks)
+        events = [{"messageStart": {"role": "assistant"}}]
+        events.append({"contentBlockStart": {"contentBlockIndex": 0, "start": {}}})
+        for word in answer_text.split(" "):
+            events.append({"contentBlockDelta": {"delta": {"text": word + " "}}})
+        events.append({"contentBlockStop": {"contentBlockIndex": 0}})
+        events.append({"messageStop": {"stopReason": "end_turn"}})
+        events.append({"metadata": {"usage": {}}})
+
+        fragments = []
+        result = process_converse_stream(
+            {"stream": iter(events)},
+            on_answer_fragment=lambda f: fragments.append(f),
+            on_answer_start=lambda: None,
+            is_answer_turn=True,
+        )
+
+        assert result.answer_streamed
+        # Fragments are buffered to ~40 chars each
+        combined = "".join(fragments)
+        assert combined == answer_text + " "  # trailing space from word split
 
     def test_no_stream_field_returns_empty(self):
         result = process_converse_stream({})

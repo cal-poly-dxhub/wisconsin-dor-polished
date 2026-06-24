@@ -6,7 +6,7 @@ Runs Claude's agentic loop with Neptune-backed tools:
 1. Receives a UserQuery (query, query_id, session_id)
 2. Claude decides which tools to call (vector_search, get_neighbors, etc.)
 3. Tools execute against Neptune Analytics
-4. Loop continues until Claude calls the 'answer' tool
+4. Loop continues until Claude writes an answer (text block) + calls cite_documents
 5. Returns a RetrieveResult with documents + response for streaming
 """
 
@@ -302,7 +302,7 @@ def run_agentic_loop(
         turn=0,
         payload={
             "toolName": "faq_search",
-            "summary": build_tool_call_summary("faq_search", {"query": search_query}),
+            "summary": build_tool_call_summary("faq_search", {"query": search_query}, neptune),
             "status": "pending",
         },
     )
@@ -349,11 +349,42 @@ def run_agentic_loop(
                 f"{len(high_confidence_faq.faqs)} FAQ(s) as primary source; "
                 "graph traversal will supplement the answer"
             )
+            _emit_safe(
+                ws_server,
+                trace_seq,
+                query_id=query_id,
+                kind="phase",
+                payload={
+                    "phase": "faq_transition",
+                    "label": "FAQ match found, supplementing with graph search",
+                },
+            )
         else:
             logger.warning(
                 "FAQ score cleared threshold but no entries parsed; "
                 "loop will treat FAQs as ordinary context"
             )
+            _emit_safe(
+                ws_server,
+                trace_seq,
+                query_id=query_id,
+                kind="phase",
+                payload={
+                    "phase": "faq_transition",
+                    "label": "No strong FAQ match, searching knowledge graph",
+                },
+            )
+    else:
+        _emit_safe(
+            ws_server,
+            trace_seq,
+            query_id=query_id,
+            kind="phase",
+            payload={
+                "phase": "faq_transition",
+                "label": "No strong FAQ match, searching knowledge graph",
+            },
+        )
 
     # Prepend prior turns so Claude can resolve pronouns and short follow-ups.
     messages: list[dict] = []
@@ -430,8 +461,8 @@ def run_agentic_loop(
 
         if turn == 7:
             warning = (
-                "You are running low on turns. Call the answer tool NOW with your "
-                "best answer from the context gathered so far."
+                "You are running low on turns. Write your best answer NOW from the "
+                "context gathered so far, then call cite_documents."
             )
             messages.append({
                 "role": "user",
@@ -499,6 +530,7 @@ def run_agentic_loop(
             stream_response,
             on_answer_fragment=_send_ws_fragment,
             on_answer_start=_on_answer_start,
+            is_answer_turn=True,
         )
         if stream_result.answer_streamed:
             answer_was_streamed = True
@@ -572,7 +604,7 @@ def run_agentic_loop(
                 turn=turn_number,
                 payload={
                     "toolName": tool_name,
-                    "summary": build_tool_call_summary(tool_name, tool_input),
+                    "summary": build_tool_call_summary(tool_name, tool_input, neptune),
                     "status": "pending",
                 },
                 dev_payload={
@@ -678,7 +710,7 @@ def run_agentic_loop(
                 discovery=discovery_summary(discovery),
                 tool_result_summary=tool_result_summary["raw"],
             )
-            if tool_name not in ("answer", "clarify"):
+            if tool_name not in ("cite_documents", "clarify"):
                 result_metadata = dict(tool_result_summary["metadata"])
                 if tool_latency_ms is not None:
                     result_metadata["latencyMs"] = tool_latency_ms
@@ -732,8 +764,13 @@ def run_agentic_loop(
                 )
                 return answer, [], [], None, trace_log, False, ws_connection_alive[0]
 
-            if tool_name == "answer":
-                answer = result.get("response", "")
+            if tool_name == "cite_documents":
+                # Answer text comes from text blocks, citations from this tool
+                text_blocks = [
+                    block["text"] for block in assistant_message["content"]
+                    if "text" in block
+                ]
+                answer = "\n".join(text_blocks)
                 cited = set(result.get("cited_doc_ids", []))
                 cited_chunks = [
                     c for c in all_chunks if c.get("doc_id") in cited
@@ -746,8 +783,6 @@ def run_agentic_loop(
                 cited_opinions = {
                     k: v for k, v in fetched_opinions.items() if k in cited
                 }
-                # Backfill: fetch opinions for cited case-law stubs the
-                # agent didn't explicitly fetch_case_opinion for.
                 _OPINION_BACKFILL_CAP = 3
                 unfetched_stubs = [
                     cid for cid in cited
@@ -788,7 +823,7 @@ def run_agentic_loop(
                 _log(
                     "agent_loop_complete",
                     **trace_context,
-                    terminal_reason="answer_tool",
+                    terminal_reason="cite_documents",
                     turns_used=turn_number,
                     elapsed_ms=round((time.perf_counter() - loop_started) * 1000),
                     answer_chars=len(answer),
@@ -800,7 +835,7 @@ def run_agentic_loop(
                 )
                 _record_trace(
                     "loop_complete", turn=turn_number,
-                    terminalReason="answer_tool",
+                    terminalReason="cite_documents",
                     turnsUsed=turn_number,
                     elapsedMs=round((time.perf_counter() - loop_started) * 1000),
                     citedDocCount=len(cited),
@@ -813,7 +848,7 @@ def run_agentic_loop(
                     query_id=query_id,
                     kind="loop_complete",
                     payload={
-                        "terminalReason": "answer_tool",
+                        "terminalReason": "cite_documents",
                         "turnsUsed": turn_number,
                         "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
                         "citedDocCount": len(cited),
@@ -949,7 +984,7 @@ def _send_resources_and_finalize(
 
     if not answer_already_streamed:
         # Fallback: answer wasn't streamed live (e.g., text-only response
-        # without answer tool, or turn budget exhaustion). Replay it.
+        # without cite_documents tool, or turn budget exhaustion). Replay it.
         start_msg = AnswerEventType(event="start", query_id=query_id)
         data = json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)})
         ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
@@ -1033,9 +1068,9 @@ def handler(event: dict, context) -> dict[str, Any]:
                 kind="phase",
                 payload={
                     "phase": "generality_classified",
-                    "label": "Classified prompt generality — asking for property type"
+                    "label": "Query needs clarification on property type"
                     if needs_disambiguation
-                    else "Classified prompt generality — specific enough to proceed",
+                    else "Query is specific enough to proceed",
                     "result": "disambiguate" if needs_disambiguation else "proceed",
                 },
             )

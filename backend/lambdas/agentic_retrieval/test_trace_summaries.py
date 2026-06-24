@@ -22,24 +22,24 @@ class TestBuildToolCallSummary:
         assert build_tool_call_summary("faq_search", {"query": "what is TID"}) == '"what is TID"'
 
     def test_get_neighbors(self):
-        assert build_tool_call_summary("get_neighbors", {"doc_id": "stat-70-32"}) == "doc stat-70-32"
+        assert build_tool_call_summary("get_neighbors", {"doc_id": "stat-70-32"}, None) == "stat-70-32"
 
     def test_get_document(self):
         assert build_tool_call_summary("get_document", {"doc_id": "doc-1"}) == "doc-1"
 
-    def test_answer(self):
-        assert build_tool_call_summary("answer", {"cited_doc_ids": ["a", "b", "c"]}) == "with 3 cited doc(s)"
+    def test_cite_documents(self):
+        assert build_tool_call_summary("cite_documents", {"cited_doc_ids": ["a", "b", "c"]}, None) == "with 3 cited sources"
 
     def test_unknown_tool(self):
         assert build_tool_call_summary("mystery_tool", {"foo": "bar"}) == ""
 
     def test_empty_inputs(self):
-        assert build_tool_call_summary("vector_search", {}) == ""
-        assert build_tool_call_summary("faq_search", {"query": ""}) == ""
-        assert build_tool_call_summary("get_neighbors", {"doc_id": ""}) == ""
-        assert build_tool_call_summary("get_authority_chain", {}) == ""
-        assert build_tool_call_summary("answer", {}) == "with 0 cited doc(s)"
-        assert build_tool_call_summary("answer", {"cited_doc_ids": None}) == "with 0 cited doc(s)"
+        assert build_tool_call_summary("vector_search", {}, None) == ""
+        assert build_tool_call_summary("faq_search", {"query": ""}, None) == ""
+        assert build_tool_call_summary("get_neighbors", {"doc_id": ""}, None) == ""
+        assert build_tool_call_summary("get_authority_chain", {}, None) == ""
+        assert build_tool_call_summary("cite_documents", {}, None) == "with 0 cited sources"
+        assert build_tool_call_summary("cite_documents", {"cited_doc_ids": None}, None) == "with 0 cited sources"
 
 
 class TestBuildToolResultSummary:
@@ -70,14 +70,14 @@ class TestBuildToolResultSummary:
         result = {"neighbors": [{"id": "d1", "relationship": "CITES"}, {"id": "d2", "relationship": "IMPLEMENTS"}]}
         s = build_tool_result_summary("get_neighbors", result, self._mock_neptune())
         assert s["status"] == "ok"
-        assert "2 neighbor" in s["summary_text"]
+        assert "2 related" in s["summary_text"]
         assert set(s["doc_ids"]) == {"d1", "d2"}
 
     def test_faq_search_with_scores(self):
         result = {"faqs": [{"text": "Q: x\nA: y", "score": 0.84}, {"text": "Q: p\nA: q", "score": 0.71}], "count": 2}
         s = build_tool_result_summary("faq_search", result, self._mock_neptune())
         assert s["status"] == "ok"
-        assert "top score 0.84" in s["summary_text"]
+        assert "0.84" in s["summary_text"]
         assert s["metadata"]["faqCount"] == 2
 
     def test_error_result(self):
@@ -85,10 +85,10 @@ class TestBuildToolResultSummary:
         assert s["status"] == "error"
         assert "not found" in s["summary_text"]
 
-    def test_answer_terminal(self):
-        s = build_tool_result_summary("answer", {"response": "Use value...", "cited_doc_ids": ["a", "b"]}, self._mock_neptune())
+    def test_cite_documents_terminal(self):
+        s = build_tool_result_summary("cite_documents", {"cited_doc_ids": ["a", "b"]}, self._mock_neptune())
         assert s["status"] == "terminal"
-        assert "2 cited" in s["summary_text"]
+        assert "2 sources" in s["summary_text"]
         assert s["doc_ids"] == ["a", "b"]
 
     def test_fetch_opinion_miss(self):

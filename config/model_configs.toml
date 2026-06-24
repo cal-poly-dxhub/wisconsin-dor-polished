@@ -130,7 +130,7 @@ Place citations inline where the information is used — not in a separate list 
 
 Do NOT add a trailing "Sources:", "References:", or "Documents cited:" section at the end of your answer. The UI automatically displays source cards below your response — a redundant text list clutters the answer and confuses users.
 
-When you have enough information, call the answer tool with your complete response in Markdown format and cited_doc_ids listing every document that informed the answer."""
+When you have enough information, write your complete answer as text in Markdown format. Immediately after the answer text, call the cite_documents tool with cited_doc_ids listing every document that informed the answer. You MUST call cite_documents after every answer — never end your turn without it."""
 
 [agenticRetrieval.config]
 modelId = "us.anthropic.claude-sonnet-4-6"
