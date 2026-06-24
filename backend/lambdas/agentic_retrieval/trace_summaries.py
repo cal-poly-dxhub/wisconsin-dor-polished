@@ -248,11 +248,22 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         )
         graph_context = result.get("graph_context", {}) or {}
         neighbor_count = sum(len(v) for v in graph_context.values())
+        pre_dedup_count = result.get("pre_dedup_count", n_chunks)
+        authority_breakdown: dict[str, int] = {}
+        for chunk in chunks:
+            level = chunk.get("authority_level")
+            if level is not None:
+                key = str(int(level))
+                authority_breakdown[key] = authority_breakdown.get(key, 0) + 1
+        related_case_law = result.get("related_case_law", [])
         metadata = {
             "chunkCount": n_chunks,
             "docCount": n_docs,
             "neighborCount": neighbor_count,
             "topScore": round(top_score, 4),
+            "preDedupCount": pre_dedup_count,
+            "authorityBreakdown": authority_breakdown,
+            "caseLawCount": len(related_case_law),
         }
 
     elif tool_name == "search_document":
@@ -292,7 +303,11 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         doc_ids = [n["id"] for n in neighbors if n.get("id")][:10]
         n = len(neighbors)
         summary_text = f"Retrieved {n} related {'document' if n == 1 else 'documents'} from graph"
-        metadata = {"neighborCount": len(neighbors)}
+        relationship_counts: dict[str, int] = {}
+        for neighbor in neighbors:
+            rel = neighbor.get("relationship", "unknown")
+            relationship_counts[rel] = relationship_counts.get(rel, 0) + 1
+        metadata = {"neighborCount": len(neighbors), "relationshipCounts": relationship_counts}
 
     elif tool_name == "get_document":
         doc = result.get("document")

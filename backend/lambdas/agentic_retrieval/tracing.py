@@ -23,6 +23,12 @@ ALLOWED_METADATA_KEYS = frozenset({
     "refined",
     "citedDocCount",
     "latencyMs",
+    "keywordFallback",
+    "preDedupCount",
+    "authorityBreakdown",
+    "relationshipCounts",
+    "discoveryCounts",
+    "caseLawCount",
 })
 
 

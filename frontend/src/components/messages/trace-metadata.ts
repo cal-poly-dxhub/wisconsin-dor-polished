@@ -14,6 +14,12 @@ const ALLOWED_METADATA_KEYS = new Set([
   'refined',
   'citedDocCount',
   'latencyMs',
+  'keywordFallback',
+  'preDedupCount',
+  'authorityBreakdown',
+  'relationshipCounts',
+  'discoveryCounts',
+  'caseLawCount',
 ]);
 
 export function sanitizeTraceMetadata(
@@ -39,12 +45,16 @@ export function formatTraceMetadata(metadata: unknown): string {
 
   addCount('faqCount', 'FAQ hit');
   addCount('chunkCount', 'chunk');
-  addCount('docCount', 'doc');
-  addCount('neighborCount', 'neighbor');
+  addCount('docCount', 'source');
   addCount('documentCount', 'document');
   addCount('chainLength', 'authority step');
   addCount('citedDocCount', 'citation');
   addCount('opinionChars', 'char');
+
+  const neighborCount = m.neighborCount;
+  if (typeof neighborCount === 'number' && neighborCount > 0) {
+    parts.push(`${neighborCount} graph ${neighborCount === 1 ? 'neighbor' : 'neighbors'} enriched`);
+  }
 
   const topScore = m.topScore;
   if (typeof topScore === 'number' && topScore > 0) {
@@ -56,6 +66,9 @@ export function formatTraceMetadata(metadata: unknown): string {
   }
   if (m.refined === true) {
     parts.push('refined');
+  }
+  if (m.keywordFallback === true) {
+    parts.push('keyword fallback');
   }
 
   return parts.join(' · ');

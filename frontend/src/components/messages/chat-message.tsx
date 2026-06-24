@@ -1,7 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Info, ThumbsUp, ThumbsDown, FileText } from 'lucide-react';
+import { Info, ThumbsUp, ThumbsDown, FileText, Network } from 'lucide-react';
 import { useAssignFeedback } from '@/hooks/api/chat';
 import { useChatStore } from '@/stores/chat-store';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -21,6 +21,7 @@ import { Button } from '../ui/button';
 import { ButtonGroup } from '../ui/button-group';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { FeedbackPopover } from './feedback-popover';
+import { RetrievalModal } from './retrieval-modal';
 
 type TraceStep = {
   label: string;
@@ -523,6 +524,7 @@ export function ChatMessage({
   const [stepsOpen, setStepsOpen] = useState(detailedTrace);
   const agentTrace = useChatStore(s => s.queries[queryId]?.agentTrace);
   const devTrace = useDevTrace();
+  const [retrievalModalOpen, setRetrievalModalOpen] = useState(false);
 
   const steps = useMemo<TraceStep[]>(() => {
     if (!agentTrace || agentTrace.length === 0) {
@@ -702,6 +704,16 @@ export function ChatMessage({
                   </motion.div>
                 )}
               </AnimatePresence>
+              {agentTrace && agentTrace.length > 0 && (
+                <button
+                  onClick={() => setRetrievalModalOpen(true)}
+                  className="mt-2 flex items-center gap-1.5 text-muted-foreground/70 hover:text-foreground transition-colors cursor-pointer"
+                  style={{ fontSize: '0.8em' }}
+                >
+                  <Network className="h-3.5 w-3.5" />
+                  <span>View live pipeline</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -717,6 +729,7 @@ export function ChatMessage({
           />
         </div>
       </div>
+      <RetrievalModal queryId={queryId} open={retrievalModalOpen} onClose={() => setRetrievalModalOpen(false)} />
     </motion.div>
   );
 }
