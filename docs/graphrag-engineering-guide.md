@@ -83,7 +83,7 @@ Before the subsystems, internalize the engineering patterns. They recur in nearl
 
 **Backend is the source of truth; the frontend stays dumb.** The Lambda pre-formats every human-readable trace string and emits camelCase metadata. The UI only picks a verb and renders. Citation cards are restricted to exactly the agent's `cited_doc_ids` on the backend.
 
-**Bound everything that talks to a metered service.** These limits are first-class design inputs, not afterthoughts: API Gateway 128 KB per WebSocket frame (document batching in `websocket_utils.batching`), Titan v2's 8000-char silent truncation (`CHUNK_MAX_CHARS=7500`), Neptune per-query memory (byte-capped UNWIND), and the Bedrock turn budget (`MAX_TURNS=10` + degraded fallback).
+**Bound everything that talks to a metered service.** These limits are first-class design inputs, not afterthoughts: API Gateway 128 KB per WebSocket frame (document batching in `websocket_utils.batching`), Titan v2's 8000-char silent truncation (`CHUNK_MAX_CHARS=2500`), Neptune per-query memory (byte-capped UNWIND), and the Bedrock turn budget (`MAX_TURNS=10` + degraded fallback).
 
 **Root-cause before fixing; prove it end-to-end.** The history repeatedly shows a first plausible fix being insufficient and a second independent cause found (phase 4 produced 0 edges for _two_ unrelated reasons; the discovery-tag no-op hid a second crash once fixed). Fixes ship with regression tests and verified counts ("1,742 PART_OF edges, was 0").
 
@@ -116,7 +116,7 @@ One worked trace before the subsystem deep-dives.
 
 ## 4. The Neptune graph data model
 
-**Engine.** Neptune Analytics (`neptune-graph`), graph `g-ndvl4j73v4`, us-east-1, 1024-dim vector index (matches Titan Embed Text V2), 32 m-NCU, IAM auth, **public connectivity, no VPC**. Public connectivity is deliberate (`6bf3ec1`): the project has no VPC, so the graph is publicly reachable but IAM-gated, scoped to the agentic Lambda's `neptune-graph:ExecuteQuery / ReadDataViaQuery / GetQueryStatus`. The trade-off is documented — no network boundary, IAM is the only protection.
+**Engine.** Neptune Analytics (`neptune-graph`), graph `g-ndvl4j73v4`, us-east-1, 1024-dim vector index (matches Titan Embed Text V2), 32 m-NCU (scale to 128 for full re-ingestion loads), IAM auth, **public connectivity, no VPC**. Public connectivity is deliberate (`6bf3ec1`): the project has no VPC, so the graph is publicly reachable but IAM-gated, scoped to the agentic Lambda's `neptune-graph:ExecuteQuery / ReadDataViaQuery / GetQueryStatus`. The trade-off is documented — no network boundary, IAM is the only protection.
 
 **Node spine.** `Framework → Document → Chunk`, plus `Topic` nodes and on-demand `stub` nodes.
 
@@ -198,7 +198,9 @@ Neptune signals overload via **both** `ThrottlingException` _and_ `Unprocessable
 
 ### 5.4 UNWIND must be capped by bytes, not just count
 
-Ingestion write phases batch with `UNWIND $rows`. Capping by **document/row count alone is insufficient**: a single outlier doc (a case-law opinion or WPAM chunk with ~2000+ chars) blows Neptune's per-query memory budget and deterministically OOMs. Phase 8 therefore caps by cumulative chunk-text **bytes** (`PHASE_8_MAX_BYTES_PER_FLUSH = 50_000`) in addition to count (50) and ref-pairs (400) (`26a81e3`). The byte cap is the one that actually prevents the OOM — do not remove it in favor of count-only caps.
+Ingestion write phases batch with `UNWIND $rows`. Capping by **document/row count alone is insufficient**: a single outlier doc (a case-law opinion or WPAM chunk with ~2000+ chars) blows Neptune's per-query memory budget and deterministically OOMs. Phase 8 therefore caps by cumulative chunk-text **bytes** (`PHASE_8_MAX_BYTES_PER_FLUSH = 50_000`) in addition to count (10) and ref-pairs (80) (`26a81e3`). The byte cap is the one that actually prevents the OOM — do not remove it in favor of count-only caps.
+
+> **Gotcha — 32 mCU OOMs on full re-ingestion.** At `CHUNK_MAX_CHARS=2500`, the full corpus produces ~45k chunks. Phase 8's batch MERGE with CITES edges OOMed Neptune at 32 mCU even with batch sizes of 20. The fix: scale Neptune to 128 mCU during load (`aws neptune-graph update-graph --provisioned-memory 128`), then scale back to 32 after completion. The batch size was also reduced to 10/80 pairs as a permanent guard. Always scale back — 128 mCU is 4× the cost.
 
 ---
 
@@ -268,6 +270,10 @@ load.py ──▶ Neptune graph                      (11 CLI phases of UNWIND-ba
 - **Phase 4 parent IDs are `WIS-STAT-{N}`, not `CH-{N}`.** The original `CH-{N}` form matched nothing (CITES/PART*OF live in the `WIS-STAT-*` namespace) \_and* only 7 hardcoded chapters existed — a second independent reason phase 4 produced 0 edges (`8ea71a9`). The `statute*families` `CH-*`nodes from phase 1 are now effectively a dead namespace; don't assume they link to`WIS-STAT-\_`.
 - **`make_doc_id` prepends a path discriminator** for generic stems and news sections — `/Manufacturing/home.aspx` and `/RETr/Home.aspx` both stemmed to `home` and silently overwrote each other; COTVC-News and Assessor-News post on the same dates (~62 collisions) (`5688d7a`).
 - **Phase 11's prompt** carries per-doc summaries + positive/negative examples + a decision order (`SUPERSEDES > CONFLICTS_WITH > SUPPLEMENTS > RELATED_TO`). Before this, the LLM defaulted everything to `RELATED_TO` and emitted `CONFLICTS_WITH` once in 11k+ edges (`8ea71a9`). Per-type counts are logged so you can verify.
+- **Docker image must be `--platform linux/amd64`.** Fargate runs amd64; building on Apple Silicon without the flag produces an ARM image that fails with `CannotPullContainerError: image Manifest does not contain descriptor matching platform`. The `build_and_push.sh` script does not currently set `--platform` — build manually with the flag or fix the script.
+- **`AWS_REGION` in shell overrides script defaults.** `run_fargate.sh` uses `${AWS_REGION:-us-east-1}` — if your shell has `AWS_REGION=us-west-2` set, the script targets the wrong region and fails with "Stack does not exist." Always invoke with `AWS_PROFILE=widor AWS_REGION=us-east-1` explicitly.
+- **Neptune `DeleteDataViaQuery` permission required for MERGE.** The Fargate task role needs `neptune-graph:DeleteDataViaQuery` in addition to Read/Write — `MERGE` with `SET` requires it. Without it, load phase 1 (scaffold) fails immediately with `AccessDeniedException`.
+- **Topic clustering batch size.** Phase 5 sends topics to the LLM for synonym clustering. Batch size is 60 topics per call with `maxTokens: 8192`. Larger batches risk output truncation. The full corpus produces ~300+ unique topics across all docs.
 
 ---
 
@@ -288,7 +294,7 @@ Both extractors emit the same contract the chunkers consume: `header_split` (tex
 - **Per-line page tracking** (`9bc8346`). The old `get_pages_for_chunk()` reconstructed each chunk's page range by substring-matching its lines against the _whole_ document. Repeating boilerplate (footers, headers) appears on every page, so the match set exploded — corrupting **55% of the deployed corpus** (one chunk spanned pages 1–1349). Now each buffered line is a `(text, page)` tuple and a chunk's `start_page`/`end_page` is the min/max of its buffer. **Do not reintroduce any "reconstruct pages by matching text" helper.**
 - **TOC suppression** (`9bc8346`). A dot-leader line (`"XV. Contact Info . . . 57"`) matches the roman-numeral heading regex and would become the heading for every subsequent chunk. The `_LEADER_IN_LINE` pattern forces such lines to body text, and `is_toc_chunk()` drops whole TOC chunks post-chunking. These are two separate defenses; both exist for a reason.
 - **Table false-positive rejection** (`9bc8346`, `610972f`). PyMuPDF's `find_tables()` flags multi-column prose as tables; row-joining with `" | "` scrambles reading order. `looks_like_real_table()` rejects candidates by row-count/cell-length signature and a >60%-empty-cell ratio.
-- **7500-char cap** (`40f8747`). Titan v2 **silently truncates** input past 8000 chars — an oversized chunk was stored and shown, but its tail never contributed to the embedding (match-invisible). `CHUNK_MAX_CHARS=7500` is enforced at three layers (in-loop, per-chunker `_enforce_chunk_cap`, and a final pass after assembly, because heading prefixes and line-rejoining grow the string after the buffer-time measurement).
+- **2500-char cap** (reduced from 7500). Titan v2 **silently truncates** input past 8000 chars — the original 7500 cap prevented truncation but produced overly large chunks that bloated the agent's context window and reduced retrieval precision. `CHUNK_MAX_CHARS=2500` produces ~3× more chunks per document but each is fully embedded, more precise for vector search, and cheaper at query time (fewer tokens in tool results). The cap is enforced at three layers (in-loop, per-chunker `_enforce_chunk_cap`, and a final pass after assembly, because heading prefixes and line-rejoining grow the string after the buffer-time measurement). The retrieval parameters (top_k, diversity cap, fetch_k) were tuned upward to compensate for the smaller chunk size — see §8.
 
 > **Gotcha — routing is effectively dead for statute/WPAM in production.** `extract.py` passes `source_id = metadata["doc_id"]` (the per-doc id), but `CHUNKER_BY_SOURCE` keys are categories (`"state-laws"`, `"assessment-manual"`). They almost never match, so nearly everything falls through to the `general` chunker. The specialized `chunk_document_statute`/`chunk_document_wpam` paths are maintained and unit-tested but rarely exercised by the real pipeline. If you intend statutes/WPAM to use their specialized chunkers, fix the `source_id` passed by `extract.py` _or_ the dict keys — re-running ingestion alone won't change which chunker fires.
 
@@ -336,9 +342,9 @@ This eliminates the second Bedrock call that ResponseStreaming previously made t
 
 ### Key design decisions and footguns
 
-- **5× over-fetch + diversity cap** (`tools.py:627`): WPAM editions are ~79% of all chunks, so a naive `top_k=10` returns almost exclusively WPAM. When no `target_year` is set, `vector_search` requests `top_k * 5` from Neptune (was 3×). After WPAM dedup, a **per-document cap of 3 chunks** (`DIVERSITY_CAP_PER_DOC` env var, default 3) prevents any single source from crowding out others. The agent sees a diverse survey; it can drill deeper with `search_document`. When `target_year` IS set, no over-fetch (the user wants a specific edition).
+- **6× over-fetch + diversity cap** (`tools.py:627`): WPAM editions dominate the vector space, so a naive `top_k=15` risks returning mostly WPAM. When no `target_year` is set, `vector_search` requests `top_k * 6` from Neptune (90 chunks for the default top_k=15). After WPAM dedup, a **per-document cap of 5 chunks** (`DIVERSITY_CAP_PER_DOC` env var, default 5) prevents any single source from crowding out others. The agent sees a diverse survey; it can drill deeper with `search_document`. When `target_year` IS set, no over-fetch (the user wants a specific edition). These parameters were tuned upward from (5×, cap 3) when `CHUNK_MAX_CHARS` was reduced from 7500→2500 — smaller chunks require more results to cover the same ground.
 - **Authority-aware tiebreaking** (`tools.py:652`): after WPAM dedup + diversity cap + `top_k` truncation, chunks are re-sorted so higher-authority sources appear first _among similarly-scored results_. Similarity scores are bucketed (threshold 0.03); within the same bucket, lower `authority_level` wins (1=Constitution beats 9=USPAP). Between buckets, relevance wins — a highly relevant FAQ still beats a tangentially related statute. This exploits the model's primacy bias: authoritative sources appear earlier in context, making the prompt-level hierarchy instructions more effective. `authority_level` is resolved from the parent Document node via the `EXTRACTED_FROM` join already present in the Neptune query. Missing authority defaults to 9 (lowest priority). The `_sort_key` is popped during sort so it never reaches Claude's context.
-- **`search_document` — on-demand depth** (`tools.py:794`): embeds the sub-query with Titan v2 and runs a global vector search filtered to chunks belonging to the target `doc_id`. Returns up to `top_k` (max 5) chunks from that document. This replaces the depth lost by the diversity cap — the agent gets breadth by default and depth on demand. The system prompt instructs the agent to call it when `vector_search` surfaced only 1–2 chunks from a highly relevant doc (e.g., a WPAM chapter or assessment guide).
+- **`search_document` — on-demand depth** (`tools.py:794`): embeds the sub-query with Titan v2 and runs a global vector search (fetch_k=800, env `SEARCH_DOCUMENT_FETCH_K`) filtered to chunks belonging to the target `doc_id`. Returns up to `top_k` (default 5, max 10) chunks from that document. This replaces the depth lost by the diversity cap — the agent gets breadth by default and depth on demand. The system prompt instructs the agent to call it when `vector_search` surfaced only 1–2 chunks from a highly relevant doc (e.g., a WPAM chapter or assessment guide). **Known limitation:** with ~45k chunks in the graph, small docs (e.g., BOR guide with ~20 chunks) may not appear in the top 800 global results. A future fix should replace the global-search-and-filter approach with direct graph traversal (`get_chunks_for_doc`) + local cosine similarity ranking.
 - **Auto-enrichment** (`1864142`): after `vector_search` returns chunks, the executor fetches `get_neighbors` for the top-3 distinct parent doc_ids and returns `{chunks, graph_context}`. The agent gets graph context for free without an extra turn. Best-effort — neighbor errors are swallowed.
 - **Neighbor-doc citation discovery** (`f87e6d7`): after auto-enrichment, `vector_search` runs an additional pass to surface case law mentioned in neighbor doc text but not in the directly-retrieved chunks. It filters neighbors to non-WPAM document nodes, ranks them by shared statute overlap with the query chunks (top 3), fetches their chunk text, regex-extracts case citations, and resolves them to CaseLaw nodes. The chunk text stays in the Lambda (regex only, never enters Claude's context). See `docs/co-cited-case-law-discovery.md` for the full traversal path. This replaced a pure graph-traversal approach that failed because high-degree statute nodes (1500+ CITES edges) made LIMIT-based discovery arbitrary.
 - **`cited_doc_ids` is the authoritative sidebar.** On `answer`, the returned cards are restricted to _exactly_ the agent's cited ids, not all discovered docs — auto-enrichment pulls in far more docs (case-law stubs CITES-linked to statutes) than the answer uses. The turn-budget fallback path is the exception (it returns all discovered ids).
@@ -443,6 +449,8 @@ This works because ingestion stamped `citation` on every CaseLaw node. It's an e
 
 > **Stub-promotion authority footgun** (`2631d5f`): `WIS-STAT-*` section stubs carry no `authority_level`. When `_build_rag_documents` promotes such a stub to a parent Document for content (often a WPAM doc), it must keep the stub's **own** identity authority (default Statute=2), not borrow the parent's — else "Wis. Stat. 70.49(2)" renders a WPAM badge.
 
+> **Stub-promotion page resolution** (`e37e91d`): `find_stub_promotion` finds the earliest chunk in the parent chapter PDF that cites a stub, using its `start_page` for the citation link. Two fixes prevent linking to the TOC: (1) `c.start_page > 2` skips index/TOC chunks that cite every section, and (2) a `parent_hint` derived from the stub ID (e.g., `WIS-STAT-70.32` → prefer `statutes-70`) ensures the promotion resolves to the stub's own chapter, not a cross-referencing chapter that happens to have a lower page number.
+
 ---
 
 ## 11. WPAM edition recency
@@ -459,7 +467,7 @@ Three layers enforce recency:
 
 1. **`current_wpam_year` — dynamic resolution from Neptune** (`neptune_client.py`). A cached property queries `max(d.edition_year)` across all `FW-WPAM` documents on Lambda cold start. This is the authoritative "what year is current" — no hardcoded year constant.
 
-2. **Over-fetch at retrieval time** (`tools.py`). When no `target_wpam_year` is set, `vector_search` requests `top_k * 5` chunks from Neptune (e.g., 50 instead of 10). WPAM editions are ~79% of all chunks, so the 5× multiplier gives the dedup + diversity filters enough runway to surface non-WPAM results. When a `target_wpam_year` IS set, no over-fetch (the user wants a specific edition, so old results are expected).
+2. **Over-fetch at retrieval time** (`tools.py`). When no `target_wpam_year` is set, `vector_search` requests `top_k * 6` chunks from Neptune (e.g., 90 instead of 15). WPAM editions dominate the chunk count, so the 6× multiplier gives the dedup + diversity filters enough runway to surface non-WPAM results. When a `target_wpam_year` IS set, no over-fetch (the user wants a specific edition, so old results are expected).
 
 3. **Two-pass dedup** (`wpam_dedup.py::dedupe_wpam_chunks`):
    - **Pass 1 — heading collapse:** groups WPAM chunks by normalized heading, keeps one per group (prefer `target_year` if set, else `max(edition_year)`).
@@ -476,11 +484,11 @@ Three layers enforce recency:
 1. User asks: "What information is used to determine my assessment?"
 2. `faq_search` runs on verbatim query (always first)
 3. Claude calls `vector_search(query="...")` — no `target_wpam_year`
-4. Neptune returns top 50 chunks (`top_k * 5` over-fetch)
+4. Neptune returns top 90 chunks (`top_k * 6` over-fetch, default top_k=15)
 5. `dedupe_wpam_chunks` runs:
    - Pass 1: heading collapse (same heading across editions → keep newest)
    - Pass 2: edition filter — `allowed_years = {2026}` (from `neptune.current_wpam_year`). Everything not 2026 is dropped.
-6. Truncate to 10 chunks, return to Claude
+6. Diversity cap (5 chunks/doc), then truncate to 15 chunks, return to Claude
 7. Claude only sees current WPAM + non-WPAM sources (statutes, admin rules, FAQs, etc.)
 
 **User specifies a year:**
@@ -530,7 +538,7 @@ Citation cards carry a **stable reference** (`s3_key`, `start_page`, `end_page`)
 
 ### Inline prose citations
 
-The agentic retrieval answer uses `[Title](doc:documentId)` instead of embedding 500-char presigned URLs that broke the markdown parser (`37f0c9c`). The frontend's `animated-markdown.tsx::resolveHref` rewrites `doc:<id>` to a URL from a per-message `docUrls` map. That map is built from `sourceUrl` **only**, so a PDF-only doc (s3Key, no sourceUrl) renders a non-clickable inline span — its click-through is the citation card's resolver path, not the inline link. Intentional but surprising.
+The agentic retrieval answer uses `[Title](doc:documentId#page=N)` instead of embedding 500-char presigned URLs that broke the markdown parser (`37f0c9c`). The `#page=N` fragment is optional and carries the chunk's `start_page` so the link goes to the specific PDF page the model retrieved — not just the document-level page stored on the source card. The frontend's `animated-markdown.tsx::resolveHref` rewrites `doc:<id>#page=N` to a URL from a per-message `docUrls` map, overriding the `page` query param when a `#page=` fragment is present. The `docUrls` map is built by `chat-message.tsx`: PDFs go through `buildResolverUrl(s3Key, startPage)`, non-PDFs use their public `sourceUrl`. The prompt instructs the model to include `#page=N` whenever a chunk has a `start_page` value, and to only cite documents it has direct chunks for (not documents quoted secondhand by another source).
 
 ---
 
@@ -675,7 +683,7 @@ A single `query_id` threads through the handler → WebSocket. To debug a failed
 | `execute_query` decodes `payload.read()`                   | neptune-graph returns a StreamingBody; raw `["results"]` is always `[]` | `610972f`, `4f0e95a` |
 | Inlined-literal Cypher (embedding/topK/depth)              | Neptune rejects parameterized CALL args                                 | `de53482`            |
 | Catch `UnprocessableException` as throttling               | Neptune signals overload two ways                                       | `c198bc0`            |
-| Phase-8 byte-cap on UNWIND                                 | count caps don't prevent per-query OOM                                  | `26a81e3`            |
+| Phase-8 byte-cap on UNWIND + batch size 10                 | count caps don't prevent per-query OOM; 32 mCU OOMs at batch 20+       | `26a81e3`            |
 | FAQ loop **always continues** (no short-circuit)           | FAQ-only answers had no citable evidence                                | `3ae5894`            |
 | Deterministic turn-0 `faq_search` (bypass Claude)          | Claude paraphrase hurt KB recall                                        | `13a90c3`            |
 | Case law = thin stubs, no embeddings                       | annotation lives on the statute; embedding inverts authority            | `c835f66`            |
@@ -724,7 +732,7 @@ The same court opinion often has multiple reporter citations (e.g., `45 Wis. 2d 
 
 ---
 
-_This guide documents the state of `feat/graphrag-migration` as of commit `dab9f09` (2026-06-21). When you change a subsystem, update its section here and add any new "do NOT revert" decision to §18.2 — that table is the cheapest insurance against re-breaking solved problems._
+_This guide documents the state of `feat/graphrag-migration` as of 2026-06-23. When you change a subsystem, update its section here and add any new "do NOT revert" decision to §18.2 — that table is the cheapest insurance against re-breaking solved problems._
 
 Other random notes from Jonah:
 during one of the client meetings, they noticed a message that asked them to allow their computer to discover other computers on the same network. This happens because they have their own cognito setup.

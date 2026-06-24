@@ -221,6 +221,61 @@ AWS_PROFILE=widor AWS_REGION=us-east-1 aws dynamodb scan \
 
 **When user asks about recent queries or chat activity:** Prefer DynamoDB scan over CloudWatch logs — it returns structured data with the full question, answer, feedback, and timestamps. Offer to use the admin API endpoint or direct CLI scan depending on context.
 
+## Investigating a Query (Feedback Triage)
+
+When the user provides a **queryId** (UUID), follow this two-step process to get full context:
+
+**Step 1 — Get chat history from DynamoDB (instant, O(1) lookup by partition key):**
+```bash
+AWS_PROFILE=widor AWS_REGION=us-east-1 aws dynamodb get-item \
+  --table-name "WisconsinBotGraphRAG-WisconsinSessionsStackNestedStackWisconsinSessionsStackNestedStac-1P3H46X50M51H-ChatHistoryTableA22BA13C-GTH2UH9SGD0W" \
+  --key '{"queryId": {"S": "<QUERY_ID>"}}' \
+  --output json
+```
+Extract: `query`, `answer`, `feedback`, `thumbUp`, `timestamp`, and `resources` (nested under `.M.data.M`).
+
+**Step 2 — Get the agentic retrieval trace from CloudWatch:**
+
+Log group: `/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf`
+
+```bash
+# Find the log stream by timestamp (convert ISO timestamp from Step 1 to epoch ms):
+EPOCH_MS=$(date -j -f "%Y-%m-%dT%H:%M:%S" "<TIMESTAMP_PREFIX>" +%s)000
+
+# List streams around that time:
+AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs describe-log-streams \
+  --log-group-name "/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf" \
+  --order-by LastEventTime --descending --limit 10 \
+  --query 'logStreams[*].[logStreamName, lastEventTimestamp]' --output table
+
+# Pick the stream whose lastEventTimestamp is closest to (but >= ) the query timestamp.
+# Convert epoch to verify: date -r $((EPOCH_MS / 1000)) -u
+
+# Fetch and grep for the queryId:
+AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs get-log-events \
+  --log-group-name "/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf" \
+  --log-stream-name '<STREAM_NAME>' \
+  --no-paginate --output json | jq '.events[] | .message' -r | grep "<QUERY_ID>"
+```
+
+**Alternatively, use `filter-log-events` (slower but skips stream guessing):**
+```bash
+AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs filter-log-events \
+  --log-group-name "/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf" \
+  --start-time $((EPOCH_MS - 60000)) --end-time $((EPOCH_MS + 120000)) \
+  --filter-pattern "<QUERY_ID>" \
+  --output json | jq '.events[] | .message' -r
+```
+
+**Key structured log events to look for (all keyed by `query_id`):**
+- `agentic_retrieval_request_received` — confirms the request hit the Lambda
+- `agent_tool_call` — each tool invocation (vector_search, search_document, get_neighbors, answer)
+- `agent_tool_result` — tool output summary (chunk counts, doc IDs discovered)
+- `wpam_dedup` — shows edition filtering/dedup decisions
+- `agent_loop_complete` — final stats (turns, cited docs, discovery map)
+
+**What to provide:** The **queryId** is the fastest identifier — it's a direct DynamoDB key and a unique grep token in logs. A timestamp alone requires a scan + stream correlation.
+
 ## Prompt Management
 
 All LLM prompts are externalized to `config/model_configs.toml` and loaded from DynamoDB at Lambda cold-start. The TOML is the source of truth; DynamoDB is the runtime store.

@@ -9,11 +9,12 @@
 | 5 | Replace LLM classification with structural parsers | — |
 | 14 | Improve case law discovery in vector_search auto-enrichment | [Response B](#response-b) |
 | 17 | Handle multipart queries (split or unified answering strategy) | — |
-| 18 | Show traversed sources in UI during agentic retrieval | — |
-| 19 | Fix train-of-thought flicker on sidebar session hover | — |
 | 20 | Add user persona setting (government worker vs. citizen) | — |
 | 21 | Investigate z-score normalization for vector_search result filtering | — |
 | 22 | Apply over-fetch multiplier when target_wpam_year is set | — |
+| 23 | Strip WPAM running headers from chunk text | — |
+| 24 | Multi-citation source cards (aggregate inline citations per parent doc) | — |
+| 25 | Fix WPAM 2025 garbled table chunks and heading metadata | — |
 
 ## Done
 
@@ -31,6 +32,8 @@
 | 15 | Add settings modal with detailed trace toggle |
 | 6 | Reduce PDF chunk size for consistency and precision |
 | 16 | Support URL-based session routing and preserve "new chat" state on reload |
+| 18 | Show traversed sources in UI during agentic retrieval |
+| 19 | Fix train-of-thought flicker on sidebar session hover |
 
 ---
 
@@ -144,43 +147,6 @@ The page anchor off-by-one and same-page-for-different-sections issues trace to 
 
 ---
 
-### Task 18: Show traversed sources in UI during agentic retrieval
-
-**Problem:** While the agent is performing retrieval (tool loop running), the user only sees the train-of-thought trace steps. There's no visual indication of which specific sources/documents the agent has looked at or traversed so far. This makes the wait feel opaque and doesn't build confidence that the system is finding relevant material.
-
-**Direction:**
-
-- **Live source feed** — As the agent calls `vector_search`, `get_neighbors`, or `get_authority_chain`, stream the document titles/names it encounters back to the frontend and display them in a lightweight UI element (e.g., a scrolling list of source chips, a sidebar panel, or inline badges under the trace).
-- **Progressive accumulation** — Sources should accumulate as retrieval progresses, giving the user a sense of the breadth of material being consulted before the final answer arrives.
-- **Tie into existing trace stream** — The backend already streams tool call metadata over WebSocket. Extract document titles from tool results and emit them as a dedicated message type (or enrich existing trace messages) so the frontend can render them distinctly from the reasoning steps.
-- **Design considerations:** Keep it non-intrusive — it should enhance the waiting experience without overwhelming the UI. Consider collapsibility or a compact chip/pill format that expands on hover/click.
-
----
-
-### Task 19: Fix train-of-thought flicker on sidebar session hover
-
-**Problem:** When viewing an active session with the train-of-thought trace visible, hovering over session cards in the sidebar causes multiple UI elements in the chat window to flicker. Reproducible by moving the cursor back and forth between the chat window and a non-selected session card (the one that shows a light hover rectangle).
-
-**Affected elements:**
-- Train-of-thought trace section flickers
-- Source cards' title font color flickers
-- Feedback buttons (thumbs up/down) underneath the chat response — their border and background flicker
-
-**Attempted fixes (did not resolve):**
-- Narrowing sidebar `transition-all` to `transition-[width]`
-- Wrapping `ChatMessage` in `React.memo` with stable `EMPTY_RESOURCES` array ref
-- Replacing the outer `<motion.div>` wrapper on `ChatMessage` with a plain `<div>`
-- Adding `initial={false}` to the trace `AnimatePresence` and `layout={false}` to the trace `motion.div`
-
-**Key files:**
-- `frontend/src/components/messages/chat-message.tsx` — trace rendering (`AnimatePresence` + `motion.div` with `height: 'auto'`)
-- `frontend/src/components/messages/chat-container.tsx` — scroll handler that calls `setSelectedMessageId`
-- `frontend/src/components/layout/sessions-sidebar.tsx` — sidebar with hover state + width transition
-
-**Likely direction:** The root cause may be deeper than framer-motion re-renders — possibly CSS `hover:bg-muted` on the sidebar cards triggering a reflow that propagates through the flex layout to the chat container, causing the scroll handler or a resize observer to fire and update state. Needs profiling with React DevTools and/or Chrome Performance tab to identify the exact re-render trigger.
-
----
-
 ### Task 20: Add user persona setting (government worker vs. citizen)
 
 **Problem:** The chatbot currently gives the same style of answer regardless of who is asking. A government worker (assessor, clerk, DOR staff) needs advice framed as guidance they can relay to a citizen or apply in their professional role — citing authority, procedural steps, and internal references. A citizen asking the same question needs a plain-language explanation of what applies to *them* and what action *they* should take.
@@ -262,6 +228,65 @@ fetch_k = top_k * 6 if target_year is None else top_k * 2
 
 ---
 
+### Task 23: Strip WPAM running headers from chunk text
+
+**Problem:** Each page of the WPAM PDF carries a running header like "Chapter 14 Agricultural Valuation" or "Chapter 12 Residential Property Valuation". These survive boilerplate stripping because the current `WPAM_PATTERNS` only matches bare `Chapter N` lines (no title text). As a result, the header is repeated in ~579 chunks across the WPAM 2025 corpus — wasting embedding dimensions on repeated noise and slightly diluting retrieval precision.
+
+**Evidence (2026-06-23 chunk inspection):**
+| Running header | Occurrences (buried mid-chunk) |
+|---|---|
+| Chapter 14 Agricultural Valuation | 79 |
+| Chapter 12 Residential Property Valuation | 69 |
+| Chapter 13 Commercial Valuation | 67 |
+| Chapter 10 Assessment/Sales Ratio Analysis | 53 |
+| Chapter 7 Assessment Roll & Parcel Information | 48 |
+| ... (15+ more) | ... |
+
+**Fix:** Add a pattern to `WPAM_PATTERNS` in `tools/pdf_chunking/boilerplate.py`:
+```python
+re.compile(r"^Chapter\s+\d+[\s–—–—-]+.+$"),
+```
+This matches `Chapter N <title>` lines (with dash/em-dash separator or space) which are always running headers in WPAM PDFs. True chapter starts are multi-line (title + section number + content) and won't be stripped because the boilerplate filter operates line-by-line.
+
+**Caveat:** Must not strip the actual chapter heading at the start of each chapter. The heading line itself (e.g., "Chapter 17 Manufacturing and Utility Assessment") appears identically as both the true heading and as the running header. However, in the WPAM chunker, the true heading triggers a chunk split and becomes the first line of a new chunk — boilerplate stripping runs BEFORE chunking, so stripping ALL `Chapter N Title` lines would remove the true headings too. Need either:
+1. A frequency-based approach (strip only lines that appear >3 times in the document), or
+2. A position-aware approach (strip only if the line appears after another content line on the same page — i.e., it's a header, not the first content line of a new section).
+
+**Priority:** Low — doesn't affect citation accuracy or page linking. Cosmetic improvement to embedding quality. Roll into next reingestion cycle.
+
+**Key file:** `tools/pdf_chunking/boilerplate.py` — `WPAM_PATTERNS` list
+
+---
+
+### Task 24: Multi-citation source cards (aggregate inline citations per parent doc)
+
+**Problem:** A single response can contain multiple inline citations pointing to different pages of the same parent document (e.g., `[§ 70.11](doc:statutes-70#page=23)` and `[§ 70.47](doc:statutes-70#page=56)`). Currently, the source card at the bottom represents the parent doc as a single entry with no indication that the response cited multiple specific locations within it. This creates two issues:
+
+1. The user sees multiple inline links in the answer text but only one card — the card gives no signal about which specific pages/sections were referenced.
+2. Clicking the source card opens the doc at a single page (typically the first citation's page or the doc's start), losing the page-level specificity of other citations.
+
+**Invariants:**
+
+- Every inline citation must point to a parent doc that appears in the source cards (enforced by the post-filter from Task 2).
+- There can be more inline citations than source cards — multiple citations can reference different pages of the same parent doc, which maps to a single card.
+- Source cards must indicate citation count when a parent doc is cited more than once.
+
+**Direction:**
+
+- **Citation count badge** — When a source card's parent doc has N > 1 inline citations, show a small badge/indicator (e.g., "3 citations") on the collapsed card.
+- **Expanded citation list** — When the card is expanded, show each individual citation with its specific page reference and the surrounding context/label from the inline link text (e.g., "§ 70.11 — page 23", "§ 70.47 — page 56"). Each entry should be independently clickable to open the doc at that specific page.
+- **Data flow** — The backend already emits per-citation page numbers via `#page=N` fragments on inline links. The frontend needs to:
+  1. Parse all inline `doc:ID#page=N` links from the answer body.
+  2. Group them by parent doc ID.
+  3. Pass the grouped citation list to each source card component.
+
+**Key files:**
+- `frontend/src/components/messages/animated-markdown.tsx` — inline link rendering, `resolveHref` already parses `#page=N`
+- `frontend/src/components/messages/chat-message.tsx` — source card rendering
+- `backend/lambdas/agentic_retrieval/main.py` — `cited_doc_ids` assembly (may need to emit citation-level metadata, not just doc IDs)
+
+---
+
 ## Flawed Responses
 
 ### Response A
@@ -331,4 +356,74 @@ fetch_k = top_k * 6 if target_year is None else top_k * 2
 </details>
 
 ---
+
+### Task 25: Fix WPAM 2025 garbled table chunks and heading metadata
+
+**Problem:** The WPAM 2025 chunking produced ~48% of chunks with incorrect heading metadata and ~10-20% with garbled text from multi-column PDF table extraction. This pollutes vector search results with noise chunks that match on keywords but provide no useful information to the model.
+
+**Evidence (2026-06-24 query audit):** Query "If a manufacturing property sells, is the assessment adjusted to the sale price?" surfaced 3 garbled WPAM chunks in the first `vector_search` turn:
+
+| Chunk ID | Page | Issue |
+|----------|------|-------|
+| `_chunk_0825` | 355-356 | Text is fragmented table columns: `"various com\n\nization rate\n\n57 \| shment of t\n\nponents of t"` |
+| `_chunk_2088` | 895-896 | Heading is a table label: `"X-axis of this cost table shows the tonnage capabilities of the scale; while the"` |
+| `_chunk_1739` | 757-758 | Interleaved columns: `"reference point of ti\n\nthe assessor has to\n\nfor a short-term (\n\ninstitutional lender \| Per S.F. Value"` |
+
+These matched because they contain "manufacturing" keywords buried in the garbled text, but contribute zero useful context to the answer.
+
+**Sub-issues:**
+
+#### 1. Heading metadata is catastrophically wrong for ~48% of WPAM chunks
+
+| Heading assigned | Chunk count | What it actually is |
+|-----------------|-------------|---------------------|
+| "M-forms due, last day to submit request to DOR for manufacturing" | 548 | Appendix calendar table column header |
+| "L - Lottery credit" | 521 | Appendix table row label |
+| "X-axis of this cost table shows the tonnage capabilities of the scale; while the" | 108 | Cost table caption fragment |
+| "V. Poor" | 199 | Condition rating table cell |
+
+Out of 2226 WPAM 2025 chunks, ~1069 have completely wrong headings — these are table column headers, row labels, or captions that leaked into heading extraction for unrelated chunks across the entire document. This causes:
+- WPAM dedup "heading group" logic to group by garbage headings instead of actual semantic topics
+- Citation cards to display nonsensical headings to users
+- The model to receive misleading context about what a chunk is about
+
+#### 2. Garbled table text in chunk bodies
+
+Multi-column PDF layouts (cost tables, comparison charts, calendars) produce chunks where PyMuPDF interleaves columns character-by-character rather than reading left-to-right per row. The text is syntactically meaningless — fragments like `"57 | shment of t"` (the number is from one column, the truncated word from another).
+
+**Overall chunk quality stats:**
+- Total chunks in graph: 46,626
+- Average text length: 1,185 chars
+- Chunks < 200 chars: 15,127 (32%) — many are 1-30 chars (single table cells or page numbers)
+- Chunks at max (2400-2500 chars): 16,328 (35%)
+
+#### 3. News pages lack page metadata
+
+`news_pages-assessor-news-2023-10-27` (and likely other HTML-sourced docs) have `start_page=None, end_page=None` and empty headings for all chunks. Citation cards for these docs will lack anchor context. Low priority since news pages are web content, but the system should either assign synthetic page numbers or handle the null case gracefully in the UI.
+
+**Root Cause Analysis:**
+
+The WPAM 2025 PDF is a ~950-page document with extensive tables, appendices, calendars, and multi-column layouts. The heading extraction in the WPAM chunker picks the first "heading-like" line encountered, but for chunks that fall within table regions, the "heading-like" line is actually a table column header or row label that happens to be bold/larger font.
+
+The garbled text is a PyMuPDF extraction failure on multi-column layouts — the library reads text in DOM order rather than visual reading order, interleaving columns. The existing `extraction_looks_good()` quality gate in `pymupdf_extractor.py` doesn't catch these cases because the text passes basic heuristics (has words, has whitespace, etc.) even though it's semantically garbled.
+
+**Direction (ranked by impact):**
+
+1. **Post-extraction garbled text detection** — Add a quality signal that detects interleaved-column text patterns (high frequency of `|`, very short "words" separated by newlines, high ratio of fragments < 5 chars). Flag or discard chunks that fail. Could be applied either at chunking time or as a graph-level filter at query time.
+
+2. **Heading validation/repair** — After chunking, validate headings against a known set of WPAM chapter headings (e.g., "Chapter N Title" format). If a chunk's heading doesn't match any known chapter pattern AND appears on >50 other chunks, it's likely a leaked table header — replace with the nearest valid chapter heading based on page number.
+
+3. **Table region detection** — Before chunking, identify table regions in the PDF (PyMuPDF has `page.find_tables()` API). Either skip table regions entirely, extract them as structured data, or at minimum mark chunks from table regions so they can be downranked in retrieval.
+
+4. **Query-time filtering** — Add a lightweight garbled-text detector in the `vector_search` tool that filters out chunks whose text fails a coherence check before returning results to the model. Fastest to implement, but doesn't fix the root data quality issue.
+
+**Relationship to other tasks:**
+- Task 23 (strip running headers) addresses a subset of the heading pollution but not the table-header leak
+- Task 6 (reduce chunk size) is marked done — the 2500-char max is working correctly; the issue is source text quality, not chunk size
+
+**Key files:**
+- `tools/pdf_chunking/pdfChunker.py` — WPAM chunker heading extraction logic
+- `tools/pdf_chunking/pymupdf_extractor.py` — `extraction_looks_good()` quality gate
+- `tools/graphrag/extract.py` — orchestrates extraction and chunking
+- `backend/lambdas/agentic_retrieval/tools.py` — potential query-time filtering location
 
