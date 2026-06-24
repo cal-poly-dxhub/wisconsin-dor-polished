@@ -753,15 +753,13 @@ def run_agentic_loop(
                 return answer, [], [], None, trace_log, False, ws_connection_alive[0]
 
             if tool_name == "cite_documents":
-                # Answer text comes from text blocks (streamed in real-time).
-                # Fall back to tool input's response field if Claude skipped the text block.
                 text_blocks = [
                     block["text"] for block in assistant_message["content"]
                     if "text" in block
                 ]
-                answer = "\n".join(text_blocks)
-                if not answer:
-                    answer = result.get("response", "")
+                text_answer = "\n".join(text_blocks)
+                tool_answer = result.get("response", "")
+                answer = tool_answer if len(tool_answer) > len(text_answer) else text_answer
                 cited = set(result.get("cited_doc_ids", []))
                 cited_chunks = [
                     c for c in all_chunks if c.get("doc_id") in cited
