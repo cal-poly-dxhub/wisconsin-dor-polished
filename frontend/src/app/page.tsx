@@ -72,7 +72,7 @@ function AppShell() {
                 <div className="min-h-0 flex-1">
                   <ChatContainer />
                 </div>
-                <div className="absolute inset-x-0 bottom-0">
+                <div className="pointer-events-none absolute inset-x-0 bottom-0">
                   <ChatInput
                     placeholder="Ask a Wisconsin tax or revenue question..."
                     onSendMessage={sendMessage}

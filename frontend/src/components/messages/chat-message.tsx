@@ -20,7 +20,7 @@ import { formatTraceMetadata } from './trace-metadata';
 import { Button } from '../ui/button';
 import { ButtonGroup } from '../ui/button-group';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
-import { FeedbackPopover } from './feedback-popover';
+import { FeedbackModal } from './feedback-modal';
 import { RetrievalModal } from './retrieval-modal';
 
 type TraceStep = {
@@ -379,26 +379,23 @@ function MessageOptionsBar({
   items,
 }: MessageOptionsBarProps) {
   const [infoOpen, setInfoOpen] = useState(false);
-  const [thumbsUpOpen, setThumbsUpOpen] = useState(false);
-  const [thumbsDownOpen, setThumbsDownOpen] = useState(false);
+  const [feedbackModal, setFeedbackModal] = useState<'up' | 'down' | null>(null);
+  const [submittedRating, setSubmittedRating] = useState<'up' | 'down' | null>(null);
+  const [retrievalOpen, setRetrievalOpen] = useState(false);
   const assignFeedback = useAssignFeedback();
+  const devMode = useDevTrace();
+  const hasTrace = useChatStore(s => (s.queries[queryId]?.agentTrace?.length ?? 0) > 0);
 
   const sessionId = useChatStore(state => state.sessionId);
 
   const handleFeedback = (thumbUp: boolean, feedback?: string) => {
-    console.log('handleFeedback', thumbUp, feedback);
-
-    if (!sessionId) {
-      console.log('Found no session ID; skipping feedback assignment.');
-      return;
-    }
-
-    console.log('Run feedback mutation');
+    if (!sessionId) return;
 
     assignFeedback.mutate({
       sessionId: sessionId!,
       payload: { queryId, thumbUp, feedback },
     });
+    setSubmittedRating(thumbUp ? 'up' : 'down');
   };
 
   return (
@@ -414,7 +411,7 @@ function MessageOptionsBar({
           <ButtonGroup>
             <Popover open={infoOpen} onOpenChange={setInfoOpen}>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" aria-label="Message Info">
+                <Button variant="outline" size="icon" className="cursor-pointer" aria-label="Message Info">
                   <Info className="h-4 w-4" />
                 </Button>
               </PopoverTrigger>
@@ -441,27 +438,47 @@ function MessageOptionsBar({
                 </div>
               </PopoverContent>
             </Popover>
+            {devMode && hasTrace && (
+              <Button
+                variant="outline"
+                size="icon"
+                className="cursor-pointer"
+                aria-label="View Retrieval Pipeline"
+                onClick={() => setRetrievalOpen(true)}
+              >
+                <Network className="h-4 w-4" />
+              </Button>
+            )}
           </ButtonGroup>
+          <RetrievalModal queryId={queryId} open={retrievalOpen} onClose={() => setRetrievalOpen(false)} />
           <ButtonGroup>
-            <FeedbackPopover
-              open={thumbsUpOpen}
-              onOpenChange={setThumbsUpOpen}
-              onSubmit={feedback => handleFeedback(true, feedback)}
+            <Button
+              variant={submittedRating === 'up' ? 'default' : 'outline'}
+              size="icon"
+              className="cursor-pointer"
+              aria-label="Thumbs Up"
+              onClick={() => setFeedbackModal('up')}
             >
-              <Button variant="outline" size="icon" aria-label="Thumbs Up">
-                <ThumbsUp className="h-4 w-4" />
-              </Button>
-            </FeedbackPopover>
-            <FeedbackPopover
-              open={thumbsDownOpen}
-              onOpenChange={setThumbsDownOpen}
-              onSubmit={feedback => handleFeedback(false, feedback)}
+              <ThumbsUp className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={submittedRating === 'down' ? 'default' : 'outline'}
+              size="icon"
+              className="cursor-pointer"
+              aria-label="Thumbs Down"
+              onClick={() => setFeedbackModal('down')}
             >
-              <Button variant="outline" size="icon" aria-label="Thumbs Down">
-                <ThumbsDown className="h-4 w-4" />
-              </Button>
-            </FeedbackPopover>
+              <ThumbsDown className="h-4 w-4" />
+            </Button>
           </ButtonGroup>
+
+          <FeedbackModal
+            open={feedbackModal !== null}
+            onOpenChange={(open) => { if (!open) setFeedbackModal(null); }}
+            type={feedbackModal ?? 'up'}
+            onSubmit={(feedback) => handleFeedback(feedbackModal === 'up', feedback)}
+            items={items}
+          />
         </motion.div>
       )}
     </AnimatePresence>
@@ -704,7 +721,7 @@ export function ChatMessage({
                   </motion.div>
                 )}
               </AnimatePresence>
-              {agentTrace && agentTrace.length > 0 && (
+              {devTrace && agentTrace && agentTrace.length > 0 && (
                 <button
                   onClick={() => setRetrievalModalOpen(true)}
                   className="mt-2 flex items-center gap-1.5 text-muted-foreground/70 hover:text-foreground transition-colors cursor-pointer"
