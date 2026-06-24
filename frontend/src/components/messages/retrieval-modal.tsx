@@ -79,12 +79,12 @@ function ChunkSquares({ total, kept, label }: { total: number; kept: number; lab
   const displayKept = Math.min(kept, displayTotal);
   return (
     <div className="mt-3">
-      {label && <p className="text-[10px] text-muted-foreground/70 mb-1.5">{label}</p>}
-      <div className="flex flex-wrap gap-[3px]">
+      {label && <p className="text-xs text-muted-foreground/70 mb-1.5">{label}</p>}
+      <div className="flex flex-wrap gap-1">
         {Array.from({ length: displayTotal }).map((_, i) => (
           <div
             key={i}
-            className={`h-[10px] w-[10px] rounded-[2px] transition-colors duration-300 ${
+            className={`h-3 w-3 rounded-[3px] transition-colors duration-300 ${
               i < displayKept
                 ? 'bg-foreground/70'
                 : 'bg-foreground/15'
@@ -92,7 +92,7 @@ function ChunkSquares({ total, kept, label }: { total: number; kept: number; lab
           />
         ))}
       </div>
-      <p className="text-[10px] text-muted-foreground/60 mt-1.5">
+      <p className="text-xs text-muted-foreground/60 mt-1.5">
         {kept} kept / {total} candidates
       </p>
     </div>
@@ -121,19 +121,19 @@ function AuthoritySquares({ breakdown }: { breakdown: Record<string, number> }) 
     <div className="mt-3 space-y-1.5">
       {levels.map(([level, count]) => (
         <div key={level} className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground/70 w-16 shrink-0 tabular-nums">
+          <span className="text-xs text-muted-foreground/70 w-16 shrink-0 tabular-nums">
             {AUTHORITY_LABELS[level] ?? `L${level}`}
           </span>
-          <div className="flex gap-[2px]">
+          <div className="flex gap-1">
             {Array.from({ length: Math.min(count, 20) }).map((_, i) => (
               <div
                 key={i}
-                className="h-[10px] w-[10px] rounded-[2px] bg-foreground/70"
+                className="h-3 w-3 rounded-[3px] bg-foreground/70"
                 style={{ opacity: 1 - (Number(level) - 1) * 0.08 }}
               />
             ))}
           </div>
-          <span className="text-[10px] text-muted-foreground/50">{count}</span>
+          <span className="text-xs text-muted-foreground/50">{count}</span>
         </div>
       ))}
     </div>
@@ -151,18 +151,18 @@ function RelationshipSquares({ counts }: { counts: Record<string, number> }) {
     <div className="mt-3 space-y-1.5">
       {entries.map(([rel, count]) => (
         <div key={rel} className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground/70 w-20 shrink-0 truncate">
+          <span className="text-xs text-muted-foreground/70 w-20 shrink-0 truncate">
             {rel}
           </span>
-          <div className="flex gap-[2px]">
+          <div className="flex gap-1">
             {Array.from({ length: Math.min(count, 15) }).map((_, i) => (
               <div
                 key={i}
-                className="h-[10px] w-[10px] rounded-[2px] bg-foreground/60"
+                className="h-3 w-3 rounded-[3px] bg-foreground/60"
               />
             ))}
           </div>
-          <span className="text-[10px] text-muted-foreground/50">{count}</span>
+          <span className="text-xs text-muted-foreground/50">{count}</span>
         </div>
       ))}
     </div>
@@ -186,18 +186,18 @@ function DiscoverySquares({ counts }: { counts: Record<string, number> }) {
     <div className="mt-3 space-y-1.5">
       {entries.map(([tag, count]) => (
         <div key={tag} className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground/70 w-24 shrink-0 truncate">
+          <span className="text-xs text-muted-foreground/70 w-24 shrink-0 truncate">
             {tag}
           </span>
-          <div className="flex gap-[2px]">
+          <div className="flex gap-1">
             {Array.from({ length: Math.min(count, 12) }).map((_, i) => (
               <div
                 key={i}
-                className={`h-[10px] w-[10px] rounded-[2px] ${DISCOVERY_COLORS[tag] ?? 'bg-foreground/50'}`}
+                className={`h-3 w-3 rounded-[3px] ${DISCOVERY_COLORS[tag] ?? 'bg-foreground/50'}`}
               />
             ))}
           </div>
-          <span className="text-[10px] text-muted-foreground/50">{count}</span>
+          <span className="text-xs text-muted-foreground/50">{count}</span>
         </div>
       ))}
     </div>
@@ -225,17 +225,17 @@ function FAQVisualization({ step }: { step: RetrievalStep }) {
 
   return (
     <div className="mt-3">
-      <div className="flex gap-[3px]">
+      <div className="flex gap-1">
         {Array.from({ length: faqCount }).map((_, i) => (
           <div
             key={i}
-            className={`h-[10px] w-[10px] rounded-[2px] ${
+            className={`h-3 w-3 rounded-[3px] ${
               i === 0 && topScore >= 0.7 ? 'bg-foreground/90' : 'bg-foreground/40'
             }`}
           />
         ))}
       </div>
-      <p className="text-[10px] text-muted-foreground/60 mt-1.5">
+      <p className="text-xs text-muted-foreground/60 mt-1.5">
         {faqCount} FAQ{faqCount !== 1 ? 's' : ''} · top score {topScore.toFixed(2)}
         {topScore >= 0.7 && ' · high confidence'}
       </p>
@@ -263,12 +263,12 @@ function VectorVisualization({ step }: { step: RetrievalStep }) {
       )}
       {Object.keys(authorityBreakdown).length > 0 && (
         <div className="mt-3">
-          <p className="text-[10px] text-muted-foreground/70 mb-1.5">By authority level</p>
+          <p className="text-xs text-muted-foreground/70 mb-1.5">By authority level</p>
           <AuthoritySquares breakdown={authorityBreakdown} />
         </div>
       )}
       {caseLawCount > 0 && (
-        <p className="text-[10px] text-muted-foreground/60 mt-2">
+        <p className="text-xs text-muted-foreground/60 mt-2">
           + {caseLawCount} case law citation{caseLawCount !== 1 ? 's' : ''} discovered
         </p>
       )}
@@ -296,12 +296,12 @@ function GraphVisualization({ step }: { step: RetrievalStep }) {
       )}
       {Object.keys(relationshipCounts).length === 0 && neighborCount > 0 && (
         <div className="mt-3">
-          <div className="flex flex-wrap gap-[3px]">
+          <div className="flex flex-wrap gap-1">
             {Array.from({ length: Math.min(neighborCount, 30) }).map((_, i) => (
-              <div key={i} className="h-[10px] w-[10px] rounded-[2px] bg-foreground/60" />
+              <div key={i} className="h-3 w-3 rounded-[3px] bg-foreground/60" />
             ))}
           </div>
-          <p className="text-[10px] text-muted-foreground/60 mt-1.5">
+          <p className="text-xs text-muted-foreground/60 mt-1.5">
             {neighborCount} neighbor{neighborCount !== 1 ? 's' : ''}
           </p>
         </div>
@@ -310,15 +310,15 @@ function GraphVisualization({ step }: { step: RetrievalStep }) {
         <div className="mt-2 flex items-center gap-1">
           {Array.from({ length: chainLength }).map((_, i) => (
             <div key={i} className="flex items-center gap-1">
-              <div className="h-[10px] w-[10px] rounded-[2px] bg-foreground/60"
+              <div className="h-3 w-3 rounded-[3px] bg-foreground/60"
                 style={{ opacity: 1 - i * 0.15 }}
               />
               {i < chainLength - 1 && (
-                <span className="text-[8px] text-muted-foreground/40">→</span>
+                <span className="text-xs text-muted-foreground/40">→</span>
               )}
             </div>
           ))}
-          <span className="text-[10px] text-muted-foreground/60 ml-1">
+          <span className="text-xs text-muted-foreground/60 ml-1">
             authority chain
           </span>
         </div>
@@ -349,7 +349,7 @@ function SynthesisVisualization({ step, trace }: { step: RetrievalStep; trace: A
         <DiscoverySquares counts={discoveryCounts} />
       )}
       {citedDocCount > 0 && (
-        <p className="text-[10px] text-muted-foreground mt-2 font-medium">
+        <p className="text-xs text-muted-foreground mt-2 font-medium">
           {citedDocCount} source{citedDocCount !== 1 ? 's' : ''} cited in answer
         </p>
       )}
@@ -368,12 +368,12 @@ function SpecializedVisualization({ step }: { step: RetrievalStep }) {
         const status = e.payload.status as string;
         return (
           <div key={i} className="flex items-center gap-2">
-            <div className={`h-[10px] w-[10px] rounded-[2px] shrink-0 ${
+            <div className={`h-3 w-3 rounded-[3px] shrink-0 ${
               status === 'ok' || status === 'terminal' ? 'bg-foreground/70'
                 : status === 'miss' ? 'border border-foreground/30'
                   : 'bg-destructive/50'
             }`} />
-            <span className="text-[10px] text-muted-foreground truncate">
+            <span className="text-xs text-muted-foreground truncate">
               {String(e.payload.summary ?? toolName)}
             </span>
           </div>
@@ -385,9 +385,9 @@ function SpecializedVisualization({ step }: { step: RetrievalStep }) {
 
 function IdleSquares() {
   return (
-    <div className="mt-3 flex gap-[3px]">
+    <div className="mt-3 flex gap-1">
       {Array.from({ length: 8 }).map((_, i) => (
-        <div key={i} className="h-[10px] w-[10px] rounded-[2px] bg-muted-foreground/10" />
+        <div key={i} className="h-3 w-3 rounded-[3px] bg-muted-foreground/10" />
       ))}
     </div>
   );
@@ -398,7 +398,7 @@ function IdleSquares() {
 function StepPanel({ step, trace }: { step: RetrievalStep; trace: AgentTraceEvent[] }) {
   return (
     <div
-      className={`retrieval-step-panel rounded-lg border p-5 transition-all duration-300 ${
+      className={`retrieval-step-panel rounded-lg border p-6 transition-all duration-300 ${
         step.status === 'active'
           ? 'border-foreground/30 bg-card shadow-sm'
           : step.status === 'complete'
@@ -408,12 +408,12 @@ function StepPanel({ step, trace }: { step: RetrievalStep; trace: AgentTraceEven
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className={`text-sm font-semibold tracking-tight ${
+          <h3 className={`text-base font-semibold tracking-tight ${
             step.status === 'idle' ? 'text-muted-foreground/60' : 'text-foreground'
           }`}>
             {step.title}
           </h3>
-          <p className="text-[11px] text-muted-foreground mt-0.5">{step.subtitle}</p>
+          <p className="text-sm text-muted-foreground mt-0.5">{step.subtitle}</p>
         </div>
         <StepIndicator status={step.status} />
       </div>
@@ -426,7 +426,7 @@ function StepPanel({ step, trace }: { step: RetrievalStep; trace: AgentTraceEven
       {step.status === 'idle' && step.id !== 'synthesis' && <IdleSquares />}
 
       {step.status === 'active' && (
-        <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground/70">
+        <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground/70">
           <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-pulse shrink-0" />
           <span>Processing...</span>
         </div>
@@ -546,23 +546,23 @@ export function RetrievalModal({ queryId, open, onClose }: RetrievalModalProps) 
               </div>
             </div>
 
-            {/* Steps grid */}
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Steps list */}
+            <div className="p-6 flex flex-col gap-4 max-w-2xl mx-auto">
               {steps.map(step => (
                 <StepPanel key={step.id} step={step} trace={agentTrace ?? []} />
               ))}
             </div>
 
             {/* Legend */}
-            <div className="px-6 pb-5 flex flex-wrap gap-4 text-[10px] text-muted-foreground/60">
-              <span className="flex items-center gap-1.5">
-                <span className="h-[10px] w-[10px] rounded-[2px] bg-foreground/70" /> Kept
+            <div className="px-6 pb-6 flex flex-wrap gap-5 text-xs text-muted-foreground/60 max-w-2xl mx-auto">
+              <span className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-[3px] bg-foreground/70" /> Kept
               </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-[10px] w-[10px] rounded-[2px] bg-foreground/15" /> Filtered
+              <span className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-[3px] bg-foreground/15" /> Filtered
               </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-[10px] w-[10px] rounded-[2px] border border-foreground/30" /> Miss
+              <span className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-[3px] border border-foreground/30" /> Miss
               </span>
             </div>
           </motion.div>
