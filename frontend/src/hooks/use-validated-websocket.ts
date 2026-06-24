@@ -122,18 +122,30 @@ export const useValidatedWebSocket = (
   const handleMessage = useCallback(
     (event: MessageEvent) => {
       try {
+        const t0 = performance.now();
         const rawData: unknown = JSON.parse(event.data as string);
         if (!rawData || typeof rawData !== 'object' || !('streamId' in rawData)) {
           return;
         }
-        console.log('[WS] Received:', rawData);
+        // Silently ignore keepalive/heartbeat messages
+        if ((rawData as { streamId: string }).streamId === 'heartbeat') {
+          return;
+        }
+        const responseType = (rawData as { body?: { responseType?: string } }).body?.responseType ?? '?';
+        console.log(`[WS] Received (${responseType}):`, rawData);
+        const t1 = performance.now();
         const validatedMessage: WebSocketMessage =
           WebSocketMessageSchema.parse(rawData);
+        const t2 = performance.now();
         const messageBody = validatedMessage.body;
 
         // Set previous message and trigger message callback
         setLastMessage(messageBody);
         messageHandlerRef.current(messageBody);
+        const t3 = performance.now();
+        console.log(
+          `[WS Timing] ${responseType} | parse=${(t1 - t0).toFixed(1)}ms | validate=${(t2 - t1).toFixed(1)}ms | handler=${(t3 - t2).toFixed(1)}ms | total=${(t3 - t0).toFixed(1)}ms`
+        );
       } catch (err) {
         console.error('[WS] Validation failed:', err);
         console.error('[WS] Raw message:', JSON.parse(event.data as string));
