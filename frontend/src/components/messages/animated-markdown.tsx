@@ -3,8 +3,6 @@
 import React, { memo, useMemo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
 
 export interface AnimatedMarkdownProps {
   content: string;
@@ -53,11 +51,43 @@ function splitAnimated(
   return children;
 }
 
-// Math nodes rendered by rehype-katex come in as spans/divs with
-// className "katex" or "katex-display". We must render them whole,
-// not split into words, so KaTeX's internal layout survives.
-function isKatexElement(className: unknown): boolean {
-  return typeof className === 'string' && className.includes('katex');
+
+type SourceTone = 'statute' | 'case-law' | 'admin-rule' | 'wpam' | 'faq' | 'gov-pub' | 'iaao' | 'uspap' | 'default';
+
+function classifySource(text: string): SourceTone {
+  const t = text.toLowerCase();
+  if (t.includes('stat.') || t.includes('statute') || t.includes('§')) return 'statute';
+  if (t.includes('v.') || t.includes('case') || t.includes('f.4th') || t.includes('wis.2d')) return 'case-law';
+  if (t.includes('admin') || t.includes('rule') || t.includes('tax ')) return 'admin-rule';
+  if (t.includes('wpam')) return 'wpam';
+  if (t.includes('faq')) return 'faq';
+  if (t.includes('guide') || t.includes('bulletin') || t.includes('publication')) return 'gov-pub';
+  if (t.includes('iaao')) return 'iaao';
+  if (t.includes('uspap')) return 'uspap';
+  return 'default';
+}
+
+function extractText(node: React.ReactNode): string {
+  if (typeof node === 'string') return node;
+  if (typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join('');
+  if (React.isValidElement(node) && node.props) {
+    return extractText((node.props as { children?: React.ReactNode }).children);
+  }
+  return '';
+}
+
+function SourceLink({ href, children }: { href: string; children: React.ReactNode }) {
+  const text = extractText(children);
+  const tone = classifySource(text);
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={`source-link source-link--${tone}`}>
+      {children}
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V10m-4-8h5m0 0v5m0-5L7.5 8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    </a>
+  );
 }
 
 const DOC_HREF_PREFIX = 'doc:';
@@ -93,14 +123,10 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
   const components = useMemo<Components>(() => {
     if (!animate) {
       return {
-        a: ({ children, href, ...props }) => {
+        a: ({ children, href }) => {
           const resolved = resolveHref(href, docUrls);
-          if (!resolved) return <span {...props}>{children}</span>;
-          return (
-            <a {...props} href={resolved} target="_blank" rel="noopener noreferrer">
-              {children}
-            </a>
-          );
+          if (!resolved) return <span>{children}</span>;
+          return <SourceLink href={resolved}>{children}</SourceLink>;
         },
       };
     }
@@ -122,14 +148,10 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
         <strong {...props}>{wrap(children, 'strong')}</strong>
       ),
       em: ({ children, ...props }) => <em {...props}>{wrap(children, 'em')}</em>,
-      a: ({ children, href, ...props }) => {
+      a: ({ children, href }) => {
         const resolved = resolveHref(href, docUrls);
-        if (!resolved) return <span {...props}>{wrap(children, 'a')}</span>;
-        return (
-          <a {...props} href={resolved} target="_blank" rel="noopener noreferrer">
-            {wrap(children, 'a')}
-          </a>
-        );
+        if (!resolved) return <span>{wrap(children, 'a')}</span>;
+        return <SourceLink href={resolved}>{wrap(children, 'a')}</SourceLink>;
       },
       blockquote: ({ children, ...props }) => (
         <blockquote {...props}>{wrap(children, 'bq')}</blockquote>
@@ -140,35 +162,22 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
       th: ({ children, ...props }) => <th {...props}>{children}</th>,
       // Code blocks render verbatim — no word splitting inside.
       code: ({ children, ...props }) => <code {...props}>{children}</code>,
-      // rehype-katex emits <span class="katex"> and <div class="katex-display">.
-      // Let them render unwrapped so KaTeX's own spans aren't shredded.
-      span: ({ children, className, ...props }) =>
-        isKatexElement(className) ? (
-          <span className={className} {...props}>
-            {children}
-          </span>
-        ) : (
-          <span className={className} {...props}>
-            {wrap(children, 'span')}
-          </span>
-        ),
-      div: ({ children, className, ...props }) =>
-        isKatexElement(className) ? (
-          <div className={className} {...props}>
-            {children}
-          </div>
-        ) : (
-          <div className={className} {...props}>
-            {children}
-          </div>
-        ),
+      span: ({ children, className, ...props }) => (
+        <span className={className} {...props}>
+          {wrap(children, 'span')}
+        </span>
+      ),
+      div: ({ children, className, ...props }) => (
+        <div className={className} {...props}>
+          {children}
+        </div>
+      ),
     };
   }, [animate, animationDuration, docUrls]);
 
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeKatex]}
+      remarkPlugins={[remarkGfm]}
       components={components}
       urlTransform={(url) => url}
     >

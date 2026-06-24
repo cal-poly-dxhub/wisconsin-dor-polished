@@ -1,13 +1,13 @@
 /* Chat message styling utilities */
 .chat-query {
   font-weight: 500;
-  font-size: clamp(0.9rem, 1vw + 0.5rem, 1.05rem);
+  font-size: 1rem;
   color: var(--foreground);
 }
 
 .chat-response {
-  font-weight: 200;
-  font-size: 1.125rem;
+  font-weight: 400;
+  font-size: 1rem;
   color: var(--foreground);
 }
 
@@ -17,12 +17,12 @@
 
 /* Markdown formatting styles */
 .markdown-container {
-  font-family: '42 Dot Sans', Arial, Helvetica, sans-serif;
+  font-family: 'Raveo', Arial, Helvetica, sans-serif;
   color: var(--foreground);
   background: transparent;
-  line-height: 1.5;
-  font-size: clamp(0.9rem, 1vw + 0.5rem, 1.05rem);
-  font-weight: 200;
+  line-height: 1.6;
+  font-size: 1rem;
+  font-weight: 400;
 }
 
 /* Headings */
@@ -32,8 +32,7 @@
 .markdown-container h4,
 .markdown-container h5,
 .markdown-container h6 {
-  font-family: '42 Dot Sans', Arial, Helvetica, sans-serif;
-  font-weight: 700;
+  font-weight: 600;
   margin-top: 1em;
   margin-bottom: 0.5em;
   line-height: 1.25;
@@ -44,8 +43,8 @@
   margin-top: 0.25em;
 }
 
-.markdown-container h1 { font-size: 2.2rem; }
-.markdown-container h2 { font-size: 1.7rem; }
+.markdown-container h1 { font-size: 2.8rem; }
+.markdown-container h2 { font-size: 2rem; }
 .markdown-container h3 { font-size: 1.3rem; }
 .markdown-container h4 { font-size: 1.1rem; }
 .markdown-container h5 { font-size: 1rem; }
@@ -56,7 +55,14 @@
   margin-top: 0.5em;
   margin-bottom: 0.5em;
   font-size: inherit;
-  font-weight: 100 !important;
+  font-weight: 400 !important;
+}
+
+/* Horizontal rules / section dividers */
+.markdown-container hr {
+  margin: 2em 0;
+  border: none;
+  border-top: 1px solid var(--border);
 }
 
 /* Code blocks & Inline code */
@@ -93,7 +99,7 @@
   margin-bottom: 0.4em;
   line-height: 1.5;
   font-size: inherit;
-  font-weight: 200 !important;
+  font-weight: 400 !important;
   display: list-item;
   list-style-position: outside;
 }
@@ -124,15 +130,55 @@
   list-style-type: lower-roman;
 }
 
-/* Links */
-.markdown-container a {
+/* Inline source links */
+.markdown-container .source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.15em 0.5em;
+  margin: 0 0.1em;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--card);
   color: var(--primary);
+  font-size: 0.85em;
+  font-weight: 500;
+  text-decoration: none;
+  outline: none;
+  vertical-align: baseline;
+}
+
+.markdown-container .source-link:hover {
   text-decoration: underline;
-  transition: color 0.2s;
 }
-.markdown-container a:hover {
-  opacity: 0.8;
+
+.markdown-container .source-link svg {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
 }
+
+/* Source type tints — light mode (subtle) */
+.source-link--statute { background: rgba(59, 130, 246, 0.06); border-color: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+.source-link--case-law { background: rgba(139, 92, 246, 0.06); border-color: rgba(139, 92, 246, 0.15); color: #8b5cf6; }
+.source-link--admin-rule { background: rgba(20, 184, 166, 0.06); border-color: rgba(20, 184, 166, 0.15); color: #0d9488; }
+.source-link--wpam { background: rgba(34, 197, 94, 0.06); border-color: rgba(34, 197, 94, 0.15); color: #16a34a; }
+.source-link--faq { background: rgba(202, 138, 4, 0.06); border-color: rgba(202, 138, 4, 0.15); color: #a16207; }
+.source-link--gov-pub { background: rgba(234, 88, 12, 0.06); border-color: rgba(234, 88, 12, 0.15); color: #c2410c; }
+.source-link--iaao { background: rgba(225, 29, 72, 0.06); border-color: rgba(225, 29, 72, 0.15); color: #be123c; }
+.source-link--uspap { background: rgba(225, 29, 72, 0.06); border-color: rgba(225, 29, 72, 0.15); color: #be123c; }
+.source-link--default { background: rgba(107, 114, 128, 0.06); border-color: rgba(107, 114, 128, 0.15); color: #6b7280; }
+
+/* Source type tints — dark mode (subtle) */
+.dark .source-link--statute { background: rgba(59, 130, 246, 0.07); border-color: rgba(59, 130, 246, 0.15); color: #93c5fd; }
+.dark .source-link--case-law { background: rgba(139, 92, 246, 0.07); border-color: rgba(139, 92, 246, 0.15); color: #c4b5fd; }
+.dark .source-link--admin-rule { background: rgba(20, 184, 166, 0.07); border-color: rgba(20, 184, 166, 0.15); color: #5eead4; }
+.dark .source-link--wpam { background: rgba(34, 197, 94, 0.07); border-color: rgba(34, 197, 94, 0.15); color: #86efac; }
+.dark .source-link--faq { background: rgba(234, 179, 8, 0.07); border-color: rgba(234, 179, 8, 0.15); color: #fde047; }
+.dark .source-link--gov-pub { background: rgba(249, 115, 22, 0.07); border-color: rgba(249, 115, 22, 0.15); color: #fdba74; }
+.dark .source-link--iaao { background: rgba(244, 63, 94, 0.07); border-color: rgba(244, 63, 94, 0.15); color: #fda4af; }
+.dark .source-link--uspap { background: rgba(244, 63, 94, 0.07); border-color: rgba(244, 63, 94, 0.15); color: #fda4af; }
+.dark .source-link--default { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.08); color: #d1d5db; }
 
 /* Blockquotes */
 .markdown-container blockquote {
@@ -190,16 +236,6 @@
   }
 }
 
-/* KaTeX display math — center block equations and give them breathing room */
-.markdown-container .katex-display {
-  margin: 1em 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-.markdown-container .katex {
-  font-size: 1em;
-}
 
 /* Thinking shimmer - wave pulse across text */
 .thinking-shimmer {

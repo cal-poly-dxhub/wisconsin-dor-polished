@@ -31,7 +31,7 @@ export function ChatInput({
     setExpanded(scrollHeight > 36);
     ta.style.height = Math.min(scrollHeight, maxHeight) + 'px';
     ta.style.overflowY = scrollHeight > maxHeight ? 'auto' : 'hidden';
-    ta.offsetHeight;
+    void ta.offsetHeight;
     ta.style.transition = 'height 0.2s ease';
   }, [message]);
 

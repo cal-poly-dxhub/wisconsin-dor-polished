@@ -6,6 +6,32 @@ import { X } from 'lucide-react';
 import { useChatStore } from '@/stores/chat-store';
 import type { AgentTraceEvent } from '@/stores/types';
 
+// --- Animation helpers ---
+
+function FadeIn({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, delay, ease: [0.4, 0, 0.2, 1] }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function StaggerSquare({ index, className, style }: { index: number; className: string; style?: React.CSSProperties }) {
+  return (
+    <motion.div
+      className={className}
+      style={style}
+      initial={{ opacity: 0, scale: 0.6 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.2, delay: index * 0.015, ease: [0.4, 0, 0.2, 1] }}
+    />
+  );
+}
+
 interface RetrievalStep {
   id: string;
   title: string;
@@ -78,24 +104,27 @@ function ChunkSquares({ total, kept, label }: { total: number; kept: number; lab
   const displayTotal = Math.min(total, 60);
   const displayKept = Math.min(kept, displayTotal);
   return (
-    <div className="mt-3">
-      {label && <p className="text-xs text-muted-foreground/70 mb-1.5">{label}</p>}
-      <div className="flex flex-wrap gap-1">
-        {Array.from({ length: displayTotal }).map((_, i) => (
-          <div
-            key={i}
-            className={`h-3 w-3 rounded-[3px] transition-colors duration-300 ${
-              i < displayKept
-                ? 'bg-foreground/70'
-                : 'bg-foreground/15'
-            }`}
-          />
-        ))}
+    <FadeIn>
+      <div className="mt-3">
+        {label && <p className="text-xs text-muted-foreground/70 mb-1.5">{label}</p>}
+        <div className="flex flex-wrap gap-1">
+          {Array.from({ length: displayTotal }).map((_, i) => (
+            <StaggerSquare
+              key={i}
+              index={i}
+              className={`h-3 w-3 rounded-[3px] ${
+                i < displayKept
+                  ? 'bg-foreground/70'
+                  : 'bg-foreground/15'
+              }`}
+            />
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground/60 mt-1.5">
+          {kept} kept / {total} candidates
+        </p>
       </div>
-      <p className="text-xs text-muted-foreground/60 mt-1.5">
-        {kept} kept / {total} candidates
-      </p>
-    </div>
+    </FadeIn>
   );
 }
 
@@ -117,24 +146,35 @@ function AuthoritySquares({ breakdown }: { breakdown: Record<string, number> }) 
 
   if (levels.length === 0) return null;
 
+  let globalIdx = 0;
   return (
     <div className="mt-3 space-y-1.5">
-      {levels.map(([level, count]) => (
-        <div key={level} className="flex items-center gap-2">
+      {levels.map(([level, count], rowIdx) => (
+        <motion.div
+          key={level}
+          className="flex items-center gap-2"
+          initial={{ opacity: 0, x: -4 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.2, delay: rowIdx * 0.04 }}
+        >
           <span className="text-xs text-muted-foreground/70 w-16 shrink-0 tabular-nums">
             {AUTHORITY_LABELS[level] ?? `L${level}`}
           </span>
           <div className="flex gap-1">
-            {Array.from({ length: Math.min(count, 20) }).map((_, i) => (
-              <div
-                key={i}
-                className="h-3 w-3 rounded-[3px] bg-foreground/70"
-                style={{ opacity: 1 - (Number(level) - 1) * 0.08 }}
-              />
-            ))}
+            {Array.from({ length: Math.min(count, 20) }).map((_, i) => {
+              const idx = globalIdx++;
+              return (
+                <StaggerSquare
+                  key={i}
+                  index={idx}
+                  className="h-3 w-3 rounded-[3px] bg-foreground/70"
+                  style={{ opacity: 1 - (Number(level) - 1) * 0.08 }}
+                />
+              );
+            })}
           </div>
           <span className="text-xs text-muted-foreground/50">{count}</span>
-        </div>
+        </motion.div>
       ))}
     </div>
   );
@@ -147,23 +187,30 @@ function RelationshipSquares({ counts }: { counts: Record<string, number> }) {
 
   if (entries.length === 0) return null;
 
+  let globalIdx = 0;
   return (
     <div className="mt-3 space-y-1.5">
-      {entries.map(([rel, count]) => (
-        <div key={rel} className="flex items-center gap-2">
+      {entries.map(([rel, count], rowIdx) => (
+        <motion.div
+          key={rel}
+          className="flex items-center gap-2"
+          initial={{ opacity: 0, x: -4 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.2, delay: rowIdx * 0.04 }}
+        >
           <span className="text-xs text-muted-foreground/70 w-20 shrink-0 truncate">
             {rel}
           </span>
           <div className="flex gap-1">
-            {Array.from({ length: Math.min(count, 15) }).map((_, i) => (
-              <div
-                key={i}
-                className="h-3 w-3 rounded-[3px] bg-foreground/60"
-              />
-            ))}
+            {Array.from({ length: Math.min(count, 15) }).map((_, i) => {
+              const idx = globalIdx++;
+              return (
+                <StaggerSquare key={i} index={idx} className="h-3 w-3 rounded-[3px] bg-foreground/60" />
+              );
+            })}
           </div>
           <span className="text-xs text-muted-foreground/50">{count}</span>
-        </div>
+        </motion.div>
       ))}
     </div>
   );
@@ -182,23 +229,34 @@ function DiscoverySquares({ counts }: { counts: Record<string, number> }) {
   const entries = Object.entries(counts).sort(([, a], [, b]) => b - a);
   if (entries.length === 0) return null;
 
+  let globalIdx = 0;
   return (
     <div className="mt-3 space-y-1.5">
-      {entries.map(([tag, count]) => (
-        <div key={tag} className="flex items-center gap-2">
+      {entries.map(([tag, count], rowIdx) => (
+        <motion.div
+          key={tag}
+          className="flex items-center gap-2"
+          initial={{ opacity: 0, x: -4 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.2, delay: rowIdx * 0.04 }}
+        >
           <span className="text-xs text-muted-foreground/70 w-24 shrink-0 truncate">
             {tag}
           </span>
           <div className="flex gap-1">
-            {Array.from({ length: Math.min(count, 12) }).map((_, i) => (
-              <div
-                key={i}
-                className={`h-3 w-3 rounded-[3px] ${DISCOVERY_COLORS[tag] ?? 'bg-foreground/50'}`}
-              />
-            ))}
+            {Array.from({ length: Math.min(count, 12) }).map((_, i) => {
+              const idx = globalIdx++;
+              return (
+                <StaggerSquare
+                  key={i}
+                  index={idx}
+                  className={`h-3 w-3 rounded-[3px] ${DISCOVERY_COLORS[tag] ?? 'bg-foreground/50'}`}
+                />
+              );
+            })}
           </div>
           <span className="text-xs text-muted-foreground/50">{count}</span>
-        </div>
+        </motion.div>
       ))}
     </div>
   );
@@ -228,34 +286,48 @@ function FAQVisualization({ step }: { step: RetrievalStep }) {
   const scores = faqScores.length > 0 ? faqScores : Array.from({ length: faqCount }, (_, i) => i === 0 ? topScore : 0);
 
   return (
-    <div className="mt-3">
-      <div className="flex items-end gap-1.5">
-        {scores.map((score, i) => {
-          const aboveThreshold = score >= threshold;
-          return (
-            <div key={i} className="flex flex-col items-center gap-1">
-              <div
-                className={`w-3 rounded-[3px] transition-colors ${
-                  aboveThreshold ? 'bg-foreground/80' : 'bg-foreground/25'
-                }`}
-                style={{ height: `${Math.max(12, Math.round(score * 32))}px` }}
-              />
-              <span className="text-[9px] text-muted-foreground/50 tabular-nums">
-                {score.toFixed(2)}
-              </span>
-            </div>
-          );
-        })}
+    <FadeIn>
+      <div className="mt-3">
+        <div className="flex items-end gap-1.5">
+          {scores.map((score, i) => {
+            const aboveThreshold = score >= threshold;
+            return (
+              <motion.div
+                key={i}
+                className="flex flex-col items-center gap-1"
+                initial={{ opacity: 0, scaleY: 0 }}
+                animate={{ opacity: 1, scaleY: 1 }}
+                transition={{ duration: 0.3, delay: i * 0.05, ease: [0.4, 0, 0.2, 1] }}
+                style={{ originY: 1 }}
+              >
+                <div
+                  className={`w-3 rounded-[3px] ${
+                    aboveThreshold ? 'bg-foreground/80' : 'bg-foreground/25'
+                  }`}
+                  style={{ height: `${Math.max(12, Math.round(score * 32))}px` }}
+                />
+                <span className="text-[9px] text-muted-foreground/50 tabular-nums">
+                  {score.toFixed(2)}
+                </span>
+              </motion.div>
+            );
+          })}
+        </div>
+        <motion.div
+          className="flex items-center gap-2 mt-2"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+        >
+          <div className="h-px flex-1 bg-foreground/15" />
+          <span className="text-xs text-muted-foreground/50">threshold {threshold.toFixed(2)}</span>
+          <div className="h-px flex-1 bg-foreground/15" />
+        </motion.div>
+        <p className="text-xs text-muted-foreground/60 mt-1.5">
+          {scores.filter(s => s >= threshold).length} above threshold · {faqCount} total
+        </p>
       </div>
-      <div className="flex items-center gap-2 mt-2">
-        <div className="h-px flex-1 bg-foreground/15" />
-        <span className="text-xs text-muted-foreground/50">threshold {threshold.toFixed(2)}</span>
-        <div className="h-px flex-1 bg-foreground/15" />
-      </div>
-      <p className="text-xs text-muted-foreground/60 mt-1.5">
-        {scores.filter(s => s >= threshold).length} above threshold · {faqCount} total
-      </p>
-    </div>
+    </FadeIn>
   );
 }
 
@@ -270,23 +342,35 @@ function ScoreBuckets({ buckets }: { buckets: Record<string, number> }) {
   const entries = BUCKET_ORDER.filter(k => buckets[k] && buckets[k] > 0);
   if (entries.length === 0) return null;
 
+  let globalIdx = 0;
   return (
-    <div className="mt-3">
-      <p className="text-xs text-muted-foreground/70 mb-1.5">Score distribution</p>
-      <div className="space-y-1.5">
-        {entries.map(bucket => (
-          <div key={bucket} className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground/70 w-14 shrink-0 tabular-nums">{bucket}</span>
-            <div className="flex gap-1">
-              {Array.from({ length: Math.min(buckets[bucket], 20) }).map((_, i) => (
-                <div key={i} className={`h-3 w-3 rounded-[3px] ${BUCKET_OPACITY[bucket]}`} />
-              ))}
-            </div>
-            <span className="text-xs text-muted-foreground/50">{buckets[bucket]}</span>
-          </div>
-        ))}
+    <FadeIn delay={0.1}>
+      <div className="mt-3">
+        <p className="text-xs text-muted-foreground/70 mb-1.5">Score distribution</p>
+        <div className="space-y-1.5">
+          {entries.map((bucket, rowIdx) => (
+            <motion.div
+              key={bucket}
+              className="flex items-center gap-2"
+              initial={{ opacity: 0, x: -4 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.2, delay: rowIdx * 0.04 }}
+            >
+              <span className="text-xs text-muted-foreground/70 w-14 shrink-0 tabular-nums">{bucket}</span>
+              <div className="flex gap-1">
+                {Array.from({ length: Math.min(buckets[bucket], 20) }).map((_, i) => {
+                  const idx = globalIdx++;
+                  return (
+                    <StaggerSquare key={i} index={idx} className={`h-3 w-3 rounded-[3px] ${BUCKET_OPACITY[bucket]}`} />
+                  );
+                })}
+              </div>
+              <span className="text-xs text-muted-foreground/50">{buckets[bucket]}</span>
+            </motion.div>
+          ))}
+        </div>
       </div>
-    </div>
+    </FadeIn>
   );
 }
 
@@ -312,28 +396,36 @@ function VectorVisualization({ step }: { step: RetrievalStep }) {
         />
       )}
       {targetWpamYear && (
-        <p className="text-xs text-muted-foreground/60 mt-2">
-          Filtered to WPAM {targetWpamYear} edition
-        </p>
+        <FadeIn delay={0.15}>
+          <p className="text-xs text-muted-foreground/60 mt-2">
+            Filtered to WPAM {targetWpamYear} edition
+          </p>
+        </FadeIn>
       )}
       {Object.keys(scoreBuckets).length > 0 && (
         <ScoreBuckets buckets={scoreBuckets} />
       )}
       {Object.keys(authorityBreakdown).length > 0 && (
-        <div className="mt-3">
-          <p className="text-xs text-muted-foreground/70 mb-1.5">By authority level</p>
-          <AuthoritySquares breakdown={authorityBreakdown} />
-        </div>
+        <FadeIn delay={0.2}>
+          <div className="mt-3">
+            <p className="text-xs text-muted-foreground/70 mb-1.5">By authority level</p>
+            <AuthoritySquares breakdown={authorityBreakdown} />
+          </div>
+        </FadeIn>
       )}
       {autoEnrichedCount > 0 && (
-        <p className="text-xs text-muted-foreground/60 mt-2">
-          + {autoEnrichedCount} graph neighbor{autoEnrichedCount !== 1 ? 's' : ''} auto-enriched
-        </p>
+        <FadeIn delay={0.25}>
+          <p className="text-xs text-muted-foreground/60 mt-2">
+            + {autoEnrichedCount} graph neighbor{autoEnrichedCount !== 1 ? 's' : ''} auto-enriched
+          </p>
+        </FadeIn>
       )}
       {caseLawCount > 0 && (
-        <p className="text-xs text-muted-foreground/60 mt-1">
-          + {caseLawCount} case law citation{caseLawCount !== 1 ? 's' : ''} discovered
-        </p>
+        <FadeIn delay={0.3}>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            + {caseLawCount} case law citation{caseLawCount !== 1 ? 's' : ''} discovered
+          </p>
+        </FadeIn>
       )}
     </div>
   );
@@ -355,36 +447,48 @@ function GraphVisualization({ step }: { step: RetrievalStep }) {
   return (
     <div>
       {Object.keys(relationshipCounts).length > 0 && (
-        <RelationshipSquares counts={relationshipCounts} />
+        <FadeIn>
+          <RelationshipSquares counts={relationshipCounts} />
+        </FadeIn>
       )}
       {Object.keys(relationshipCounts).length === 0 && neighborCount > 0 && (
-        <div className="mt-3">
-          <div className="flex flex-wrap gap-1">
-            {Array.from({ length: Math.min(neighborCount, 30) }).map((_, i) => (
-              <div key={i} className="h-3 w-3 rounded-[3px] bg-foreground/60" />
-            ))}
+        <FadeIn>
+          <div className="mt-3">
+            <div className="flex flex-wrap gap-1">
+              {Array.from({ length: Math.min(neighborCount, 30) }).map((_, i) => (
+                <StaggerSquare key={i} index={i} className="h-3 w-3 rounded-[3px] bg-foreground/60" />
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground/60 mt-1.5">
+              {neighborCount} neighbor{neighborCount !== 1 ? 's' : ''}
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground/60 mt-1.5">
-            {neighborCount} neighbor{neighborCount !== 1 ? 's' : ''}
-          </p>
-        </div>
+        </FadeIn>
       )}
       {chainLength > 0 && (
-        <div className="mt-2 flex items-center gap-1">
-          {Array.from({ length: chainLength }).map((_, i) => (
-            <div key={i} className="flex items-center gap-1">
-              <div className="h-3 w-3 rounded-[3px] bg-foreground/60"
-                style={{ opacity: 1 - i * 0.15 }}
-              />
-              {i < chainLength - 1 && (
-                <span className="text-xs text-muted-foreground/40">→</span>
-              )}
-            </div>
-          ))}
-          <span className="text-xs text-muted-foreground/60 ml-1">
-            authority chain
-          </span>
-        </div>
+        <FadeIn delay={0.1}>
+          <div className="mt-2 flex items-center gap-1">
+            {Array.from({ length: chainLength }).map((_, i) => (
+              <motion.div
+                key={i}
+                className="flex items-center gap-1"
+                initial={{ opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.2, delay: i * 0.08 }}
+              >
+                <div className="h-3 w-3 rounded-[3px] bg-foreground/60"
+                  style={{ opacity: 1 - i * 0.15 }}
+                />
+                {i < chainLength - 1 && (
+                  <span className="text-xs text-muted-foreground/40">→</span>
+                )}
+              </motion.div>
+            ))}
+            <span className="text-xs text-muted-foreground/60 ml-1">
+              authority chain
+            </span>
+          </div>
+        </FadeIn>
       )}
     </div>
   );
@@ -400,39 +504,57 @@ function SynthesisVisualization({ step, trace }: { step: RetrievalStep; trace: A
   if (step.status === 'idle') return <IdleSquares />;
   if (!loopComplete) {
     return (
-      <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground/70">
+      <motion.div
+        className="mt-3 flex items-center gap-2 text-xs text-muted-foreground/70"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.3 }}
+      >
         <span className="h-2 w-2 rounded-full bg-foreground/30 animate-pulse" />
         <span>Generating answer...</span>
-      </div>
+      </motion.div>
     );
   }
 
   const titleEntries = Object.entries(discoveryTitles).slice(0, 10);
 
   return (
-    <div>
-      {Object.keys(discoveryCounts).length > 0 && (
-        <DiscoverySquares counts={discoveryCounts} />
-      )}
-      {titleEntries.length > 0 && (
-        <div className="mt-3">
-          <p className="text-xs text-muted-foreground/70 mb-1.5">Cited sources</p>
-          <div className="space-y-1">
-            {titleEntries.map(([docId, title]) => (
-              <div key={docId} className="flex items-center gap-2">
-                <div className="h-3 w-3 rounded-[3px] bg-foreground/70 shrink-0" />
-                <span className="text-xs text-muted-foreground truncate">{title}</span>
-              </div>
-            ))}
+    <FadeIn>
+      <div>
+        {Object.keys(discoveryCounts).length > 0 && (
+          <DiscoverySquares counts={discoveryCounts} />
+        )}
+        {titleEntries.length > 0 && (
+          <div className="mt-3">
+            <p className="text-xs text-muted-foreground/70 mb-1.5">Cited sources</p>
+            <div className="space-y-1">
+              {titleEntries.map(([docId, title], i) => (
+                <motion.div
+                  key={docId}
+                  className="flex items-center gap-2"
+                  initial={{ opacity: 0, x: -4 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.2, delay: i * 0.03 }}
+                >
+                  <div className="h-3 w-3 rounded-[3px] bg-foreground/70 shrink-0" />
+                  <span className="text-xs text-muted-foreground truncate">{title}</span>
+                </motion.div>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
-      {citedDocCount > 0 && (
-        <p className="text-xs text-muted-foreground mt-2 font-medium">
-          {citedDocCount} source{citedDocCount !== 1 ? 's' : ''} cited in answer
-        </p>
-      )}
-    </div>
+        )}
+        {citedDocCount > 0 && (
+          <motion.p
+            className="text-xs text-muted-foreground mt-2 font-medium"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3, delay: 0.2 }}
+          >
+            {citedDocCount} source{citedDocCount !== 1 ? 's' : ''} cited in answer
+          </motion.p>
+        )}
+      </div>
+    </FadeIn>
   );
 }
 
@@ -440,24 +562,48 @@ function SpecializedVisualization({ step }: { step: RetrievalStep }) {
   const results = step.events.filter(e => e.kind === 'tool_result');
   if (results.length === 0) return <IdleSquares />;
 
+  type CollapsedEntry = { summary: string; status: string; count: number; totalChunks: number; totalMs: number };
+  const collapsed: CollapsedEntry[] = [];
+  for (const e of results) {
+    const status = e.payload.status as string;
+    const summary = String(e.payload.summary ?? (e.payload.toolName as string));
+    const meta = e.payload.metadata as Record<string, unknown> | undefined;
+    const docId = meta?.['docId'] as string | undefined;
+    const chunkCount = typeof meta?.['chunkCount'] === 'number' ? meta['chunkCount'] as number : 0;
+    const elapsedMs = typeof meta?.['elapsedMs'] === 'number' ? meta['elapsedMs'] as number : 0;
+    const prev = collapsed[collapsed.length - 1];
+    if (prev && docId && prev.summary === summary) {
+      prev.count += 1;
+      prev.totalChunks += chunkCount;
+      prev.totalMs += elapsedMs;
+      continue;
+    }
+    collapsed.push({ summary, status, count: 1, totalChunks: chunkCount, totalMs: elapsedMs });
+  }
+
   return (
     <div className="mt-3 space-y-1.5">
-      {results.map((e, i) => {
-        const toolName = e.payload.toolName as string;
-        const status = e.payload.status as string;
-        return (
-          <div key={i} className="flex items-center gap-2">
-            <div className={`h-3 w-3 rounded-[3px] shrink-0 ${
-              status === 'ok' || status === 'terminal' ? 'bg-foreground/70'
-                : status === 'miss' ? 'border border-foreground/30'
-                  : 'bg-destructive/50'
-            }`} />
-            <span className="text-xs text-muted-foreground truncate">
-              {String(e.payload.summary ?? toolName)}
-            </span>
-          </div>
-        );
-      })}
+      {collapsed.map((entry, i) => (
+        <motion.div
+          key={i}
+          className="flex items-center gap-2"
+          initial={{ opacity: 0, x: -4 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.2, delay: i * 0.04 }}
+        >
+          <div className={`h-3 w-3 rounded-[3px] shrink-0 ${
+            entry.status === 'ok' || entry.status === 'terminal' ? 'bg-foreground/70'
+              : entry.status === 'miss' ? 'border border-foreground/30'
+                : 'bg-destructive/50'
+          }`} />
+          <span className="text-xs text-muted-foreground truncate">
+            {entry.summary}
+            {entry.count > 1 && (
+              <span className="text-muted-foreground/60"> ×{entry.count} · {entry.totalChunks} chunks</span>
+            )}
+          </span>
+        </motion.div>
+      ))}
     </div>
   );
 }
@@ -466,7 +612,13 @@ function IdleSquares() {
   return (
     <div className="mt-3 flex gap-1">
       {Array.from({ length: 8 }).map((_, i) => (
-        <div key={i} className="h-3 w-3 rounded-[3px] bg-muted-foreground/10" />
+        <motion.div
+          key={i}
+          className="h-3 w-3 rounded-[3px] bg-muted-foreground/10"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2, delay: i * 0.02 }}
+        />
       ))}
     </div>
   );
@@ -505,10 +657,15 @@ function StepPanel({ step, trace }: { step: RetrievalStep; trace: AgentTraceEven
       {step.status === 'idle' && step.id !== 'synthesis' && <IdleSquares />}
 
       {step.status === 'active' && (
-        <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground/70">
+        <motion.div
+          className="mt-2 flex items-center gap-2 text-xs text-muted-foreground/70"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3 }}
+        >
           <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-pulse shrink-0" />
           <span>Processing...</span>
-        </div>
+        </motion.div>
       )}
     </div>
   );
@@ -520,17 +677,27 @@ function StepIndicator({ status }: { status: 'idle' | 'active' | 'complete' }) {
   }
   if (status === 'active') {
     return (
-      <div className="h-5 w-5 rounded-full border-2 border-foreground/50 flex items-center justify-center shrink-0">
+      <motion.div
+        className="h-5 w-5 rounded-full border-2 border-foreground/50 flex items-center justify-center shrink-0"
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ duration: 0.2 }}
+      >
         <div className="h-2 w-2 rounded-full bg-foreground/50 animate-pulse" />
-      </div>
+      </motion.div>
     );
   }
   return (
-    <div className="h-5 w-5 rounded-full bg-foreground/10 flex items-center justify-center shrink-0">
+    <motion.div
+      className="h-5 w-5 rounded-full bg-foreground/10 flex items-center justify-center shrink-0"
+      initial={{ scale: 0.8, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ duration: 0.2 }}
+    >
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
         <path d="M2 5L4.5 7.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/70" />
       </svg>
-    </div>
+    </motion.div>
   );
 }
 
@@ -540,9 +707,14 @@ function ElapsedBadge({ trace }: { trace: AgentTraceEvent[] }) {
   const ms = loopComplete.payload.elapsedMs as number | undefined;
   if (!ms) return null;
   return (
-    <span className="text-xs text-muted-foreground tabular-nums">
+    <motion.span
+      className="text-xs text-muted-foreground tabular-nums"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+    >
       {(ms / 1000).toFixed(1)}s total
-    </span>
+    </motion.span>
   );
 }
 
@@ -625,15 +797,22 @@ export function RetrievalModal({ queryId, open, onClose }: RetrievalModalProps) 
               </div>
             </div>
 
-            {/* Steps list */}
-            <div className="p-6 flex flex-col gap-4 max-w-2xl mx-auto">
-              {steps.map(step => (
-                <StepPanel key={step.id} step={step} trace={agentTrace ?? []} />
+            {/* Steps grid */}
+            <div className="p-6 grid grid-cols-1 md:grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-4">
+              {steps.map((step, i) => (
+                <motion.div
+                  key={step.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.25, delay: i * 0.05, ease: [0.4, 0, 0.2, 1] }}
+                >
+                  <StepPanel step={step} trace={agentTrace ?? []} />
+                </motion.div>
               ))}
             </div>
 
             {/* Legend */}
-            <div className="px-6 pb-6 flex flex-wrap gap-5 text-xs text-muted-foreground/60 max-w-2xl mx-auto">
+            <div className="px-6 pb-6 flex flex-wrap gap-5 text-xs text-muted-foreground/60">
               <span className="flex items-center gap-2">
                 <span className="h-3 w-3 rounded-[3px] bg-foreground/70" /> Kept
               </span>

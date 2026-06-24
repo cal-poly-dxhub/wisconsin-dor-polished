@@ -12,19 +12,19 @@ describe('formatTraceMetadata', () => {
         topScore: 0.84,
         latencyMs: 120,
       }),
-    ).toBe('3 chunks · 2 docs · 1 neighbor · top score 0.84 · 120ms');
+    ).toBe('3 chunks · 2 sources · 1 graph neighbor enriched · top score 0.84 · 120ms');
   });
 
   test('singularizes counts correctly', () => {
     expect(
       formatTraceMetadata({ chunkCount: 1, docCount: 1, citedDocCount: 1 }),
-    ).toBe('1 chunk · 1 doc · 1 citation');
+    ).toBe('1 chunk · 1 source · 1 citation');
   });
 
   test('skips zero/missing fields', () => {
     expect(
       formatTraceMetadata({ chunkCount: 0, neighborCount: 2, topScore: 0 }),
-    ).toBe('2 neighbors');
+    ).toBe('2 graph neighbors enriched');
   });
 
   test('handles faq metadata', () => {

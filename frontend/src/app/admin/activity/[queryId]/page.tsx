@@ -4,6 +4,7 @@ import { use, useState } from 'react';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import '@/components/messages/chat-message.css';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { useActivityData, type TraceEvent } from '@/hooks/use-activity-data';
 import { Button } from '@/components/ui/button';
@@ -169,7 +170,7 @@ function QueryDetail({ queryId }: { queryId: string }) {
           </CardHeader>
           <CardContent>
             {showMarkdown ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed">
+              <div className="markdown-container text-sm">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {item.answer}
                 </ReactMarkdown>

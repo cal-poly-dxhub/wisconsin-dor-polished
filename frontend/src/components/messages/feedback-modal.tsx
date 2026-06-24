@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { ThumbsUp, ThumbsDown, FileText, HelpCircle } from 'lucide-react';
 import {
   Dialog,
@@ -59,7 +59,7 @@ export function FeedbackModal({
     ? mentionOptions.filter(o => o.label.toLowerCase().includes(mentionQuery.toLowerCase()))
     : [];
 
-  const computeMenuPosition = useCallback((atIndex: number) => {
+  function computeMenuPosition(atIndex: number, text: string) {
     const textarea = textareaRef.current;
     if (!textarea) return;
 
@@ -79,13 +79,12 @@ export function FeedbackModal({
     mirror.style.visibility = 'hidden';
     mirror.style.left = '-9999px';
 
-    const textBefore = feedback.slice(0, atIndex);
+    const textBefore = text.slice(0, atIndex);
     mirror.textContent = textBefore;
     const span = document.createElement('span');
     span.textContent = '@';
     mirror.appendChild(span);
 
-    const textareaRect = textarea.getBoundingClientRect();
     const spanRect = span.getBoundingClientRect();
     const mirrorRect = mirror.getBoundingClientRect();
 
@@ -94,16 +93,16 @@ export function FeedbackModal({
 
     setMenuPos({ top, left: Math.min(left, textarea.offsetWidth - 50) });
     mirror.textContent = '';
-  }, [feedback]);
+  }
 
-  const closeMention = useCallback(() => {
+  function closeMention() {
     setMentionQuery(null);
     setMentionIndex(0);
     setCursorAtSign(null);
     setMenuPos(null);
-  }, []);
+  }
 
-  const insertMention = useCallback((option: MentionOption) => {
+  function insertMention(option: MentionOption) {
     if (cursorAtSign === null) return;
     const before = feedback.slice(0, cursorAtSign);
     const afterCursor = textareaRef.current?.selectionStart ?? feedback.length;
@@ -119,7 +118,7 @@ export function FeedbackModal({
       }, 0);
     }
     closeMention();
-  }, [feedback, cursorAtSign, maxLength, closeMention]);
+  }
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
@@ -138,7 +137,7 @@ export function FeedbackModal({
           setMentionQuery(query);
           setMentionIndex(0);
           setCursorAtSign(atIdx);
-          computeMenuPosition(atIdx);
+          computeMenuPosition(atIdx, value);
           return;
         }
       }
@@ -164,26 +163,20 @@ export function FeedbackModal({
     }
   };
 
-  useEffect(() => {
-    if (!open) {
-      setFeedback('');
-      closeMention();
-    }
-  }, [open, closeMention]);
-
   const handleSubmit = () => {
     onSubmit(feedback || undefined);
     setFeedback('');
     onOpenChange(false);
   };
 
-  const handleCancel = () => {
+  const handleClose = () => {
     setFeedback('');
+    closeMention();
     onOpenChange(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) handleCancel(); else onOpenChange(o); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); else onOpenChange(o); }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -258,7 +251,7 @@ export function FeedbackModal({
 
           <div className="flex justify-end gap-2">
             <button
-              onClick={handleCancel}
+              onClick={handleClose}
               className="rounded-md px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted cursor-pointer"
             >
               Cancel
