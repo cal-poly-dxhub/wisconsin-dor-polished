@@ -52,6 +52,11 @@ export function useWebSocketChat(
   // Track the pending optimistic ID so handleSuccessfulSend can replace it
   const pendingQueryIdRef = useRef<string | null>(null);
 
+  // Buffer fragments and place the full answer on stop (no streaming)
+  const fragmentBufferRef = useRef<string>('');
+  const streamStartRef = useRef(0);
+  const fragmentCountRef = useRef(0);
+
   // Define UI actions for each message type
   const messageHandler = useCallback(
     (message: MessageUnion) => {
@@ -74,6 +79,7 @@ export function useWebSocketChat(
 
           switch (message.responseType) {
             case 'documents':
+              console.log(`[WS Timing] documents received | count=${message.content.documents.length}`);
               updateQueryResources(
                 message.queryId,
                 message.content.documents.map(document => ({
@@ -84,6 +90,7 @@ export function useWebSocketChat(
               break;
 
             case 'faq':
+              console.log(`[WS Timing] faqs received | count=${message.content.faqs.length}`);
               updateQueryResources(
                 message.queryId,
                 message.content.faqs.map(faq => ({
@@ -94,15 +101,27 @@ export function useWebSocketChat(
               break;
 
             case 'fragment':
-              appendQueryResponse(message.queryId, message.content.fragment);
+              fragmentCountRef.current++;
+              fragmentBufferRef.current += message.content.fragment;
               break;
 
             case 'answer-event':
-              const { event } = message;
-              if (event === 'start') {
+              if (message.event === 'start') {
+                streamStartRef.current = performance.now();
+                fragmentCountRef.current = 0;
+                fragmentBufferRef.current = '';
                 updateQueryStatus(message.queryId, 'streaming');
                 setChatState('streaming');
-              } else if (event === 'stop') {
+              } else if (message.event === 'stop') {
+                const streamDuration = performance.now() - streamStartRef.current;
+                console.log(
+                  `[WS Timing] STREAM STOP | duration=${streamDuration.toFixed(1)}ms | fragments=${fragmentCountRef.current} | queryId=${message.queryId}`
+                );
+                // Place the full answer in one shot
+                if (fragmentBufferRef.current) {
+                  appendQueryResponse(message.queryId, fragmentBufferRef.current);
+                  fragmentBufferRef.current = '';
+                }
                 updateQueryStatus(message.queryId, 'completed');
                 setChatState('idle');
                 queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] });
@@ -199,9 +218,14 @@ export function useWebSocketChat(
     setSessionId(sessionId);
   }, [sessionId, setSessionId]);
 
+  // Track send time for roundtrip measurement
+  const sendTimestampRef = useRef(0);
+
   // Wrap sendMessage to optimistically add the query to the store immediately
   const optimisticSendMessage = useCallback(
     async (message: string) => {
+      sendTimestampRef.current = performance.now();
+      console.log(`[WS Timing] SEND | message="${message.slice(0, 60)}${message.length > 60 ? '...' : ''}"`);
       const optimisticId = `pending-${Date.now()}`;
       pendingQueryIdRef.current = optimisticId;
 

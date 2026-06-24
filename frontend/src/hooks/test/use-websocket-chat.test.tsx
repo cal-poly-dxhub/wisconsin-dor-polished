@@ -37,7 +37,7 @@ const mockUseValidatedWebSocket = mock(() => {
 let resolveSendMessage: (value: { query_id: string }) => void;
 let rejectSendMessage: (error: Error) => void;
 let resolveCreateSession: (value: { sessionId: string }) => void;
-let rejectCreateSession: (error: Error) => void;
+let _rejectCreateSession: (error: Error) => void;
 
 const mockSendMessage = mock(
   () =>
@@ -51,7 +51,7 @@ const mockCreateSession = mock(
   () =>
     new Promise((resolve, reject) => {
       resolveCreateSession = resolve;
-      rejectCreateSession = reject;
+      _rejectCreateSession = reject;
     })
 );
 
@@ -63,6 +63,10 @@ mock.module('../use-validated-websocket', () => ({
 mock.module('../../api/chat-api', () => ({
   sendMessage: mockSendMessage,
   createSession: mockCreateSession,
+}));
+
+mock.module('../../components/errors/use-chat-error', () => ({
+  useChatError: () => ({ handleError: mock(() => {}) }),
 }));
 
 // Mock crypto.randomUUID
@@ -123,7 +127,7 @@ describe('useWebSocketChat Hook Tests', () => {
       () =>
         new Promise((resolve, reject) => {
           resolveCreateSession = resolve;
-          rejectCreateSession = reject;
+          _rejectCreateSession = reject;
         })
     );
   });
@@ -247,13 +251,11 @@ describe('useWebSocketChat Hook Tests', () => {
       });
     });
 
-    // Verify the complete message was constructed in the store
+    // Fragments are buffered — content is empty until stop event
     store = useChatStore.getState();
     const query = store.queries[queryId];
     expect(query).toBeDefined();
-    expect(query.response.content).toBe(
-      'Hello world! This is a streaming response.'
-    );
+    expect(query.response.content).toBe('');
 
     // State is streaming before the stop event
     expect(store.chatState).toBe('streaming');
@@ -269,10 +271,13 @@ describe('useWebSocketChat Hook Tests', () => {
       mockMessageHandler!(stopEvent);
     });
 
-    // Verify final state
+    // Verify final state — full answer placed on stop
     store = useChatStore.getState();
     expect(store.chatState).toBe('idle');
     expect(store.queries[queryId].status).toBe('completed');
+    expect(store.queries[queryId].response.content).toBe(
+      'Hello world! This is a streaming response.'
+    );
     expect(store.currentQueryId).toBe(queryId);
 
     // Verify the complete flow maintained proper state

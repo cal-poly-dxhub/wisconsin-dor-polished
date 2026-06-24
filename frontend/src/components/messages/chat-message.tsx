@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { DocumentCard, type Document } from '../documents/document-card/document-card';
 import { FAQCard } from '../documents/document-card/faq-card';
 import { buildResolverUrl } from '@/lib/citation-resolver';
+import { parseInlineCitations, type InlineCitation } from '@/lib/parse-inline-citations';
 import { useDevTrace } from '@/hooks/use-dev-trace';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { AgentTraceEvent, ResourceItem, FAQ } from '@/stores/types';
@@ -145,6 +146,7 @@ function buildTraceSteps(
     toolName: string | null;
     isCompletedResult: boolean;
     metadata: Record<string, unknown> | null;
+    collapseCount: number;
   };
   const collapsed: CollapsibleStep[] = [];
 
@@ -163,33 +165,43 @@ function buildTraceSteps(
     const metadata = (event.payload.metadata as Record<string, unknown>) ?? null;
 
     const prev = collapsed[collapsed.length - 1];
-    // Fold consecutive completed results for the same tool into one line.
-    // The agent often issues 2-3 vector_searches in a row; without this, the
-    // trace shows the same "Searched the knowledge graph" entry repeated
-    // with partial counts. Merging sums the counts and keeps one row.
-    // Skip search_document — each targets a different doc and should stay separate.
     if (
       prev &&
       prev.isCompletedResult &&
       isCompletedResult &&
       toolName &&
-      toolName !== 'search_document' &&
       prev.toolName === toolName
     ) {
-      const merged = mergeTraceMetadata(prev.metadata, metadata);
-      prev.metadata = merged;
-      prev.detail = formatTraceMetadata(merged);
-      continue;
+      // For search_document, only collapse if same doc_id
+      if (toolName === 'search_document') {
+        const prevDocId = prev.metadata?.['docId'] as string | undefined;
+        const curDocId = metadata?.['docId'] as string | undefined;
+        if (prevDocId && curDocId && prevDocId === curDocId) {
+          const merged = mergeTraceMetadata(prev.metadata, metadata);
+          prev.metadata = merged;
+          prev.collapseCount += 1;
+          prev.detail = formatTraceMetadata(merged);
+          continue;
+        }
+      } else {
+        const merged = mergeTraceMetadata(prev.metadata, metadata);
+        prev.metadata = merged;
+        prev.collapseCount += 1;
+        prev.detail = formatTraceMetadata(merged);
+        continue;
+      }
     }
-    collapsed.push({ ...step, toolName, isCompletedResult, metadata });
+    collapsed.push({ ...step, toolName, isCompletedResult, metadata, collapseCount: 1 });
   }
 
-  return collapsed.map(({ label, done, error, missed, detail, devJson }) => ({
+  return collapsed.map(({ label, done, error, missed, detail, devJson, collapseCount }) => ({
     label,
     done,
     error,
     missed,
-    detail,
+    detail: collapseCount > 1
+      ? `×${collapseCount}` + (detail ? ` · ${detail}` : '')
+      : detail,
     devJson,
   }));
 }
@@ -283,7 +295,7 @@ export function StreamResponse({
   );
 }
 
-function InlineSources({ items, streamingComplete }: { items: ResourceItem[]; streamingComplete?: boolean }) {
+function InlineSources({ items, streamingComplete, citationsByDoc }: { items: ResourceItem[]; streamingComplete?: boolean; citationsByDoc?: Map<string, InlineCitation[]> }) {
   const [open, setOpen] = useState(true);
 
   if (!items.length || !streamingComplete) return null;
@@ -319,13 +331,19 @@ function InlineSources({ items, streamingComplete }: { items: ResourceItem[]; st
               item.type === 'document'
                 ? `doc-${(item.data as Document).documentId}`
                 : `faq-${(item.data as FAQ).faqId}`;
+            if (item.type === 'document') {
+              const doc = item.data as Document;
+              const rawId = doc.documentId.replace(/-[a-f0-9]{7}$/, '');
+              const citations = citationsByDoc?.get(rawId);
+              return (
+                <div key={key}>
+                  <DocumentCard document={doc} citations={citations} />
+                </div>
+              );
+            }
             return (
               <div key={key}>
-                {item.type === 'document' ? (
-                  <DocumentCard document={item.data as Document} />
-                ) : (
-                  <FAQCard faq={item.data as FAQ} />
-                )}
+                <FAQCard faq={item.data as FAQ} />
               </div>
             );
           })}
@@ -348,6 +366,7 @@ function mergeTraceMetadata(
     'chain_length', 'chainLength',
     'cited_doc_count', 'citedDocCount',
     'rag_document_count', 'ragDocumentCount',
+    'latencyMs',
   ];
   for (const key of numericKeys) {
     const va = a?.[key];
@@ -592,16 +611,21 @@ export function ChatMessage({
     return () => { cancelled = true; };
   }, [items]);
 
+  const citationsByDoc = useMemo(() => {
+    if (!response) return new Map<string, InlineCitation[]>();
+    return parseInlineCitations(response);
+  }, [response]);
+
   const memoizedResponse = useMemo(() => {
     if (!response) return null;
 
     return (
       <div className="chat-response-aligned">
         <StreamResponse content={response} streamingComplete={streamingComplete} docUrls={docUrls} />
-        <InlineSources items={items ?? []} streamingComplete={streamingComplete} />
+        <InlineSources items={items ?? []} streamingComplete={streamingComplete} citationsByDoc={citationsByDoc} />
       </div>
     );
-  }, [response, streamingComplete, items, docUrls]);
+  }, [response, streamingComplete, items, docUrls, citationsByDoc]);
 
   const containerClassName = useMemo(
     () => `font-sans ${className || ''}`,
