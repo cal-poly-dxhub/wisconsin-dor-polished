@@ -37,6 +37,17 @@ type TraceStep = {
   devJson?: string;
 };
 
+const THINKING_VERBS = [
+  'Reviewing sources...',
+  'Cross-referencing...',
+  'Analyzing provisions...',
+  'Consulting guidelines...',
+  'Evaluating relevance...',
+  'Synthesizing findings...',
+  'Checking authority...',
+  'Weighing evidence...',
+];
+
 const TOOL_VERBS: Record<string, string> = {
   vector_search: 'Searching knowledge graph for',
   search_document: 'Searching',
@@ -548,7 +559,8 @@ export function ChatMessage({
     if (isThinking && built.length > 0) {
       const last = built[built.length - 1];
       if (last.done && !last.error) {
-        built.push({ label: 'Thinking...', done: false });
+        const verb = THINKING_VERBS[built.length % THINKING_VERBS.length];
+        built.push({ label: verb, done: false });
       }
     }
     return built;
