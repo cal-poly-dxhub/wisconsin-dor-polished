@@ -150,6 +150,13 @@ export function useWebSocketChat(
                 devPayload: message.devPayload,
               });
               break;
+
+            case 'choices':
+              useChatStore.getState().setQueryChoices(
+                message.queryId,
+                message.content.choices
+              );
+              break;
           }
         }
       } catch (error) {

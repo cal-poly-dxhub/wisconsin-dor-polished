@@ -99,6 +99,16 @@ export const AgentEventSchema = z.object({
   devPayload: z.record(z.string(), z.unknown()).default({}),
 });
 
+export const ChoicesContentSchema = z.object({
+  choices: z.array(z.string()),
+});
+
+export const ChoicesMessageSchema = z.object({
+  responseType: z.literal('choices'),
+  queryId: z.string(),
+  content: ChoicesContentSchema,
+});
+
 export const MessageUnionSchema = z.discriminatedUnion('responseType', [
   DocumentsMessageSchema,
   FAQMessageSchema,
@@ -106,10 +116,11 @@ export const MessageUnionSchema = z.discriminatedUnion('responseType', [
   FragmentMessageSchema,
   AnswerEventTypeSchema,
   AgentEventSchema,
+  ChoicesMessageSchema,
 ]);
 
 export const WebSocketMessageSchema = z.object({
-  streamId: z.enum(['answer-event', 'answer', 'resources', 'error', 'agent-trace']),
+  streamId: z.enum(['answer-event', 'answer', 'resources', 'error', 'agent-trace', 'choices']),
   body: MessageUnionSchema,
 });
 
@@ -126,6 +137,8 @@ export type FragmentContent = z.infer<typeof FragmentContentSchema>;
 export type FragmentMessage = z.infer<typeof FragmentMessageSchema>;
 export type AgentEventKind = z.infer<typeof AgentEventKindSchema>;
 export type AgentEvent = z.infer<typeof AgentEventSchema>;
+export type ChoicesContent = z.infer<typeof ChoicesContentSchema>;
+export type ChoicesMessage = z.infer<typeof ChoicesMessageSchema>;
 export type MessageUnion = z.infer<typeof MessageUnionSchema>;
 export type WebSocketMessage = z.infer<typeof WebSocketMessageSchema>;
 

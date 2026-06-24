@@ -34,6 +34,7 @@ export interface Query {
     content?: string;
   };
   resources?: ResourceItem[];
+  choices?: string[];
 
   error?: QueryError;
 
@@ -147,6 +148,7 @@ export interface ChatStore {
   appendQueryResponse: (queryId: string, fragment: string) => void;
   updateQueryResources: (queryId: string, resources: ResourceItem[]) => void;
 
+  setQueryChoices: (queryId: string, choices: string[]) => void;
   setQueryError: (queryId: string, error: QueryError) => void;
   clearQueryError: (queryId: string) => void;
   incrementQueryRetry: (queryId: string) => void;

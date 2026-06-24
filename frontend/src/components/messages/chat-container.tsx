@@ -8,10 +8,11 @@ import { ChevronDown } from 'lucide-react';
 
 interface ChatContainerProps {
   variant?: 'default' | 'borderless' | 'narrow' | 'wide';
+  onSendMessage?: (message: string) => void;
 }
 
 export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
-  ({ variant = 'borderless' }, ref) => {
+  ({ variant = 'borderless', onSendMessage }, ref) => {
     const queries = useChatStore(state => state.queries);
     const queryOrder = useChatStore(state => state.queryOrder);
     const currentQueryId = useChatStore(state => state.currentQueryId);
@@ -155,6 +156,7 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
                 streamingComplete={query.status === 'completed'}
                 selected={query.queryId === selectedMessageId}
                 items={query.resources || []}
+                onSendMessage={onSendMessage}
               />
             ))}
           </div>

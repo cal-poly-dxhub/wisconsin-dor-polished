@@ -17,6 +17,7 @@ from websocket_utils.errors import (
 from websocket_utils.models import (
     AgentEventMessage,
     AnswerEventType,
+    ChoicesMessage,
     DocumentsMessage,
     ErrorMessage,
     FAQMessage,
@@ -82,6 +83,11 @@ class WebSocketServer:
             case AgentEventMessage():
                 message = {
                     "streamId": "agent-trace",
+                    "body": body.model_dump(by_alias=True),
+                }
+            case ChoicesMessage():
+                message = {
+                    "streamId": "choices",
                     "body": body.model_dump(by_alias=True),
                 }
             case _:

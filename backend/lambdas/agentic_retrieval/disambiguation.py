@@ -25,21 +25,22 @@ CLASSIFIER_MODEL_ID = os.environ.get(
     "DISAMBIGUATION_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 )
 
+PROPERTY_TYPE_CHOICES = [
+    "Residential",
+    "Commercial",
+    "Manufacturing",
+    "Agricultural",
+    "Undeveloped",
+    "Agricultural Forest",
+    "Forest Land",
+    "Farm Improvements (other)",
+    "Not certain — general information",
+]
+
 CLARIFICATION_QUESTION = (
     "To give you the most relevant answer, I need to know what category "
-    "best describes your type of property:\n\n"
-    "1. **Residential**\n"
-    "2. **Commercial**\n"
-    "3. **Manufacturing**\n"
-    "4. **Agricultural**\n"
-    "5. **Undeveloped**\n"
-    "6. **Agricultural Forest**\n"
-    "7. **Forest Land**\n"
-    "8. **Farm Improvements (other)**\n"
-    "9. **Not certain** — I am seeking general Wisconsin property "
-    "assessment information\n\n"
-    "Please select the option that best fits your situation, or describe "
-    "your property type."
+    "best describes your type of property. "
+    "Please select an option below, or describe your property type."
 )
 
 _CLASSIFIER_PROMPT = """\

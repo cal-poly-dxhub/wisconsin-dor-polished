@@ -55,6 +55,8 @@ from websocket_utils.batching import batch_documents_for_ws
 from websocket_utils.models import (
     FAQ,
     AnswerEventType,
+    ChoicesContent,
+    ChoicesMessage,
     FAQContent,
     FAQMessage,
     FragmentContent,
@@ -1046,7 +1048,7 @@ def handler(event: dict, context) -> dict[str, Any]:
         # Pre-loop disambiguation: if enabled, check whether the query is
         # a generic property assessment question that needs classification.
         if ENABLE_DISAMBIGUATION:
-            from disambiguation import CLARIFICATION_QUESTION, should_disambiguate
+            from disambiguation import CLARIFICATION_QUESTION, PROPERTY_TYPE_CHOICES, should_disambiguate
 
             needs_disambiguation = should_disambiguate(user_query.query, chat_history)
             _emit(
@@ -1081,6 +1083,12 @@ def handler(event: dict, context) -> dict[str, Any]:
                         faq_resource=None,
                         answer_already_streamed=False,
                     )
+                    choices_msg = ChoicesMessage(
+                        query_id=user_query.query_id,
+                        content=ChoicesContent(choices=PROPERTY_TYPE_CHOICES),
+                    )
+                    data = json.dumps({"streamId": "choices", "body": choices_msg.model_dump(by_alias=True)})
+                    ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
                 save_chat_history(
                     session_id,
                     user_query.query_id,

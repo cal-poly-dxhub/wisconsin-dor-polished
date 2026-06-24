@@ -115,6 +115,13 @@ export const useChatStore = create<ChatStore>()(
         }
       }),
 
+    setQueryChoices: (queryId: string, choices: string[]) =>
+      set(state => {
+        if (state.queries[queryId]) {
+          state.queries[queryId].choices = choices;
+        }
+      }),
+
     setQueryError: (queryId: string, error: QueryError) =>
       set(state => {
         if (state.queries[queryId]) {

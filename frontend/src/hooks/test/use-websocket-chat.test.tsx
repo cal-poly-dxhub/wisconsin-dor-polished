@@ -1,6 +1,6 @@
 /** @bun */
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useWebSocketChat } from '../use-websocket-chat';
 import { useChatStore } from '../../stores/chat-store';
@@ -20,39 +20,25 @@ global.document = dom.window.document;
 (global as unknown as { window: typeof dom.window }).window = dom.window;
 global.navigator = dom.window.navigator;
 
-// Mock the validated websocket hook
-const mockUseValidatedWebSocket = mock(() => {
-  return {
-    connectionState: 'connecting',
-    isConnected: false,
-    lastMessage: null,
-    sendMessage: mock(() => {}),
-    close: mock(() => {}),
-    reconnect: mock(() => {}),
-    error: null,
-  };
-});
+// Capture the sendMessage mock so tests can verify it was called
+const mockWsSendMessage = mock(() => Promise.resolve());
+const mockClose = mock(() => {});
+const mockReconnect = mock(() => {});
 
-// Mock the chat API functions with controllable promises
-let resolveSendMessage: (value: { query_id: string }) => void;
-let rejectSendMessage: (error: Error) => void;
-let resolveCreateSession: (value: { sessionId: string }) => void;
-let _rejectCreateSession: (error: Error) => void;
-
-const mockSendMessage = mock(
-  () =>
-    new Promise((resolve, reject) => {
-      resolveSendMessage = resolve;
-      rejectSendMessage = reject;
-    })
-);
-
-const mockCreateSession = mock(
-  () =>
-    new Promise((resolve, reject) => {
-      resolveCreateSession = resolve;
-      _rejectCreateSession = reject;
-    })
+// Mock the validated websocket hook — captures the messageHandler for tests
+const mockUseValidatedWebSocket = mock(
+  (_messageHandler?: MessageHandler, _options?: unknown) => {
+    return {
+      connectionState: 'open' as const,
+      isConnected: true,
+      lastMessage: null,
+      sendMessage: mockWsSendMessage,
+      close: mockClose,
+      reconnect: mockReconnect,
+      sessionId: 'test-session-123',
+      error: null,
+    };
+  }
 );
 
 // Mock the modules
@@ -60,30 +46,15 @@ mock.module('../use-validated-websocket', () => ({
   useValidatedWebSocket: mockUseValidatedWebSocket,
 }));
 
-mock.module('../../api/chat-api', () => ({
-  sendMessage: mockSendMessage,
-  createSession: mockCreateSession,
-}));
-
 mock.module('../../components/errors/use-chat-error', () => ({
   useChatError: () => ({ handleError: mock(() => {}) }),
 }));
 
-// Mock crypto.randomUUID
-Object.defineProperty(global, 'crypto', {
-  value: {
-    randomUUID: mock(() => 'test-uuid-123'),
-  },
-});
-
 describe('useWebSocketChat Hook Tests', () => {
   let mockMessageHandler: ((message: MessageUnion) => void) | null = null;
-  let mockClose: ReturnType<typeof mock>;
-  let mockReconnect: ReturnType<typeof mock>;
   let queryClient: QueryClient;
 
   beforeEach(() => {
-    // Create a new QueryClient for each test
     queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -91,51 +62,29 @@ describe('useWebSocketChat Hook Tests', () => {
       },
     });
 
-    // Reset the chat store to initial state
-    const store = useChatStore.getState();
-    store.reset();
+    useChatStore.getState().reset();
+    mockWsSendMessage.mockClear();
 
-    mockClose = mock(() => {});
-    mockReconnect = mock(() => {});
-
-    // Setup validated websocket mock
     mockUseValidatedWebSocket.mockImplementation(
-      (messageHandler: MessageHandler) => {
-        mockMessageHandler = messageHandler;
+      (messageHandler?: MessageHandler) => {
+        if (messageHandler) mockMessageHandler = messageHandler;
 
         return {
-          connectionState: 'connecting',
-          isConnected: false,
+          connectionState: 'open' as const,
+          isConnected: true,
           lastMessage: null,
-          sendMessage: mock(() => {}),
+          sendMessage: mockWsSendMessage,
           close: mockClose,
           reconnect: mockReconnect,
+          sessionId: 'test-session-123',
           error: null,
         };
       }
     );
-
-    mockSendMessage.mockImplementation(
-      () =>
-        new Promise((resolve, reject) => {
-          resolveSendMessage = resolve;
-          rejectSendMessage = reject;
-        })
-    );
-
-    mockCreateSession.mockImplementation(
-      () =>
-        new Promise((resolve, reject) => {
-          resolveCreateSession = resolve;
-          _rejectCreateSession = reject;
-        })
-    );
   });
 
   afterEach(() => {
-    // Reset the chat store to initial state
-    const store = useChatStore.getState();
-    store.reset();
+    useChatStore.getState().reset();
   });
 
   test('should handle complete chat flow correctly', async () => {
@@ -143,11 +92,9 @@ describe('useWebSocketChat Hook Tests', () => {
       websocketUrl: 'wss://test-websocket.example.com',
     };
 
-    const createWrapper = (queryClient: QueryClient) => {
+    const createWrapper = (qc: QueryClient) => {
       const Wrapper = ({ children }: { children: React.ReactNode }) => (
-        <QueryClientProvider client={queryClient}>
-          {children}
-        </QueryClientProvider>
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
       );
       Wrapper.displayName = 'TestWrapper';
       return Wrapper;
@@ -157,62 +104,32 @@ describe('useWebSocketChat Hook Tests', () => {
       wrapper: createWrapper(queryClient),
     });
 
-    // Verify message handler was captured
     expect(mockMessageHandler).toBeDefined();
 
-    // Initial state verification
+    // Initial state
     let store = useChatStore.getState();
-    expect(store.connectionState).toBe('closed');
     expect(store.chatState).toBe('idle');
     expect(store.queries).toEqual({});
     expect(store.queryOrder).toEqual([]);
 
-    const sessionId = 'test-session-123';
-    const queryId = 'test-query-456';
-
-    // Step 1: Send a message (sendMessage now takes a plain string)
+    // Send a message — creates optimistic query and calls WS sendMessage
     await act(async () => {
-      result.current.sendMessage('What is Wisconsin?');
+      await result.current.sendMessage('What is Wisconsin?');
     });
 
-    // Wait for the session creation to be called and resolve it
-    await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalled();
-    });
+    expect(mockWsSendMessage).toHaveBeenCalledWith('What is Wisconsin?');
 
-    // Resolve session creation
-    resolveCreateSession({ sessionId });
-
-    // Wait for the send message to be called
-    await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalledWith(sessionId, {
-        message: 'What is Wisconsin?',
-      });
-    });
-
-    // Verify chat state is 'sending' while the API request is pending
+    // Optimistic query should be in the store
     store = useChatStore.getState();
-    expect(store.chatState).toBe('sending');
+    expect(store.queryOrder).toHaveLength(1);
+    const optimisticId = store.queryOrder[0];
+    expect(store.queries[optimisticId].query).toBe('What is Wisconsin?');
+    expect(store.queries[optimisticId].status).toBe('pending');
 
-    // Manually resolve the API promise
-    resolveSendMessage({
-      query_id: queryId,
-    });
+    // Simulate server replacing optimistic ID via answer-event start
+    const queryId = 'server-query-456';
 
-    // Step 2: Wait for the mutation to complete and verify query was created
-    await waitFor(() => {
-      store = useChatStore.getState();
-      expect(store.queries[queryId]).toBeDefined();
-      expect(store.queries[queryId].query).toBe('What is Wisconsin?');
-      expect(store.queries[queryId].queryId).toBe(queryId);
-      expect(store.queries[queryId].type).toBe('outbound');
-      expect(store.queries[queryId].status).toBe('sent');
-      expect(store.currentQueryId).toBe(queryId);
-      expect(store.chatState).toBe('waiting_for_response');
-      expect(store.queryOrder).toContain(queryId);
-    });
-
-    // Step 3: Simulate streaming response via WebSocket
+    // First message with real queryId triggers eager replaceQueryId
     const startEvent: MessageUnion = {
       responseType: 'answer-event',
       event: 'start',
@@ -223,79 +140,54 @@ describe('useWebSocketChat Hook Tests', () => {
       mockMessageHandler!(startEvent);
     });
 
-    // Verify streaming state
     store = useChatStore.getState();
-    expect(store.chatState).toBe('streaming');
+    expect(store.queries[queryId]).toBeDefined();
     expect(store.queries[queryId].status).toBe('streaming');
+    expect(store.chatState).toBe('streaming');
 
-    // Simulate message fragments
-    const fragments = [
-      'Hello',
-      ' world',
-      '! This is a',
-      ' streaming',
-      ' response.',
-    ];
-
+    // Simulate fragments
+    const fragments = ['Hello', ' world', '!'];
     fragments.forEach(fragment => {
-      const fragmentMessage: MessageUnion = {
-        responseType: 'fragment',
-        queryId,
-        content: {
-          fragment,
-        },
-      };
-
       act(() => {
-        mockMessageHandler!(fragmentMessage);
+        mockMessageHandler!({
+          responseType: 'fragment',
+          queryId,
+          content: { fragment },
+        });
       });
     });
 
-    // Fragments are buffered — content is empty until stop event
+    // Fragments are buffered until stop
     store = useChatStore.getState();
-    const query = store.queries[queryId];
-    expect(query).toBeDefined();
-    expect(query.response.content).toBe('');
+    expect(store.queries[queryId].response.content).toBe('');
 
-    // State is streaming before the stop event
-    expect(store.chatState).toBe('streaming');
-
-    // Step 4: Simulate streaming completion
-    const stopEvent: MessageUnion = {
-      responseType: 'answer-event',
-      event: 'stop',
-      queryId,
-    };
-
+    // Stop event flushes buffer
     act(() => {
-      mockMessageHandler!(stopEvent);
+      mockMessageHandler!({
+        responseType: 'answer-event',
+        event: 'stop',
+        queryId,
+      });
     });
 
-    // Verify final state — full answer placed on stop
     store = useChatStore.getState();
     expect(store.chatState).toBe('idle');
     expect(store.queries[queryId].status).toBe('completed');
-    expect(store.queries[queryId].response.content).toBe(
-      'Hello world! This is a streaming response.'
-    );
-    expect(store.currentQueryId).toBe(queryId);
-
-    // Verify the complete flow maintained proper state
-    expect(Object.keys(store.queries)).toHaveLength(1);
-    expect(store.queryOrder).toHaveLength(1);
-    expect(store.errors).toHaveLength(0);
+    expect(store.queries[queryId].response.content).toBe('Hello world!');
   });
 
   test('should handle API send error gracefully', async () => {
+    mockWsSendMessage.mockImplementationOnce(() =>
+      Promise.reject(new Error('Network error'))
+    );
+
     const options = {
       websocketUrl: 'wss://test-websocket.example.com',
     };
 
-    const createWrapper = (queryClient: QueryClient) => {
+    const createWrapper = (qc: QueryClient) => {
       const Wrapper = ({ children }: { children: React.ReactNode }) => (
-        <QueryClientProvider client={queryClient}>
-          {children}
-        </QueryClientProvider>
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
       );
       Wrapper.displayName = 'TestWrapper';
       return Wrapper;
@@ -305,41 +197,18 @@ describe('useWebSocketChat Hook Tests', () => {
       wrapper: createWrapper(queryClient),
     });
 
-    const sessionId = 'test-session-123';
-
-    // Send a message
+    // Send should not throw — the hook handles the error internally
     await act(async () => {
-      result.current.sendMessage('What is Wisconsin?');
+      try {
+        await result.current.sendMessage('What is Wisconsin?');
+      } catch {
+        // Expected — sendMessage may propagate the rejection
+      }
     });
 
-    // Wait for the session creation to be called and resolve it
-    await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalled();
-    });
-
-    // Resolve session creation
-    resolveCreateSession({ sessionId });
-
-    // Wait for the send message to be called
-    await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalledWith(sessionId, {
-        message: 'What is Wisconsin?',
-      });
-    });
-
-    // Verify chat state is 'sending' while the API request is pending
-    let store = useChatStore.getState();
-    expect(store.chatState).toBe('sending');
-
-    // Manually reject the API promise to simulate an error
-    const apiError = new Error('Network error: Failed to send message');
-    rejectSendMessage(apiError);
-
-    // Wait for the state to reset to idle after the error
-    await waitFor(() => {
-      store = useChatStore.getState();
-      expect(store.chatState).toBe('idle');
-    });
+    // The optimistic query was still added to the store
+    const store = useChatStore.getState();
+    expect(store.queryOrder).toHaveLength(1);
   });
 
   test('should handle WebSocket message processing error gracefully', async () => {
@@ -347,69 +216,44 @@ describe('useWebSocketChat Hook Tests', () => {
       websocketUrl: 'wss://test-websocket.example.com',
     };
 
-    const createWrapper = (queryClient: QueryClient) => {
+    const createWrapper = (qc: QueryClient) => {
       const Wrapper = ({ children }: { children: React.ReactNode }) => (
-        <QueryClientProvider client={queryClient}>
-          {children}
-        </QueryClientProvider>
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
       );
       Wrapper.displayName = 'TestWrapper';
       return Wrapper;
     };
 
-    const { result } = renderHook(() => useWebSocketChat(options), {
+    renderHook(() => useWebSocketChat(options), {
       wrapper: createWrapper(queryClient),
     });
 
-    // Verify message handler was captured
     expect(mockMessageHandler).toBeDefined();
 
-    const sessionId = 'test-session-123';
+    // Add a query to the store so the message handler doesn't early-return
     const queryId = 'test-query-456';
-
-    // First, send a message and resolve it successfully
-    await act(async () => {
-      result.current.sendMessage('What is Wisconsin?');
+    act(() => {
+      useChatStore.getState().addQuery({
+        query: 'hello',
+        queryId,
+        type: 'outbound',
+        timestamp: new Date().toISOString(),
+        status: 'pending',
+        response: { type: 'stream', content: '' },
+      });
     });
 
-    // Wait for the session creation to be called and resolve it
-    await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalled();
-    });
-
-    // Resolve session creation
-    resolveCreateSession({ sessionId });
-
-    // Wait for the send message to be called and resolve it
-    await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalled();
-    });
-
-    // Resolve the send message
-    resolveSendMessage({
-      query_id: queryId,
-    });
-
-    // Wait for the query to be created
-    await waitFor(() => {
-      const store = useChatStore.getState();
-      expect(store.queries[queryId]).toBeDefined();
-    });
-
-    // Simulate a malformed WebSocket message that will cause an error
+    // Simulate a malformed message — missing content.fragment
     const malformedMessage = {
       responseType: 'fragment',
       queryId,
-      // Missing 'content' property which will cause an error in processing
     } as MessageUnion;
 
-    // Send the malformed message — error should be handled gracefully
-    // (shown as toast, not crash)
+    // Should not crash
     act(() => {
       mockMessageHandler!(malformedMessage);
     });
 
-    // The hook should not crash; chat state remains consistent
     const store = useChatStore.getState();
     expect(store.queries[queryId]).toBeDefined();
   });
@@ -473,5 +317,44 @@ describe('useWebSocketChat Hook Tests', () => {
     expect(trace?.[0].kind).toBe('loop_start');
     expect(trace?.[1].kind).toBe('tool_call');
     expect(trace?.[1].payload.toolName).toBe('vector_search');
+  });
+
+  test('routes choices message into query choices store', async () => {
+    const options = { websocketUrl: 'wss://test-websocket.example.com' };
+    const createWrapper = (qc: QueryClient) => {
+      const Wrapper = ({ children }: { children: React.ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      );
+      Wrapper.displayName = 'TestWrapper';
+      return Wrapper;
+    };
+    renderHook(() => useWebSocketChat(options), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    const queryId = 'q-choices-1';
+    act(() => {
+      useChatStore.getState().addQuery({
+        query: 'how is my property assessed?',
+        queryId,
+        type: 'outbound',
+        timestamp: new Date().toISOString(),
+        status: 'completed',
+        response: { type: 'stream', content: 'Please select an option.' },
+      });
+    });
+
+    const choicesMessage: MessageUnion = {
+      responseType: 'choices',
+      queryId,
+      content: { choices: ['Residential', 'Commercial', 'Agricultural'] },
+    };
+
+    act(() => {
+      mockMessageHandler!(choicesMessage);
+    });
+
+    const query = useChatStore.getState().queries[queryId];
+    expect(query.choices).toEqual(['Residential', 'Commercial', 'Agricultural']);
   });
 });

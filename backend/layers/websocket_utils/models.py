@@ -120,3 +120,13 @@ class AgentEventMessage(WebSocketMessage):
     timestamp: int  # epoch ms at emission
     payload: dict[str, Any] = Field(default_factory=dict)
     dev_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChoicesContent(WebSocketMessage):
+    choices: list[str]
+
+
+class ChoicesMessage(WebSocketMessage):
+    response_type: Literal["choices"] = "choices"
+    query_id: str
+    content: ChoicesContent

@@ -70,7 +70,7 @@ function AppShell() {
             ) : (
               <>
                 <div className="min-h-0 flex-1">
-                  <ChatContainer />
+                  <ChatContainer onSendMessage={sendMessage} />
                 </div>
                 <div className="pointer-events-none absolute inset-x-0 bottom-0">
                   <ChatInput
