@@ -72,22 +72,21 @@ class TestProcessConverseStream:
         assert content[0] == {"text": "Let me search."}
         assert content[1]["toolUse"]["name"] == "vector_search"
 
-    def test_cite_documents_tool_input_accumulated(self):
-        """cite_documents tool input is fully accumulated and parsed."""
-        answer_text = "Property tax assessment requires compliance with Wis. Stat. 70.32."
-        tool_input = {"response": answer_text, "cited_doc_ids": ["WIS-STAT-70.32"]}
+    def test_prepare_answer_tool_input_accumulated(self):
+        """prepare_answer tool input is fully accumulated and parsed."""
+        tool_input = {"cited_doc_ids": ["WIS-STAT-70.32"], "answer_plan": "Explain assessment requirements"}
         events = _make_stream_events([{
             "type": "toolUse",
             "id": "t1",
-            "name": "cite_documents",
+            "name": "prepare_answer",
             "input": tool_input,
         }], stop_reason="tool_use")
 
         result = process_converse_stream({"stream": iter(events)})
 
         tool_block = result.assistant_message["content"][0]["toolUse"]
-        assert tool_block["input"]["response"] == answer_text
         assert tool_block["input"]["cited_doc_ids"] == ["WIS-STAT-70.32"]
+        assert tool_block["input"]["answer_plan"] == "Explain assessment requirements"
 
     def test_usage_extracted(self):
         events = _make_stream_events(

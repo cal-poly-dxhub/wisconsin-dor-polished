@@ -129,12 +129,13 @@ def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
             "question_chars": len(result.get("question", "")),
         }
 
-    if tool_name == "cite_documents":
+    if tool_name == "prepare_answer":
         return {
             "tool_name": tool_name,
             "status": "terminal",
             "cited_doc_count": len(result.get("cited_doc_ids", [])),
             "cited_doc_ids": result.get("cited_doc_ids", [])[:20],
+            "has_plan": bool(result.get("answer_plan")),
         }
 
     return {"tool_name": tool_name, "status": "ok", "result_keys": sorted(result.keys())}
@@ -190,7 +191,7 @@ def build_tool_call_summary(tool_name: str, tool_input: dict, neptune_client=Non
     if tool_name == "clarify":
         question = tool_input.get("question", "")
         return f'"{question[:60]}"' if question else ""
-    if tool_name == "cite_documents":
+    if tool_name == "prepare_answer":
         cited = tool_input.get("cited_doc_ids", []) or []
         n = len(cited)
         return f"with {n} cited {'source' if n == 1 else 'sources'}"
@@ -386,13 +387,13 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         status = "terminal"
         metadata = {"questionChars": len(question)}
 
-    elif tool_name == "cite_documents":
+    elif tool_name == "prepare_answer":
         cited = result.get("cited_doc_ids", []) or []
         doc_ids = list(cited)[:10]
         n = len(cited)
-        summary_text = f"Citing {n} {'source' if n == 1 else 'sources'}"
+        summary_text = f"Preparing answer with {n} {'source' if n == 1 else 'sources'}"
         status = "terminal"
-        metadata = {"citedDocCount": len(cited)}
+        metadata = {"citedDocCount": len(cited), "hasPlan": bool(result.get("answer_plan"))}
 
     else:
         summary_text = f"{tool_name} complete"

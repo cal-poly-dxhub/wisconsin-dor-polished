@@ -27,8 +27,8 @@ class TestBuildToolCallSummary:
     def test_get_document(self):
         assert build_tool_call_summary("get_document", {"doc_id": "doc-1"}) == "doc-1"
 
-    def test_cite_documents(self):
-        assert build_tool_call_summary("cite_documents", {"cited_doc_ids": ["a", "b", "c"]}, None) == "with 3 cited sources"
+    def test_prepare_answer(self):
+        assert build_tool_call_summary("prepare_answer", {"cited_doc_ids": ["a", "b", "c"]}, None) == "with 3 cited sources"
 
     def test_unknown_tool(self):
         assert build_tool_call_summary("mystery_tool", {"foo": "bar"}) == ""
@@ -38,8 +38,8 @@ class TestBuildToolCallSummary:
         assert build_tool_call_summary("faq_search", {"query": ""}, None) == ""
         assert build_tool_call_summary("get_neighbors", {"doc_id": ""}, None) == ""
         assert build_tool_call_summary("get_authority_chain", {}, None) == ""
-        assert build_tool_call_summary("cite_documents", {}, None) == "with 0 cited sources"
-        assert build_tool_call_summary("cite_documents", {"cited_doc_ids": None}, None) == "with 0 cited sources"
+        assert build_tool_call_summary("prepare_answer", {}, None) == "with 0 cited sources"
+        assert build_tool_call_summary("prepare_answer", {"cited_doc_ids": None}, None) == "with 0 cited sources"
 
 
 class TestBuildToolResultSummary:
@@ -85,8 +85,8 @@ class TestBuildToolResultSummary:
         assert s["status"] == "error"
         assert "not found" in s["summary_text"]
 
-    def test_cite_documents_terminal(self):
-        s = build_tool_result_summary("cite_documents", {"cited_doc_ids": ["a", "b"]}, self._mock_neptune())
+    def test_prepare_answer_terminal(self):
+        s = build_tool_result_summary("prepare_answer", {"cited_doc_ids": ["a", "b"], "answer_plan": "plan"}, self._mock_neptune())
         assert s["status"] == "terminal"
         assert "2 sources" in s["summary_text"]
         assert s["doc_ids"] == ["a", "b"]

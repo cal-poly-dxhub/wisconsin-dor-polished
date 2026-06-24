@@ -1,13 +1,18 @@
 """
-Agentic Retrieval Lambda: replaces both classifier and retrieval Lambdas
-for the GraphRAG path.
+Agentic Retrieval Lambda: two-phase architecture for the GraphRAG path.
 
-Runs Claude's agentic loop with Neptune-backed tools:
+Phase A (Research Loop):
 1. Receives a UserQuery (query, query_id, session_id)
 2. Claude decides which tools to call (vector_search, get_neighbors, etc.)
 3. Tools execute against Neptune Analytics
-4. Loop continues until Claude writes an answer (text block) + calls cite_documents
-5. Returns a RetrieveResult with documents + response for streaming
+4. Loop continues until Claude calls prepare_answer(cited_doc_ids, answer_plan)
+5. Returns cited docs and research context (no answer text yet)
+
+Phase B (Answer Stream):
+1. Build resource cards from cited_doc_ids (presigned URLs, opinion backfill)
+2. Send resource cards over WebSocket
+3. Call converse_stream() with NO tools — just research context + focused prompt
+4. Stream answer text token-by-token over WebSocket
 """
 
 import asyncio
@@ -17,6 +22,7 @@ import logging
 import os
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import boto3
@@ -155,6 +161,26 @@ LOG_MAX_TEXT_CHARS = int(os.environ.get("LOG_MAX_TEXT_CHARS", "500"))
 EMIT_AGENT_TRACE = os.environ.get("EMIT_AGENT_TRACE", "true").lower() == "true"
 
 
+@dataclass
+class AgentLoopResult:
+    """Result from Phase A (research loop)."""
+    cited_doc_ids: list[str]
+    all_chunks: list[dict]
+    all_doc_ids: set[str]
+    discovery: dict[str, str]
+    fetched_opinions: dict[str, dict]
+    faq_resource: FAQResource | None
+    answer_plan: str
+    trace_log: list[dict]
+    connection_alive: bool
+    # Fallback answer for edge cases (turn budget exhausted, clarify tool)
+    fallback_answer: str | None = None
+    # High-confidence FAQ entries (from seeded faq_search)
+    high_confidence_faq: FAQResource | None = None
+    # Raw FAQ entries for cited-faq resolution
+    faq_entries: list[dict] = field(default_factory=list)
+
+
 # --- Convenience wrappers that bind module-level config to extracted functions ---
 
 def _log(event: str, level: int = logging.INFO, **fields: Any) -> None:
@@ -195,16 +221,18 @@ def run_agentic_loop(
     request_id: str = "",
     ws_server=None,
     trace_seq=None,
-) -> tuple[str, list[str], list[RAGDocument], FAQResource | None, list[dict], bool, bool]:
-    """Run Claude's agentic loop against Neptune.
+) -> AgentLoopResult:
+    """Run Claude's agentic research loop (Phase A) against Neptune.
 
     Turn 0 is hardcoded: run `faq_search` with the verbatim user query. The
     result is always seeded into the conversation and Claude is handed off to
     graph work.
 
-    Returns:
-        (answer_text, cited_doc_ids, rag_documents, faq_resource, trace_log,
-         answer_streamed, connection_alive)
+    The loop exits when the model calls `prepare_answer` (declaring cited docs
+    and an answer plan). The actual answer text is NOT generated here — that
+    happens in Phase B (streaming).
+
+    Returns an AgentLoopResult dataclass.
     """
     chat_history = chat_history or []
     if trace_seq is None:
@@ -214,7 +242,6 @@ def run_agentic_loop(
     discovery: dict[str, str] = {}
     fetched_opinions: dict[str, dict] = {}
     trace_log: list[dict] = []
-    answer_was_streamed = False  # always False — paced replay happens in finalize
     ws_connection_alive = [True]
 
     def _record_trace(kind: str, turn: int | None = None, **data) -> None:
@@ -464,8 +491,8 @@ def run_agentic_loop(
 
         if turn == 7:
             warning = (
-                "You are running low on turns. Write your best answer NOW from the "
-                "context gathered so far, then call cite_documents."
+                "You are running low on turns. Call prepare_answer NOW with the "
+                "documents gathered so far — list cited_doc_ids and a brief answer_plan."
             )
             messages.append({
                 "role": "user",
@@ -556,17 +583,63 @@ def run_agentic_loop(
                 block["text"] for block in assistant_message["content"]
                 if "text" in block
             ]
-            answer = "\n".join(text_blocks)
-            if stop_reason == "max_tokens" and answer:
-                answer = answer + "\n\n_(Response may be incomplete)_"
+            fallback_answer = "\n".join(text_blocks)
+            if stop_reason == "max_tokens" and fallback_answer:
+                fallback_answer = fallback_answer + "\n\n_(Response may be incomplete)_"
             _log(
                 "agent_final_text_without_answer_tool",
                 **trace_context,
                 turn=turn_number,
                 stop_reason=stop_reason,
-                answer_chars=len(answer),
+                answer_chars=len(fallback_answer),
             )
-            break
+            # Model responded with text instead of calling prepare_answer.
+            # Treat the text as a fallback answer.
+            _log(
+                "agent_loop_complete",
+                **trace_context,
+                terminal_reason="assistant_text_fallback",
+                elapsed_ms=round((time.perf_counter() - loop_started) * 1000),
+                answer_chars=len(fallback_answer),
+                discovered_doc_count=len(all_doc_ids),
+                discovery=discovery_summary(discovery),
+            )
+            _record_trace(
+                "loop_complete",
+                terminalReason="assistant_text_fallback",
+                turnsUsed=turn_number,
+                elapsedMs=round((time.perf_counter() - loop_started) * 1000),
+                citedDocCount=len(all_doc_ids),
+                citedDocIds=list(all_doc_ids)[:20],
+                discovery=discovery_summary(discovery),
+            )
+            _emit_safe(
+                ws_server,
+                trace_seq,
+                query_id=query_id,
+                kind="loop_complete",
+                payload={
+                    "terminalReason": "assistant_text_fallback",
+                    "turnsUsed": turn_number,
+                    "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
+                    "citedDocCount": len(all_doc_ids),
+                    "discoveryCounts": discovery_summary(discovery),
+                },
+            )
+            return AgentLoopResult(
+                cited_doc_ids=list(all_doc_ids),
+                all_chunks=all_chunks,
+                all_doc_ids=all_doc_ids,
+                discovery=discovery,
+                fetched_opinions=fetched_opinions,
+                faq_resource=None,
+                answer_plan="",
+                trace_log=trace_log,
+                connection_alive=ws_connection_alive[0],
+                fallback_answer=fallback_answer,
+                high_confidence_faq=high_confidence_faq,
+                faq_entries=faq_entries,
+            )
 
         tool_results = []
         for tool_use in tool_uses:
@@ -697,7 +770,7 @@ def run_agentic_loop(
                 discovery=discovery_summary(discovery),
                 tool_result_summary=tool_result_summary["raw"],
             )
-            if tool_name not in ("cite_documents", "clarify"):
+            if tool_name not in ("prepare_answer", "clarify"):
                 result_metadata = dict(tool_result_summary["metadata"])
                 if tool_latency_ms is not None:
                     result_metadata["latencyMs"] = tool_latency_ms
@@ -750,89 +823,46 @@ def run_agentic_loop(
                         "discoveryCounts": discovery_summary(discovery),
                     },
                 )
-                return answer, [], [], None, trace_log, False, ws_connection_alive[0]
+                return AgentLoopResult(
+                    cited_doc_ids=[],
+                    all_chunks=all_chunks,
+                    all_doc_ids=all_doc_ids,
+                    discovery=discovery,
+                    fetched_opinions=fetched_opinions,
+                    faq_resource=None,
+                    answer_plan="",
+                    trace_log=trace_log,
+                    connection_alive=ws_connection_alive[0],
+                    fallback_answer=answer,
+                    high_confidence_faq=high_confidence_faq,
+                    faq_entries=faq_entries,
+                )
 
-            if tool_name == "cite_documents":
-                text_blocks = [
-                    block["text"] for block in assistant_message["content"]
-                    if "text" in block
-                ]
-                text_answer = "\n".join(text_blocks)
-                tool_answer = result.get("response", "")
-                answer = tool_answer if len(tool_answer) > len(text_answer) else text_answer
-                cited = set(result.get("cited_doc_ids", []))
-                cited_chunks = [
-                    c for c in all_chunks if c.get("doc_id") in cited
-                ]
-                cited_discovery = {
-                    k: v for k, v in discovery.items() if k in cited
-                }
-                for cid in cited:
-                    cited_discovery.setdefault(cid, "fetched")
-                cited_opinions = {
-                    k: v for k, v in fetched_opinions.items() if k in cited
-                }
-                _OPINION_BACKFILL_CAP = 3
-                unfetched_stubs = [
-                    cid for cid in cited
-                    if is_case_law_stub(cid) and cid not in cited_opinions
-                ]
-                for stub_id in unfetched_stubs[:_OPINION_BACKFILL_CAP]:
-                    try:
-                        doc_info = neptune.get_document(stub_id)
-                        citation = (doc_info or {}).get("citation", "")
-                        if not citation:
-                            continue
-                        opinion = fetch_case_opinion(citation, raw_bucket=RAW_BUCKET)
-                        if opinion.get("found"):
-                            cited_opinions[stub_id] = {
-                                "citation": citation,
-                                "raw_key": opinion.get("raw_key", ""),
-                                "text": opinion.get("text", ""),
-                                "scholar_url": opinion.get("scholar_url", ""),
-                            }
-                            cited_discovery[stub_id] = "opinion-backfill"
-                            logger.info(
-                                f"Opinion backfill: fetched {citation} "
-                                f"({len(opinion.get('text', ''))} chars)"
-                            )
-                    except Exception:  # noqa: BLE001
-                        logger.warning(
-                            f"Opinion backfill failed for {stub_id}",
-                            exc_info=True,
-                        )
-                rag_docs = build_rag_documents(
-                    cited_chunks, cited, cited_discovery, cited_opinions,
-                    neptune_client=neptune,
-                )
-                cited_faq_resource = (
-                    high_confidence_faq
-                    or build_cited_faq_resource(faq_entries, cited)
-                )
+            if tool_name == "prepare_answer":
+                cited = list(result.get("cited_doc_ids", []))
+                answer_plan = result.get("answer_plan", "")
                 _log(
                     "agent_loop_complete",
                     **trace_context,
-                    terminal_reason="cite_documents",
+                    terminal_reason="prepare_answer",
                     turns_used=turn_number,
                     elapsed_ms=round((time.perf_counter() - loop_started) * 1000),
-                    answer_chars=len(answer),
                     cited_doc_count=len(cited),
                     discovered_doc_count=len(all_doc_ids),
-                    rag_document_count=len(rag_docs),
-                    faq_count=len(cited_faq_resource.faqs) if cited_faq_resource else 0,
-                    discovery=discovery_summary(cited_discovery),
+                    has_plan=bool(answer_plan),
+                    discovery=discovery_summary(discovery),
                 )
                 _record_trace(
                     "loop_complete", turn=turn_number,
-                    terminalReason="cite_documents",
+                    terminalReason="prepare_answer",
                     turnsUsed=turn_number,
                     elapsedMs=round((time.perf_counter() - loop_started) * 1000),
                     citedDocCount=len(cited),
-                    citedDocIds=list(cited)[:20],
-                    discovery=discovery_summary(cited_discovery),
+                    citedDocIds=cited[:20],
+                    discovery=discovery_summary(discovery),
                 )
                 discovery_titles: dict[str, str] = {}
-                for doc_id in list(cited)[:20]:
+                for doc_id in cited[:20]:
                     try:
                         info = neptune.get_document(doc_id)
                         discovery_titles[doc_id] = (info or {}).get("title") or doc_id
@@ -844,15 +874,27 @@ def run_agentic_loop(
                     query_id=query_id,
                     kind="loop_complete",
                     payload={
-                        "terminalReason": "cite_documents",
+                        "terminalReason": "prepare_answer",
                         "turnsUsed": turn_number,
                         "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
                         "citedDocCount": len(cited),
-                        "discoveryCounts": discovery_summary(cited_discovery),
+                        "discoveryCounts": discovery_summary(discovery),
                         "discoveryTitles": discovery_titles,
                     },
                 )
-                return answer, list(cited), rag_docs, cited_faq_resource, trace_log, answer_was_streamed, ws_connection_alive[0]
+                return AgentLoopResult(
+                    cited_doc_ids=cited,
+                    all_chunks=all_chunks,
+                    all_doc_ids=all_doc_ids,
+                    discovery=discovery,
+                    fetched_opinions=fetched_opinions,
+                    faq_resource=None,  # resolved in handler
+                    answer_plan=answer_plan,
+                    trace_log=trace_log,
+                    connection_alive=ws_connection_alive[0],
+                    high_confidence_faq=high_confidence_faq,
+                    faq_entries=faq_entries,
+                )
 
             tool_results.append({
                 "toolResult": {
@@ -873,9 +915,9 @@ def run_agentic_loop(
                 if last_text:
                     break
         if last_text:
-            answer = last_text + "\n\n_(Response incomplete: turn budget reached)_"
+            fallback_answer = last_text + "\n\n_(Response incomplete: turn budget reached)_"
         else:
-            answer = (
+            fallback_answer = (
                 "I was unable to find a complete answer within the allowed number "
                 "of search steps. Please try rephrasing your question."
             )
@@ -883,60 +925,65 @@ def run_agentic_loop(
             "agent_turn_budget_exhausted",
             logging.WARNING,
             **trace_context,
-            answer_chars=len(answer),
+            answer_chars=len(fallback_answer),
             discovered_doc_count=len(all_doc_ids),
             accumulated_chunk_count=len(all_chunks),
             discovery=discovery_summary(discovery),
         )
+        _log(
+            "agent_loop_complete",
+            **trace_context,
+            terminal_reason="turn_budget_exhausted",
+            elapsed_ms=round((time.perf_counter() - loop_started) * 1000),
+            answer_chars=len(fallback_answer),
+            discovered_doc_count=len(all_doc_ids),
+            discovery=discovery_summary(discovery),
+        )
+        _record_trace(
+            "loop_complete",
+            terminalReason="turn_budget_exhausted",
+            turnsUsed=MAX_TURNS,
+            elapsedMs=round((time.perf_counter() - loop_started) * 1000),
+            citedDocCount=len(all_doc_ids),
+            citedDocIds=list(all_doc_ids)[:20],
+            discovery=discovery_summary(discovery),
+        )
+        _emit_safe(
+            ws_server,
+            trace_seq,
+            query_id=query_id,
+            kind="loop_complete",
+            payload={
+                "terminalReason": "turn_budget_exhausted",
+                "turnsUsed": MAX_TURNS,
+                "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
+                "citedDocCount": len(all_doc_ids),
+                "discoveryCounts": discovery_summary(discovery),
+            },
+        )
+        return AgentLoopResult(
+            cited_doc_ids=list(all_doc_ids),
+            all_chunks=all_chunks,
+            all_doc_ids=all_doc_ids,
+            discovery=discovery,
+            fetched_opinions=fetched_opinions,
+            faq_resource=None,
+            answer_plan="",
+            trace_log=trace_log,
+            connection_alive=ws_connection_alive[0],
+            fallback_answer=fallback_answer,
+            high_confidence_faq=high_confidence_faq,
+            faq_entries=faq_entries,
+        )
 
-    rag_docs = build_rag_documents(
-        all_chunks, all_doc_ids, discovery, fetched_opinions,
-        neptune_client=neptune,
-    )
-    _log(
-        "agent_loop_complete",
-        **trace_context,
-        terminal_reason="assistant_text_or_fallback",
-        elapsed_ms=round((time.perf_counter() - loop_started) * 1000),
-        answer_chars=len(answer),
-        discovered_doc_count=len(all_doc_ids),
-        rag_document_count=len(rag_docs),
-        discovery=discovery_summary(discovery),
-    )
-    _record_trace(
-        "loop_complete",
-        terminalReason="assistant_text_or_fallback",
-        turnsUsed=MAX_TURNS,
-        elapsedMs=round((time.perf_counter() - loop_started) * 1000),
-        citedDocCount=len(all_doc_ids),
-        citedDocIds=list(all_doc_ids)[:20],
-        discovery=discovery_summary(discovery),
-    )
-    _emit_safe(
-        ws_server,
-        trace_seq,
-        query_id=query_id,
-        kind="loop_complete",
-        payload={
-            "terminalReason": "assistant_text_or_fallback",
-            "turnsUsed": MAX_TURNS,
-            "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
-            "citedDocCount": len(all_doc_ids),
-            "discoveryCounts": discovery_summary(discovery),
-        },
-    )
-    return answer, list(all_doc_ids), rag_docs, high_confidence_faq, trace_log, answer_was_streamed, ws_connection_alive[0]
 
-
-def _send_resources_and_finalize(
+def _send_resources(
     ws_server: WebSocketServer,
     query_id: str,
-    answer: str,
     rag_documents: list[RAGDocument],
     faq_resource: FAQResource | None,
-    answer_already_streamed: bool,
 ) -> None:
-    """Send documents, FAQs, and full answer over WebSocket."""
+    """Send resource cards (documents + FAQs) over WebSocket."""
     source_documents = [
         SourceDocument(
             document_id=doc.document_id,
@@ -976,6 +1023,17 @@ def _send_resources_and_finalize(
         data = json.dumps({"streamId": "resources", "body": faq_message.model_dump(by_alias=True)})
         ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
 
+
+def _send_resources_and_finalize(
+    ws_server: WebSocketServer,
+    query_id: str,
+    answer: str,
+    rag_documents: list[RAGDocument],
+    faq_resource: FAQResource | None,
+) -> None:
+    """Send documents, FAQs, and full answer over WebSocket (fallback path)."""
+    _send_resources(ws_server, query_id, rag_documents, faq_resource)
+
     start_msg = AnswerEventType(event="start", query_id=query_id)
     data = json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)})
     ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
@@ -991,10 +1049,239 @@ def _send_resources_and_finalize(
     ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
 
 
+# --- Phase B: Answer Streaming ---
+
+ANSWER_STREAM_SYSTEM_PROMPT = """You are writing a final answer for the Wisconsin DOR property tax assistant. The research phase is complete — all relevant documents have been retrieved and are provided below as context.
+
+Write your answer in Markdown format following these rules:
+- Use inline citations: [Document Title](doc:document-id#page=N)
+- Only cite documents listed in the provided context
+- Place citations inline where information is used
+- Do NOT add a trailing Sources/References section
+- Do NOT use absolutist phrases ("bottom line", "clearly", "always", "never")
+- Qualify answers with their source and conditions
+- Answer only what was asked — no peripheral details
+- When the answer depends on facts you don't have (property class, municipality, assessment year), say so explicitly
+- Present alternatives when they exist for different property types or situations
+- Use hedging language where appropriate: "generally", "typically", "in most cases"
+- Reserve unhedged statements for direct statutory quotes or unambiguous rules"""
+
+
+def _build_answer_context(
+    query: str,
+    cited_chunks: list[dict],
+    cited_doc_ids: set[str],
+    discovery: dict[str, str],
+    fetched_opinions: dict[str, dict],
+    answer_plan: str,
+    chat_history: list[dict] | None = None,
+    neptune_client: NeptuneClient | None = None,
+) -> str:
+    """Build the context message for Phase B answer generation."""
+    parts = []
+
+    if chat_history:
+        parts.append("## Prior Conversation")
+        for turn in chat_history[-3:]:  # last 3 turns for context
+            parts.append(f"User: {turn.get('query', '')}")
+            parts.append(f"Assistant: {turn.get('answer', '')[:500]}")
+        parts.append("")
+
+    parts.append(f"## User Question\n{query}\n")
+
+    if answer_plan:
+        parts.append(f"## Answer Plan\n{answer_plan}\n")
+
+    parts.append("## Retrieved Documents and Chunks\n")
+
+    # Group chunks by document
+    chunks_by_doc: dict[str, list[dict]] = {}
+    for chunk in cited_chunks:
+        doc_id = chunk.get("doc_id", "unknown")
+        chunks_by_doc.setdefault(doc_id, []).append(chunk)
+
+    for doc_id in sorted(cited_doc_ids):
+        doc_chunks = chunks_by_doc.get(doc_id, [])
+        # Get document metadata
+        doc_info = None
+        if neptune_client:
+            try:
+                doc_info = neptune_client.get_document(doc_id)
+            except Exception:
+                pass
+
+        title = (doc_info or {}).get("title", doc_id)
+        authority = (doc_info or {}).get("authority_level", "")
+
+        parts.append(f"### [{title}](doc:{doc_id})")
+        if authority:
+            parts.append(f"Authority level: {authority}")
+
+        if doc_chunks:
+            for chunk in doc_chunks:
+                page = chunk.get("start_page")
+                page_ref = f" (page {page})" if page else ""
+                parts.append(f"\n**Chunk{page_ref}:**")
+                parts.append(chunk.get("text", "")[:2000])
+
+        # Include case opinion text if available
+        if doc_id in fetched_opinions:
+            opinion = fetched_opinions[doc_id]
+            parts.append(f"\n**Case Opinion ({opinion.get('citation', '')}):**")
+            parts.append(opinion.get("text", "")[:3000])
+
+        parts.append("")
+
+    parts.append(f"\n## Documents to Cite\nYou MUST cite these document IDs: {sorted(cited_doc_ids)}")
+
+    return "\n".join(parts)
+
+
+def _stream_answer(
+    ws_server: WebSocketServer,
+    query_id: str,
+    answer_context: str,
+    trace_seq,
+    ws_connection_alive: list[bool],
+) -> str:
+    """Phase B: Stream the answer token-by-token via converse_stream().
+
+    Returns the full accumulated answer text.
+    """
+    _emit(
+        ws_server, trace_seq,
+        emit_enabled=EMIT_AGENT_TRACE,
+        max_chars=LOG_MAX_TEXT_CHARS,
+        query_id=query_id,
+        kind="phase",
+        payload={"phase": "answer_streaming"},
+    )
+
+    # Send answer-event: start
+    start_msg = AnswerEventType(event="start", query_id=query_id)
+    data = json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)})
+    ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
+
+    # Start heartbeat for the streaming phase
+    heartbeat_stop = threading.Event()
+
+    def _heartbeat_loop():
+        while not heartbeat_stop.wait(_WS_HEARTBEAT_INTERVAL):
+            if not ws_connection_alive[0]:
+                break
+            try:
+                ws_server.client.post_to_connection(
+                    ConnectionId=ws_server.connection_id,
+                    Data=json.dumps({"streamId": "heartbeat", "body": {}}),
+                )
+            except Exception:
+                logger.info("WebSocket connection gone during answer stream heartbeat")
+                ws_connection_alive[0] = False
+                break
+
+    heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
+    if ws_connection_alive[0]:
+        heartbeat_thread.start()
+
+    # Start converse_stream with NO tools — pure text output
+    stream_started = time.perf_counter()
+    try:
+        stream_response = bedrock.converse_stream(
+            modelId=AGENTIC_MODEL_ID,
+            messages=[{"role": "user", "content": [{"text": answer_context}]}],
+            system=[{"text": ANSWER_STREAM_SYSTEM_PROMPT}],
+            inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+        )
+    except Exception as exc:
+        heartbeat_stop.set()
+        _log(
+            "answer_stream_error",
+            logging.ERROR,
+            query_id=query_id,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
+
+    # Stream text deltas to WebSocket
+    answer_text = ""
+    fragment_buffer = ""
+    _FRAGMENT_MIN_SIZE = 30  # batch small deltas to avoid excessive WS calls
+
+    event_stream = stream_response.get("stream")
+    if event_stream:
+        for event in event_stream:
+            if "contentBlockDelta" in event:
+                delta = event["contentBlockDelta"].get("delta", {})
+                text_chunk = delta.get("text", "")
+                if text_chunk:
+                    answer_text += text_chunk
+                    fragment_buffer += text_chunk
+
+                    if len(fragment_buffer) >= _FRAGMENT_MIN_SIZE:
+                        if ws_connection_alive[0]:
+                            frag_msg = FragmentMessage(
+                                query_id=query_id,
+                                content=FragmentContent(fragment=fragment_buffer),
+                            )
+                            try:
+                                ws_server.client.post_to_connection(
+                                    ConnectionId=ws_server.connection_id,
+                                    Data=json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)}),
+                                )
+                            except Exception:
+                                ws_connection_alive[0] = False
+                        fragment_buffer = ""
+
+            elif "metadata" in event:
+                usage = event["metadata"].get("usage", {})
+                _log(
+                    "answer_stream_usage",
+                    usage=usage,
+                    query_id=query_id,
+                )
+
+    heartbeat_stop.set()
+
+    # Flush remaining buffer
+    if fragment_buffer and ws_connection_alive[0]:
+        frag_msg = FragmentMessage(
+            query_id=query_id,
+            content=FragmentContent(fragment=fragment_buffer),
+        )
+        try:
+            ws_server.client.post_to_connection(
+                ConnectionId=ws_server.connection_id,
+                Data=json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)}),
+            )
+        except Exception:
+            ws_connection_alive[0] = False
+
+    # Send answer-event: stop
+    stop_msg = AnswerEventType(event="stop", query_id=query_id)
+    data = json.dumps({"streamId": "answer-event", "body": stop_msg.model_dump(by_alias=True)})
+    if ws_connection_alive[0]:
+        try:
+            ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
+        except Exception:
+            ws_connection_alive[0] = False
+
+    stream_latency = round((time.perf_counter() - stream_started) * 1000)
+    _log(
+        "answer_stream_complete",
+        query_id=query_id,
+        answer_chars=len(answer_text),
+        stream_latency_ms=stream_latency,
+    )
+
+    return answer_text
+
+
 def handler(event: dict, context) -> dict[str, Any]:
     """
-    Lambda handler. Processes a UserQuery via agentic retrieval,
-    streams resources and answer directly over WebSocket.
+    Lambda handler. Processes a UserQuery via two-phase agentic retrieval:
+    Phase A: Research loop (non-streaming converse calls with tools)
+    Phase B: Answer streaming (converse_stream with no tools)
     """
     session_id: str | None = None
     request_id = getattr(context, "aws_request_id", "") if context else ""
@@ -1079,7 +1366,6 @@ def handler(event: dict, context) -> dict[str, Any]:
                         answer,
                         rag_documents=[],
                         faq_resource=None,
-                        answer_already_streamed=False,
                     )
                     choices_msg = ChoicesMessage(
                         query_id=user_query.query_id,
@@ -1095,7 +1381,8 @@ def handler(event: dict, context) -> dict[str, Any]:
                 )
                 return {"successful": True}
 
-        answer, cited_doc_ids, rag_documents, faq_resource, trace_log, answer_streamed, connection_alive = run_agentic_loop(
+        # === Phase A: Research Loop ===
+        result = run_agentic_loop(
             user_query.query,
             chat_history=chat_history,
             query_id=user_query.query_id,
@@ -1105,30 +1392,194 @@ def handler(event: dict, context) -> dict[str, Any]:
             trace_seq=trace_seq,
         )
 
-        _log(
-            "agentic_retrieval_response_ready",
-            request_id=request_id,
-            query_id=user_query.query_id,
-            session_id=user_query.session_id,
-            answer_chars=len(answer),
-            cited_doc_count=len(cited_doc_ids),
-            rag_document_count=len(rag_documents),
-            faq_count=len(faq_resource.faqs) if faq_resource else 0,
-        )
+        if result.fallback_answer is not None:
+            # Edge case: clarify tool, turn budget exhausted, or model responded
+            # with text instead of calling prepare_answer. No Phase B needed.
+            answer = result.fallback_answer
+            rag_documents = build_rag_documents(
+                result.all_chunks, result.all_doc_ids, result.discovery,
+                result.fetched_opinions, neptune_client=neptune,
+            )
+            faq_resource = (
+                result.high_confidence_faq
+                or build_cited_faq_resource(result.faq_entries, result.all_doc_ids)
+            )
 
-        if ws_server and connection_alive:
-            try:
-                _send_resources_and_finalize(
-                    ws_server,
-                    user_query.query_id,
-                    answer,
-                    rag_documents,
-                    faq_resource,
-                    answer_already_streamed=False,
+            _log(
+                "agentic_retrieval_response_ready",
+                request_id=request_id,
+                query_id=user_query.query_id,
+                session_id=user_query.session_id,
+                answer_chars=len(answer),
+                cited_doc_count=len(result.cited_doc_ids),
+                rag_document_count=len(rag_documents),
+                faq_count=len(faq_resource.faqs) if faq_resource else 0,
+                phase="fallback",
+            )
+
+            if ws_server and result.connection_alive:
+                try:
+                    _send_resources_and_finalize(
+                        ws_server,
+                        user_query.query_id,
+                        answer,
+                        rag_documents,
+                        faq_resource,
+                    )
+                except Exception:
+                    logger.info("WebSocket connection lost during finalize; answer saved to DB")
+
+        else:
+            # === Normal path: Phase B streaming ===
+            # 1. Build resources from cited_doc_ids
+            cited = set(result.cited_doc_ids)
+            cited_chunks = [
+                c for c in result.all_chunks if c.get("doc_id") in cited
+            ]
+            cited_discovery = {
+                k: v for k, v in result.discovery.items() if k in cited
+            }
+            for cid in cited:
+                cited_discovery.setdefault(cid, "fetched")
+
+            # Opinion backfill for case law stubs not already fetched
+            cited_opinions = {
+                k: v for k, v in result.fetched_opinions.items() if k in cited
+            }
+            _OPINION_BACKFILL_CAP = 3
+            unfetched_stubs = [
+                cid for cid in cited
+                if is_case_law_stub(cid) and cid not in cited_opinions
+            ]
+            for stub_id in unfetched_stubs[:_OPINION_BACKFILL_CAP]:
+                try:
+                    doc_info = neptune.get_document(stub_id)
+                    citation = (doc_info or {}).get("citation", "")
+                    if not citation:
+                        continue
+                    opinion = fetch_case_opinion(citation, raw_bucket=RAW_BUCKET)
+                    if opinion.get("found"):
+                        cited_opinions[stub_id] = {
+                            "citation": citation,
+                            "raw_key": opinion.get("raw_key", ""),
+                            "text": opinion.get("text", ""),
+                            "scholar_url": opinion.get("scholar_url", ""),
+                        }
+                        cited_discovery[stub_id] = "opinion-backfill"
+                        logger.info(
+                            f"Opinion backfill: fetched {citation} "
+                            f"({len(opinion.get('text', ''))} chars)"
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        f"Opinion backfill failed for {stub_id}",
+                        exc_info=True,
+                    )
+
+            rag_documents = build_rag_documents(
+                cited_chunks, cited, cited_discovery, cited_opinions,
+                neptune_client=neptune,
+            )
+            faq_resource = (
+                result.high_confidence_faq
+                or build_cited_faq_resource(result.faq_entries, cited)
+            )
+
+            _log(
+                "agentic_retrieval_response_ready",
+                request_id=request_id,
+                query_id=user_query.query_id,
+                session_id=user_query.session_id,
+                cited_doc_count=len(cited),
+                rag_document_count=len(rag_documents),
+                faq_count=len(faq_resource.faqs) if faq_resource else 0,
+                phase="streaming",
+            )
+
+            answer = ""  # Will be populated by streaming or fallback
+            if ws_server and result.connection_alive:
+                ws_connection_alive = [result.connection_alive]
+                try:
+                    # 2. Send resource cards over WebSocket
+                    _send_resources(ws_server, user_query.query_id, rag_documents, faq_resource)
+
+                    # 3. Stream answer (Phase B)
+                    answer_context = _build_answer_context(
+                        user_query.query,
+                        cited_chunks,
+                        cited,
+                        cited_discovery,
+                        cited_opinions,
+                        result.answer_plan,
+                        chat_history=chat_history,
+                        neptune_client=neptune,
+                    )
+                    answer = _stream_answer(
+                        ws_server,
+                        user_query.query_id,
+                        answer_context,
+                        trace_seq,
+                        ws_connection_alive,
+                    )
+                except Exception:
+                    logger.info("WebSocket connection lost during Phase B; answer may be partial")
+                    if not answer:
+                        try:
+                            if not answer_context:
+                                answer_context = _build_answer_context(
+                                    user_query.query,
+                                    cited_chunks,
+                                    cited,
+                                    cited_discovery,
+                                    cited_opinions,
+                                    result.answer_plan,
+                                    chat_history=chat_history,
+                                    neptune_client=neptune,
+                                )
+                            response = bedrock.converse(
+                                modelId=AGENTIC_MODEL_ID,
+                                messages=[{"role": "user", "content": [{"text": answer_context}]}],
+                                system=[{"text": ANSWER_STREAM_SYSTEM_PROMPT}],
+                                inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+                            )
+                            text_blocks = [
+                                block["text"]
+                                for block in response["output"]["message"]["content"]
+                                if "text" in block
+                            ]
+                            answer = "\n".join(text_blocks)
+                            logger.info("Phase B fallback: generated answer via non-streaming converse()")
+                        except Exception as fallback_exc:
+                            logger.error(f"Phase B non-streaming fallback failed: {fallback_exc}")
+                            answer = "(Answer generation failed — please retry)"
+            else:
+                # No WebSocket — generate answer without streaming for DB save
+                answer_context = _build_answer_context(
+                    user_query.query,
+                    cited_chunks,
+                    cited,
+                    cited_discovery,
+                    cited_opinions,
+                    result.answer_plan,
+                    chat_history=chat_history,
+                    neptune_client=neptune,
                 )
-            except Exception:
-                logger.info("WebSocket connection lost during finalize; answer saved to DB")
-                connection_alive = False
+                try:
+                    response = bedrock.converse(
+                        modelId=AGENTIC_MODEL_ID,
+                        messages=[{"role": "user", "content": [{"text": answer_context}]}],
+                        system=[{"text": ANSWER_STREAM_SYSTEM_PROMPT}],
+                        inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+                    )
+                    text_blocks = [
+                        block["text"]
+                        for block in response["output"]["message"]["content"]
+                        if "text" in block
+                    ]
+                    answer = "\n".join(text_blocks)
+                except Exception as exc:
+                    logger.error(f"Phase B non-streaming fallback failed: {exc}")
+                    answer = "(Answer generation failed — please retry)"
 
         save_chat_history(
             session_id,
@@ -1137,8 +1588,10 @@ def handler(event: dict, context) -> dict[str, Any]:
             answer,
             rag_documents=rag_documents,
             faq_resource=faq_resource,
-            trace_log=trace_log,
+            trace_log=result.trace_log,
         )
+
+        return {"successful": True}
 
     except Exception as e:
         _log(

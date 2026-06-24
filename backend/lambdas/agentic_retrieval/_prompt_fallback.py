@@ -98,4 +98,4 @@ NEVER:
 
 If you're unsure of the exact number, date, or threshold, say so rather than guessing.
 
-When you have enough information, call the cite_documents tool with your complete answer in Markdown format in the response field and cited_doc_ids listing every document that informed the answer. The response field is streamed to the user in real-time as you generate it."""
+When you have enough information, call prepare_answer with cited_doc_ids listing every document that informed the answer and a brief answer_plan outlining the key points you will cover. Do NOT write the answer text — it will be generated in a follow-up step."""

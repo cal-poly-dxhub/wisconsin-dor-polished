@@ -52,8 +52,7 @@ export function useWebSocketChat(
   // Track the pending optimistic ID so handleSuccessfulSend can replace it
   const pendingQueryIdRef = useRef<string | null>(null);
 
-  // Buffer fragments and place the full answer on stop (no streaming)
-  const fragmentBufferRef = useRef<string>('');
+  // Track streaming state for timing logs
   const streamStartRef = useRef(0);
   const fragmentCountRef = useRef(0);
 
@@ -102,14 +101,13 @@ export function useWebSocketChat(
 
             case 'fragment':
               fragmentCountRef.current++;
-              fragmentBufferRef.current += message.content.fragment;
+              appendQueryResponse(message.queryId, message.content.fragment);
               break;
 
             case 'answer-event':
               if (message.event === 'start') {
                 streamStartRef.current = performance.now();
                 fragmentCountRef.current = 0;
-                fragmentBufferRef.current = '';
                 updateQueryStatus(message.queryId, 'streaming');
                 setChatState('streaming');
               } else if (message.event === 'stop') {
@@ -117,11 +115,7 @@ export function useWebSocketChat(
                 console.log(
                   `[WS Timing] STREAM STOP | duration=${streamDuration.toFixed(1)}ms | fragments=${fragmentCountRef.current} | queryId=${message.queryId}`
                 );
-                // Place the full answer in one shot
-                if (fragmentBufferRef.current) {
-                  appendQueryResponse(message.queryId, fragmentBufferRef.current);
-                  fragmentBufferRef.current = '';
-                }
+                // Fragments already appended in real-time — just finalize status
                 updateQueryStatus(message.queryId, 'completed');
                 setChatState('idle');
                 queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] });

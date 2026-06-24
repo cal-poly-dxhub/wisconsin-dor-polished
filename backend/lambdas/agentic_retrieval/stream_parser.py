@@ -1,4 +1,8 @@
-"""Incremental JSON parser for streaming the cite_documents tool's response field.
+"""Incremental JSON parser for streaming a tool_use's response field.
+
+NOTE: This module is UNUSED since the two-phase streaming migration. Phase B
+now uses converse_stream() directly instead of parsing tool input JSON. Kept
+for reference / potential future use.
 
 When Bedrock streams a tool_use input, we receive the JSON as a series of
 string fragments. This parser detects when we're inside the "response" string
