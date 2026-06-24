@@ -13,6 +13,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ExternalLink, Maximize2, X } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import { buildResolverUrl } from '@/lib/citation-resolver';
+import type { InlineCitation } from '@/lib/parse-inline-citations';
 import { AuthorityBadge } from './authority-badge';
 import { DiscoveryBadge } from './discovery-badge';
 import { chooseSourceTarget } from './source-target';
@@ -177,6 +178,7 @@ function getSourceActionLabel(document: Document) {
 interface DocumentCardCompactProps
   extends VariantProps<typeof documentCardVariants> {
   document: Document;
+  citations?: InlineCitation[];
   className?: string;
   isExpanded: boolean;
   onClick: () => void;
@@ -185,8 +187,9 @@ interface DocumentCardCompactProps
 
 export function DocumentCardCompact({
   document,
+  citations,
   className,
-  isExpanded,
+  isExpanded: _isExpanded,
   onClick,
   onSourceClick,
   variant = 'compact',
@@ -237,13 +240,18 @@ export function DocumentCardCompact({
               <Maximize2 className="h-3.5 w-3.5" />
             </button>
           </div>
-          {(document.authorityLevel !== undefined || (document.discoveryTag && document.discoveryTag !== 'unknown')) && (
+          {(document.authorityLevel !== undefined || (document.discoveryTag && document.discoveryTag !== 'unknown') || (citations && citations.length > 1)) && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1.5">
               {document.authorityLevel !== undefined && (
                 <AuthorityBadge authorityLevel={document.authorityLevel} size="sm" />
               )}
               {document.discoveryTag && document.discoveryTag !== 'unknown' && (
                 <DiscoveryBadge tag={document.discoveryTag} size="sm" />
+              )}
+              {citations && citations.length > 1 && (
+                <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20 dark:bg-blue-950 dark:text-blue-300 dark:ring-blue-400/30">
+                  {citations.length} citations
+                </span>
               )}
             </div>
           )}
@@ -272,6 +280,7 @@ export function DocumentCardCompact({
 
 interface DocumentCardModalProps {
   document: Document;
+  citations?: InlineCitation[];
   isAnimating: boolean;
   onClose: (e: React.MouseEvent) => void;
   onSourceClick: (e: React.MouseEvent) => void;
@@ -279,6 +288,7 @@ interface DocumentCardModalProps {
 
 function DocumentCardModal({
   document,
+  citations,
   isAnimating,
   onClose,
   onSourceClick,
@@ -338,6 +348,36 @@ function DocumentCardModal({
             </p>
           </div>
 
+          {/* Per-page citation links */}
+          {citations && citations.length > 0 && document.s3Key && (
+            <div className="px-5 pt-3 pb-3 border-b border-border">
+              <p className="text-xs font-medium text-muted-foreground mb-2">
+                Cited {citations.length} {citations.length === 1 ? 'location' : 'locations'} in this response
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {citations.map((c) => (
+                  <button
+                    key={c.page}
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground/80 hover:bg-accent hover:text-foreground transition-[color,background-color,border-color] cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const popup = window.open('about:blank', '_blank');
+                      if (!popup) return;
+                      void buildResolverUrl(document.s3Key!, c.page)
+                        .then(url => { if (url) popup.location.href = url; else popup.close(); })
+                        .catch(() => popup.close());
+                    }}
+                  >
+                    <span>{c.label}</span>
+                    <span className="text-muted-foreground">p.{c.page}</span>
+                    <ExternalLink className="h-2.5 w-2.5 text-muted-foreground" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Content */}
           <CardContent className="flex-1 overflow-hidden p-5">
             <div className="rounded-md border border-border bg-muted/30 overflow-hidden max-h-full flex flex-col">
@@ -366,12 +406,14 @@ function DocumentCardModal({
 
 interface DocumentCardProps {
   document: Document;
+  citations?: InlineCitation[];
   className?: string;
   onSourceClick?: (document: Document) => void;
 }
 
 export const DocumentCard = memo(function DocumentCard({
   document,
+  citations,
   className,
   onSourceClick,
 }: DocumentCardProps) {
@@ -396,16 +438,10 @@ export const DocumentCard = memo(function DocumentCard({
 
       const target = chooseSourceTarget(document);
       if (target?.kind === 's3') {
-        // window.open() must run synchronously to satisfy popup blockers;
-        // the JWT fetch is async so we open about:blank first and redirect
-        // the popup once the resolver URL is built. We can't pass
-        // 'noopener' here — browsers return null from window.open with
-        // noopener, which would defeat the popup-first pattern. The only
-        // page the popup ever lands on is our resolver's S3 redirect, so
-        // window.opener leakage is bounded.
         const popup = window.open('about:blank', '_blank');
         if (!popup) return;
-        void buildResolverUrl(target.s3Key, document.startPage)
+        const page = document.startPage ?? (citations && citations.length > 0 ? Math.min(...citations.map(c => c.page)) : undefined);
+        void buildResolverUrl(target.s3Key, page)
           .then(url => {
             if (url) {
               popup.location.href = url;
@@ -420,7 +456,7 @@ export const DocumentCard = memo(function DocumentCard({
 
       onSourceClick?.(document);
     },
-    [document, onSourceClick]
+    [document, citations, onSourceClick]
   );
 
   const handleModalClose = useCallback(
@@ -435,6 +471,7 @@ export const DocumentCard = memo(function DocumentCard({
     <>
       <DocumentCardCompact
         document={document}
+        citations={citations}
         className={className}
         isExpanded={isExpanded}
         onClick={onClick}
@@ -445,6 +482,7 @@ export const DocumentCard = memo(function DocumentCard({
         {isExpanded && (
           <DocumentCardModal
             document={document}
+            citations={citations}
             isAnimating={isAnimating}
             onClose={handleModalClose}
             onSourceClick={handleSourceClick}
