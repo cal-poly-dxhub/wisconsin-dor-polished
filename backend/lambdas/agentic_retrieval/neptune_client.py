@@ -251,15 +251,28 @@ class NeptuneClient:
         WIS-STAT-70.05 promoting to statutes-70 rather than to an
         admin-rules chapter that happens to cite it first.
 
+        For statute stubs we additionally prefer the chunk that *defines*
+        the section over chunks that merely cross-reference it.  The
+        structural signal: the statute chunker produces definition chunks
+        whose text starts with "<section_number> <Title>" — e.g.,
+        "70.32 Real estate, how valued."  Cross-references start with
+        lowercase or subsection markers like "(1)".  We detect this via
+        c.text STARTS WITH "<section> " followed by a capital letter
+        [A-Z].  This is format-agnostic (works regardless of line-break
+        patterns or PDF extraction quirks) and tolerant of stale heading
+        metadata.  Fallback: lowest page number among parent-matching
+        chunks.
+
         Returns the parent doc plus the page range from the citing chunk,
         or None if no chapter doc cites the stub.
         """
-        # Derive the expected parent chapter ID from the stub ID.
-        # e.g. "WIS-STAT-70.32" → "statutes-70", "WIS-STAT-77.04" → "statutes-77"
         parent_hint = ""
+        section_prefix = ""
         if stub_id.startswith("WIS-STAT-"):
-            chapter = stub_id.split("-", 2)[2].split(".")[0]  # "70"
+            section = stub_id.split("-", 2)[2]  # "70.32"
+            chapter = section.split(".")[0]  # "70"
             parent_hint = f"statutes-{chapter}"
+            section_prefix = section
 
         results = self.query(
             "MATCH (stub {id: $id}) "
@@ -267,21 +280,32 @@ class NeptuneClient:
             "WITH stub, stub_fw "
             "MATCH (c:Chunk)-[:CITES]->(stub) "
             "MATCH (c)-[:EXTRACTED_FROM]->(parent) "
-            "WHERE parent.summary IS NOT NULL AND c.start_page > 2 "
+            "WHERE parent.summary IS NOT NULL "
             "OPTIONAL MATCH (parent)-[:BELONGS_TO]->(parent_fw:Framework) "
             "WITH parent, c, "
             "  CASE WHEN parent.id = $parent_hint THEN 0 "
             "    WHEN stub_fw IS NOT NULL AND parent_fw IS NOT NULL "
             "      AND parent_fw.id = stub_fw.id THEN 1 "
-            "    ELSE 2 END AS rank "
-            "ORDER BY rank ASC, c.start_page ASC "
+            "    ELSE 2 END AS rank, "
+            "  CASE "
+            "    WHEN $section_prefix <> '' "
+            "      AND c.text STARTS WITH ($section_prefix + ' ') "
+            "      AND substring(c.text, size($section_prefix) + 1, 1) >= 'A' "
+            "      AND substring(c.text, size($section_prefix) + 1, 1) <= 'Z' "
+            "      THEN 0 "
+            "    ELSE 1 END AS def_score "
+            "ORDER BY rank ASC, def_score ASC, c.start_page ASC "
             "RETURN parent.id AS id, parent.title AS title, "
             "parent.summary AS summary, parent.source_url AS source_url, "
             "parent.source_key AS s3_key, parent.doc_type AS doc_type, "
             "parent.authority_level AS authority_level, "
             "c.start_page AS start_page, c.end_page AS end_page "
             "LIMIT 1",
-            {"id": stub_id, "parent_hint": parent_hint},
+            {
+                "id": stub_id,
+                "parent_hint": parent_hint,
+                "section_prefix": section_prefix,
+            },
             query_name="find_stub_promotion",
         )
         return results[0] if results else None
