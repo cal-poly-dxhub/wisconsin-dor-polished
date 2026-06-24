@@ -760,17 +760,21 @@ def run_agentic_loop(
                         "turnsUsed": turn_number,
                         "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
                         "citedDocCount": 0,
+                        "discoveryCounts": discovery_summary(discovery),
                     },
                 )
                 return answer, [], [], None, trace_log, False, ws_connection_alive[0]
 
             if tool_name == "cite_documents":
-                # Answer text comes from text blocks, citations from this tool
+                # Answer text comes from text blocks (streamed in real-time).
+                # Fall back to tool input's response field if Claude skipped the text block.
                 text_blocks = [
                     block["text"] for block in assistant_message["content"]
                     if "text" in block
                 ]
                 answer = "\n".join(text_blocks)
+                if not answer:
+                    answer = result.get("response", "")
                 cited = set(result.get("cited_doc_ids", []))
                 cited_chunks = [
                     c for c in all_chunks if c.get("doc_id") in cited
@@ -852,6 +856,7 @@ def run_agentic_loop(
                         "turnsUsed": turn_number,
                         "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
                         "citedDocCount": len(cited),
+                        "discoveryCounts": discovery_summary(cited_discovery),
                     },
                 )
                 return answer, list(cited), rag_docs, cited_faq_resource, trace_log, answer_was_streamed, ws_connection_alive[0]
@@ -924,6 +929,7 @@ def run_agentic_loop(
             "turnsUsed": MAX_TURNS,
             "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
             "citedDocCount": len(all_doc_ids),
+            "discoveryCounts": discovery_summary(discovery),
         },
     )
     return answer, list(all_doc_ids), rag_docs, high_confidence_faq, trace_log, answer_was_streamed, ws_connection_alive[0]

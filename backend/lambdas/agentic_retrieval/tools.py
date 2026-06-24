@@ -449,20 +449,26 @@ TOOL_DEFINITIONS = [
             "name": "cite_documents",
             "description": (
                 "After writing your answer as text, call this tool with the IDs of "
-                "all documents you cited. This is REQUIRED — always call it after "
-                "writing your answer."
+                "all documents you cited AND a copy of your answer. You MUST write "
+                "the answer as a text block BEFORE calling this tool — the text "
+                "block is what gets streamed to the user in real-time. Then call "
+                "this tool to register citations."
             ),
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
+                        "response": {
+                            "type": "string",
+                            "description": "Copy of the answer text you just wrote (for citation tracking)",
+                        },
                         "cited_doc_ids": {
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "List of document IDs cited in the answer text",
                         },
                     },
-                    "required": ["cited_doc_ids"],
+                    "required": ["response", "cited_doc_ids"],
                 }
             },
         }
@@ -795,7 +801,11 @@ def execute_tool(
             latency_ms=round((time.perf_counter() - started) * 1000),
             **_query_fields(tool_input["query"]),
         )
-        result: dict[str, Any] = {"chunks": chunks, "graph_context": graph_context}
+        result: dict[str, Any] = {
+            "chunks": chunks,
+            "graph_context": graph_context,
+            "pre_dedup_count": pre_dedup_count,
+        }
         if related_case_law:
             result["related_case_law"] = related_case_law
         return result
@@ -1000,6 +1010,7 @@ def execute_tool(
         _log_tool_event(
             "cite_documents_tool_complete",
             tool_name=tool_name,
+            response_chars=len(tool_input.get("response", "")),
             cited_doc_count=len(tool_input.get("cited_doc_ids", [])),
             latency_ms=round((time.perf_counter() - started) * 1000),
         )

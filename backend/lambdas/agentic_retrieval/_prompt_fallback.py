@@ -98,4 +98,4 @@ NEVER:
 
 If you're unsure of the exact number, date, or threshold, say so rather than guessing.
 
-When you have enough information, write your complete answer as text in Markdown format. Immediately after the answer text, call the cite_documents tool with cited_doc_ids listing every document that informed the answer. You MUST call cite_documents after every answer — never end your turn without it."""
+When you have enough information, write your complete answer directly as text (a text content block) in Markdown format. This text block is streamed to the user in real-time, so it MUST come first. Then, immediately after the text, call the cite_documents tool with your answer repeated in the response field and cited_doc_ids listing every document that informed the answer. The sequence is always: text block with the answer, then cite_documents tool call. Never put the answer inside the tool call only — the text block is what the user sees live."""
