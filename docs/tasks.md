@@ -13,7 +13,6 @@
 | 21 | Investigate z-score normalization for vector_search result filtering | — |
 | 22 | Apply over-fetch multiplier when target_wpam_year is set | — |
 | 23 | Strip WPAM running headers from chunk text | — |
-| 24 | Multi-citation source cards (aggregate inline citations per parent doc) | — |
 | 25 | Fix WPAM 2025 garbled table chunks and heading metadata | — |
 
 ## Done
@@ -34,6 +33,7 @@
 | 16 | Support URL-based session routing and preserve "new chat" state on reload |
 | 18 | Show traversed sources in UI during agentic retrieval |
 | 19 | Fix train-of-thought flicker on sidebar session hover |
+| 24 | Multi-citation source cards (aggregate inline citations per parent doc) |
 
 ---
 
