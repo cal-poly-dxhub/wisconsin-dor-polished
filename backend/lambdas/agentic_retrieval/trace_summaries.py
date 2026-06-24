@@ -247,8 +247,9 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             default=0.0,
         )
         graph_context = result.get("graph_context", {}) or {}
-        neighbor_count = sum(len(v) for v in graph_context.values())
+        auto_enriched_count = sum(len(v) for v in graph_context.values())
         pre_dedup_count = result.get("pre_dedup_count", n_chunks)
+        target_wpam_year = result.get("target_wpam_year")
         authority_breakdown: dict[str, int] = {}
         for chunk in chunks:
             level = chunk.get("authority_level")
@@ -256,15 +257,30 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
                 key = str(int(level))
                 authority_breakdown[key] = authority_breakdown.get(key, 0) + 1
         related_case_law = result.get("related_case_law", [])
+        scores = [float(c.get("score", 0.0)) for c in chunks]
+        score_buckets: dict[str, int] = {"0.9+": 0, "0.8-0.9": 0, "0.7-0.8": 0, "<0.7": 0}
+        for s in scores:
+            if s >= 0.9:
+                score_buckets["0.9+"] += 1
+            elif s >= 0.8:
+                score_buckets["0.8-0.9"] += 1
+            elif s >= 0.7:
+                score_buckets["0.7-0.8"] += 1
+            else:
+                score_buckets["<0.7"] += 1
+        score_buckets = {k: v for k, v in score_buckets.items() if v > 0}
         metadata = {
             "chunkCount": n_chunks,
             "docCount": n_docs,
-            "neighborCount": neighbor_count,
+            "autoEnrichedCount": auto_enriched_count,
             "topScore": round(top_score, 4),
             "preDedupCount": pre_dedup_count,
             "authorityBreakdown": authority_breakdown,
             "caseLawCount": len(related_case_law),
+            "scoreBuckets": score_buckets,
         }
+        if target_wpam_year is not None:
+            metadata["targetWpamYear"] = target_wpam_year
 
     elif tool_name == "search_document":
         chunks = result.get("chunks", [])
@@ -291,12 +307,18 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
     elif tool_name == "faq_search":
         faqs = result.get("faqs", [])
         top = faqs[0].get("score", 0.0) if faqs else 0.0
+        faq_scores = [round(float(f.get("score", 0.0)), 4) for f in faqs]
         summary_text = (
             f"FAQ semantic match score {top:.2f}"
             if faqs
             else "No FAQ matches"
         )
-        metadata = {"faqCount": len(faqs), "topScore": round(float(top), 4)}
+        metadata = {
+            "faqCount": len(faqs),
+            "topScore": round(float(top), 4),
+            "faqScoreThreshold": 0.70,
+            "faqScores": faq_scores,
+        }
 
     elif tool_name == "get_neighbors":
         neighbors = result.get("neighbors", [])

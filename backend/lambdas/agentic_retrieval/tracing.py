@@ -29,6 +29,12 @@ ALLOWED_METADATA_KEYS = frozenset({
     "relationshipCounts",
     "discoveryCounts",
     "caseLawCount",
+    "autoEnrichedCount",
+    "scoreBuckets",
+    "targetWpamYear",
+    "discoveryTitles",
+    "faqScoreThreshold",
+    "faqScores",
 })
 
 

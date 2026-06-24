@@ -806,6 +806,8 @@ def execute_tool(
             "graph_context": graph_context,
             "pre_dedup_count": pre_dedup_count,
         }
+        if target_year is not None:
+            result["target_wpam_year"] = target_year
         if related_case_law:
             result["related_case_law"] = related_case_law
         return result

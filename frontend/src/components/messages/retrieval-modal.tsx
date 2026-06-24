@@ -220,25 +220,72 @@ function FAQVisualization({ step }: { step: RetrievalStep }) {
   const m = getMetadataFromEvents(step.events, 'faq_search');
   const faqCount = typeof m.faqCount === 'number' ? m.faqCount : 0;
   const topScore = typeof m.topScore === 'number' ? m.topScore : 0;
+  const threshold = typeof m.faqScoreThreshold === 'number' ? m.faqScoreThreshold : 0.70;
+  const faqScores = Array.isArray(m.faqScores) ? (m.faqScores as number[]) : [];
 
   if (faqCount === 0) return <IdleSquares />;
 
+  const scores = faqScores.length > 0 ? faqScores : Array.from({ length: faqCount }, (_, i) => i === 0 ? topScore : 0);
+
   return (
     <div className="mt-3">
-      <div className="flex gap-1">
-        {Array.from({ length: faqCount }).map((_, i) => (
-          <div
-            key={i}
-            className={`h-3 w-3 rounded-[3px] ${
-              i === 0 && topScore >= 0.7 ? 'bg-foreground/90' : 'bg-foreground/40'
-            }`}
-          />
-        ))}
+      <div className="flex items-end gap-1.5">
+        {scores.map((score, i) => {
+          const aboveThreshold = score >= threshold;
+          return (
+            <div key={i} className="flex flex-col items-center gap-1">
+              <div
+                className={`w-3 rounded-[3px] transition-colors ${
+                  aboveThreshold ? 'bg-foreground/80' : 'bg-foreground/25'
+                }`}
+                style={{ height: `${Math.max(12, Math.round(score * 32))}px` }}
+              />
+              <span className="text-[9px] text-muted-foreground/50 tabular-nums">
+                {score.toFixed(2)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <div className="h-px flex-1 bg-foreground/15" />
+        <span className="text-xs text-muted-foreground/50">threshold {threshold.toFixed(2)}</span>
+        <div className="h-px flex-1 bg-foreground/15" />
       </div>
       <p className="text-xs text-muted-foreground/60 mt-1.5">
-        {faqCount} FAQ{faqCount !== 1 ? 's' : ''} · top score {topScore.toFixed(2)}
-        {topScore >= 0.7 && ' · high confidence'}
+        {scores.filter(s => s >= threshold).length} above threshold · {faqCount} total
       </p>
+    </div>
+  );
+}
+
+function ScoreBuckets({ buckets }: { buckets: Record<string, number> }) {
+  const BUCKET_ORDER = ['0.9+', '0.8-0.9', '0.7-0.8', '<0.7'];
+  const BUCKET_OPACITY: Record<string, string> = {
+    '0.9+': 'bg-foreground/90',
+    '0.8-0.9': 'bg-foreground/65',
+    '0.7-0.8': 'bg-foreground/40',
+    '<0.7': 'bg-foreground/20',
+  };
+  const entries = BUCKET_ORDER.filter(k => buckets[k] && buckets[k] > 0);
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="mt-3">
+      <p className="text-xs text-muted-foreground/70 mb-1.5">Score distribution</p>
+      <div className="space-y-1.5">
+        {entries.map(bucket => (
+          <div key={bucket} className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground/70 w-14 shrink-0 tabular-nums">{bucket}</span>
+            <div className="flex gap-1">
+              {Array.from({ length: Math.min(buckets[bucket], 20) }).map((_, i) => (
+                <div key={i} className={`h-3 w-3 rounded-[3px] ${BUCKET_OPACITY[bucket]}`} />
+              ))}
+            </div>
+            <span className="text-xs text-muted-foreground/50">{buckets[bucket]}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -249,6 +296,9 @@ function VectorVisualization({ step }: { step: RetrievalStep }) {
   const chunkCount = typeof m.chunkCount === 'number' ? m.chunkCount : 0;
   const authorityBreakdown = (m.authorityBreakdown as Record<string, number>) ?? {};
   const caseLawCount = typeof m.caseLawCount === 'number' ? m.caseLawCount : 0;
+  const autoEnrichedCount = typeof m.autoEnrichedCount === 'number' ? m.autoEnrichedCount : 0;
+  const scoreBuckets = (m.scoreBuckets as Record<string, number>) ?? {};
+  const targetWpamYear = typeof m.targetWpamYear === 'number' ? m.targetWpamYear : null;
 
   if (chunkCount === 0 && preDedupCount === 0) return <IdleSquares />;
 
@@ -261,14 +311,27 @@ function VectorVisualization({ step }: { step: RetrievalStep }) {
           label="Dedup + diversity filtering"
         />
       )}
+      {targetWpamYear && (
+        <p className="text-xs text-muted-foreground/60 mt-2">
+          Filtered to WPAM {targetWpamYear} edition
+        </p>
+      )}
+      {Object.keys(scoreBuckets).length > 0 && (
+        <ScoreBuckets buckets={scoreBuckets} />
+      )}
       {Object.keys(authorityBreakdown).length > 0 && (
         <div className="mt-3">
           <p className="text-xs text-muted-foreground/70 mb-1.5">By authority level</p>
           <AuthoritySquares breakdown={authorityBreakdown} />
         </div>
       )}
-      {caseLawCount > 0 && (
+      {autoEnrichedCount > 0 && (
         <p className="text-xs text-muted-foreground/60 mt-2">
+          + {autoEnrichedCount} graph neighbor{autoEnrichedCount !== 1 ? 's' : ''} auto-enriched
+        </p>
+      )}
+      {caseLawCount > 0 && (
+        <p className="text-xs text-muted-foreground/60 mt-1">
           + {caseLawCount} case law citation{caseLawCount !== 1 ? 's' : ''} discovered
         </p>
       )}
@@ -330,6 +393,7 @@ function GraphVisualization({ step }: { step: RetrievalStep }) {
 function SynthesisVisualization({ step, trace }: { step: RetrievalStep; trace: AgentTraceEvent[] }) {
   const loopComplete = trace.find(e => e.kind === 'loop_complete');
   const discoveryCounts = (loopComplete?.payload?.discoveryCounts as Record<string, number>) ?? {};
+  const discoveryTitles = (loopComplete?.payload?.discoveryTitles as Record<string, string>) ?? {};
   const citedDocCount = typeof loopComplete?.payload?.citedDocCount === 'number'
     ? loopComplete.payload.citedDocCount : 0;
 
@@ -343,10 +407,25 @@ function SynthesisVisualization({ step, trace }: { step: RetrievalStep; trace: A
     );
   }
 
+  const titleEntries = Object.entries(discoveryTitles).slice(0, 10);
+
   return (
     <div>
       {Object.keys(discoveryCounts).length > 0 && (
         <DiscoverySquares counts={discoveryCounts} />
+      )}
+      {titleEntries.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs text-muted-foreground/70 mb-1.5">Cited sources</p>
+          <div className="space-y-1">
+            {titleEntries.map(([docId, title]) => (
+              <div key={docId} className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-[3px] bg-foreground/70 shrink-0" />
+                <span className="text-xs text-muted-foreground truncate">{title}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
       {citedDocCount > 0 && (
         <p className="text-xs text-muted-foreground mt-2 font-medium">

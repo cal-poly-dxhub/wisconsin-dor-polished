@@ -15,6 +15,7 @@ import itertools
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any
 
@@ -64,6 +65,7 @@ from websocket_utils.models import (
 from websocket_utils.utils import WebSocketServer, get_ws_connection_from_session
 
 MAX_TURNS = 10
+_WS_HEARTBEAT_INTERVAL = 15  # seconds between keepalive pings
 
 # Bedrock KB relevance scores range 0-1. A well-matched FAQ typically scores
 # 0.75+; loosely related hits land around 0.6-0.7. At/above this threshold the
@@ -526,12 +528,33 @@ def run_agentic_loop(
             )
             raise
 
+        heartbeat_stop = threading.Event()
+
+        def _heartbeat_loop():
+            while not heartbeat_stop.wait(_WS_HEARTBEAT_INTERVAL):
+                if not ws_server or not ws_connection_alive[0]:
+                    break
+                try:
+                    ws_server.client.post_to_connection(
+                        ConnectionId=ws_server.connection_id,
+                        Data=json.dumps({"streamId": "heartbeat", "body": {}}),
+                    )
+                except Exception:
+                    logger.info("WebSocket connection gone during heartbeat")
+                    ws_connection_alive[0] = False
+                    break
+
+        heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
+        if ws_server and ws_connection_alive[0]:
+            heartbeat_thread.start()
+
         stream_result = process_converse_stream(
             stream_response,
             on_answer_fragment=_send_ws_fragment,
             on_answer_start=_on_answer_start,
             is_answer_turn=True,
         )
+        heartbeat_stop.set()
         if stream_result.answer_streamed:
             answer_was_streamed = True
         converse_latency_ms = round((time.perf_counter() - converse_started) * 1000)
@@ -846,6 +869,13 @@ def run_agentic_loop(
                     citedDocIds=list(cited)[:20],
                     discovery=discovery_summary(cited_discovery),
                 )
+                discovery_titles: dict[str, str] = {}
+                for doc_id in list(cited)[:20]:
+                    try:
+                        info = neptune.get_document(doc_id)
+                        discovery_titles[doc_id] = (info or {}).get("title") or doc_id
+                    except Exception:
+                        discovery_titles[doc_id] = doc_id
                 _emit_safe(
                     ws_server,
                     trace_seq,
@@ -857,6 +887,7 @@ def run_agentic_loop(
                         "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
                         "citedDocCount": len(cited),
                         "discoveryCounts": discovery_summary(cited_discovery),
+                        "discoveryTitles": discovery_titles,
                     },
                 )
                 return answer, list(cited), rag_docs, cited_faq_resource, trace_log, answer_was_streamed, ws_connection_alive[0]

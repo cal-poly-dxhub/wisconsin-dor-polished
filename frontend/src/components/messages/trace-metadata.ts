@@ -20,6 +20,12 @@ const ALLOWED_METADATA_KEYS = new Set([
   'relationshipCounts',
   'discoveryCounts',
   'caseLawCount',
+  'autoEnrichedCount',
+  'scoreBuckets',
+  'targetWpamYear',
+  'discoveryTitles',
+  'faqScoreThreshold',
+  'faqScores',
 ]);
 
 export function sanitizeTraceMetadata(

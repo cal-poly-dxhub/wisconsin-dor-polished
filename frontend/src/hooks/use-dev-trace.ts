@@ -11,6 +11,7 @@ import { useMemo } from 'react';
  */
 export function useDevTrace(): boolean {
   return useMemo(() => {
+    if (process.env.NODE_ENV === 'development') return true;
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
     if (params.get('debug') === '1') return true;

@@ -63,7 +63,7 @@ class TestBuildToolResultSummary:
         assert set(s["doc_ids"]) == {"doc-a", "doc-b"}
         assert s["metadata"]["chunkCount"] == 3
         assert s["metadata"]["docCount"] == 2
-        assert s["metadata"]["neighborCount"] == 1
+        assert s["metadata"]["autoEnrichedCount"] == 1
         assert s["metadata"]["topScore"] == pytest.approx(0.91)
 
     def test_get_neighbors(self):
