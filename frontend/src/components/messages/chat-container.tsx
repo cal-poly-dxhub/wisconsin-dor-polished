@@ -103,18 +103,19 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
     }, [handleScroll, orderedQueries.length]);
 
     // A newly submitted question means the user wants to follow the next
-    // answer. Reset the scrolled-up flag (handleScroll may have just flipped
-    // it to true, because scrollHeight grew before scrollTop caught up) and
-    // pin to the bottom so the streaming effect below can take over.
+    // answer. Reset the scrolled-up flag and smooth-scroll to bottom.
     useEffect(() => {
       if (!autoScroll) return;
       userScrolledUpRef.current = false;
       if (containerRef.current) {
-        containerRef.current.scrollTop = containerRef.current.scrollHeight;
+        containerRef.current.scrollTo({
+          top: containerRef.current.scrollHeight,
+          behavior: 'smooth',
+        });
       }
     }, [orderedQueries.length, autoScroll]);
 
-    // Auto-scroll to bottom during streaming unless user scrolled up
+    // Auto-scroll to bottom during streaming/completion unless user scrolled up
     const currentQuery = currentQueryId ? queries[currentQueryId] : null;
     const streamContent = currentQuery?.response?.content;
     const queryStatus = currentQuery?.status;
@@ -124,7 +125,10 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
     useEffect(() => {
       if (!autoScroll) return;
       if (!containerRef.current || !isActive || userScrolledUpRef.current) return;
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      containerRef.current.scrollTo({
+        top: containerRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
     }, [streamContent, queryStatus, isActive, agentTrace, autoScroll]);
 
     return (
