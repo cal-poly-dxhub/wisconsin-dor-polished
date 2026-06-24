@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useChatStore } from '@/stores/chat-store';
@@ -274,6 +275,8 @@ function getMetadataFromEvents(events: AgentTraceEvent[], toolName?: string) {
   return merged;
 }
 
+const BAR_CHART_HEIGHT = 180;
+
 function FAQVisualization({ step }: { step: RetrievalStep }) {
   const m = getMetadataFromEvents(step.events, 'faq_search');
   const faqCount = typeof m.faqCount === 'number' ? m.faqCount : 0;
@@ -284,46 +287,63 @@ function FAQVisualization({ step }: { step: RetrievalStep }) {
   if (faqCount === 0) return <IdleSquares />;
 
   const scores = faqScores.length > 0 ? faqScores : Array.from({ length: faqCount }, (_, i) => i === 0 ? topScore : 0);
+  const ceilScore = Math.max(...scores, threshold) * 1.2;
+  const thresholdPct = (threshold / ceilScore) * 100;
 
   return (
     <FadeIn>
-      <div className="mt-3">
-        <div className="flex items-end gap-1.5">
-          {scores.map((score, i) => {
-            const aboveThreshold = score >= threshold;
-            return (
-              <motion.div
-                key={i}
-                className="flex flex-col items-center gap-1"
-                initial={{ opacity: 0, scaleY: 0 }}
-                animate={{ opacity: 1, scaleY: 1 }}
-                transition={{ duration: 0.3, delay: i * 0.05, ease: [0.4, 0, 0.2, 1] }}
-                style={{ originY: 1 }}
-              >
-                <div
-                  className={`w-3 rounded-[3px] ${
-                    aboveThreshold ? 'bg-foreground/80' : 'bg-foreground/25'
-                  }`}
-                  style={{ height: `${Math.max(12, Math.round(score * 32))}px` }}
-                />
-                <span className="text-[9px] text-muted-foreground/50 tabular-nums">
-                  {score.toFixed(2)}
-                </span>
-              </motion.div>
-            );
-          })}
+      <div className="mt-4">
+        <div className="relative w-full overflow-visible" style={{ height: BAR_CHART_HEIGHT }}>
+          {/* Bars */}
+          <div className="flex items-end gap-1.5 h-full w-full">
+            {scores.map((score, i) => {
+              const aboveThreshold = score >= threshold;
+              const heightPct = (score / ceilScore) * 100;
+              return (
+                <motion.div
+                  key={i}
+                  className="relative flex-1 flex flex-col items-center justify-end h-full"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.2, delay: i * 0.04 }}
+                >
+                  <motion.div
+                    className={`w-full rounded-t-[4px] ${
+                      aboveThreshold ? 'bg-foreground/75' : 'bg-foreground/20'
+                    }`}
+                    initial={{ height: 0 }}
+                    animate={{ height: `${heightPct}%` }}
+                    transition={{ duration: 0.4, delay: i * 0.06, ease: [0.4, 0, 0.2, 1] }}
+                  />
+                  <span className="mt-1.5 text-[10px] text-muted-foreground/60 tabular-nums">
+                    {score.toFixed(2)}
+                  </span>
+                </motion.div>
+              );
+            })}
+          </div>
+
+          {/* Threshold line — rendered after bars so it sits on top */}
+          <motion.div
+            className="absolute left-0 right-0 z-10 pointer-events-none"
+            style={{ bottom: `${thresholdPct}%` }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4, delay: 0.3 }}
+          >
+            <div
+              className="w-full"
+              style={{
+                height: '2px',
+                backgroundImage: 'repeating-linear-gradient(to right, rgb(248 113 113 / 0.9), rgb(248 113 113 / 0.9) 6px, transparent 6px, transparent 12px)',
+              }}
+            />
+            <span className="absolute top-1.5 right-0 text-[10px] text-red-400 font-medium tabular-nums">
+              {threshold.toFixed(2)}
+            </span>
+          </motion.div>
         </div>
-        <motion.div
-          className="flex items-center gap-2 mt-2"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3, delay: 0.2 }}
-        >
-          <div className="h-px flex-1 bg-foreground/15" />
-          <span className="text-xs text-muted-foreground/50">threshold {threshold.toFixed(2)}</span>
-          <div className="h-px flex-1 bg-foreground/15" />
-        </motion.div>
-        <p className="text-xs text-muted-foreground/60 mt-1.5">
+        <p className="text-xs text-muted-foreground/60 mt-3">
           {scores.filter(s => s >= threshold).length} above threshold · {faqCount} total
         </p>
       </div>
@@ -344,10 +364,7 @@ function ScoreBuckets({ buckets }: { buckets: Record<string, number> }) {
 
   let globalIdx = 0;
   return (
-    <FadeIn delay={0.1}>
-      <div className="mt-3">
-        <p className="text-xs text-muted-foreground/70 mb-1.5">Score distribution</p>
-        <div className="space-y-1.5">
+    <div className="space-y-1.5">
           {entries.map((bucket, rowIdx) => (
             <motion.div
               key={bucket}
@@ -368,6 +385,79 @@ function ScoreBuckets({ buckets }: { buckets: Record<string, number> }) {
               <span className="text-xs text-muted-foreground/50">{buckets[bucket]}</span>
             </motion.div>
           ))}
+    </div>
+  );
+}
+
+type VectorBreakdownView = 'scores' | 'authority';
+
+function VectorBreakdownToggle({ scoreBuckets, authorityBreakdown }: { scoreBuckets: Record<string, number>; authorityBreakdown: Record<string, number> }) {
+  const [view, setView] = useState<VectorBreakdownView>('scores');
+  const hasScores = Object.keys(scoreBuckets).length > 0;
+  const hasAuthority = Object.keys(authorityBreakdown).length > 0;
+
+  if (!hasScores && !hasAuthority) return null;
+
+  return (
+    <FadeIn delay={0.1}>
+      <div className="mt-3">
+        <select
+          value={view}
+          onChange={e => setView(e.target.value as VectorBreakdownView)}
+          className="mb-3 text-xs bg-muted/40 border border-border/80 rounded-lg px-3 py-2.5 text-foreground/80 font-medium cursor-pointer shadow-sm focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors hover:bg-muted/60"
+        >
+          {hasScores && <option value="scores">Score distribution</option>}
+          {hasAuthority && <option value="authority">Authority level</option>}
+        </select>
+
+        <div className="pt-1">
+          {view === 'scores' && hasScores && <ScoreBuckets buckets={scoreBuckets} />}
+          {view === 'authority' && hasAuthority && <AuthoritySquares breakdown={authorityBreakdown} />}
+        </div>
+      </div>
+    </FadeIn>
+  );
+}
+
+const DIVERSITY_CAP = 5;
+
+function DocChunkGroups({ docChunks, preDedupCount, chunkCount }: { docChunks: Record<string, number>; preDedupCount: number; chunkCount: number }) {
+  const entries = Object.entries(docChunks).sort(([, a], [, b]) => b - a);
+  if (entries.length === 0) return null;
+
+  return (
+    <FadeIn>
+      <div className="mt-3">
+        <p className="text-xs text-muted-foreground/70 mb-3">
+          {preDedupCount} candidates → {chunkCount} kept (cap {DIVERSITY_CAP}/doc)
+        </p>
+        <div className="space-y-4">
+          {entries.map(([docId, count], groupIdx) => {
+            const atCap = count >= DIVERSITY_CAP;
+            const shortId = docId.length > 32 ? docId.slice(0, 32) + '…' : docId;
+            return (
+              <motion.div
+                key={docId}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, delay: groupIdx * 0.05 }}
+              >
+                <p className={`text-[11px] mb-2 truncate ${atCap ? 'text-foreground/70 font-medium' : 'text-muted-foreground/60'}`}>
+                  {shortId}
+                  {atCap && <span className="text-muted-foreground/50 font-normal"> (capped)</span>}
+                </p>
+                <div className="flex gap-1">
+                  {Array.from({ length: count }).map((_, i) => (
+                    <StaggerSquare
+                      key={i}
+                      index={i}
+                      className={`h-3 w-3 rounded-[3px] ${atCap ? 'bg-foreground/70' : 'bg-foreground/45'}`}
+                    />
+                  ))}
+                </div>
+              </motion.div>
+            );
+          })}
         </div>
       </div>
     </FadeIn>
@@ -383,18 +473,19 @@ function VectorVisualization({ step }: { step: RetrievalStep }) {
   const autoEnrichedCount = typeof m.autoEnrichedCount === 'number' ? m.autoEnrichedCount : 0;
   const scoreBuckets = (m.scoreBuckets as Record<string, number>) ?? {};
   const targetWpamYear = typeof m.targetWpamYear === 'number' ? m.targetWpamYear : null;
+  const docChunks = (m.docChunks as Record<string, number>) ?? {};
 
   if (chunkCount === 0 && preDedupCount === 0) return <IdleSquares />;
 
+  const hasDocChunks = Object.keys(docChunks).length > 0;
+
   return (
     <div>
-      {preDedupCount > 0 && (
-        <ChunkSquares
-          total={preDedupCount}
-          kept={chunkCount}
-          label="Dedup + diversity filtering"
-        />
-      )}
+      {hasDocChunks ? (
+        <DocChunkGroups docChunks={docChunks} preDedupCount={preDedupCount} chunkCount={chunkCount} />
+      ) : preDedupCount > 0 ? (
+        <ChunkSquares total={preDedupCount} kept={chunkCount} label="Dedup + diversity filtering" />
+      ) : null}
       {targetWpamYear && (
         <FadeIn delay={0.15}>
           <p className="text-xs text-muted-foreground/60 mt-2">
@@ -402,17 +493,7 @@ function VectorVisualization({ step }: { step: RetrievalStep }) {
           </p>
         </FadeIn>
       )}
-      {Object.keys(scoreBuckets).length > 0 && (
-        <ScoreBuckets buckets={scoreBuckets} />
-      )}
-      {Object.keys(authorityBreakdown).length > 0 && (
-        <FadeIn delay={0.2}>
-          <div className="mt-3">
-            <p className="text-xs text-muted-foreground/70 mb-1.5">By authority level</p>
-            <AuthoritySquares breakdown={authorityBreakdown} />
-          </div>
-        </FadeIn>
-      )}
+      <VectorBreakdownToggle scoreBuckets={scoreBuckets} authorityBreakdown={authorityBreakdown} />
       {autoEnrichedCount > 0 && (
         <FadeIn delay={0.25}>
           <p className="text-xs text-muted-foreground/60 mt-2">
@@ -629,7 +710,7 @@ function IdleSquares() {
 function StepPanel({ step, trace }: { step: RetrievalStep; trace: AgentTraceEvent[] }) {
   return (
     <div
-      className={`retrieval-step-panel rounded-lg border p-6 transition-all duration-300 ${
+      className={`retrieval-step-panel h-full rounded-lg border p-6 transition-all duration-300 ${
         step.status === 'active'
           ? 'border-foreground/30 bg-card shadow-sm'
           : step.status === 'complete'
@@ -748,57 +829,42 @@ export function RetrievalModal({ queryId, open, onClose }: RetrievalModalProps) 
     return () => { document.body.style.overflow = ''; };
   }, [open]);
 
-  return (
+  const modalContent = (
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
+          className="fixed inset-0 z-50 overflow-y-auto bg-background"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 8 }}
+          transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
         >
-          {/* Backdrop */}
-          <motion.div
-            className="absolute inset-0 bg-background/80 backdrop-blur-sm"
-            onClick={onClose}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          />
-
-          {/* Modal content */}
-          <motion.div
-            className="relative z-10 w-[calc(100vw-4rem)] max-w-5xl max-h-[calc(100vh-4rem)] overflow-y-auto rounded-xl border border-border bg-card shadow-2xl"
-            initial={{ scale: 0.95, opacity: 0, y: 12 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.95, opacity: 0, y: 12 }}
-            transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
-          >
             {/* Header */}
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card/95 backdrop-blur-sm px-6 py-4">
-              <div className="min-w-0">
-                <h2 className="text-base font-semibold tracking-tight">Retrieval Pipeline</h2>
-                {query && (
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-md">
-                    &ldquo;{query}&rdquo;
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center gap-3">
-                <ElapsedBadge trace={agentTrace ?? []} />
+            <div className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur-sm px-6 py-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-lg font-semibold tracking-tight">Retrieval Pipeline</h2>
+                    <ElapsedBadge trace={agentTrace ?? []} />
+                  </div>
+                  {query && (
+                    <p className="mt-2 text-base text-foreground/80 font-medium leading-snug">
+                      &ldquo;{query}&rdquo;
+                    </p>
+                  )}
+                </div>
                 <button
                   onClick={onClose}
-                  className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                  className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer shrink-0"
                   aria-label="Close"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
             </div>
 
             {/* Steps grid */}
-            <div className="p-6 grid grid-cols-1 md:grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-4">
+            <div className="p-6 grid grid-cols-[repeat(auto-fill,minmax(400px,1fr))] gap-4">
               {steps.map((step, i) => (
                 <motion.div
                   key={step.id}
@@ -823,9 +889,11 @@ export function RetrievalModal({ queryId, open, onClose }: RetrievalModalProps) 
                 <span className="h-3 w-3 rounded-[3px] border border-foreground/30" /> Miss
               </span>
             </div>
-          </motion.div>
         </motion.div>
       )}
     </AnimatePresence>
   );
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(modalContent, document.body);
 }

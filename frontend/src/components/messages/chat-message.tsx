@@ -244,6 +244,7 @@ interface MessageOptionsBarProps {
   queryId: string;
   timestamp: string;
   items: ResourceItem[];
+  onOpenRetrieval?: () => void;
 }
 
 export function StreamResponse({
@@ -378,11 +379,11 @@ function MessageOptionsBar({
   queryId,
   timestamp,
   items,
+  onOpenRetrieval,
 }: MessageOptionsBarProps) {
   const [infoOpen, setInfoOpen] = useState(false);
   const [feedbackModal, setFeedbackModal] = useState<'up' | 'down' | null>(null);
   const [submittedRating, setSubmittedRating] = useState<'up' | 'down' | null>(null);
-  const [retrievalOpen, setRetrievalOpen] = useState(false);
   const assignFeedback = useAssignFeedback();
   const devMode = useDevTrace();
   const hasTrace = useChatStore(s => (s.queries[queryId]?.agentTrace?.length ?? 0) > 0);
@@ -439,19 +440,18 @@ function MessageOptionsBar({
                 </div>
               </PopoverContent>
             </Popover>
-            {devMode && hasTrace && (
+            {devMode && hasTrace && onOpenRetrieval && (
               <Button
                 variant="outline"
                 size="icon"
                 className="cursor-pointer"
                 aria-label="View Retrieval Pipeline"
-                onClick={() => setRetrievalOpen(true)}
+                onClick={onOpenRetrieval}
               >
                 <Network className="h-4 w-4" />
               </Button>
             )}
           </ButtonGroup>
-          <RetrievalModal queryId={queryId} open={retrievalOpen} onClose={() => setRetrievalOpen(false)} />
           <ButtonGroup>
             <Button
               variant={submittedRating === 'up' ? 'default' : 'outline'}
@@ -766,6 +766,7 @@ export function ChatMessage({
             queryId={queryId}
             timestamp={timestamp ?? 'No timestamp available'}
             items={items ?? []}
+            onOpenRetrieval={() => setRetrievalModalOpen(true)}
           />
         </div>
       </div>

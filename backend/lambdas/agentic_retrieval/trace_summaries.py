@@ -269,6 +269,10 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             else:
                 score_buckets["<0.7"] += 1
         score_buckets = {k: v for k, v in score_buckets.items() if v > 0}
+        doc_chunks: dict[str, int] = {}
+        for chunk in chunks:
+            did = chunk.get("doc_id", "unknown")
+            doc_chunks[did] = doc_chunks.get(did, 0) + 1
         metadata = {
             "chunkCount": n_chunks,
             "docCount": n_docs,
@@ -278,6 +282,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             "authorityBreakdown": authority_breakdown,
             "caseLawCount": len(related_case_law),
             "scoreBuckets": score_buckets,
+            "docChunks": doc_chunks,
         }
         if target_wpam_year is not None:
             metadata["targetWpamYear"] = target_wpam_year
