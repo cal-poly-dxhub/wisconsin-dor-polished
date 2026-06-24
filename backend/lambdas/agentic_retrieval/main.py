@@ -21,7 +21,6 @@ from typing import Any
 
 import boto3
 import pydantic
-from bedrock_streaming import process_converse_stream
 from case_law_handling import is_case_law_stub
 from case_opinion import citation_to_raw_slug, fetch_case_opinion
 from chat_history import get_chat_history, save_chat_history
@@ -478,25 +477,6 @@ def run_agentic_loop(
 
         converse_started = time.perf_counter()
 
-        try:
-            stream_response = bedrock.converse_stream(
-                modelId=AGENTIC_MODEL_ID,
-                messages=messages,
-                system=[{"text": SYSTEM_PROMPT}],
-                toolConfig=tool_config,
-                inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
-            )
-        except Exception as exc:
-            _log(
-                "bedrock_converse_error",
-                logging.ERROR,
-                **trace_context,
-                turn=turn_number,
-                error_type=type(exc).__name__,
-                error=str(exc),
-            )
-            raise
-
         heartbeat_stop = threading.Event()
 
         def _heartbeat_loop():
@@ -517,13 +497,33 @@ def run_agentic_loop(
         if ws_server and ws_connection_alive[0]:
             heartbeat_thread.start()
 
-        stream_result = process_converse_stream(stream_response)
+        try:
+            response = bedrock.converse(
+                modelId=AGENTIC_MODEL_ID,
+                messages=messages,
+                system=[{"text": SYSTEM_PROMPT}],
+                toolConfig=tool_config,
+                inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+            )
+        except Exception as exc:
+            heartbeat_stop.set()
+            _log(
+                "bedrock_converse_error",
+                logging.ERROR,
+                **trace_context,
+                turn=turn_number,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
+
         heartbeat_stop.set()
         converse_latency_ms = round((time.perf_counter() - converse_started) * 1000)
 
-        assistant_message = stream_result.assistant_message
+        assistant_message = response["output"]["message"]
         messages.append(assistant_message)
-        stop_reason = stream_result.stop_reason
+        stop_reason = response["stopReason"]
+        usage = response.get("usage", {})
         asst_summary = _assistant_summary(assistant_message)
         _log(
             "agent_turn_model_response",
@@ -531,7 +531,7 @@ def run_agentic_loop(
             turn=turn_number,
             bedrock_latency_ms=converse_latency_ms,
             stop_reason=stop_reason,
-            usage=stream_result.usage,
+            usage=usage,
             assistant=asst_summary,
         )
         if asst_summary["text_preview"]:
@@ -928,10 +928,6 @@ def run_agentic_loop(
     return answer, list(all_doc_ids), rag_docs, high_confidence_faq, trace_log, answer_was_streamed, ws_connection_alive[0]
 
 
-_REPLAY_FRAGMENT_SIZE = 40
-_REPLAY_PACE_SECONDS = 0.05
-
-
 def _send_resources_and_finalize(
     ws_server: WebSocketServer,
     query_id: str,
@@ -940,7 +936,7 @@ def _send_resources_and_finalize(
     faq_resource: FAQResource | None,
     answer_already_streamed: bool,
 ) -> None:
-    """Send documents, FAQs, and paced answer replay over WebSocket."""
+    """Send documents, FAQs, and full answer over WebSocket."""
     source_documents = [
         SourceDocument(
             document_id=doc.document_id,
@@ -984,14 +980,11 @@ def _send_resources_and_finalize(
     data = json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)})
     ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
 
-    for i in range(0, len(answer), _REPLAY_FRAGMENT_SIZE):
-        fragment = answer[i : i + _REPLAY_FRAGMENT_SIZE]
-        frag_msg = FragmentMessage(
-            query_id=query_id, content=FragmentContent(fragment=fragment)
-        )
-        frag_data = json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)})
-        ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=frag_data)
-        time.sleep(_REPLAY_PACE_SECONDS)
+    frag_msg = FragmentMessage(
+        query_id=query_id, content=FragmentContent(fragment=answer)
+    )
+    frag_data = json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)})
+    ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=frag_data)
 
     stop_msg = AnswerEventType(event="stop", query_id=query_id)
     data = json.dumps({"streamId": "answer-event", "body": stop_msg.model_dump(by_alias=True)})
