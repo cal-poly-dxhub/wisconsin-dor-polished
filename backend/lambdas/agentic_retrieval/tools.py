@@ -12,7 +12,6 @@ import time
 from typing import Any
 
 import boto3
-
 from case_opinion import fetch_case_opinion
 from neptune_client import NeptuneClient
 from wpam_dedup import dedupe_wpam_chunks
@@ -223,7 +222,10 @@ TOOL_DEFINITIONS = [
                     "properties": {
                         "doc_id": {
                             "type": "string",
-                            "description": "The document ID to search within (from a previous tool result)",
+                            "description": (
+                                "The document ID to search within"
+                                " (from a previous tool result)"
+                            ),
                         },
                         "query": {
                             "type": "string",
@@ -446,29 +448,33 @@ TOOL_DEFINITIONS = [
     },
     {
         "toolSpec": {
-            "name": "cite_documents",
+            "name": "prepare_answer",
             "description": (
-                "After writing your answer as text, call this tool with the IDs of "
-                "all documents you cited AND a copy of your answer. You MUST write "
-                "the answer as a text block BEFORE calling this tool — the text "
-                "block is what gets streamed to the user in real-time. Then call "
-                "this tool to register citations."
+                "Signal that research is complete and you are ready to write "
+                "your answer. Declare which documents you will cite. Do NOT "
+                "write the answer text here — it will be generated in a "
+                "follow-up step. Just list the document IDs and optionally "
+                "outline the answer structure."
             ),
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
-                        "response": {
-                            "type": "string",
-                            "description": "Copy of the answer text you just wrote (for citation tracking)",
-                        },
                         "cited_doc_ids": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "List of document IDs cited in the answer text",
+                            "description": "Document IDs that will be cited in the answer",
+                        },
+                        "answer_plan": {
+                            "type": "string",
+                            "description": (
+                                "Brief outline of the answer structure and key points "
+                                "to cover (2-3 sentences). This helps the answer "
+                                "generation step stay focused."
+                            ),
                         },
                     },
-                    "required": ["response", "cited_doc_ids"],
+                    "required": ["cited_doc_ids"],
                 }
             },
         }
@@ -734,6 +740,49 @@ def execute_tool(
         except Exception:  # noqa: BLE001
             logger.warning("case law citation resolution failed", exc_info=True)
 
+        # Graph-structural case law discovery: derive statute subsection IDs
+        # from chunk headings, then traverse CITES edges to find CaseLaw nodes
+        # connected to those subsections. Prioritizes recent cases (2000+) that
+        # aren't mentioned in text yet.
+        try:
+            subsection_ids: set[str] = set()
+            for chunk in chunks:
+                heading = chunk.get("heading") or ""
+                doc_id = chunk.get("doc_id") or ""
+                if doc_id.startswith("statutes-") and heading:
+                    m = re.match(r"^(\d+\.\d+(?:\s*\(\d+\w*\))?)", heading)
+                    if m:
+                        subsection_ids.add(f"WIS-STAT-{m.group(1).strip()}")
+            if subsection_ids:
+                existing_ids = {c.get("id") for c in related_case_law}
+                graph_cases = neptune.get_cases_for_subsections(
+                    list(subsection_ids), limit=100
+                )
+                # Sort by year from node ID (modern citations: case-law-YYYY-wi-*)
+                _yr_re = re.compile(r"^case-law-(\d{4})-wi")
+
+                def _case_year(c: dict) -> int:
+                    m = _yr_re.match(c.get("id") or "")
+                    return int(m.group(1)) if m else 0
+
+                graph_cases.sort(key=_case_year, reverse=True)
+                new_cases = [
+                    c for c in graph_cases[:15]
+                    if c.get("id") not in existing_ids
+                ]
+                if new_cases:
+                    related_case_law.extend(new_cases)
+                    _log_tool_event(
+                        "vector_search_subsection_case_discovery",
+                        tool_name=tool_name,
+                        subsection_ids=sorted(subsection_ids),
+                        total_cases=len(graph_cases),
+                        new_cases=len(new_cases),
+                        case_ids=[c.get("id") for c in new_cases[:10]],
+                    )
+        except Exception:  # noqa: BLE001
+            logger.warning("subsection case law discovery failed", exc_info=True)
+
         # Neighbor-doc citation extraction: pick the most topically relevant
         # non-WPAM neighbor docs (ranked by shared statutes with query chunks),
         # read their chunk text, and extract case citations via regex. This
@@ -861,7 +910,10 @@ def execute_tool(
             if not matched:
                 return {
                     "error": f"No chunks found for document '{target_doc_id}' matching this query",
-                    "suggestion": "Try a different sub-query or use vector_search with broader terms",
+                    "suggestion": (
+                        "Try a different sub-query or use"
+                        " vector_search with broader terms"
+                    ),
                 }
         return {"chunks": matched, "doc_id": target_doc_id, "keyword_fallback": keyword_fallback}
 
@@ -1008,12 +1060,12 @@ def execute_tool(
         )
         return tool_input
 
-    elif tool_name == "cite_documents":
+    elif tool_name == "prepare_answer":
         _log_tool_event(
-            "cite_documents_tool_complete",
+            "prepare_answer_tool_complete",
             tool_name=tool_name,
-            response_chars=len(tool_input.get("response", "")),
             cited_doc_count=len(tool_input.get("cited_doc_ids", [])),
+            has_plan=bool(tool_input.get("answer_plan")),
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
         return tool_input

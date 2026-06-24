@@ -4,16 +4,15 @@
 
 | # | Task | Related Responses |
 |---|------|-------------------|
-| 1 | Disambiguate generic queries before full retrieval | [Response A](#response-a) |
 | 2 | Fixing linking issues | — |
 | 5 | Replace LLM classification with structural parsers | — |
-| 14 | Improve case law discovery in vector_search auto-enrichment | [Response B](#response-b) |
 | 17 | Handle multipart queries (split or unified answering strategy) | — |
 | 20 | Add user persona setting (government worker vs. citizen) | — |
 | 21 | Investigate z-score normalization for vector_search result filtering | — |
 | 22 | Apply over-fetch multiplier when target_wpam_year is set | — |
 | 23 | Strip WPAM running headers from chunk text | — |
 | 25 | Fix WPAM 2025 garbled table chunks and heading metadata | — |
+| 26 | Admin ingestion page — ingest documents via URL from the UI | — |
 
 ## Done
 
@@ -34,18 +33,12 @@
 | 18 | Show traversed sources in UI during agentic retrieval |
 | 19 | Fix train-of-thought flicker on sidebar session hover |
 | 24 | Multi-citation source cards (aggregate inline citations per parent doc) |
+| 1 | Disambiguate generic queries before full retrieval |
+| 14 | Improve case law discovery in vector_search auto-enrichment |
 
 ---
 
 ## Task Details
-
-### Task 1: Disambiguate generic queries before full retrieval
-
-**Problem:** For generic queries that don't specify a certain type/classification of land, the system adds classification-specific detail to the answer (e.g., citing the manufacturing manual when the user never asked about manufacturing).
-
-**Suggested Direction:** Add a structural change to the retrieval path — after FAQ semantic search, first gather enough information against the query to understand if the answer depends on the user's specific needs (e.g., different answer for agricultural vs. manufacturing vs. residential land). If so, before doing the full retrieval path, ask a follow-up back to the user: "There are multiple types of X — which one best suits your needs?" Once the user responds, we have a much more targeted query to retrieve against.
-
----
 
 ### Task 2: Fixing linking issues
 
@@ -58,6 +51,7 @@
 - [ ] **Inline citations** — All sources cited as cards at the bottom of a response must also be mentioned as inline links within the answer text.
 - [ ] **Remove redundant source list** — The chatbot should not additionally list sources as a line of text at the end of its response (the cards are sufficient).
 - [ ] **Inline ↔ card reconciliation** — The model writes more inline `[Title](doc:id)` links than it puts in `cited_doc_ids`, so those links render in the answer but have no matching source card below. Need a post-filter to enforce the 1:1 invariant programmatically (the model drifts on this bookkeeping despite prompt instructions).
+- [ ] **Statute link promotion** — When the agent describes a statutory rule (e.g., Wis. Stat. § 70.32) but only retrieved guide/publication chunks that paraphrase it, the inline citation links to the guide rather than the actual statute. The user sees "[Wis. Stat. § 70.32](doc:news_pages-...)" which is misleading. **Status: prompt approach deployed (step 5 in WORKFLOW), evaluating effectiveness before considering deterministic post-processing.**
 
   **Options:**
   1. **Post-filter (recommended)** — After the model finishes, regex-extract all `doc:ID` patterns from the answer body and union them into `cited_doc_ids` before sending resource cards. Deterministic, guarantees consistency regardless of model drift.
@@ -83,6 +77,34 @@ The page anchor off-by-one and same-page-for-different-sections issues trace to 
 - Statute chunker has ~2.4% false-split rate from cross-references (e.g., "70.995 shall be assessed..." mid-prose triggering a split). These create small decoy chunks with misleading headings but correct page numbers. They won't outrank real definitions in vector search for most queries — low priority.
 - Statute PDF boilerplate ("Updated 23-24 Wis. Stats. Published and certified...") survives into chunk bodies (~55 occurrences per statute). Wastes tokens but doesn't affect page accuracy — low priority.
 
+**Statute Link Promotion (2026-06-24, in progress):**
+
+The agent frequently cites statutory rules (e.g., "Wis. Stat. § 70.32") with inline links pointing to a guide or news page that *describes* the statute rather than the statute document itself. This happens because the agent retrieves guide/publication chunks that paraphrase the statute, satisfying the "only cite docs you have chunks for" rule — but the user sees a statute-named link that opens a guide PDF, which is confusing.
+
+**Observed examples:**
+- Query "How are my property taxes determined?" → `[Wis. Stat. § 70.32](doc:statutes-70#page=23)` correct, but levy/credits citations link to `doc:gov_publications-2026-property-owners-guide#page=29`
+- Query "Can the sale of a dark commercial property..." → `[Wis. Stat. § 70.32](doc:news_pages-assessor-news-2023-03-02)` — statute-named link pointing to a news advisory
+
+**Current approach: prompt-level workflow step (step 5 in WORKFLOW section of `config/model_configs.toml`):**
+> "If your vector_search results are dominated by guides or publications that describe statutory rules, call search_document on the relevant statute chapter to get the actual statute text + page number so you can cite the statute directly."
+
+**Constraint:** The existing inline citation rule requires the agent to only link documents it has chunks for. This is correct and prevents hallucinated page numbers. The prompt approach tells the agent to *retrieve* the statute chunk before citing it.
+
+**If prompt approach proves insufficient, deterministic post-processing options:**
+
+1. **Post-loop statute link rewriting** — After `cite_documents`, regex-scan the answer for inline links where link text matches `Wis. Stat.` / `§ X.Y` but the `doc:` target is a non-statute doc. For each match, call `find_stub_promotion("WIS-STAT-{section}")` to resolve the statute chapter doc + page, then rewrite the href. Works for the DynamoDB-saved answer; for streaming, would need a correction event or the frontend doing client-side resolution.
+
+2. **Frontend-side resolution** — When rendering a `doc:` link whose display text matches a statute pattern, check if a statute source card exists in the resource list and redirect the link target. Loses page-level specificity (card has a single page range, not per-citation pages).
+
+3. **Hybrid: post-process saved copy only** — Rewrite links in the DynamoDB record and let the streamed version go as-is. History/admin views get correct links; live stream is slightly less precise but not broken.
+
+**Streaming consideration:** If the answer is streamed token-by-token, post-processing is too late for the live experience. Options: (a) send a "correction" event after stream ends to replace the answer, (b) do it only on the saved copy, or (c) rely on the prompt approach for streaming and use post-processing only as a DB-level cleanup.
+
+**Key files:**
+- `config/model_configs.toml` — prompt step 5 (deployed 2026-06-24)
+- `backend/lambdas/agentic_retrieval/main.py` — where `cite_documents` result is handled; insertion point for post-processing
+- `backend/lambdas/agentic_retrieval/neptune_client.py` — `find_stub_promotion()` resolves stub → chapter doc + page
+
 ---
 
 ### Task 5: Replace LLM classification with structural parsers
@@ -105,30 +127,6 @@ The page anchor off-by-one and same-page-for-different-sections issues trace to 
 **Conclusion:** The LLM's primary value is `summary`, `topics`, and `implements_refs`. For docs where `metadata.json` already provides `doc_type`, `framework_id`, and `authority_level` (all docs), the LLM is mainly generating the human-readable summary and graph relationship edges. At $8/full-ingest, this is a low-priority optimization — only worth pursuing if extraction becomes a frequent bottleneck or Bedrock throttling becomes an issue.
 
 **Direction (if pursued):** Build structural parsers only for the highest-volume remaining categories: news pages (~450 docs, highly templated job postings/announcements), FAQ pages (~40 docs, structured HTML). Keep LLM for gov publications, IAAO, and other varied documents where the summary and topic extraction genuinely require comprehension.
-
----
-
-### Task 14: Improve case law discovery in vector_search auto-enrichment
-
-**Problem:** The `vector_search` tool's auto-enrichment does not reliably surface relevant case law — especially recent decisions connected to statutes via `CITES` edges. The current approach depends on: (1) text regex citation extraction from retrieved chunks, and (2) `get_neighbors` on parent docs with a hard cap of 50 and no ordering. For heavily-connected nodes like `statutes-70` (hundreds of CITES edges), which 50 neighbors are returned is non-deterministic. This causes critical case law (e.g., *Children's Hospital of Wisconsin v. City of Wauwatosa*, 2025 WI App 43) to appear in some runs but not others for the same query.
-
-**Evidence:** Same query ("Is the expansion of a non-profit hospital that is under construction on the assessment date qualify for an exemption from property tax?") run on 06/18 and 06/21. On 06/18 the agent happened to call `get_neighbors` on `WIS-STAT-70.11` with `title_filter: "hospital"`, found the 2025 case, fetched its full opinion from S3, and produced an excellent answer citing the case's facts and holding. On 06/21 the agent took a different tool path, never discovered the case, and produced a weaker generic answer. The auto-enrichment surfaced the same 5 generic cases both times — Children's Hospital was never in them because it's connected via graph edge (CITES), not mentioned in the chunk text.
-
-**Root Cause:** The auto-enrichment resolves cases from *text mentions* (regex) but not from *graph structure* (CITES edges to statute subsections). The `get_neighbors` call on parent docs is too broad (entire statute doc) and too small (50 cap, no ordering) to reliably capture the right cases.
-
-**Direction (ranked by effectiveness):**
-
-1. **Chunk → Statute subsection → CaseLaw path** — Retrieved chunks already have `CITES` edges to specific statute subsection nodes (e.g., `WIS-STAT-70.11`). Add a step: collect the statute subsection IDs cited by the top chunks, then query for CaseLaw nodes that also have `CITES` edges to those same subsections. This is deterministic, targeted, and uses exactly the graph structure built during ingestion.
-
-2. **Order the 50-cap by recency** — Add `ORDER BY n.effective_date DESC` to the `get_neighbors` query. Newer cases (2025) always beat older ones (1967) for a slot in the cap. Simple one-line change.
-
-3. **Label-aware budget splitting** — Reserve a portion of the 50 neighbor slots specifically for CaseLaw nodes. Currently the 50 slots may be dominated by Documents/Frameworks, pushing case law out entirely.
-
-4. **Prompt nudge** — Instruct the agent to always call `get_neighbors` with `title_filter` on relevant statutes. Cheapest to implement but fundamentally unreliable — the same prompt produced different behavior on 06/18 vs 06/21.
-
-**Key files:**
-- `backend/lambdas/agentic_retrieval/tools.py` — auto-enrichment logic (lines 665–791)
-- `backend/lambdas/agentic_retrieval/neptune_client.py` — `get_neighbors()` (line 279), `resolve_case_citations()`, would need new method for subsection→CaseLaw traversal
 
 ---
 
@@ -255,35 +253,6 @@ This matches `Chapter N <title>` lines (with dash/em-dash separator or space) wh
 **Priority:** Low — doesn't affect citation accuracy or page linking. Cosmetic improvement to embedding quality. Roll into next reingestion cycle.
 
 **Key file:** `tools/pdf_chunking/boilerplate.py` — `WPAM_PATTERNS` list
-
----
-
-### Task 24: Multi-citation source cards (aggregate inline citations per parent doc)
-
-**Problem:** A single response can contain multiple inline citations pointing to different pages of the same parent document (e.g., `[§ 70.11](doc:statutes-70#page=23)` and `[§ 70.47](doc:statutes-70#page=56)`). Currently, the source card at the bottom represents the parent doc as a single entry with no indication that the response cited multiple specific locations within it. This creates two issues:
-
-1. The user sees multiple inline links in the answer text but only one card — the card gives no signal about which specific pages/sections were referenced.
-2. Clicking the source card opens the doc at a single page (typically the first citation's page or the doc's start), losing the page-level specificity of other citations.
-
-**Invariants:**
-
-- Every inline citation must point to a parent doc that appears in the source cards (enforced by the post-filter from Task 2).
-- There can be more inline citations than source cards — multiple citations can reference different pages of the same parent doc, which maps to a single card.
-- Source cards must indicate citation count when a parent doc is cited more than once.
-
-**Direction:**
-
-- **Citation count badge** — When a source card's parent doc has N > 1 inline citations, show a small badge/indicator (e.g., "3 citations") on the collapsed card.
-- **Expanded citation list** — When the card is expanded, show each individual citation with its specific page reference and the surrounding context/label from the inline link text (e.g., "§ 70.11 — page 23", "§ 70.47 — page 56"). Each entry should be independently clickable to open the doc at that specific page.
-- **Data flow** — The backend already emits per-citation page numbers via `#page=N` fragments on inline links. The frontend needs to:
-  1. Parse all inline `doc:ID#page=N` links from the answer body.
-  2. Group them by parent doc ID.
-  3. Pass the grouped citation list to each source card component.
-
-**Key files:**
-- `frontend/src/components/messages/animated-markdown.tsx` — inline link rendering, `resolveHref` already parses `#page=N`
-- `frontend/src/components/messages/chat-message.tsx` — source card rendering
-- `backend/lambdas/agentic_retrieval/main.py` — `cited_doc_ids` assembly (may need to emit citation-level metadata, not just doc IDs)
 
 ---
 
@@ -426,4 +395,35 @@ The garbled text is a PyMuPDF extraction failure on multi-column layouts — the
 - `tools/pdf_chunking/pymupdf_extractor.py` — `extraction_looks_good()` quality gate
 - `tools/graphrag/extract.py` — orchestrates extraction and chunking
 - `backend/lambdas/agentic_retrieval/tools.py` — potential query-time filtering location
+
+---
+
+### Task 26: Admin ingestion page — ingest documents via URL from the UI
+
+**Problem:** Ingesting new documents (PDFs, web pages) currently requires CLI access and manual invocation of the scrape → extract → embed → load pipeline. DOR staff or project maintainers should be able to paste a URL into an admin page and have the document ingested without SSH/CLI.
+
+**Design:**
+
+- **New admin route** — `/admin/ingest`, Cognito-gated (same as `/admin/activity`)
+- **UI:** URL text input, category dropdown (gov_publications, faq_pages, news_pages, etc. — drives framework_id + authority_level), optional title override, "Ingest" button with progress/status display
+- **Hybrid backend — Lambda for single docs, Fargate for bulk:**
+  - **1-3 URLs** → Single Lambda handles all 4 phases inline (scrape → S3, extract+classify, embed, load to Neptune). ~2-3 min wall clock, well within Lambda 15-min limit. Stream status updates back over WebSocket (reuse existing infra).
+  - **4+ URLs** → Lambda does scrape → S3 for all docs, then kicks off a Fargate task with `--source-filter` targeting the batch. Frontend polls ECS task status or tails CloudWatch for progress.
+- **Status tracking:** WebSocket updates for Lambda path (reuse existing connection infra); ECS DescribeTask polling for Fargate path. Optionally a DynamoDB "ingestion jobs" table with status field for persistence across refreshes.
+- **Validation:** Before ingesting, HEAD the URL to verify it's reachable and check content-type (PDF vs HTML). Show file size and last-modified to the user for confirmation.
+
+**Key considerations:**
+
+- The extract/embed/load code is pure Python with boto3 — runs fine in a Lambda with the existing layer. Only risk is very large PDFs (500+ pages) potentially exceeding Lambda memory/timeout — these should route to Fargate.
+- Need to handle the `source_to_framework` mapping at upload time — the category dropdown populates metadata (framework_id, authority_level, doc_type) that the scraper currently hardcodes.
+- The `doc_id` derivation (currently `make_doc_id()` in `scrape_documents.py`) needs to be reusable from the Lambda.
+- Existing `scrape_documents.py` logic (download, HTML scraping, metadata generation, S3 upload) should be extracted into a shared module rather than duplicated.
+
+**Key files:**
+- `frontend/src/app/admin/ingest/page.tsx` — new admin page (to create)
+- `backend/lambdas/agentic_retrieval/` — pattern reference for Lambda + WebSocket streaming
+- `tools/graphrag/scrape_documents.py` — scrape/upload logic to extract into shared module
+- `tools/graphrag/extract.py`, `embed.py`, `load.py` — pipeline steps to invoke from Lambda
+- `infra/stacks/ingestion-stack.ts` — existing Fargate infra to reuse for bulk path
+- `infra/stacks/sessions-stack.ts` — HTTP API routes (add `POST /admin/ingest`)
 

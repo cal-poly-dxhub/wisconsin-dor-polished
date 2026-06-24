@@ -453,6 +453,28 @@ class NeptuneClient:
         )
         return [r["text"] for r in results if r.get("text")]
 
+    def get_cases_for_subsections(
+        self, subsection_ids: list[str], limit: int = 15
+    ) -> list[dict]:
+        """Find CaseLaw nodes connected to statute subsections via CITES edges.
+
+        Returns cases ordered so that modern-format citations (YYYY WI ...)
+        appear first by year descending, followed by older-format citations.
+        """
+        if not subsection_ids:
+            return []
+        results = self.query(
+            "MATCH (s)-[:CITES]-(n:CaseLaw) "
+            "WHERE s.id IN $ids "
+            "RETURN DISTINCT n.id AS id, n.title AS title, "
+            "n.citation AS citation, n.doc_type AS doc_type, "
+            "n.authority_level AS authority_level, "
+            "n.source_url AS source_url, labels(n) AS labels",
+            {"ids": subsection_ids},
+            query_name="get_cases_for_subsections",
+        )
+        return results[:limit]
+
     def resolve_case_citations(self, citations: list[str]) -> list[dict]:
         """Look up CaseLaw nodes by their normalized citation strings."""
         if not citations:
