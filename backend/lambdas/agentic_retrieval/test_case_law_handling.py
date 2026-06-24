@@ -62,6 +62,12 @@ class TestExtractCaseName:
         name = extract_case_name("Thoma v. Village of Slinger, 2018 WI 45")
         assert name == "thoma v. village of slinger"
 
+    def test_cuts_at_comma_volume_number(self):
+        name = extract_case_name(
+            "Lowe's Home Centers, LLC v. City of Delavan, 379 Wis. 2d 141"
+        )
+        assert name == "lowe's home centers, llc v. city of delavan"
+
     def test_no_separator(self):
         name = extract_case_name("Simple Case Name")
         assert name == "simple case name"
@@ -216,6 +222,31 @@ class TestCollapseCaseLawByTitle:
         only = next(iter(merged.values()))
         assert "yearful" in only.content
         assert "yearless" in only.content
+
+    def test_merges_volume_citations_with_public_domain_citation(self):
+        """379 Wis. 2d 141 + 2023 WI 8 + 405 Wis. 2d 616 → one card."""
+        docs = {
+            "case-law-379-wis-2d-141": MockRAGDocument(
+                document_id="case-law-379-wis-2d-141-abc",
+                title="Lowe's Home Centers, LLC v. City of Delavan, 379 Wis. 2d 141",
+                content="court of appeals opinion",
+                discovery_tag="opinion-fetched",
+            ),
+            "case-law-2023-wi-8": MockRAGDocument(
+                document_id="case-law-2023-wi-8-def",
+                title="Lowe's Home Centers, LLC v. City of Delavan, 2023 WI 8",
+                content="supreme court opinion",
+                discovery_tag="opinion-fetched",
+            ),
+            "case-law-405-wis-2d-616": MockRAGDocument(
+                document_id="case-law-405-wis-2d-616-ghi",
+                title="Lowe's Home Centers, LLC v. City of Delavan, 405 Wis. 2d 616",
+                content="supreme court opinion",
+                discovery_tag="opinion-fetched",
+            ),
+        }
+        merged = collapse_case_law_by_title(docs)
+        assert len(merged) == 1
 
 
 class TestBuildOpinionCard:

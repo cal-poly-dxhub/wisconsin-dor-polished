@@ -21,7 +21,7 @@ DISCOVERY_TAG_PRIORITY = [
 ]
 
 _CASE_NAME_SUFFIX_RE = re.compile(
-    r"\s*(?:[–—:]|-\s)|,\s*(?=\d{4}\b)"
+    r"\s*(?:[–—:]|-\s)|,\s*(?=\d+\b)"
 )
 
 _YEAR_RE = re.compile(r"\b(\d{4})\b")
