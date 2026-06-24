@@ -47,7 +47,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
         }),
         layers: [props.stepFunctionTypesLayer, props.websocketUtilsLayer],
         description:
-          'Agentic retrieval Lambda: Neptune graph + vector search with Claude tool loop',
+          'Agentic retrieval: Neptune graph + vector search with Claude tool loop, paced replay',
         timeout: cdk.Duration.seconds(120),
         memorySize: 512,
         tracing: lambda.Tracing.ACTIVE,

@@ -21,7 +21,7 @@ from typing import Any
 
 import boto3
 import pydantic
-from bedrock_streaming import StreamResult, process_converse_stream
+from bedrock_streaming import process_converse_stream
 from case_law_handling import is_case_law_stub
 from case_opinion import citation_to_raw_slug, fetch_case_opinion
 from chat_history import get_chat_history, save_chat_history
@@ -213,7 +213,7 @@ def run_agentic_loop(
     discovery: dict[str, str] = {}
     fetched_opinions: dict[str, dict] = {}
     trace_log: list[dict] = []
-    answer_was_streamed = False
+    answer_was_streamed = False  # always False — paced replay happens in finalize
     ws_connection_alive = [True]
 
     def _record_trace(kind: str, turn: int | None = None, **data) -> None:
@@ -478,37 +478,6 @@ def run_agentic_loop(
 
         converse_started = time.perf_counter()
 
-        def _send_ws_fragment(text: str) -> None:
-            """Send a real-time answer fragment over WebSocket."""
-            if not ws_server or not ws_connection_alive[0]:
-                return
-            msg = FragmentMessage(
-                query_id=query_id,
-                content=FragmentContent(fragment=text),
-            )
-            try:
-                ws_server.client.post_to_connection(
-                    ConnectionId=ws_server.connection_id,
-                    Data=json.dumps({"streamId": "answer", "body": msg.model_dump(by_alias=True)}),
-                )
-            except Exception:
-                logger.info("WebSocket connection gone; continuing without streaming")
-                ws_connection_alive[0] = False
-
-        def _on_answer_start() -> None:
-            """Signal the frontend that answer streaming is beginning."""
-            if not ws_server or not ws_connection_alive[0]:
-                return
-            start_msg = AnswerEventType(event="start", query_id=query_id)
-            try:
-                ws_server.client.post_to_connection(
-                    ConnectionId=ws_server.connection_id,
-                    Data=json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)}),
-                )
-            except Exception:
-                logger.info("WebSocket connection gone; continuing without streaming")
-                ws_connection_alive[0] = False
-
         try:
             stream_response = bedrock.converse_stream(
                 modelId=AGENTIC_MODEL_ID,
@@ -548,15 +517,8 @@ def run_agentic_loop(
         if ws_server and ws_connection_alive[0]:
             heartbeat_thread.start()
 
-        stream_result = process_converse_stream(
-            stream_response,
-            on_answer_fragment=_send_ws_fragment,
-            on_answer_start=_on_answer_start,
-            is_answer_turn=True,
-        )
+        stream_result = process_converse_stream(stream_response)
         heartbeat_stop.set()
-        if stream_result.answer_streamed:
-            answer_was_streamed = True
         converse_latency_ms = round((time.perf_counter() - converse_started) * 1000)
 
         assistant_message = stream_result.assistant_message
@@ -966,6 +928,10 @@ def run_agentic_loop(
     return answer, list(all_doc_ids), rag_docs, high_confidence_faq, trace_log, answer_was_streamed, ws_connection_alive[0]
 
 
+_REPLAY_FRAGMENT_SIZE = 40
+_REPLAY_PACE_SECONDS = 0.05
+
+
 def _send_resources_and_finalize(
     ws_server: WebSocketServer,
     query_id: str,
@@ -974,12 +940,7 @@ def _send_resources_and_finalize(
     faq_resource: FAQResource | None,
     answer_already_streamed: bool,
 ) -> None:
-    """Send documents, FAQs, and (if needed) answer over WebSocket.
-
-    When answer_already_streamed=True, the answer text was already sent
-    in real-time during the Bedrock stream. We only need to send the
-    stop event. Otherwise, fall back to chunked replay.
-    """
+    """Send documents, FAQs, and paced answer replay over WebSocket."""
     source_documents = [
         SourceDocument(
             document_id=doc.document_id,
@@ -1019,21 +980,18 @@ def _send_resources_and_finalize(
         data = json.dumps({"streamId": "resources", "body": faq_message.model_dump(by_alias=True)})
         ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
 
-    if not answer_already_streamed:
-        # Fallback: answer wasn't streamed live (e.g., text-only response
-        # without cite_documents tool, or turn budget exhaustion). Replay it.
-        start_msg = AnswerEventType(event="start", query_id=query_id)
-        data = json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)})
-        ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
+    start_msg = AnswerEventType(event="start", query_id=query_id)
+    data = json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)})
+    ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
 
-        _FALLBACK_FRAGMENT_SIZE = 80
-        for i in range(0, len(answer), _FALLBACK_FRAGMENT_SIZE):
-            fragment = answer[i : i + _FALLBACK_FRAGMENT_SIZE]
-            frag_msg = FragmentMessage(
-                query_id=query_id, content=FragmentContent(fragment=fragment)
-            )
-            frag_data = json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)})
-            ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=frag_data)
+    for i in range(0, len(answer), _REPLAY_FRAGMENT_SIZE):
+        fragment = answer[i : i + _REPLAY_FRAGMENT_SIZE]
+        frag_msg = FragmentMessage(
+            query_id=query_id, content=FragmentContent(fragment=fragment)
+        )
+        frag_data = json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)})
+        ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=frag_data)
+        time.sleep(_REPLAY_PACE_SECONDS)
 
     stop_msg = AnswerEventType(event="stop", query_id=query_id)
     data = json.dumps({"streamId": "answer-event", "body": stop_msg.model_dump(by_alias=True)})
@@ -1157,7 +1115,6 @@ def handler(event: dict, context) -> dict[str, Any]:
             cited_doc_count=len(cited_doc_ids),
             rag_document_count=len(rag_documents),
             faq_count=len(faq_resource.faqs) if faq_resource else 0,
-            answer_streamed=answer_streamed,
         )
 
         if ws_server and connection_alive:
@@ -1168,7 +1125,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                     answer,
                     rag_documents,
                     faq_resource,
-                    answer_already_streamed=answer_streamed,
+                    answer_already_streamed=False,
                 )
             except Exception:
                 logger.info("WebSocket connection lost during finalize; answer saved to DB")
