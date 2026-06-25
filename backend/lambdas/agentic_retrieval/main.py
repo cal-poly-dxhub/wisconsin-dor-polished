@@ -1150,8 +1150,6 @@ def _stream_answer(
     """
     _emit(
         ws_server, trace_seq,
-        emit_enabled=EMIT_AGENT_TRACE,
-        max_chars=LOG_MAX_TEXT_CHARS,
         query_id=query_id,
         kind="phase",
         payload={"phase": "answer_streaming"},
@@ -1521,8 +1519,11 @@ def handler(event: dict, context) -> dict[str, Any]:
                         trace_seq,
                         ws_connection_alive,
                     )
-                except Exception:
-                    logger.info("WebSocket connection lost during Phase B; answer may be partial")
+                except Exception as phase_b_exc:
+                    logger.error(
+                        "Phase B failed | exc_type=%s exc=%s",
+                        type(phase_b_exc).__name__, phase_b_exc, exc_info=True,
+                    )
                     if not answer:
                         try:
                             if not answer_context:
