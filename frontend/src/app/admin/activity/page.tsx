@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import {
@@ -82,15 +82,37 @@ function formatRelativeTime(ts: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function applyClientSearch(items: ActivityItem[], searchQuery: string): ActivityItem[] {
-  if (!searchQuery) return items;
-  const q = searchQuery.toLowerCase();
+function applyClientFilters(
+  items: ActivityItem[],
+  feedbackFilter: FeedbackFilter,
+  searchQuery: string
+): ActivityItem[] {
   return items.filter(item => {
-    const matchesQuery = item.query.toLowerCase().includes(q);
-    const matchesAnswer = item.answer.toLowerCase().includes(q);
-    const matchesFeedback = item.feedback?.toLowerCase().includes(q);
-    const matchesEmail = item.email?.toLowerCase().includes(q);
-    return matchesQuery || matchesAnswer || matchesFeedback || matchesEmail;
+    switch (feedbackFilter) {
+      case 'up':
+        if (item.thumbUp !== true) return false;
+        break;
+      case 'down':
+        if (item.thumbUp !== false) return false;
+        break;
+      case 'rated':
+        if (item.thumbUp == null) return false;
+        break;
+      case 'unrated':
+        if (item.thumbUp != null) return false;
+        break;
+    }
+
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchesQuery = item.query.toLowerCase().includes(q);
+      const matchesAnswer = item.answer.toLowerCase().includes(q);
+      const matchesFeedback = item.feedback?.toLowerCase().includes(q);
+      const matchesEmail = item.email?.toLowerCase().includes(q);
+      if (!matchesQuery && !matchesAnswer && !matchesFeedback && !matchesEmail) return false;
+    }
+
+    return true;
   });
 }
 
@@ -118,19 +140,22 @@ function ActivityDashboard() {
   const [feedbackFilter, setFeedbackFilter] = useState<FeedbackFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const buildFilters = (range: TimeRange, feedback: FeedbackFilter): ActivityFilters => ({
-    after: getTimeRangeISO(range),
-    feedback,
-    limit: PAGE_SIZE,
-  });
+  const loadFirstPageRef = useRef(loadFirstPage);
+  loadFirstPageRef.current = loadFirstPage;
 
   useEffect(() => {
-    loadFirstPage(buildFilters(timeRange, feedbackFilter));
-  }, [timeRange, feedbackFilter, loadFirstPage]);
+    const filters: ActivityFilters = {
+      after: getTimeRangeISO(timeRange),
+      limit: PAGE_SIZE,
+      cacheKey: timeRange,
+    };
+    const autoLoadAll = timeRange !== 'all';
+    loadFirstPageRef.current(filters, autoLoadAll);
+  }, [timeRange]);
 
   const displayItems = useMemo(
-    () => applyClientSearch(items, searchQuery),
-    [items, searchQuery]
+    () => applyClientFilters(items, feedbackFilter, searchQuery),
+    [items, feedbackFilter, searchQuery]
   );
 
   const stats = useMemo(() => {
