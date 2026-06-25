@@ -31,6 +31,7 @@ export interface ActivityItem {
   thumbUp: boolean | null;
   feedback: string | null;
   trace: TraceEvent[] | null;
+  email: string | null;
 }
 
 interface CachedData {

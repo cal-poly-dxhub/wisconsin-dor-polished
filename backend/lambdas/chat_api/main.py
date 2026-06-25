@@ -172,21 +172,31 @@ def get_user_id_from_jwt() -> str:
         raise ValidationError(reason="Invalid authentication token") from e
 
 
-def create_session(user_id: str) -> str:
+def get_email_from_jwt() -> str | None:
+    """Extract email from Cognito JWT claims (best-effort)."""
+    try:
+        claims = app.current_event.request_context.authorizer.jwt_claim
+        return claims.get("email")
+    except Exception:
+        return None
+
+
+def create_session(user_id: str, email: str | None = None) -> str:
     """Create a new chat session; return the session ID."""
     session_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
+    item: dict[str, dict[str, str]] = {
+        "sessionId": {"S": session_id},
+        "userId": {"S": user_id},
+        "createdAt": {"S": now},
+        "lastMessageAt": {"S": now},
+    }
+    if email:
+        item["email"] = {"S": email}
+
     try:
-        dynamodb.put_item(
-            TableName=session_table_name,
-            Item={
-                "sessionId": {"S": session_id},
-                "userId": {"S": user_id},
-                "createdAt": {"S": now},
-                "lastMessageAt": {"S": now},
-            },
-        )
+        dynamodb.put_item(TableName=session_table_name, Item=item)
     except Exception as e:
         logger.error(f"Failed to create session in DynamoDB: {e}")
         raise SessionCreationError(details={"session_id": session_id, "error": str(e)}) from e
@@ -199,7 +209,8 @@ def create_session_handler() -> dict[str, Any]:
     """Create a new chat session."""
     try:
         user_id = get_user_id_from_jwt()
-        session_id = create_session(user_id)
+        email = get_email_from_jwt()
+        session_id = create_session(user_id, email=email)
         return create_api_response(201, {"sessionId": session_id})
 
     except ChatAPIError as e:
@@ -399,6 +410,33 @@ def get_session_history_handler(session_id: str) -> dict[str, Any]:
         return create_api_response(500, error_response)
 
 
+def _resolve_session_emails(session_ids: set[str]) -> dict[str, str]:
+    """Batch-fetch email addresses from the Sessions table for a set of session IDs."""
+    if not session_ids:
+        return {}
+    email_map: dict[str, str] = {}
+    batch_keys = [{"sessionId": {"S": sid}} for sid in session_ids]
+    for i in range(0, len(batch_keys), 100):
+        chunk = batch_keys[i : i + 100]
+        try:
+            resp = dynamodb.batch_get_item(
+                RequestItems={
+                    session_table_name: {
+                        "Keys": chunk,
+                        "ProjectionExpression": "sessionId, email",
+                    }
+                }
+            )
+            for item in resp.get("Responses", {}).get(session_table_name, []):
+                sid = item.get("sessionId", {}).get("S")
+                email = item.get("email", {}).get("S")
+                if sid and email:
+                    email_map[sid] = email
+        except Exception:
+            logger.warning("Failed to batch-resolve session emails", exc_info=True)
+    return email_map
+
+
 @app.get("/admin/activity")
 def activity_handler() -> dict[str, Any]:
     """Return all chat history items for the admin activity dashboard."""
@@ -414,6 +452,7 @@ def activity_handler() -> dict[str, Any]:
 
         deserializer = TypeDeserializer()
         results = []
+        session_ids: set[str] = set()
         for item in items:
             deserialized = {k: deserializer.deserialize(v) for k, v in item.items()}
             trace_raw = deserialized.get("trace")
@@ -425,9 +464,12 @@ def activity_handler() -> dict[str, Any]:
                     trace = None
             elif isinstance(trace_raw, list):
                 trace = trace_raw
+            sid = deserialized.get("sessionId", "")
+            if sid:
+                session_ids.add(sid)
             results.append({
                 "queryId": deserialized.get("queryId", ""),
-                "sessionId": deserialized.get("sessionId", ""),
+                "sessionId": sid,
                 "query": deserialized.get("query", ""),
                 "answer": deserialized.get("answer", ""),
                 "timestamp": deserialized.get("timestamp", ""),
@@ -435,6 +477,10 @@ def activity_handler() -> dict[str, Any]:
                 "feedback": deserialized.get("feedback"),
                 "trace": trace,
             })
+
+        email_by_session = _resolve_session_emails(session_ids)
+        for result in results:
+            result["email"] = email_by_session.get(result["sessionId"])
 
         results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
         return create_api_response(200, {"items": results, "count": len(results)})

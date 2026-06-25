@@ -112,7 +112,8 @@ function applyFilters(
       const matchesQuery = item.query.toLowerCase().includes(q);
       const matchesAnswer = item.answer.toLowerCase().includes(q);
       const matchesFeedback = item.feedback?.toLowerCase().includes(q);
-      if (!matchesQuery && !matchesAnswer && !matchesFeedback) return false;
+      const matchesEmail = item.email?.toLowerCase().includes(q);
+      if (!matchesQuery && !matchesAnswer && !matchesFeedback && !matchesEmail) return false;
     }
 
     return true;
@@ -293,6 +294,11 @@ function ActivityDashboard() {
                             <span className="text-xs text-muted-foreground">
                               {item.timestamp ? formatTimestamp(item.timestamp) : 'No timestamp'}
                             </span>
+                            {item.email && (
+                              <span className="text-xs text-muted-foreground">
+                                &middot; {item.email}
+                              </span>
+                            )}
                             {item.feedback && (
                               <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
                                 has comment

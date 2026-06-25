@@ -132,6 +132,11 @@ function QueryDetail({ queryId }: { queryId: string }) {
               {formatFullTimestamp(item.timestamp)}
             </span>
           )}
+          {item.email && (
+            <span className="flex items-center gap-1">
+              {item.email}
+            </span>
+          )}
           <span className="flex items-center gap-1">
             <Hash className="h-3 w-3" />
             {item.queryId}
