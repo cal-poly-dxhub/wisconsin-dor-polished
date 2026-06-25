@@ -105,7 +105,7 @@ class TestStatutePatterns:
         assert len(result) == 1
 
     def test_statute_patterns_not_applied_to_wpam(self):
-        lpm = [("Chapter 70", 3)]
+        lpm = [("77.52 SALES AND USE TAXES", 3)]
         result = strip_boilerplate(lpm, strategy="wpam")
         assert len(result) == 1
 
@@ -151,6 +151,105 @@ class TestTaggedContent:
         lpm = [("<headers><<header>><header>Assessment Process</header><</header>>", 3)]
         result = strip_boilerplate(lpm)
         assert len(result) == 1
+
+
+# --- WPAM running header stripping ---
+
+
+class TestWpamRunningHeaders:
+    def test_running_header_stripped_above_threshold(self):
+        """Headers appearing >3 times are running headers; only first kept."""
+        lpm = []
+        for page in range(449, 455):
+            lpm.append(("Chapter 14 Agricultural Valuation", page))
+            lpm.append(("Content about land use.", page))
+        result = strip_boilerplate(lpm, strategy="wpam")
+        ch14 = [l for l, _ in result if "Chapter 14" in l]
+        assert len(ch14) == 1
+
+    def test_first_occurrence_preserved(self):
+        """The preserved header is the first one (true chapter heading)."""
+        lpm = []
+        for page in range(196, 202):
+            lpm.append(("Chapter 9 Real Property Valuation", page))
+            lpm.append((f"Content page {page}.", page))
+        result = strip_boilerplate(lpm, strategy="wpam")
+        ch9_entries = [(l, p) for l, p in result if "Chapter 9" in l]
+        assert len(ch9_entries) == 1
+        assert ch9_entries[0][1] == 196
+
+    def test_at_threshold_not_stripped(self):
+        """Headers appearing exactly 3 times are not treated as running headers."""
+        lpm = [
+            ("Chapter 16 Real Property Assessment - Special", 613),
+            ("Content.", 613),
+            ("Chapter 16 Real Property Assessment - Special", 614),
+            ("Content.", 614),
+            ("Chapter 16 Real Property Assessment - Special", 615),
+            ("Content.", 615),
+        ]
+        result = strip_boilerplate(lpm, strategy="wpam")
+        ch16 = [l for l, _ in result if "Chapter 16" in l]
+        assert len(ch16) == 3
+
+    def test_multiple_chapters_independent(self):
+        """Each chapter's first occurrence is kept independently."""
+        lpm = [("Chapter 1 Overview of the Property Tax", 11), ("Content.", 11)]
+        for page in range(12, 16):
+            lpm.append(("Chapter 1 Overview of the Property Tax", page))
+        lpm.append(("Chapter 12 Residential Property Valuation", 309))
+        lpm.append(("Content.", 309))
+        for page in range(310, 314):
+            lpm.append(("Chapter 12 Residential Property Valuation", page))
+        result = strip_boilerplate(lpm, strategy="wpam")
+        ch1 = [(l, p) for l, p in result if "Chapter 1 " in l]
+        ch12 = [(l, p) for l, p in result if "Chapter 12" in l]
+        assert len(ch1) == 1
+        assert ch1[0][1] == 11
+        assert len(ch12) == 1
+        assert ch12[0][1] == 309
+
+    def test_not_applied_to_non_wpam_strategy(self):
+        """Running header stripping only activates for WPAM strategy."""
+        lpm = [
+            ("Chapter 14 Agricultural Valuation", 1),
+            ("Content.", 1),
+            ("Chapter 14 Agricultural Valuation", 2),
+            ("Chapter 14 Agricultural Valuation", 3),
+            ("Chapter 14 Agricultural Valuation", 4),
+            ("Chapter 14 Agricultural Valuation", 5),
+        ]
+        result = strip_boilerplate(lpm, strategy="general")
+        ch14 = [l for l, _ in result if "Chapter 14" in l]
+        assert len(ch14) == 5
+
+    def test_lowercase_after_number_not_matched(self):
+        """Only uppercase-starting titles are treated as chapter headers."""
+        lpm = [
+            ("Chapter 14 agricultural notes and references", 1),
+            ("Chapter 14 agricultural notes and references", 2),
+            ("Chapter 14 agricultural notes and references", 3),
+            ("Chapter 14 agricultural notes and references", 4),
+            ("Chapter 14 agricultural notes and references", 5),
+        ]
+        result = strip_boilerplate(lpm, strategy="wpam")
+        assert len([l for l, _ in result if "agricultural" in l]) == 5
+
+    def test_content_lines_never_removed(self):
+        """Non-header content lines are never affected by the stripping."""
+        lpm = [
+            ("Chapter 20 Board of Review and Assessment Appeals", 717),
+            ("The board of review hears objections to assessments.", 717),
+            ("Chapter 20 Board of Review and Assessment Appeals", 718),
+            ("Procedures for filing an appeal are described below.", 718),
+            ("Chapter 20 Board of Review and Assessment Appeals", 719),
+            ("The assessor must provide evidence of value.", 719),
+            ("Chapter 20 Board of Review and Assessment Appeals", 720),
+            ("Wisconsin Stat. 70.47 governs the process.", 720),
+        ]
+        result = strip_boilerplate(lpm, strategy="wpam")
+        content = [l for l, _ in result if "Chapter 20" not in l]
+        assert len(content) == 4
 
 
 # --- Strategy routing ---

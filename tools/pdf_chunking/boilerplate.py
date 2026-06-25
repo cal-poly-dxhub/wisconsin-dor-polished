@@ -9,6 +9,7 @@ strategy-specific chunking.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import List, Tuple
 
 # --- General patterns (all doc types) ---
@@ -47,6 +48,7 @@ _STRATEGY_PATTERNS: dict[str, list[re.Pattern]] = {
 }
 
 _TAG_RE = re.compile(r"<+[^<>]*>+")
+_CHAPTER_TITLE_RE = re.compile(r"^Chapter\s+\d+\s+[A-Z].+$")
 
 
 def strip_boilerplate(
@@ -56,8 +58,12 @@ def strip_boilerplate(
     """Remove boilerplate lines from line-page mapping.
 
     Applies GENERAL_PATTERNS (always) plus strategy-specific patterns.
-    Preserves (text, page_num) tuple structure exactly.
+    For WPAM docs, also strips repeated "Chapter N Title" running headers
+    while preserving the first occurrence (needed as a chunker split point).
     """
+    if strategy == "wpam":
+        line_page_mapping = _strip_wpam_running_headers(line_page_mapping)
+
     active_patterns = GENERAL_PATTERNS + _STRATEGY_PATTERNS.get(strategy, [])
 
     return [
@@ -65,6 +71,40 @@ def strip_boilerplate(
         for line, pnum in line_page_mapping
         if not _is_boilerplate(line, active_patterns)
     ]
+
+
+def _strip_wpam_running_headers(
+    line_page_mapping: List[Tuple[str, int]],
+    threshold: int = 3,
+) -> List[Tuple[str, int]]:
+    """Strip repeated 'Chapter N Title' running headers, keeping first occurrence.
+
+    Lines matching the chapter-title pattern that appear more than `threshold`
+    times are running headers. The first occurrence of each is preserved (the
+    chunker uses it as a split signal); subsequent duplicates are removed.
+    """
+    counts: Counter[str] = Counter()
+    for line, _ in line_page_mapping:
+        stripped = line.strip()
+        if _CHAPTER_TITLE_RE.match(stripped):
+            counts[stripped] += 1
+
+    running_headers = {text for text, count in counts.items() if count > threshold}
+
+    if not running_headers:
+        return line_page_mapping
+
+    seen: set[str] = set()
+    result: List[Tuple[str, int]] = []
+    for line, pnum in line_page_mapping:
+        stripped = line.strip()
+        if stripped in running_headers:
+            if stripped not in seen:
+                seen.add(stripped)
+                result.append((line, pnum))
+        else:
+            result.append((line, pnum))
+    return result
 
 
 def _is_boilerplate(line: str, patterns: list[re.Pattern]) -> bool:

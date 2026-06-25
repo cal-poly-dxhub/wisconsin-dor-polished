@@ -15,6 +15,7 @@ from pdf_chunking.pymupdf_extractor import (
     extraction_looks_good,
 )
 from pdf_chunking.boilerplate import strip_boilerplate
+from pdf_chunking.wpam_chunk_filter import filter_wpam_chunks, repair_wpam_subheadings
 from pdf2image import convert_from_path
 from PIL import Image
 from pdf_chunking.flowchart_tools import extract_flowcharts_from_document
@@ -22,17 +23,28 @@ from pdf_chunking.toc_detector import is_toc_chunk
 
 config = Config(read_timeout=600, retries=dict(max_attempts=5))
 
-s3 = boto3.client("s3")
-session = boto3.session.Session()
-REGION_NAME = session.region_name
-
 MEDIA_BUCKET_NAME = os.environ.get("TEXTRACT_STAGING_BUCKET", "textract-chunk-result-dhgoel")
 
 # Debug flag to control chunk logging
 DEBUG = True  # Set to False to disable chunk logging
 logging_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-def ensure_bucket_exists(s3_client, bucket_name: str):
+# Lazy-initialized module-level clients (avoid AWS calls at import time)
+_s3 = None
+_region_name = None
+
+
+def _get_s3():
+    global _s3, _region_name
+    if _s3 is None:
+        _s3 = boto3.client("s3")
+        session = boto3.session.Session()
+        _region_name = session.region_name
+        _ensure_bucket_exists(_s3, MEDIA_BUCKET_NAME)
+    return _s3
+
+
+def _ensure_bucket_exists(s3_client, bucket_name: str):
     try:
         s3_client.head_bucket(Bucket=bucket_name)
         print(f"Bucket '{bucket_name}' exists")
@@ -41,11 +53,9 @@ def ensure_bucket_exists(s3_client, bucket_name: str):
         s3_client.create_bucket(
             Bucket=bucket_name,
             CreateBucketConfiguration={
-                "LocationConstraint": REGION_NAME
+                "LocationConstraint": _region_name
             }
         )
-
-ensure_bucket_exists(s3, MEDIA_BUCKET_NAME)
 
 CHUNKER_BY_SOURCE = {
     "state-laws": "statute",
@@ -769,7 +779,7 @@ def extract_raw_text_from_pdf_s3(bucket_name: str, s3_file_path: str) -> str:
         str: Raw text content from the PDF
     """
     print(f"Extracting raw text from {os.path.basename(s3_file_path)}")
-    local_pdf_path = download_pdf_from_s3(s3, bucket_name, s3_file_path)
+    local_pdf_path = download_pdf_from_s3(_get_s3(), bucket_name, s3_file_path)
 
     # Try PyMuPDF first
     try:
@@ -789,7 +799,7 @@ def extract_raw_text_from_pdf_s3(bucket_name: str, s3_file_path: str) -> str:
     textract_output_path = None
     try:
         document, local_pdf_path, textract_output_path = extract_textract_data(
-            s3, s3_uri, bucket_name, MEDIA_BUCKET_NAME
+            _get_s3(), s3_uri, bucket_name, MEDIA_BUCKET_NAME
         )
         raw_text = extract_raw_text_from_document(document)
 
@@ -799,7 +809,7 @@ def extract_raw_text_from_pdf_s3(bucket_name: str, s3_file_path: str) -> str:
         if textract_output_path:
             media_bucket, prefix = parse_s3_uri(textract_output_path)
             print("fallback-->deleting Textract output from s3")
-            delete_s3_prefix(s3, media_bucket, prefix)
+            delete_s3_prefix(_get_s3(), media_bucket, prefix)
 
 
 def process_pdf_from_s3(
@@ -826,7 +836,7 @@ def process_pdf_from_s3(
     print(f"Processing {doc_id} (strategy={strategy}, source_id={source_id})")
 
     # --- Download PDF locally (shared by both extraction paths) ---
-    local_pdf_path = download_pdf_from_s3(s3, bucket_name, s3_file_path)
+    local_pdf_path = download_pdf_from_s3(_get_s3(), bucket_name, s3_file_path)
 
     # --- Try PyMuPDF extraction first ---
     header_split = None
@@ -851,7 +861,7 @@ def process_pdf_from_s3(
         s3_uri = f"s3://{bucket_name}/{s3_file_path}"
         try:
             document, local_pdf_path, textract_output_path = extract_textract_data(
-                s3, s3_uri, bucket_name, MEDIA_BUCKET_NAME
+                _get_s3(), s3_uri, bucket_name, MEDIA_BUCKET_NAME
             )
             header_split, line_page_mapping, flowchart_chunks = process_document(document, local_pdf_path)
             used_textract = True
@@ -859,7 +869,7 @@ def process_pdf_from_s3(
         except Exception:
             if textract_output_path:
                 media_bucket, prefix = parse_s3_uri(textract_output_path)
-                delete_s3_prefix(s3, media_bucket, prefix)
+                delete_s3_prefix(_get_s3(), media_bucket, prefix)
             raise
 
     # --- Strip boilerplate (all doc types) ---
@@ -918,11 +928,23 @@ def process_pdf_from_s3(
             print(f"🧹 Dropped {len(toc_removed)} TOC chunks for {doc_id}")
         raw_chunks = filtered_raw_chunks
 
+        # --- WPAM quality filters (garbled tables + subheading repair) ---
+        wpam_quality_removed = []
+        if strategy == "wpam":
+            raw_chunks, wpam_removed = filter_wpam_chunks(raw_chunks)
+            wpam_quality_removed = [
+                {"reason": r.pop("_filter_reason"), "text": r.get("text", ""), "chunk_index": i}
+                for i, r in enumerate(wpam_removed)
+            ]
+            if wpam_quality_removed:
+                print(f"🧹 Dropped {len(wpam_quality_removed)} low-quality WPAM chunks for {doc_id}")
+            raw_chunks = repair_wpam_subheadings(raw_chunks)
+
         # --- Clean text chunks ---
         cleaned_text_chunks, removed_chunks = extract_clean_plaintext(
             raw_chunks, doc_id=doc_id, is_statute=is_statute
         )
-        removed_chunks = toc_removed + removed_chunks
+        removed_chunks = toc_removed + wpam_quality_removed + removed_chunks
 
         if chunk_logs_dir:
             removed_chunks_dir = os.path.join(chunk_logs_dir, "removed")
@@ -996,4 +1018,4 @@ def process_pdf_from_s3(
     finally:
         if used_textract and textract_output_path:
             media_bucket, prefix = parse_s3_uri(textract_output_path)
-            delete_s3_prefix(s3, media_bucket, prefix)
+            delete_s3_prefix(_get_s3(), media_bucket, prefix)

@@ -722,6 +722,35 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
     return cite_edges
 
 
+def phase_purge_stale_chunks(client, graph_id: str, documents: list[dict]):
+    """Delete all existing Chunk nodes for documents being reloaded.
+
+    When chunks are filtered or renumbered (e.g., after quality filtering),
+    old high-numbered chunks become orphans. This purge ensures a clean slate
+    before phase_8_chunks re-creates them from the current embedded JSONs.
+    """
+    doc_ids = [d["doc_id"] for d in documents]
+    logger.info(f"Purging existing chunks for {len(doc_ids)} documents...")
+
+    total_deleted = 0
+    batch_size = 50
+    for i in range(0, len(doc_ids), batch_size):
+        batch = doc_ids[i : i + batch_size]
+        result = execute_query(
+            client,
+            graph_id,
+            "UNWIND $doc_ids AS did "
+            "MATCH (c:Chunk {doc_id: did}) "
+            "DETACH DELETE c "
+            "RETURN count(c) AS deleted",
+            {"doc_ids": batch},
+        )
+        deleted = result.get("results", [{}])[0].get("deleted", 0)
+        total_deleted += deleted
+
+    logger.info(f"  Purged {total_deleted} stale chunks across {len(doc_ids)} documents")
+
+
 def phase_8_chunks(client, graph_id: str, documents: list[dict]):
     logger.info(
         f"Phase 8: Creating chunk nodes with headings + chunk-level CITES edges "
@@ -1177,6 +1206,13 @@ def main():
             f"Source filter '{args.source_filter}': {before} → {len(documents)} documents"
         )
 
+    # When reloading a subset, purge stale chunks first to prevent orphans
+    # (chunk IDs are positional, so filtering/renumbering leaves old tail chunks behind).
+    if args.source_filter:
+        purge_phase = [(6.5, "Purge Stale Chunks", lambda: phase_purge_stale_chunks(client, graph_id, documents))]
+    else:
+        purge_phase = []
+
     phases = [
         (1, "Scaffold", lambda: phase_1_scaffold(client, graph_id, config)),
         (2, "Document Nodes", lambda: phase_2_document_nodes(client, graph_id, documents, config)),
@@ -1184,6 +1220,7 @@ def main():
         (4, "Statute Hierarchy", lambda: phase_4_statute_hierarchy(client, graph_id)),
         (5, "Topic Merging", lambda: phase_5_topic_merging(client, graph_id, documents, config)),
         (6, "Hierarchy Links", lambda: phase_6_7_hierarchy(client, graph_id, documents)),
+        *purge_phase,
         (7, "Chunk Nodes", lambda: phase_8_chunks(client, graph_id, documents)),
         (8, "Stub Resolution", lambda: phase_9_stub_resolution(client, graph_id)),
         (9, "Vector Upserts", lambda: phase_10_vectors(client, graph_id, documents)),
