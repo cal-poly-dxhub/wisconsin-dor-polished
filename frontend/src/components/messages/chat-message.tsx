@@ -250,29 +250,26 @@ interface MessageOptionsBarProps {
 export function StreamResponse({
   content,
   className,
-  streamingComplete: _streamingComplete,
+  streamingComplete,
   docUrls,
 }: StreamResponseProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const prevContentRef = useRef('');
-
-  useEffect(() => {
-    if (content && content !== prevContentRef.current && containerRef.current) {
-      const el = containerRef.current;
-      el.classList.remove('md-stagger-in');
-      el.classList.add('md-stagger-hidden');
-      requestAnimationFrame(() => {
-        el.classList.remove('md-stagger-hidden');
-        el.classList.add('md-stagger-in');
-      });
-      prevContentRef.current = content;
-    }
-  }, [content]);
+  // Latch animate to its initial value. If the message was streaming when
+  // this component mounted, keep animate=true forever — the per-word spans
+  // stay in the DOM (their one-shot CSS animation already played) and React
+  // never swaps the entire ReactMarkdown tree from the animated branch to
+  // the static branch. That full-tree swap produces <a> elements the browser
+  // silently refuses to activate on left-click.
+  const [animate] = useState(() => !streamingComplete);
 
   return (
     <div className={`chat-response font-sans ${className || ''}`}>
-      <div ref={containerRef} className={`markdown-container ${content ? 'md-stagger-in' : ''}`}>
-        <AnimatedMarkdown content={content} animate={false} docUrls={docUrls} />
+      <div className="markdown-container">
+        <AnimatedMarkdown
+          content={content}
+          animate={animate}
+          animationDuration="0.6s"
+          docUrls={docUrls}
+        />
       </div>
     </div>
   );
@@ -642,7 +639,7 @@ export function ChatMessage({
       }}
     >
       {/* Message Content */}
-      <div style={{ pointerEvents: selected ? 'auto' : 'none' }}>
+      <div>
         <div className={messageContentClassName}>
           {/* User Query - right-aligned bubble */}
           <div className="flex justify-end mb-4">

@@ -227,11 +227,9 @@
 /* Streaming word-reveal animation (formerly provided by flowtoken) */
 @keyframes ft-blurAndSharpen {
   from {
-    filter: blur(5px);
     opacity: 0;
   }
   to {
-    filter: blur(0);
     opacity: 1;
   }
 }
@@ -309,3 +307,4 @@
     transform: translateY(0);
   }
 }
+

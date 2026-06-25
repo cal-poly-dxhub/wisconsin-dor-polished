@@ -56,6 +56,19 @@ export function useWebSocketChat(
   const streamStartRef = useRef(0);
   const fragmentCountRef = useRef(0);
 
+  // rAF-based fragment buffer: accumulate tokens and flush once per frame
+  const fragmentBufferRef = useRef<{ queryId: string; text: string }>({ queryId: '', text: '' });
+  const rafIdRef = useRef<number>(0);
+
+  const flushFragments = useCallback(() => {
+    rafIdRef.current = 0;
+    const { queryId, text } = fragmentBufferRef.current;
+    if (text && queryId) {
+      appendQueryResponse(queryId, text);
+      fragmentBufferRef.current = { queryId: '', text: '' };
+    }
+  }, [appendQueryResponse]);
+
   // Define UI actions for each message type
   const messageHandler = useCallback(
     (message: MessageUnion) => {
@@ -101,7 +114,12 @@ export function useWebSocketChat(
 
             case 'fragment':
               fragmentCountRef.current++;
-              appendQueryResponse(message.queryId, message.content.fragment);
+              // Buffer fragments and flush once per animation frame
+              fragmentBufferRef.current.queryId = message.queryId;
+              fragmentBufferRef.current.text += message.content.fragment;
+              if (!rafIdRef.current) {
+                rafIdRef.current = requestAnimationFrame(flushFragments);
+              }
               break;
 
             case 'answer-event':
@@ -111,6 +129,16 @@ export function useWebSocketChat(
                 updateQueryStatus(message.queryId, 'streaming');
                 setChatState('streaming');
               } else if (message.event === 'stop') {
+                // Flush any buffered fragments before finalizing
+                if (rafIdRef.current) {
+                  cancelAnimationFrame(rafIdRef.current);
+                  rafIdRef.current = 0;
+                }
+                const { queryId: bufQid, text: bufText } = fragmentBufferRef.current;
+                if (bufText && bufQid) {
+                  appendQueryResponse(bufQid, bufText);
+                  fragmentBufferRef.current = { queryId: '', text: '' };
+                }
                 const streamDuration = performance.now() - streamStartRef.current;
                 console.log(
                   `[WS Timing] STREAM STOP | duration=${streamDuration.toFixed(1)}ms | fragments=${fragmentCountRef.current} | queryId=${message.queryId}`
@@ -176,6 +204,7 @@ export function useWebSocketChat(
       handleError,
       queryClient,
       replaceQueryId,
+      flushFragments,
     ]
   );
 

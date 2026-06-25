@@ -150,8 +150,8 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
       em: ({ children, ...props }) => <em {...props}>{wrap(children, 'em')}</em>,
       a: ({ children, href }) => {
         const resolved = resolveHref(href, docUrls);
-        if (!resolved) return <span>{wrap(children, 'a')}</span>;
-        return <SourceLink href={resolved}>{wrap(children, 'a')}</SourceLink>;
+        if (!resolved) return <span>{children}</span>;
+        return <SourceLink href={resolved}>{children}</SourceLink>;
       },
       blockquote: ({ children, ...props }) => (
         <blockquote {...props}>{wrap(children, 'bq')}</blockquote>

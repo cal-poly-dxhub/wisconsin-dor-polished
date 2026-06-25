@@ -169,17 +169,24 @@ export default function MockChatPage() {
           updateQueryStatus(queryId, 'streaming');
           setChatState('streaming');
 
-          // Stream the response word by word
-          const words = MOCK_RESPONSE.split(' ');
-          words.forEach((word, i) => {
+          // Stream token-by-token (3-8 chars per chunk, 15-25ms apart)
+          // to simulate real LLM streaming cadence
+          const chunks: string[] = [];
+          let i = 0;
+          while (i < MOCK_RESPONSE.length) {
+            const chunkSize = 3 + Math.floor(Math.random() * 6);
+            chunks.push(MOCK_RESPONSE.slice(i, i + chunkSize));
+            i += chunkSize;
+          }
+          chunks.forEach((chunk, idx) => {
             timeoutsRef.current.push(
               setTimeout(() => {
-                appendQueryResponse(queryId, (i === 0 ? '' : ' ') + word);
-                if (i === words.length - 1) {
+                appendQueryResponse(queryId, chunk);
+                if (idx === chunks.length - 1) {
                   updateQueryStatus(queryId, 'completed');
                   setChatState('idle');
                 }
-              }, i * 30)
+              }, idx * 20)
             );
           });
         }, 6000)
