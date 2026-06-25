@@ -1,10 +1,12 @@
-"""Tests for the chunker's 7500-char cap.
+"""Tests for the chunker's CHUNK_MAX_CHARS cap (currently 2500 chars).
 
 The cap exists because embed.py silently truncates inputs past 8000 chars
 when calling Titan Embed v2 — any chunk larger than that gets a partial
-embedding that doesn't cover the chunk's tail text. The fix is lossless:
-text that used to produce one oversized chunk now produces multiple
-in-cap chunks containing the same characters end-to-end.
+embedding that doesn't cover the chunk's tail text. The cap is set well
+below that limit for retrieval quality (smaller chunks yield more precise
+vector matches). The fix is lossless: text that used to produce one
+oversized chunk now produces multiple in-cap chunks containing the same
+characters end-to-end.
 
 Covers both chunker strategies where the cap matters:
   - chunk_document (general) — used by WPAM PDFs, gov publications, etc.
@@ -18,17 +20,7 @@ line_page_mapping.
 
 from __future__ import annotations
 
-import sys
-from unittest.mock import MagicMock
-
-# Pre-stub the AWS-touching imports so loading pdfChunker doesn't call
-# head_bucket at module import time.
-sys.modules.setdefault("boto3", MagicMock())
-sys.modules.setdefault("botocore", MagicMock())
-sys.modules.setdefault("botocore.config", MagicMock())
-sys.modules.setdefault("botocore.exceptions", MagicMock())
-
-from pdf_chunking.pdfChunker import (  # noqa: E402
+from pdf_chunking.pdfChunker import (
     CHUNK_MAX_CHARS,
     chunk_document,
     chunk_document_wpam,
@@ -62,28 +54,18 @@ def test_no_chunk_exceeds_cap_for_long_paragraphs() -> None:
 def test_total_chars_conserved_across_splits() -> None:
     """The cap splits oversized content into multiple chunks WITHOUT losing characters.
 
-    Uses natural sentence-shaped content so the line-boundary flush triggers
-    fire (the realistic code path for WPAM PDFs, which have many short lines
-    per paragraph, not one giant blob line).
+    Uses natural sentence-shaped content where each sentence is its own line
+    in the mapping (the realistic code path for WPAM PDFs, which have many
+    short lines per paragraph). This ensures the chunker flushes at line
+    boundaries and doesn't hard-cut mid-sentence.
     """
-    sentences = [f"Sentence number {i} describes a concept. " for i in range(600)]
-    # Concatenate into ~20 lines, each ~1500 chars — mimics a dense paragraph.
-    lines = []
-    buf = ""
-    for s in sentences:
-        if len(buf) + len(s) > 1500:
-            lines.append(buf.strip())
-            buf = s
-        else:
-            buf += s
-    if buf.strip():
-        lines.append(buf.strip())
+    sentences = [f"Sentence number {i} describes a concept." for i in range(600)]
 
+    # Each sentence is its own mapping entry — mimics how real PDFs are
+    # extracted (one line per element in the line_page_mapping).
     mapping = [("Chapter 5", 1), ("Tables Section", 1)]
-    for i, line in enumerate(lines):
-        mapping.append((line, 5 + i))
-
-    input_content_chars = sum(len(line) for line in lines)
+    for i, sent in enumerate(sentences):
+        mapping.append((sent, 5 + i // 30))
 
     chunks = chunk_document_wpam(None, "wpam-2023.pdf", "bucket", mapping)
 
@@ -123,8 +105,10 @@ def test_small_chunks_merge_but_not_past_cap() -> None:
 
 def test_split_prefers_paragraph_breaks() -> None:
     """When text has paragraph breaks, splits land on them, not mid-word."""
-    # 10KB of text with clear paragraph breaks every 1000 chars
-    paragraphs = [("Body paragraph. " * 62) for _ in range(10)]  # each ~1000 chars
+    # Paragraphs of ~400 chars each separated by \n\n. With CHUNK_MAX_CHARS=2500,
+    # paragraph breaks will fall within the 0.8-1.0 window (chars 2000-2500),
+    # allowing the splitter to break at \n\n rather than mid-word.
+    paragraphs = [("Body paragraph. " * 25) for _ in range(20)]  # each ~400 chars
     mapping = [("Chapter 2", 1), ("Section A", 1)]
     # Emit as a single huge line so the defense-in-depth splitter is what handles it
     combined = "\n\n".join(paragraphs)
@@ -164,8 +148,10 @@ def test_chunker_still_produces_chunks_for_small_input() -> None:
 def test_cap_constant_below_titan_limit() -> None:
     """Sanity: the cap must leave a margin below Titan's 8000-char limit."""
     assert CHUNK_MAX_CHARS < 8000
-    # And not so low that we produce hundreds of tiny chunks
-    assert CHUNK_MAX_CHARS >= 5000
+    # And not so low that we produce hundreds of tiny chunks.
+    # Current value is 2500 — tuned for retrieval quality (smaller chunks
+    # yield more precise vector matches for property-tax Q&A).
+    assert CHUNK_MAX_CHARS >= 2000
 
 
 # ---------------------------------------------------------------------------

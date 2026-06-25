@@ -9,20 +9,7 @@ ingest_config.yaml), never a misleading concrete default.
 
 from __future__ import annotations
 
-import os
-import sys
-from unittest.mock import MagicMock
-
-os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
-
-# Pre-register a fake pdf_chunking.pdfChunker so extract.py imports without
-# loading the real one (which calls s3.head_bucket at module load).
-_fake_module = MagicMock()
-_fake_module.process_pdf_from_s3 = MagicMock()
-sys.modules.setdefault("pdf_chunking", MagicMock())
-sys.modules.setdefault("pdf_chunking.pdfChunker", _fake_module)
-
-from tools.graphrag.extract import resolve_authority_level  # noqa: E402
+from tools.graphrag.extract import resolve_authority_level
 
 _FRAMEWORKS = {
     "frameworks": [

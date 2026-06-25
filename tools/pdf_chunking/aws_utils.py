@@ -4,11 +4,24 @@ import boto3
 from textractor.textractor import Textractor
 from textractor.data.constants import TextractFeatures
 
-session = boto3.session.Session()
-REGION_NAME = session.region_name
-print("Using AWS region:", REGION_NAME)
+# Lazy-initialized to avoid AWS calls at import time
+_session = None
+_s3_client = None
 
-s3 = boto3.client("s3", region_name=REGION_NAME)
+
+def _get_region():
+    global _session
+    if _session is None:
+        _session = boto3.session.Session()
+        print("Using AWS region:", _session.region_name)
+    return _session.region_name
+
+
+def _get_s3_client():
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client("s3", region_name=_get_region())
+    return _s3_client
 
 def get_emb(embeddings_client, passage: str) -> List[float]:
     """Get embedding for a given passage using titan embeddings."""
@@ -26,7 +39,7 @@ def extract_textract_data_local(local_pdf_path: str):
       - local_pdf_path: echo of input path (for downstream helpers)
       - None: placeholder for textract_output_path (unused locally)
     """
-    extractor = Textractor(region_name=REGION_NAME)
+    extractor = Textractor(region_name=_get_region())
 
     # Use analyze_document for local files (synchronous)
     document = extractor.analyze_document(
@@ -41,7 +54,7 @@ def extract_textract_data_local(local_pdf_path: str):
 def extract_textract_data(s3, s3_file, bucket_name, media_bucket_name):
     """Extract structured text data using Textract."""
 
-    extractor = Textractor(region_name=REGION_NAME)
+    extractor = Textractor(region_name=_get_region())
 
     file_name, ext = os.path.splitext(os.path.basename(s3_file))
     textract_output_path = f"s3://{media_bucket_name}/textract-output/{file_name}/"

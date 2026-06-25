@@ -20,17 +20,9 @@ the tests run without AWS credentials.
 
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
 
-# Pre-register a fake pdf_chunking.pdfChunker module so extract.py's import
-# succeeds without loading the real one (which calls s3.head_bucket on import).
-_fake_module = MagicMock()
-_fake_module.process_pdf_from_s3 = MagicMock()
-sys.modules.setdefault("pdf_chunking", MagicMock())
-sys.modules.setdefault("pdf_chunking.pdfChunker", _fake_module)
-
-from tools.graphrag import extract  # noqa: E402
+from tools.graphrag import extract
 
 
 def _run(metadata: dict, doc: dict | None = None):
