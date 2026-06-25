@@ -98,6 +98,8 @@ def _converse_response_to_stream(response):
 
 def _import_main():
     """Import main with all AWS deps mocked."""
+    import importlib.util
+
     with patch.dict(os.environ, {
         "AWS_REGION": "us-east-1",
         "RAW_BUCKET": "test-bucket",
@@ -108,7 +110,12 @@ def _import_main():
             del sys.modules["main"]
         with patch("boto3.client"), patch("boto3.resource"), \
              patch("neptune_client.NeptuneClient"):
-            import main
+            spec = importlib.util.spec_from_file_location(
+                "main", os.path.join(os.path.dirname(__file__), "main.py")
+            )
+            main = importlib.util.module_from_spec(spec)
+            sys.modules["main"] = main
+            spec.loader.exec_module(main)
     return main
 
 

@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "layers"))
 
@@ -63,16 +65,16 @@ class TestWebSocketHandlers:
         """Test successful WebSocket connection"""
         from connect import handler
 
-        # Mock successful DynamoDB put_item
-        mock_dynamodb.put_item.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}}
+        # Mock successful DynamoDB update_item
+        mock_dynamodb.update_item.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}}
 
         result = handler(connect_event, mock_context)
 
         # Verify DynamoDB was called correctly
-        mock_dynamodb.put_item.assert_called_once()
-        call_args = mock_dynamodb.put_item.call_args
-        assert call_args[1]["Item"]["sessionId"]["S"] == "test-session-456"
-        assert call_args[1]["Item"]["connectionId"]["S"] == "test-connection-123"
+        mock_dynamodb.update_item.assert_called_once()
+        call_args = mock_dynamodb.update_item.call_args
+        assert call_args[1]["Key"]["sessionId"]["S"] == "test-session-456"
+        assert call_args[1]["ExpressionAttributeValues"][":cid"]["S"] == "test-connection-123"
         assert call_args[1]["ConditionExpression"] == "attribute_exists(sessionId)"
 
         # Verify successful response

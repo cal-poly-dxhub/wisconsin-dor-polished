@@ -2,14 +2,12 @@ import sys
 import os
 
 root = os.path.dirname(__file__)
+# Only add shared layers to sys.path. Individual Lambda directories are
+# added by their own conftest or test file — adding them here causes
+# module name collisions (every Lambda has a main.py).
 paths = [
     os.path.join(root, "layers"),
     os.path.join(root, "lambdas", "websocket"),
-    os.path.join(root, "lambdas", "chat_api"),
-    os.path.join(root, "lambdas", "streaming"),
-    os.path.join(root, "lambdas", "resource_streaming"),
-    os.path.join(root, "lambdas", "citation_resolver"),
-    os.path.join(root, "lambdas", "agentic_retrieval"),
 ]
 for p in paths:
     if p not in sys.path:

@@ -3,6 +3,10 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
+os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+os.environ.setdefault("SESSIONS_TABLE_NAME", "test-sessions")
+os.environ.setdefault("MESSAGES_TABLE_NAME", "test-messages")
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "layers"))
 sys.path.insert(0, os.path.dirname(__file__))
 

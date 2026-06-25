@@ -43,22 +43,36 @@ class FakeFragmentMessage(FakeCamelModel):
 # Lambda layer mocks — only install if not already a real package.
 # This prevents pollution when pytest collects across directories
 # (e.g., running all of backend/ where layers/ has the real modules on path).
-_LAYER_STUBS = {
-    "websocket_utils": MagicMock(),
-    "websocket_utils.batching": MagicMock(),
-    "websocket_utils.models": MagicMock(),
-    "websocket_utils.utils": MagicMock(),
-    "step_function_types": MagicMock(),
-    "step_function_types.errors": MagicMock(),
-    "step_function_types.models": MagicMock(),
-}
+#
+# Check whether the real websocket_utils package is importable (on sys.path
+# via backend/conftest.py) — if so, import it rather than stubbing.
+import importlib.util as _ilu
 
-for mod_name, stub in _LAYER_STUBS.items():
-    if mod_name not in sys.modules:
-        sys.modules[mod_name] = stub
+_ws_real = _ilu.find_spec("websocket_utils") is not None
+_sft_real = _ilu.find_spec("step_function_types") is not None
 
-# Ensure real-ish stubs for models used in streaming callbacks.
-sys.modules["websocket_utils.models"].AgentEventMessage = FakeAgentEventMessage
-sys.modules["websocket_utils.models"].AnswerEventType = FakeAnswerEventType
-sys.modules["websocket_utils.models"].FragmentContent = FakeFragmentContent
-sys.modules["websocket_utils.models"].FragmentMessage = FakeFragmentMessage
+if _ws_real:
+    import websocket_utils
+    import websocket_utils.models
+    import websocket_utils.utils
+else:
+    for mod_name in [
+        "websocket_utils", "websocket_utils.batching",
+        "websocket_utils.models", "websocket_utils.utils",
+    ]:
+        sys.modules.setdefault(mod_name, MagicMock())
+    sys.modules["websocket_utils.models"].AgentEventMessage = FakeAgentEventMessage
+    sys.modules["websocket_utils.models"].AnswerEventType = FakeAnswerEventType
+    sys.modules["websocket_utils.models"].FragmentContent = FakeFragmentContent
+    sys.modules["websocket_utils.models"].FragmentMessage = FakeFragmentMessage
+
+if _sft_real:
+    import step_function_types
+    import step_function_types.models
+    import step_function_types.errors
+else:
+    for mod_name in [
+        "step_function_types", "step_function_types.errors",
+        "step_function_types.models",
+    ]:
+        sys.modules.setdefault(mod_name, MagicMock())
