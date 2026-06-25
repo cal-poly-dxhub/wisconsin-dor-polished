@@ -1,9 +1,14 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { ProtectedRoute } from '@/components/auth/protected-route';
-import { useActivityData, type ActivityItem } from '@/hooks/use-activity-data';
+import {
+  useActivityData,
+  type ActivityItem,
+  type ActivityFilters,
+  type FeedbackFilter,
+} from '@/hooks/use-activity-data';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -20,8 +25,6 @@ import {
   ThumbsUp,
   ThumbsDown,
   MessageSquare,
-  ChevronLeft,
-  ChevronRight,
   Search,
   Filter,
   ChevronDown,
@@ -29,9 +32,8 @@ import {
 } from 'lucide-react';
 
 type TimeRange = 'day' | 'week' | 'month' | 'all';
-type FeedbackFilter = 'all' | 'thumbs-up' | 'thumbs-down' | 'rated' | 'unrated';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 50;
 
 const TIME_RANGE_LABELS: Record<TimeRange, string> = {
   day: 'Last 24 hours',
@@ -42,23 +44,22 @@ const TIME_RANGE_LABELS: Record<TimeRange, string> = {
 
 const FEEDBACK_LABELS: Record<FeedbackFilter, string> = {
   all: 'All feedback',
-  'thumbs-up': 'Thumbs up only',
-  'thumbs-down': 'Thumbs down only',
+  up: 'Thumbs up only',
+  down: 'Thumbs down only',
   rated: 'Has rating',
   unrated: 'No rating',
 };
 
-function getTimeRangeStart(range: TimeRange): Date {
+function getTimeRangeISO(range: TimeRange): string | undefined {
+  if (range === 'all') return undefined;
   const now = new Date();
   switch (range) {
     case 'day':
-      return new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      return new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
     case 'week':
-      return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
     case 'month':
-      return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    case 'all':
-      return new Date(0);
+      return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
   }
 }
 
@@ -81,42 +82,15 @@ function formatRelativeTime(ts: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function applyFilters(
-  items: ActivityItem[],
-  timeRange: TimeRange,
-  feedbackFilter: FeedbackFilter,
-  searchQuery: string
-): ActivityItem[] {
-  const rangeStart = getTimeRangeStart(timeRange);
-
+function applyClientSearch(items: ActivityItem[], searchQuery: string): ActivityItem[] {
+  if (!searchQuery) return items;
+  const q = searchQuery.toLowerCase();
   return items.filter(item => {
-    if (item.timestamp && new Date(item.timestamp) < rangeStart) return false;
-
-    switch (feedbackFilter) {
-      case 'thumbs-up':
-        if (item.thumbUp !== true) return false;
-        break;
-      case 'thumbs-down':
-        if (item.thumbUp !== false) return false;
-        break;
-      case 'rated':
-        if (item.thumbUp == null) return false;
-        break;
-      case 'unrated':
-        if (item.thumbUp != null) return false;
-        break;
-    }
-
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const matchesQuery = item.query.toLowerCase().includes(q);
-      const matchesAnswer = item.answer.toLowerCase().includes(q);
-      const matchesFeedback = item.feedback?.toLowerCase().includes(q);
-      const matchesEmail = item.email?.toLowerCase().includes(q);
-      if (!matchesQuery && !matchesAnswer && !matchesFeedback && !matchesEmail) return false;
-    }
-
-    return true;
+    const matchesQuery = item.query.toLowerCase().includes(q);
+    const matchesAnswer = item.answer.toLowerCase().includes(q);
+    const matchesFeedback = item.feedback?.toLowerCase().includes(q);
+    const matchesEmail = item.email?.toLowerCase().includes(q);
+    return matchesQuery || matchesAnswer || matchesFeedback || matchesEmail;
   });
 }
 
@@ -129,30 +103,43 @@ export default function AdminActivityPage() {
 }
 
 function ActivityDashboard() {
-  const { items, loading, lastFetched, fetchData } = useActivityData();
+  const {
+    items,
+    loading,
+    lastFetched,
+    hasMore,
+    totalLoaded,
+    loadFirstPage,
+    loadNextPage,
+    refresh,
+  } = useActivityData();
+
   const [timeRange, setTimeRange] = useState<TimeRange>('week');
   const [feedbackFilter, setFeedbackFilter] = useState<FeedbackFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [page, setPage] = useState(0);
 
-  const filtered = useMemo(
-    () => applyFilters(items, timeRange, feedbackFilter, searchQuery),
-    [items, timeRange, feedbackFilter, searchQuery]
+  const buildFilters = (range: TimeRange, feedback: FeedbackFilter): ActivityFilters => ({
+    after: getTimeRangeISO(range),
+    feedback,
+    limit: PAGE_SIZE,
+  });
+
+  useEffect(() => {
+    loadFirstPage(buildFilters(timeRange, feedbackFilter));
+  }, [timeRange, feedbackFilter, loadFirstPage]);
+
+  const displayItems = useMemo(
+    () => applyClientSearch(items, searchQuery),
+    [items, searchQuery]
   );
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages - 1);
-  const pageItems = filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
-
   const stats = useMemo(() => {
-    const total = filtered.length;
-    const thumbsUp = filtered.filter(i => i.thumbUp === true).length;
-    const thumbsDown = filtered.filter(i => i.thumbUp === false).length;
+    const total = displayItems.length;
+    const thumbsUp = displayItems.filter(i => i.thumbUp === true).length;
+    const thumbsDown = displayItems.filter(i => i.thumbUp === false).length;
     const rated = thumbsUp + thumbsDown;
     return { total, rated, thumbsUp, thumbsDown };
-  }, [filtered]);
-
-  const resetPage = () => setPage(0);
+  }, [displayItems]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -170,7 +157,7 @@ function ActivityDashboard() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => fetchData(true)}
+            onClick={() => refresh()}
             disabled={loading}
           >
             <RefreshCw className={`mr-1.5 h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
@@ -207,7 +194,7 @@ function ActivityDashboard() {
             <Input
               placeholder="Search queries, answers, or feedback..."
               value={searchQuery}
-              onChange={e => { setSearchQuery(e.target.value); resetPage(); }}
+              onChange={e => setSearchQuery(e.target.value)}
               className="pl-8 h-8 text-sm"
             />
           </div>
@@ -222,7 +209,7 @@ function ActivityDashboard() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {(Object.entries(TIME_RANGE_LABELS) as [TimeRange, string][]).map(([key, label]) => (
-                <DropdownMenuItem key={key} onClick={() => { setTimeRange(key); resetPage(); }}>
+                <DropdownMenuItem key={key} onClick={() => setTimeRange(key)}>
                   {label}
                 </DropdownMenuItem>
               ))}
@@ -239,7 +226,7 @@ function ActivityDashboard() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {(Object.entries(FEEDBACK_LABELS) as [FeedbackFilter, string][]).map(([key, label]) => (
-                <DropdownMenuItem key={key} onClick={() => { setFeedbackFilter(key); resetPage(); }}>
+                <DropdownMenuItem key={key} onClick={() => setFeedbackFilter(key)}>
                   {label}
                 </DropdownMenuItem>
               ))}
@@ -251,7 +238,7 @@ function ActivityDashboard() {
               variant="ghost"
               size="sm"
               className="h-8 text-xs text-muted-foreground"
-              onClick={() => { setSearchQuery(''); setTimeRange('week'); setFeedbackFilter('all'); resetPage(); }}
+              onClick={() => { setSearchQuery(''); setTimeRange('week'); setFeedbackFilter('all'); }}
             >
               Clear filters
             </Button>
@@ -264,7 +251,7 @@ function ActivityDashboard() {
             <div className="py-16 text-center text-sm text-muted-foreground">
               Loading activity data...
             </div>
-          ) : filtered.length === 0 ? (
+          ) : displayItems.length === 0 ? (
             <div className="py-16 text-center text-sm text-muted-foreground">
               No queries match the current filters.
             </div>
@@ -273,7 +260,7 @@ function ActivityDashboard() {
               <Card>
                 <CardContent className="p-0">
                   <div className="divide-y divide-border">
-                    {pageItems.map(item => (
+                    {displayItems.map(item => (
                       <Link
                         key={item.queryId}
                         href={`/admin/activity/${item.queryId}`}
@@ -313,34 +300,22 @@ function ActivityDashboard() {
                 </CardContent>
               </Card>
 
-              {/* Pagination */}
+              {/* Load more */}
               <div className="mt-4 flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">
-                  {currentPage * PAGE_SIZE + 1}&ndash;{Math.min((currentPage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+                  Showing {displayItems.length} queries
+                  {totalLoaded !== displayItems.length && ` (${totalLoaded} loaded)`}
                 </span>
-                <div className="flex items-center gap-1">
+                {hasMore && (
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-7 w-7 p-0"
-                    disabled={currentPage === 0}
-                    onClick={() => setPage(p => p - 1)}
+                    onClick={loadNextPage}
+                    disabled={loading}
                   >
-                    <ChevronLeft className="h-3.5 w-3.5" />
+                    {loading ? 'Loading...' : 'Load more'}
                   </Button>
-                  <span className="px-2 text-xs text-muted-foreground">
-                    {currentPage + 1} / {totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    disabled={currentPage >= totalPages - 1}
-                    onClick={() => setPage(p => p + 1)}
-                  >
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
+                )}
               </div>
             </>
           )}

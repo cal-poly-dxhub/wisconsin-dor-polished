@@ -1,12 +1,13 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useState, useEffect } from 'react';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import '@/components/messages/chat-message.css';
 import { ProtectedRoute } from '@/components/auth/protected-route';
-import { useActivityData, type TraceEvent } from '@/hooks/use-activity-data';
+import { type ActivityItem, type TraceEvent } from '@/hooks/use-activity-data';
+import { http } from '@/lib/http';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -55,11 +56,36 @@ export default function QueryDetailPage({
 }
 
 function QueryDetail({ queryId }: { queryId: string }) {
-  const { items, loading, getItemById } = useActivityData();
-  const item = getItemById(queryId);
+  const [item, setItem] = useState<ActivityItem | null>(null);
+  const [loading, setLoading] = useState(true);
   const [showMarkdown, setShowMarkdown] = useState(false);
 
-  if (loading && items.length === 0) {
+  useEffect(() => {
+    async function fetchItem() {
+      try {
+        const response = await http.get(`admin/activity/${queryId}`).json<{
+          statusCode?: number;
+          body?: string;
+          item?: ActivityItem;
+        }>();
+
+        let data: { item: ActivityItem };
+        if (response.statusCode && response.body) {
+          data = JSON.parse(response.body);
+        } else {
+          data = response as unknown as { item: ActivityItem };
+        }
+        setItem(data.item);
+      } catch (err) {
+        console.error('Failed to fetch activity item:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchItem();
+  }, [queryId]);
+
+  if (loading) {
     return (
       <div className="min-h-screen bg-background">
         <div className="mx-auto max-w-3xl px-6 py-8">

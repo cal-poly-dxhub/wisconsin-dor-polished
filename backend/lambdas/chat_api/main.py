@@ -439,21 +439,73 @@ def _resolve_session_emails(session_ids: set[str]) -> dict[str, str]:
 
 @app.get("/admin/activity")
 def activity_handler() -> dict[str, Any]:
-    """Return all chat history items for the admin activity dashboard."""
+    """Return paginated chat history items for the admin activity dashboard.
+
+    Query params:
+      - limit: page size (default 50, max 200)
+      - cursor: opaque pagination token (base64-encoded LastEvaluatedKey)
+      - after: ISO timestamp lower bound (inclusive)
+      - before: ISO timestamp upper bound (exclusive)
+      - feedback: 'up' | 'down' | 'rated' | 'unrated' (server-side filter)
+    """
+    import base64
+
     try:
-        items = []
-        scan_kwargs: dict[str, Any] = {"TableName": message_table_name}
-        while True:
-            response = dynamodb.scan(**scan_kwargs)
-            items.extend(response.get("Items", []))
-            if "LastEvaluatedKey" not in response:
-                break
-            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        params = app.current_event.query_string_parameters or {}
+        limit = min(int(params.get("limit", "50")), 200)
+        cursor = params.get("cursor")
+        after = params.get("after")
+        before = params.get("before")
+        feedback_filter = params.get("feedback")
+
+        key_condition = "gsi1pk = :pk"
+        expr_values: dict[str, Any] = {":pk": {"S": "ALL"}}
+
+        if after and before:
+            key_condition += " AND #ts BETWEEN :after AND :before"
+            expr_values[":after"] = {"S": after}
+            expr_values[":before"] = {"S": before}
+        elif after:
+            key_condition += " AND #ts >= :after"
+            expr_values[":after"] = {"S": after}
+        elif before:
+            key_condition += " AND #ts < :before"
+            expr_values[":before"] = {"S": before}
+
+        filter_expression = None
+        if feedback_filter == "up":
+            filter_expression = "thumbUp = :fv"
+            expr_values[":fv"] = {"BOOL": True}
+        elif feedback_filter == "down":
+            filter_expression = "thumbUp = :fv"
+            expr_values[":fv"] = {"BOOL": False}
+        elif feedback_filter == "rated":
+            filter_expression = "attribute_exists(thumbUp)"
+        elif feedback_filter == "unrated":
+            filter_expression = "attribute_not_exists(thumbUp)"
+
+        query_kwargs: dict[str, Any] = {
+            "TableName": message_table_name,
+            "IndexName": "timestampIndex",
+            "KeyConditionExpression": key_condition,
+            "ExpressionAttributeValues": expr_values,
+            "ExpressionAttributeNames": {"#ts": "timestamp"},
+            "ScanIndexForward": False,
+            "Limit": limit,
+        }
+        if filter_expression:
+            query_kwargs["FilterExpression"] = filter_expression
+        if cursor:
+            query_kwargs["ExclusiveStartKey"] = json.loads(
+                base64.b64decode(cursor).decode()
+            )
+
+        response = dynamodb.query(**query_kwargs)
 
         deserializer = TypeDeserializer()
         results = []
         session_ids: set[str] = set()
-        for item in items:
+        for item in response.get("Items", []):
             deserialized = {k: deserializer.deserialize(v) for k, v in item.items()}
             trace_raw = deserialized.get("trace")
             trace = None
@@ -482,13 +534,70 @@ def activity_handler() -> dict[str, Any]:
         for result in results:
             result["email"] = email_by_session.get(result["sessionId"])
 
-        results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        return create_api_response(200, {"items": results, "count": len(results)})
+        next_cursor = None
+        if "LastEvaluatedKey" in response:
+            next_cursor = base64.b64encode(
+                json.dumps(response["LastEvaluatedKey"]).encode()
+            ).decode()
+
+        return create_api_response(200, {
+            "items": results,
+            "count": len(results),
+            "nextCursor": next_cursor,
+        })
 
     except ChatAPIError as e:
         return create_api_response(e.status_code, e.to_response())
     except Exception as e:
         logger.error(f"Unexpected error in activity_handler: {e}")
+        error_response = create_error_body(e)
+        return create_api_response(500, error_response)
+
+
+@app.get("/admin/activity/<query_id>")
+def activity_detail_handler(query_id: str) -> dict[str, Any]:
+    """Return a single chat history item by queryId."""
+    try:
+        response = dynamodb.get_item(
+            TableName=message_table_name,
+            Key={"queryId": {"S": query_id}},
+        )
+        raw_item = response.get("Item")
+        if not raw_item:
+            return create_api_response(404, {"error": "Query not found"})
+
+        deserializer = TypeDeserializer()
+        deserialized = {k: deserializer.deserialize(v) for k, v in raw_item.items()}
+        trace_raw = deserialized.get("trace")
+        trace = None
+        if trace_raw and isinstance(trace_raw, str):
+            try:
+                trace = json.loads(trace_raw)
+            except (json.JSONDecodeError, TypeError):
+                trace = None
+        elif isinstance(trace_raw, list):
+            trace = trace_raw
+
+        sid = deserialized.get("sessionId", "")
+        email_by_session = _resolve_session_emails({sid} if sid else set())
+
+        result = {
+            "queryId": deserialized.get("queryId", ""),
+            "sessionId": sid,
+            "query": deserialized.get("query", ""),
+            "answer": deserialized.get("answer", ""),
+            "timestamp": deserialized.get("timestamp", ""),
+            "thumbUp": deserialized.get("thumbUp"),
+            "feedback": deserialized.get("feedback"),
+            "trace": trace,
+            "email": email_by_session.get(sid),
+        }
+        return create_api_response(200, {"item": result})
+
+    except ChatAPIError as e:
+        return create_api_response(e.status_code, e.to_response())
+    except Exception as e:
+        logger.error(f"Unexpected error in activity_detail_handler: {e}")
         error_response = create_error_body(e)
         return create_api_response(500, error_response)
 
