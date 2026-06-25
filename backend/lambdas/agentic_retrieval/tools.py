@@ -112,10 +112,31 @@ def _history_context(chat_history: list[dict[str, str]] | None) -> str:
 TOOL_DEFINITIONS = [
     {
         "toolSpec": {
+            "name": "faq_search",
+            "description": (
+                "Already run before this loop — results are in your first "
+                "toolResult message. Do NOT call this tool again."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query to find relevant FAQs",
+                        },
+                    },
+                    "required": ["query"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
             "name": "refine_query",
             "description": (
                 "Rewrite the user's question into a focused search query "
-                "before calling faq_search or vector_search. Call this "
+                "before calling vector_search. Call this "
                 "when: (1) the user's question is a short follow-up that "
                 "depends on earlier conversation (e.g., 'what about "
                 "agriculture' with no other context), OR (2) the question "
@@ -136,34 +157,6 @@ TOOL_DEFINITIONS = [
                                 "The original user question to refine."
                             ),
                         }
-                    },
-                    "required": ["query"],
-                }
-            },
-        }
-    },
-    {
-        "toolSpec": {
-            "name": "faq_search",
-            "description": (
-                "Search frequently asked questions about Wisconsin DOR property "
-                "assessment and taxation. Returns Q&A pairs ranked by relevance. "
-                "Always try this FIRST before vector_search — if a FAQ adequately "
-                "answers the user's question, use it directly via the answer tool."
-            ),
-            "inputSchema": {
-                "json": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query to find relevant FAQs",
-                        },
-                        "top_k": {
-                            "type": "integer",
-                            "description": "Number of FAQ results to return (default: 5, max: 10)",
-                            "default": 5,
-                        },
                     },
                     "required": ["query"],
                 }

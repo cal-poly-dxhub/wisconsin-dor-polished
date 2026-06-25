@@ -1,4 +1,5 @@
 infra/cdk_out_dir/
+pdf_chunking/
 
 # Source documents (too large for git, uploaded to S3 separately)
 docs/**/*.pdf
