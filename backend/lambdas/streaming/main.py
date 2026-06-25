@@ -107,6 +107,7 @@ def log_chat_history(
 
     item: dict = {
         "sessionId": session_id,
+        "gsi1pk": "ALL",
         "timestamp": timestamp,
         "queryId": query_id,
         "query": query,

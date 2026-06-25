@@ -70,6 +70,7 @@ def save_chat_history(
         item: dict = {
             "queryId": query_id,
             "sessionId": session_id,
+            "gsi1pk": "ALL",
             "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
             "query": query,
             "answer": answer,

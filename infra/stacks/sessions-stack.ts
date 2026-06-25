@@ -120,6 +120,19 @@ export class SessionsStack extends cdk.NestedStack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    this.chatHistoryTable.addGlobalSecondaryIndex({
+      indexName: 'timestampIndex',
+      partitionKey: {
+        name: 'gsi1pk',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'timestamp',
+        type: dynamodb.AttributeType.STRING,
+      },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
     const apiHandler = new lambda.Function(this, 'ApiHandler', {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'main.handler',
@@ -483,6 +496,13 @@ export class SessionsStack extends cdk.NestedStack {
 
     httpApi.addRoutes({
       path: '/admin/activity',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/admin/activity/{queryId}',
       methods: [apigatewayv2.HttpMethod.GET],
       integration: lambdaIntegration,
       authorizer: authorizer,
