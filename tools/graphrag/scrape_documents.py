@@ -170,7 +170,9 @@ DOCUMENT_SOURCES = {
             "https://www.revenue.wi.gov/DOR%20Publications/tif-manual.pdf",
             "https://www.revenue.wi.gov/DOR%20Publications/pb218.pdf",
             "https://www.revenue.wi.gov/DOR%20Publications/pb238.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pm-201.pdf",
+            "https://www.revenue.wi.gov/DORForms/pm-201.pdf",
+            "https://www.revenue.wi.gov/DORForms/sl-101.pdf",
+            "https://www.revenue.wi.gov/DORForms/sl-103.pdf",
         ],
     },
     "complex_inquiry_pages": {
