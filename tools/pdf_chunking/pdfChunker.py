@@ -15,7 +15,7 @@ from pdf_chunking.pymupdf_extractor import (
     extraction_looks_good,
 )
 from pdf_chunking.boilerplate import strip_boilerplate
-from pdf_chunking.wpam_chunk_filter import filter_wpam_chunks, repair_wpam_subheadings
+from pdf_chunking.wpam_chunk_filter import filter_wpam_chunks, merge_short_chunks, repair_wpam_subheadings
 from pdf2image import convert_from_path
 from PIL import Image
 from pdf_chunking.flowchart_tools import extract_flowcharts_from_document
@@ -356,6 +356,92 @@ def _enforce_chunk_cap(chunks: list[dict]) -> list[dict]:
     return final
 
 
+def _split_statute_section(text: str, cap: int = CHUNK_MAX_CHARS, min_tail: int = 200) -> list[str]:
+    """Split a long statute section at semantic boundaries.
+
+    Priority: subsection markers → sentence boundaries → line breaks.
+    Tiny tail fragments are merged back into the predecessor.
+    """
+    if len(text) <= cap:
+        return [text]
+
+    # Step 1: split at subsection boundaries — (1), (2), (4m), (a), etc.
+    subsection_re = re.compile(r"(?=\n\s*\(\d+[a-z]*\)\s|\n\s*\([a-z]\)\s)")
+    segments = subsection_re.split(text)
+    segments = [s.strip() for s in segments if s.strip()]
+
+    # Step 2: greedy-merge small adjacent subsections back together
+    merged_segs = _greedy_merge_segments(segments, cap)
+
+    # Step 3: any piece still over cap → split at sentence boundaries, then lines
+    sentence_re = re.compile(r"(?<=\.) {2,}(?=[A-Z(])")
+    final: list[str] = []
+    for piece in merged_segs:
+        if len(piece) <= cap:
+            final.append(piece)
+        else:
+            sent_segments = sentence_re.split(piece)
+            if len(sent_segments) > 1:
+                for sp in _greedy_merge_segments(sent_segments, cap):
+                    if len(sp) <= cap:
+                        final.append(sp)
+                    else:
+                        final.extend(_split_at_lines(sp, cap))
+            else:
+                final.extend(_split_at_lines(piece, cap))
+
+    # Step 4: merge tiny tails back into predecessor rather than leave orphans.
+    # Only merge if predecessor is already under the primary cap — don't undo
+    # intentional splits from step 3.
+    merge_cap = 3000
+    if len(final) <= 1:
+        return final
+    result = [final[0]]
+    for piece in final[1:]:
+        if len(piece) < min_tail and len(result[-1]) <= cap:
+            combined = result[-1] + "\n" + piece
+            if len(combined) <= merge_cap:
+                result[-1] = combined
+            else:
+                result.append(piece)
+        else:
+            result.append(piece)
+    return result
+
+
+def _greedy_merge_segments(segments: list[str], cap: int) -> list[str]:
+    """Greedily merge adjacent segments while staying under cap."""
+    if not segments:
+        return []
+    out = [segments[0]]
+    for seg in segments[1:]:
+        combined = out[-1] + "\n" + seg
+        if len(combined) <= cap:
+            out[-1] = combined
+        else:
+            out.append(seg)
+    return out
+
+
+def _split_at_lines(text: str, cap: int) -> list[str]:
+    """Last-resort split at newline boundaries."""
+    results: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(start + cap, len(text))
+        if end < len(text):
+            break_hint = text.rfind("\n\n", start + int(cap * 0.8), end)
+            if break_hint == -1:
+                break_hint = text.rfind("\n", start + int(cap * 0.8), end)
+            if break_hint != -1 and break_hint > start:
+                end = break_hint
+        piece = text[start:end].strip()
+        if piece:
+            results.append(piece)
+        start = end
+    return results
+
+
 def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
     """
     Chunk WI Statute / Administrative Code PDFs.
@@ -439,7 +525,20 @@ def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
             }
         })
 
-    return _enforce_chunk_cap(merged_chunks)
+    # Split oversized sections at subsection/sentence boundaries
+    final_chunks: list[dict] = []
+    for chunk in merged_chunks:
+        text = chunk["text"]
+        if len(text) <= CHUNK_MAX_CHARS:
+            final_chunks.append(chunk)
+            continue
+        parts = _split_statute_section(text)
+        for part in parts:
+            split_chunk = {k: (dict(v) if isinstance(v, dict) else v) for k, v in chunk.items()}
+            split_chunk["text"] = part
+            final_chunks.append(split_chunk)
+
+    return final_chunks
 
 def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
     """
@@ -479,10 +578,10 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         remainder = line[m.end():].strip()
         if suffix and not re.match(r"^[–—.:]*[A-D]?$", suffix):
             return False
-        if not remainder:
-            return True
         if suffix == ".":
             return False
+        if not remainder:
+            return True
         if remainder[0] in ",)|(":
             return False
         first_word = remainder.split()[0] if remainder.split() else ""
@@ -1001,6 +1100,12 @@ def process_pdf_from_s3(
         # compliant during chunk_document's buffer-time measurement. Re-run
         # the splitter so the emitted chunks are guaranteed <= CHUNK_MAX_CHARS.
         all_chunks = _enforce_chunk_cap(all_chunks)
+
+        # Merge short tail fragments created by _enforce_chunk_cap back into
+        # their predecessor. Must run AFTER cap enforcement to catch fragments
+        # produced by splitting.
+        if strategy == "wpam":
+            all_chunks = merge_short_chunks(all_chunks)
 
         if chunk_logs_dir:
             final_chunks_dir = os.path.join(chunk_logs_dir, "final_chunks")
