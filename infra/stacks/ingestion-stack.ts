@@ -15,6 +15,8 @@ interface IngestionStackProps extends cdk.NestedStackProps {
 export class IngestionStack extends cdk.NestedStack {
   public readonly cluster: ecs.Cluster;
   public readonly taskDefinition: ecs.FargateTaskDefinition;
+  public readonly subnetIds: string;
+  public readonly securityGroupId: string;
 
   constructor(scope: Construct, id: string, props: IngestionStackProps) {
     super(scope, id, props);
@@ -161,6 +163,9 @@ export class IngestionStack extends cdk.NestedStack {
       description: 'Security group for ingestion Fargate tasks',
       allowAllOutbound: true,
     });
+
+    this.subnetIds = vpc.publicSubnets.map((s) => s.subnetId).join(',');
+    this.securityGroupId = securityGroup.securityGroupId;
 
     // Outputs for the wrapper scripts
     new cdk.CfnOutput(this, 'ClusterArn', {

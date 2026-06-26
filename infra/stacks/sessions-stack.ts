@@ -15,6 +15,7 @@ export interface SessionsStackProps extends cdk.StackProps {
   // The raw GraphRAG bucket. citation_resolver mints presigned URLs
   // against keys under raw/ on demand.
   rawBucketName: string;
+  workBucketName: string;
 }
 
 export class SessionsStack extends cdk.NestedStack {
@@ -25,6 +26,7 @@ export class SessionsStack extends cdk.NestedStack {
   public readonly chatHistoryTable: dynamodb.Table;
   public readonly httpApiUrl: string;
   public readonly websocketApiUrl: string;
+  public readonly apiHandler: lambda.Function;
 
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
@@ -151,17 +153,37 @@ export class SessionsStack extends cdk.NestedStack {
       }),
       layers: [props.stepFunctionTypesLayer, props.websocketUtilsLayer],
       description: 'Lambda function that handles API requests',
-      timeout: cdk.Duration.seconds(10),
-      memorySize: 128,
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 256,
       environment: {
         SESSIONS_TABLE_NAME: this.sessionsTable.tableName,
         MESSAGES_TABLE_NAME: this.chatHistoryTable.tableName,
+        RAW_BUCKET_NAME: props.rawBucketName,
+        WORK_BUCKET_NAME: props.workBucketName,
       },
     });
 
+    this.apiHandler = apiHandler;
     this.sessionsTable.grantReadWriteData(apiHandler);
     this.chatHistoryTable.grantReadWriteData(apiHandler);
 
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['s3:PutObject'],
+        resources: [`arn:aws:s3:::${props.rawBucketName}/raw/*`],
+      })
+    );
+    apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['s3:GetObject', 's3:ListBucket'],
+        resources: [
+          `arn:aws:s3:::${props.workBucketName}`,
+          `arn:aws:s3:::${props.workBucketName}/extracted/*`,
+        ],
+      })
+    );
     apiHandler.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -503,6 +525,27 @@ export class SessionsStack extends cdk.NestedStack {
 
     httpApi.addRoutes({
       path: '/admin/activity/{queryId}',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/admin/ingest',
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/admin/chunks/documents',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/admin/chunks/{docId}',
       methods: [apigatewayv2.HttpMethod.GET],
       integration: lambdaIntegration,
       authorizer: authorizer,

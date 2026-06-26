@@ -1,4 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 import { SessionsStack } from './sessions-stack';
 import { MessagesStack } from './messages-stack';
@@ -32,6 +33,7 @@ export class WisconsinBotStack extends cdk.Stack {
       stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
       websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
       rawBucketName: graphRAGStack.rawBucketName,
+      workBucketName: graphRAGStack.workBucketName,
     });
 
     // GraphRAG feature flag: mutually exclusive EventBridge rules
@@ -96,6 +98,40 @@ export class WisconsinBotStack extends cdk.Stack {
       workBucketName: graphRAGStack.workBucketName,
       neptuneGraphId: graphRAGStack.neptuneGraphId,
     });
+
+    sessionsStack.apiHandler.addEnvironment(
+      'INGESTION_CLUSTER_ARN',
+      ingestionStack.cluster.clusterArn
+    );
+    sessionsStack.apiHandler.addEnvironment(
+      'INGESTION_TASK_DEF_ARN',
+      ingestionStack.taskDefinition.taskDefinitionArn
+    );
+    sessionsStack.apiHandler.addEnvironment(
+      'INGESTION_SUBNET_IDS',
+      ingestionStack.subnetIds
+    );
+    sessionsStack.apiHandler.addEnvironment(
+      'INGESTION_SECURITY_GROUP_ID',
+      ingestionStack.securityGroupId
+    );
+    sessionsStack.apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['ecs:RunTask'],
+        resources: [ingestionStack.taskDefinition.taskDefinitionArn],
+      })
+    );
+    sessionsStack.apiHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['iam:PassRole'],
+        resources: [
+          ingestionStack.taskDefinition.taskRole!.roleArn,
+          ingestionStack.taskDefinition.executionRole!.roleArn,
+        ],
+      })
+    );
 
     const cloudWatchIam = new CloudWatchIam(this, 'WisconsinCloudWatchIam', {
       resetCloudWatchIamRole: RESET_ClOUDWATCH_IAM_ROLE,

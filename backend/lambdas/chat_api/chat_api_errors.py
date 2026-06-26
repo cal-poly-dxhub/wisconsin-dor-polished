@@ -153,6 +153,27 @@ class UnauthorizedError(ChatAPIError):
         return response
 
 
+class ForbiddenError(ChatAPIError):
+    """Raised when an authenticated user lacks the required role/group."""
+
+    def __init__(self, message: str = "Admin access required"):
+        super().__init__(
+            message,
+            status_code=403,
+        )
+
+    def to_response(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Convert error to response body."""
+        response = {
+            "error": {
+                "message": "You do not have permission to access this resource.",
+            },
+        }
+        if extra:
+            response["error"].update(extra)
+        return response
+
+
 class UnexpectedError(ChatAPIError):
     """Used to describe a generic error not anticipated by ChatAPIError."""
 
