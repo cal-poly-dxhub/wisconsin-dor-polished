@@ -491,7 +491,7 @@ export function ChatMessage({
   timestamp,
   className,
   streamingComplete,
-  selected = true,
+  selected: _selected = true,
   items,
   onSendMessage,
 }: ChatMessageProps) {

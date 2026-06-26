@@ -33,6 +33,11 @@ class ErrorMessage(WebSocketMessage):
     content: ErrorContent
 
 
+class ChunkSnippetWS(WebSocketMessage):
+    page: int
+    text: str
+
+
 class SourceDocument(WebSocketMessage):
     document_id: str
     title: str
@@ -51,6 +56,8 @@ class SourceDocument(WebSocketMessage):
     # RAGDocument.edition_year so the value survives the wire boundary instead
     # of being silently dropped here. Serialized as `editionYear`.
     edition_year: int | None = None
+    # Per-page chunk text snippets for citation link previews.
+    chunks: list[ChunkSnippetWS] = []
 
 
 class DocumentsContent(WebSocketMessage):

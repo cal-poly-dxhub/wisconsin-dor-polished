@@ -8,6 +8,11 @@ const optStr = z.string().nullish().transform(v => v ?? undefined);
 const optInt = z.number().int().nullish().transform(v => v ?? undefined);
 const optNum = z.number().nullish().transform(v => v ?? undefined);
 
+export const ChunkSnippetSchema = z.object({
+  page: z.number().int(),
+  text: z.string(),
+});
+
 export const SourceDocumentSchema = z.object({
   documentId: z.string(),
   title: z.string(),
@@ -23,6 +28,7 @@ export const SourceDocumentSchema = z.object({
   startPage: optInt,
   endPage: optInt,
   editionYear: optInt,
+  chunks: z.array(ChunkSnippetSchema).optional().default([]),
 });
 
 export const DocumentsContentSchema = z.object({

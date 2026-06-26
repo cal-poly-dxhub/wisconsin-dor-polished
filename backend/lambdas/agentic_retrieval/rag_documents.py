@@ -9,11 +9,12 @@ from case_law_handling import (
     collapse_case_law_by_title,
     is_case_law_stub,
 )
-from step_function_types.models import RAGDocument
+from step_function_types.models import ChunkSnippet, RAGDocument
 
 logger = logging.getLogger(__name__)
 
 _NON_DOCUMENT_LABELS = frozenset({"Chunk", "Topic", "Framework"})
+_SNIPPET_MAX_CHARS = 200
 
 
 def _generate_source_label(chunk: dict, doc_info: dict | None) -> str:
@@ -41,11 +42,21 @@ def build_rag_documents(
     fetched_opinions = fetched_opinions or {}
     docs_by_id: dict[str, RAGDocument] = {}
     doc_infos: dict[str, dict] = {}
+    snippets_by_doc: dict[str, list[ChunkSnippet]] = {}
 
     for chunk in chunks:
         doc_id = chunk.get("doc_id", "unknown")
         chunk_text = chunk.get("text") or ""
         tag = discovery.get(doc_id, "unknown")
+
+        page = chunk.get("start_page")
+        if page is not None and chunk_text:
+            snippets = snippets_by_doc.setdefault(doc_id, [])
+            if not any(s.page == page for s in snippets):
+                snippets.append(ChunkSnippet(
+                    page=page,
+                    text=chunk_text[:_SNIPPET_MAX_CHARS],
+                ))
 
         if doc_id not in docs_by_id:
             doc_info = neptune_client.get_document(doc_id)
@@ -166,5 +177,9 @@ def build_rag_documents(
         }
 
     docs_by_id = collapse_case_law_by_title(docs_by_id)
+
+    for doc_id, rag_doc in docs_by_id.items():
+        if doc_id in snippets_by_doc:
+            rag_doc.chunks = snippets_by_doc[doc_id]
 
     return list(docs_by_id.values())

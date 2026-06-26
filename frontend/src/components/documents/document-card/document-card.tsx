@@ -18,6 +18,11 @@ import { AuthorityBadge } from './authority-badge';
 import { DiscoveryBadge } from './discovery-badge';
 import { chooseSourceTarget } from './source-target';
 
+export interface ChunkSnippet {
+  page: number;
+  text: string;
+}
+
 export interface Document {
   documentId: string;
   title: string;
@@ -35,6 +40,7 @@ export interface Document {
     | 'framework-list'
     | 'opinion-fetched'
     | 'unknown';
+  chunks?: ChunkSnippet[];
 }
 
 const documentCardVariants = cva(
@@ -258,18 +264,42 @@ export function DocumentCardCompact({
         </CardHeader>
 
         <CardContent className="px-4 pt-2.5 pb-3">
-          <CardDescription className="line-clamp-2 text-xs">
-            {contentPreview}
-          </CardDescription>
+          {citations && citations.length > 0 && document.s3Key ? (
+            <div className="flex flex-wrap gap-1.5">
+              {citations.map((c) => (
+                <button
+                  key={c.page}
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs font-medium text-foreground/80 hover:bg-accent hover:text-foreground transition-[color,background-color,border-color] cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const popup = window.open('about:blank', '_blank');
+                    if (!popup) return;
+                    void buildResolverUrl(document.s3Key!, c.page)
+                      .then(url => { if (url) popup.location.href = url; else popup.close(); })
+                      .catch(() => popup.close());
+                  }}
+                >
+                  <span className="truncate max-w-[10rem]">{c.label}</span>
+                  <span className="text-muted-foreground">p.{c.page}</span>
+                  <ExternalLink className="h-2.5 w-2.5 text-muted-foreground" />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <CardDescription className="line-clamp-2 text-xs">
+              {contentPreview}
+            </CardDescription>
+          )}
         </CardContent>
 
         {document.source && (document.sourceUrl || document.s3Key) && (
           <button
             type="button"
             className="mt-auto w-full border-t border-border/50 bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-[color,background-color,border-color] cursor-pointer inline-flex items-center justify-end gap-1.5"
-            onClick={onSourceClick}
+            onClick={citations && citations.length > 1 && document.s3Key ? (e) => { e.stopPropagation(); onClick(); } : onSourceClick}
           >
-            <span>{getSourceActionLabel(document)}</span>
+            <span>{citations && citations.length > 1 && document.s3Key ? 'View Citations' : getSourceActionLabel(document)}</span>
             <ExternalLink className="h-3 w-3" />
           </button>
         )}
@@ -349,55 +379,66 @@ function DocumentCardModal({
           </div>
 
           {/* Per-page citation links */}
-          {citations && citations.length > 0 && document.s3Key && (
-            <div className="px-5 pt-3 pb-3 border-b border-border">
-              <p className="text-xs font-medium text-muted-foreground mb-2">
+          {citations && citations.length > 0 && document.s3Key ? (
+            <CardContent className="flex-1 overflow-y-auto px-5 pt-5 pb-5">
+              <p className="text-sm font-medium text-foreground mb-3">
                 Cited {citations.length} {citations.length === 1 ? 'location' : 'locations'} in this response
               </p>
-              <div className="flex flex-wrap gap-1.5">
-                {citations.map((c) => (
+              <div className="flex flex-col gap-2.5">
+                {citations.map((c) => {
+                  const snippet = document.chunks?.find(ch => ch.page === c.page);
+                  return (
+                    <button
+                      key={c.page}
+                      type="button"
+                      className="w-full text-left rounded-lg border border-border bg-background px-4 py-3 hover:bg-accent/50 hover:border-primary/40 transition-[color,background-color,border-color,box-shadow] cursor-pointer shadow-sm hover:shadow-md"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const popup = window.open('about:blank', '_blank');
+                        if (!popup) return;
+                        void buildResolverUrl(document.s3Key!, c.page)
+                          .then(url => { if (url) popup.location.href = url; else popup.close(); })
+                          .catch(() => popup.close());
+                      }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-foreground truncate">{c.label}</span>
+                        <span className="flex items-center gap-2 shrink-0 ml-3">
+                          <span className="text-muted-foreground text-xs font-normal">Page {c.page}</span>
+                          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+                        </span>
+                      </div>
+                      {snippet && (
+                        <p className="mt-1.5 text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                          {snippet.text}
+                        </p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </CardContent>
+          ) : (
+            <CardContent className="flex-1 overflow-hidden p-5">
+              <div className="rounded-md border border-border bg-muted/30 overflow-hidden max-h-full flex flex-col">
+                <div className="p-4 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50">
+                  <p className="text-sm leading-normal whitespace-pre-wrap text-foreground/90">
+                    {cleanContentText(document.content || 'No content available.')}
+                  </p>
+                </div>
+                {document.source && (document.sourceUrl || document.s3Key) && (
                   <button
-                    key={c.page}
                     type="button"
-                    className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground/80 hover:bg-accent hover:text-foreground transition-[color,background-color,border-color] cursor-pointer"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const popup = window.open('about:blank', '_blank');
-                      if (!popup) return;
-                      void buildResolverUrl(document.s3Key!, c.page)
-                        .then(url => { if (url) popup.location.href = url; else popup.close(); })
-                        .catch(() => popup.close());
-                    }}
+                    className="w-full border-t border-border bg-muted/70 px-4 py-2.5 text-sm font-medium text-primary hover:bg-muted transition-[color,background-color,border-color] cursor-pointer inline-flex items-center justify-center gap-1.5"
+                    onClick={onSourceClick}
                   >
-                    <span>{c.label}</span>
-                    <span className="text-muted-foreground">p.{c.page}</span>
-                    <ExternalLink className="h-2.5 w-2.5 text-muted-foreground" />
+                    <span>{getSourceActionLabel(document)}</span>
+                    <ExternalLink className="h-3.5 w-3.5" />
                   </button>
-                ))}
+                )}
               </div>
-            </div>
+            </CardContent>
           )}
-
-          {/* Content */}
-          <CardContent className="flex-1 overflow-hidden p-5">
-            <div className="rounded-md border border-border bg-muted/30 overflow-hidden max-h-full flex flex-col">
-              <div className="p-4 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50">
-                <p className="text-sm leading-normal whitespace-pre-wrap text-foreground/90">
-                  {cleanContentText(document.content || 'No content available.')}
-                </p>
-              </div>
-              {document.source && (document.sourceUrl || document.s3Key) && (
-                <button
-                  type="button"
-                  className="w-full border-t border-border bg-muted/70 px-4 py-2.5 text-sm font-medium text-primary hover:bg-muted transition-[color,background-color,border-color] cursor-pointer inline-flex items-center justify-center gap-1.5"
-                  onClick={onSourceClick}
-                >
-                  <span>{getSourceActionLabel(document)}</span>
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          </CardContent>
         </Card>
       </motion.div>
     </div>
@@ -440,7 +481,7 @@ export const DocumentCard = memo(function DocumentCard({
       if (target?.kind === 's3') {
         const popup = window.open('about:blank', '_blank');
         if (!popup) return;
-        const page = document.startPage ?? (citations && citations.length > 0 ? Math.min(...citations.map(c => c.page)) : undefined);
+        const page = (citations && citations.length > 0 ? citations[0].page : undefined) ?? document.startPage;
         void buildResolverUrl(target.s3Key, page)
           .then(url => {
             if (url) {

@@ -8,6 +8,11 @@ import pytest
 pydantic = pytest.importorskip("pydantic")
 
 
+class MockChunkSnippet(pydantic.BaseModel):
+    page: int
+    text: str
+
+
 class MockRAGDocument(pydantic.BaseModel):
     document_id: str
     title: str
@@ -20,6 +25,7 @@ class MockRAGDocument(pydantic.BaseModel):
     start_page: int | None = None
     end_page: int | None = None
     edition_year: int | None = None
+    chunks: list[MockChunkSnippet] = pydantic.Field(default_factory=list)
 
     def model_copy(self, update=None):
         data = self.model_dump()
@@ -29,6 +35,7 @@ class MockRAGDocument(pydantic.BaseModel):
 
 
 sys.modules["step_function_types.models"].RAGDocument = MockRAGDocument
+sys.modules["step_function_types.models"].ChunkSnippet = MockChunkSnippet
 
 from rag_documents import build_rag_documents, _generate_source_label
 
