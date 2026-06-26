@@ -31,8 +31,36 @@ case "$PHASE" in
       ${START_PHASE:+--start-phase "$START_PHASE"} \
       ${STOP_AFTER_PHASE:+--stop-after-phase "$STOP_AFTER_PHASE"}
     ;;
+  full)
+    echo "=== Running full pipeline: extract → embed → load ==="
+    echo "--- Phase: extract ---"
+    python -m tools.graphrag.extract \
+      --raw-bucket "${RAW_BUCKET}" \
+      --work-bucket "${WORK_BUCKET}" \
+      --config "$CONFIG" \
+      --max-workers "${MAX_WORKERS:-3}" \
+      ${SOURCE_FILTER:+--source-filter "$SOURCE_FILTER"} \
+      ${FORCE:+--force}
+
+    echo "--- Phase: embed ---"
+    python -m tools.graphrag.embed \
+      --work-bucket "${WORK_BUCKET}" \
+      --config "$CONFIG" \
+      --max-workers "${MAX_WORKERS:-5}" \
+      ${SOURCE_FILTER:+--source-filter "$SOURCE_FILTER"} \
+      ${FORCE:+--force}
+
+    echo "--- Phase: load ---"
+    python -m tools.graphrag.load \
+      --work-bucket "${WORK_BUCKET}" \
+      --graph-id "${GRAPH_ID}" \
+      --config "$CONFIG" \
+      ${SOURCE_FILTER:+--source-filter "$SOURCE_FILTER"}
+
+    echo "=== Full pipeline complete ==="
+    ;;
   *)
-    echo "ERROR: PHASE must be one of: extract, embed, load"
+    echo "ERROR: PHASE must be one of: extract, embed, load, full"
     echo "Got: '$PHASE'"
     exit 1
     ;;

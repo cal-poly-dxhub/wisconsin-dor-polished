@@ -48,7 +48,7 @@ _STRATEGY_PATTERNS: dict[str, list[re.Pattern]] = {
 }
 
 _TAG_RE = re.compile(r"<+[^<>]*>+")
-_CHAPTER_TITLE_RE = re.compile(r"^Chapter\s+\d+\s+[A-Z].+$")
+_CHAPTER_TITLE_RE = re.compile(r"^Chapter\s+\d+(?:\.\s*$|\s+[A-Z].+$)")
 
 
 def strip_boilerplate(

@@ -123,6 +123,53 @@ def filter_wpam_chunks(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, Any
     return kept, removed
 
 
+def merge_short_chunks(
+    chunks: list[dict[str, Any]],
+    min_chars: int = 200,
+    max_merged_chars: int = 3000,
+) -> list[dict[str, Any]]:
+    """Merge very short chunks into their predecessor.
+
+    Short chunks produce concentrated embeddings that can artificially
+    outscore longer, more substantive chunks in vector search. These
+    fragments are almost always the tail of the previous chunk's thought,
+    so merging backward preserves context without creating new artifacts.
+
+    Only merges when the predecessor shares the same heading (chapter)
+    and the result stays under max_merged_chars.
+    """
+    if not chunks:
+        return chunks
+
+    result = [chunks[0]]
+
+    for chunk in chunks[1:]:
+        text = chunk.get("text", "")
+        prev = result[-1]
+        prev_text = prev.get("text", "")
+        same_heading = (
+            chunk.get("metadata", {}).get("heading")
+            == prev.get("metadata", {}).get("heading")
+        )
+
+        if (
+            len(text) < min_chars
+            and same_heading
+            and len(prev_text) + len(text) + 1 <= max_merged_chars
+        ):
+            merged_text = prev_text + "\n" + text
+            merged_meta = {
+                **prev.get("metadata", {}),
+                "end_page": chunk.get("metadata", {}).get("end_page")
+                or prev.get("metadata", {}).get("end_page"),
+            }
+            result[-1] = {**prev, "text": merged_text, "metadata": merged_meta}
+        else:
+            result.append(chunk)
+
+    return result
+
+
 def repair_wpam_subheadings(
     chunks: list[dict[str, Any]], max_occurrences: int = 5
 ) -> list[dict[str, Any]]:

@@ -413,7 +413,7 @@ def process_document(doc: dict, raw_bucket: str, work_bucket: str, config: dict)
             "authority_level": resolve_authority_level(
                 metadata, metadata.get("framework_id", "FW-GOV-PUBS"), config
             ),
-            "title": classification.get("title", doc_id),
+            "title": metadata.get("title", classification.get("title", doc_id)),
             "summary": classification.get("summary", ""),
             "statute_refs": classification.get("statute_refs", []),
             "admin_rule_refs": classification.get("admin_rule_refs", []),
