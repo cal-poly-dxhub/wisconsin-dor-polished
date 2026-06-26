@@ -226,7 +226,7 @@ export function DocumentCardCompact({
           className
         )}
       >
-        <CardHeader className="px-4 pt-3.5 pb-0">
+        <CardHeader className="px-4 pt-3.5 pb-3.5">
           <div className="flex items-start gap-2">
             <DocumentHeader
               title={document.title}
@@ -246,7 +246,7 @@ export function DocumentCardCompact({
               <Maximize2 className="h-3.5 w-3.5" />
             </button>
           </div>
-          {(document.authorityLevel !== undefined || (document.discoveryTag && document.discoveryTag !== 'unknown') || (citations && citations.length > 1)) && (
+          {(document.authorityLevel !== undefined || (document.discoveryTag && document.discoveryTag !== 'unknown')) && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1.5">
               {document.authorityLevel !== undefined && (
                 <AuthorityBadge authorityLevel={document.authorityLevel} size="sm" />
@@ -254,23 +254,19 @@ export function DocumentCardCompact({
               {document.discoveryTag && document.discoveryTag !== 'unknown' && (
                 <DiscoveryBadge tag={document.discoveryTag} size="sm" />
               )}
-              {citations && citations.length > 1 && (
-                <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20 dark:bg-blue-950 dark:text-blue-300 dark:ring-blue-400/30">
-                  {citations.length} citations
-                </span>
-              )}
             </div>
           )}
         </CardHeader>
 
-        <CardContent className="px-4 pt-2.5 pb-3">
-          {citations && citations.length > 0 && document.s3Key ? (
-            <div className="flex flex-wrap gap-1.5">
-              {citations.map((c) => (
+        {citations && citations.length > 0 && document.s3Key ? (
+          <div className="mt-auto flex flex-col divide-y divide-border border-t border-border">
+            {citations.map((c) => {
+              const snippet = document.chunks?.find(ch => ch.page === c.page);
+              return (
                 <button
                   key={c.page}
                   type="button"
-                  className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs font-medium text-foreground/80 hover:bg-accent hover:text-foreground transition-[color,background-color,border-color] cursor-pointer"
+                  className="flex flex-col w-full px-4 py-2.5 text-left hover:bg-accent transition-[color,background-color,border-color] cursor-pointer"
                   onClick={(e) => {
                     e.stopPropagation();
                     const popup = window.open('about:blank', '_blank');
@@ -280,28 +276,39 @@ export function DocumentCardCompact({
                       .catch(() => popup.close());
                   }}
                 >
-                  <span className="truncate max-w-[10rem]">{c.label}</span>
-                  <span className="text-muted-foreground">p.{c.page}</span>
-                  <ExternalLink className="h-2.5 w-2.5 text-muted-foreground" />
+                  <div className="flex items-center gap-1 w-full">
+                    <span className="text-xs font-medium text-foreground truncate">{c.label}</span>
+                    <span className="text-[10px] text-muted-foreground ml-auto shrink-0">p.{c.page}</span>
+                    <ExternalLink className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
+                  </div>
+                  {snippet && (
+                    <p className="mt-0.5 text-[11px] text-muted-foreground line-clamp-1 leading-snug">
+                      {snippet.text}
+                    </p>
+                  )}
                 </button>
-              ))}
-            </div>
-          ) : (
-            <CardDescription className="line-clamp-2 text-xs">
-              {contentPreview}
-            </CardDescription>
-          )}
-        </CardContent>
+              );
+            })}
+          </div>
+        ) : (
+          <>
+            <CardContent className="px-4 pt-2.5 pb-3">
+              <CardDescription className="line-clamp-2 text-xs">
+                {contentPreview}
+              </CardDescription>
+            </CardContent>
 
-        {document.source && (document.sourceUrl || document.s3Key) && (
-          <button
-            type="button"
-            className="mt-auto w-full border-t border-border/50 bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-[color,background-color,border-color] cursor-pointer inline-flex items-center justify-end gap-1.5"
-            onClick={citations && citations.length > 1 && document.s3Key ? (e) => { e.stopPropagation(); onClick(); } : onSourceClick}
-          >
-            <span>{citations && citations.length > 1 && document.s3Key ? 'View Citations' : getSourceActionLabel(document)}</span>
-            <ExternalLink className="h-3 w-3" />
-          </button>
+            {document.source && (document.sourceUrl || document.s3Key) && (
+              <button
+                type="button"
+                className="mt-auto w-full border-t border-border/50 bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-[color,background-color,border-color] cursor-pointer inline-flex items-center justify-end gap-1.5"
+                onClick={onSourceClick}
+              >
+                <span>View Source</span>
+                <ExternalLink className="h-3 w-3" />
+              </button>
+            )}
+          </>
         )}
       </Card>
     </motion.div>
@@ -432,7 +439,7 @@ function DocumentCardModal({
                     className="w-full border-t border-border bg-muted/70 px-4 py-2.5 text-sm font-medium text-primary hover:bg-muted transition-[color,background-color,border-color] cursor-pointer inline-flex items-center justify-center gap-1.5"
                     onClick={onSourceClick}
                   >
-                    <span>{getSourceActionLabel(document)}</span>
+                    <span>View Source</span>
                     <ExternalLink className="h-3.5 w-3.5" />
                   </button>
                 )}

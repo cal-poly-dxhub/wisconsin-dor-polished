@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
-import { ProtectedRoute } from '@/components/auth/protected-route';
 import {
   useActivityData,
   type ActivityItem,
@@ -117,11 +116,7 @@ function applyClientFilters(
 }
 
 export default function AdminActivityPage() {
-  return (
-    <ProtectedRoute>
-      <ActivityDashboard />
-    </ProtectedRoute>
-  );
+  return <ActivityDashboard />;
 }
 
 function ActivityDashboard() {
@@ -141,7 +136,10 @@ function ActivityDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const loadFirstPageRef = useRef(loadFirstPage);
-  loadFirstPageRef.current = loadFirstPage;
+
+  useEffect(() => {
+    loadFirstPageRef.current = loadFirstPage;
+  });
 
   useEffect(() => {
     const filters: ActivityFilters = {
@@ -167,8 +165,7 @@ function ActivityDashboard() {
   }, [displayItems]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-5xl px-6 py-8">
         {/* Header */}
         <div className="flex items-start justify-between">
           <div>
@@ -346,6 +343,5 @@ function ActivityDashboard() {
           )}
         </div>
       </div>
-    </div>
   );
 }

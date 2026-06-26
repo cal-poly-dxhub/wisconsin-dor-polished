@@ -5,7 +5,6 @@ import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import '@/components/messages/chat-message.css';
-import { ProtectedRoute } from '@/components/auth/protected-route';
 import { type ActivityItem, type TraceEvent } from '@/hooks/use-activity-data';
 import { http } from '@/lib/http';
 import { Button } from '@/components/ui/button';
@@ -48,11 +47,7 @@ export default function QueryDetailPage({
 }) {
   const { queryId } = use(params);
 
-  return (
-    <ProtectedRoute>
-      <QueryDetail queryId={queryId} />
-    </ProtectedRoute>
-  );
+  return <QueryDetail queryId={queryId} />;
 }
 
 function QueryDetail({ queryId }: { queryId: string }) {
@@ -87,11 +82,9 @@ function QueryDetail({ queryId }: { queryId: string }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background">
-        <div className="mx-auto max-w-3xl px-6 py-8">
-          <div className="py-16 text-center text-sm text-muted-foreground">
-            Loading...
-          </div>
+      <div className="mx-auto max-w-3xl px-6 py-8">
+        <div className="py-16 text-center text-sm text-muted-foreground">
+          Loading...
         </div>
       </div>
     );
@@ -99,25 +92,22 @@ function QueryDetail({ queryId }: { queryId: string }) {
 
   if (!item) {
     return (
-      <div className="min-h-screen bg-background">
-        <div className="mx-auto max-w-3xl px-6 py-8">
-          <Link href="/admin/activity">
-            <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground">
-              <ArrowLeft className="h-3 w-3" />
-              Back to activity
-            </Button>
-          </Link>
-          <div className="py-16 text-center text-sm text-muted-foreground">
-            Query not found.
-          </div>
+      <div className="mx-auto max-w-3xl px-6 py-8">
+        <Link href="/admin/activity">
+          <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground">
+            <ArrowLeft className="h-3 w-3" />
+            Back to activity
+          </Button>
+        </Link>
+        <div className="py-16 text-center text-sm text-muted-foreground">
+          Query not found.
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-3xl px-6 py-8">
         {/* Back nav */}
         <Link href="/admin/activity">
           <Button variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground mb-6">
@@ -249,7 +239,6 @@ function QueryDetail({ queryId }: { queryId: string }) {
           </div>
         </div>
       </div>
-    </div>
   );
 }
 
