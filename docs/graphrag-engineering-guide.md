@@ -1,738 +1,517 @@
 # GraphRAG Engineering Guide
 
-This document covers the work done on the `feat/graphrag-migration` branch since the project was inherited from the original Cal Poly DxHub team. The branch diverged from the inherited codebase at commit `dc34139` (2026-02-13); the first new commit is `5d40004` (2026-04-14). What follows is **234 commits** of work that replaced a legacy OpenSearch RAG pipeline with a Neptune-Analytics GraphRAG system, a single agentic retrieval Lambda (handling retrieval + streaming in one invocation), a live agent-trace UI, multi-session chat, and a click-time citation resolver.
+This document describes the GraphRAG system powering the Wisconsin DOR property tax chatbot. It covers the runtime architecture, data model, ingestion pipeline, and operational procedures. Audience: developers inheriting or extending this codebase.
 
 ---
 
-## How to read this guide
+## Table of Contents
 
-- **"Current state"** describes what the code does now. Trust this over commit messages, which were sometimes WIP or later modified.
-- **⚠️ Reversed / Do NOT revert** marks a design that was deliberately changed. The commit history still contains the old approach; do not resurrect it.
-- **Gotcha** marks an invariant or footgun that will silently break things if violated.
-- File references are `path:line` and clickable. Line numbers drift; treat them as "look near here."
-- Commit hashes (`a1b2c3d`) point at the rationale. `git show <hash>` — the commit bodies in this repo are unusually detailed and are the primary source for "why."
-
-### Table of contents
-
-1. [Orientation](#1-orientation)
-2. [How this team works](#2-how-this-team-works)
-3. [The request lifecycle (happy path)](#3-the-request-lifecycle-happy-path)
-4. [The Neptune graph data model](#4-the-neptune-graph-data-model)
-5. [Cross-cutting Neptune rules](#5-cross-cutting-neptune-rules)
-6. [The offline ingestion pipeline](#6-the-offline-ingestion-pipeline)
-7. [PDF extraction and chunking](#7-pdf-extraction-and-chunking)
-8. [The agentic retrieval Lambda](#8-the-agentic-retrieval-lambda)
-9. [The FAQ layer](#9-the-faq-layer)
-10. [Case law — the deliberately constrained secondary source](#10-case-law--the-deliberately-constrained-secondary-source)
-11. [WPAM edition recency](#11-wpam-edition-recency)
-12. [Citations and source cards](#12-citations-and-source-cards)
-13. [The shared-contract discipline](#13-the-shared-contract-discipline)
-14. [Live agent-trace streaming](#14-live-agent-trace-streaming)
-15. [Sessions, auth, and chat history](#15-sessions-auth-and-chat-history)
-16. [Frontend presentation layer](#16-frontend-presentation-layer)
-17. [Deployment and operations](#17-deployment-and-operations)
-18. [Appendix: glossary, do-not-revert catalog, and known-stale docs](#18-appendix)
+1. [System Overview](#1-system-overview)
+2. [The Request Lifecycle](#2-the-request-lifecycle)
+3. [Phase A: The Research Loop](#3-phase-a-the-research-loop)
+4. [Phase B: Answer Streaming](#4-phase-b-answer-streaming)
+5. [The Neptune Graph Data Model](#5-the-neptune-graph-data-model)
+6. [Neptune Analytics Constraints](#6-neptune-analytics-constraints)
+7. [PDF Extraction and Chunking](#7-pdf-extraction-and-chunking)
+8. [The FAQ Layer](#8-the-faq-layer)
+9. [WPAM Edition Recency](#9-wpam-edition-recency)
+10. [Case Law](#10-case-law)
+11. [Citations and Source Cards](#11-citations-and-source-cards)
+12. [WebSocket Streaming and Contracts](#12-websocket-streaming-and-contracts)
+13. [Agent Trace UI](#13-agent-trace-ui)
+14. [Prompt Management](#14-prompt-management)
+15. [The Ingestion Pipeline](#15-the-ingestion-pipeline)
+16. [Sessions, Auth, and Chat History](#16-sessions-auth-and-chat-history)
+17. [Deployment and Operations](#17-deployment-and-operations)
 
 ---
 
-## 1. Orientation
+## 1. System Overview
 
-The chatbot answers property-tax questions for the Wisconsin Department of Revenue. The live architecture is a single **agentic retrieval Lambda** invoked directly by EventBridge — no Step Function, no separate streaming Lambdas.
+The chatbot answers Wisconsin property-tax questions using a single **agentic retrieval Lambda** invoked directly by EventBridge. There is no Step Function and no separate streaming Lambda for the GraphRAG path.
 
 ```
-                        ┌─────────────────────────────────────┐
-   Chat API ──emit──▶   │ EventBridge: ChatMessageReceived     │
-   (POST /message)      └───────────────┬──────────────────────┘
-                                        │
-                                        ▼
-                         ┌──────────────────────────────────┐
-                         │ AgenticRetrieval Lambda           │
-                         │  Claude tool loop over Neptune    │
-                         │  Streams docs + FAQs + answer     │
-                         │  over WebSocket directly          │
-                         └──────────────┬───────────────────┘
-                                        │  WebSocket (API Gateway)
-                                        ▼
-                                  Frontend (Next.js)
+Chat API (POST /message)
+    │ emit EventBridge: ChatMessageReceived
+    ▼
+AgenticRetrieval Lambda
+    Phase A: Claude tool loop over Neptune Analytics
+    Phase B: converse_stream() → answer tokens over WebSocket
+    │
+    ▼ WebSocket (API Gateway)
+Frontend (Next.js)
 ```
 
-EventBridge invokes the Lambda with `retryAttempts: 0` and `maxEventAge: 3 min`. The Lambda runs the agentic loop, then streams citation cards, FAQ cards, and answer text fragments directly over the existing WebSocket connection — all in one invocation, one DynamoDB write (`dab9f09`).
-
-A legacy OpenSearch path (`useGraphRAG=false`) still exists in the codebase but is **not deployed and not under active development**. It uses a separate Step Function + ResponseStreaming/ResourceStreaming Lambdas in `MessagesStack`. Do not delete it (the CDK flag gates it), but do not invest in it either.
-
-Deployment regions matter and are easy to get wrong:
-
-- **us-west-2** = production (the legacy OpenSearch stack). **Do not deploy from feature branches.**
-- **us-east-1** = the GraphRAG stack `WisconsinBotGraphRAG`. All GraphRAG development deploys here. The live graph is `g-ndvl4j73v4`.
+Key facts:
+- **Region:** us-east-1 (`WisconsinBotGraphRAG` stack). Neptune graph: `g-ndvl4j73v4`.
+- **Model:** `us.anthropic.claude-sonnet-4-6` (configurable via `AGENTIC_MODEL_ID` env var).
+- **Embedding:** Titan Embed Text V2, 1024 dimensions.
+- **Legacy path** (`useGraphRAG=false`): Step Function + separate streaming Lambdas in `MessagesStack`. Not deployed, not under active development. CDK context flag gates it.
 
 ---
 
-## 2. How this team works, stuff to keep in mind moving forward with dev
+## 2. The Request Lifecycle
 
-Basically, your LLM should be aware of these things that came up during development.
-
-Before the subsystems, internalize the engineering patterns. They recur in nearly every commit and explain _why_ the code looks the way it does. A change that violates one of these is almost always wrong.
-
-**Additive, mutually-exclusive feature gating.** GraphRAG was introduced as separate stacks and EventBridge rules gated by one flag, never by editing the legacy path. New schema fields follow the same rule: they are added as `Optional` with null-omitting serialization, never as required fields that would break existing callers.
-
-**MERGE-idempotent graph loads, plus explicit GC for residue.** Every ingestion write uses Cypher `MERGE` so re-runs are safe. But idempotency does **not** retroactively fix or remove stale edges/chunks from a prior buggy run — hence the hard rule that edge/chunk/embedding changes require a _full re-ingest_, and the existence of dry-run-by-default cleanup scripts (`purge_orphan_chunks.py`, `clean_stale_extracts.py`, and `load.py`'s own phase-12 GC) for what MERGE can't clean.
-
-**Non-destructive defaults; mutation is opt-in.** `extract.py`/`embed.py` skip already-processed docs unless `--force`. The patch and purge scripts default to dry-run and require `--apply`. Assume any script you run will _not_ mutate unless you ask it to.
-
-**Best-effort side effects never abort the correctness path.** Trace emission no-ops on a dead WebSocket and swallows errors. `save_chat_history` swallows exceptions. FAQ-URL lookup returns `None` on any miss. `vector_search` auto-enrichment swallows neighbor errors. A single tool exception becomes an error tool-result fed back to the model rather than crashing the Lambda. The pattern: isolate observability and UX-sugar failures from the answer path.
-
-**Backend is the source of truth; the frontend stays dumb.** The Lambda pre-formats every human-readable trace string and emits camelCase metadata. The UI only picks a verb and renders. Citation cards are restricted to exactly the agent's `cited_doc_ids` on the backend.
-
-**Bound everything that talks to a metered service.** These limits are first-class design inputs, not afterthoughts: API Gateway 128 KB per WebSocket frame (document batching in `websocket_utils.batching`), Titan v2's 8000-char silent truncation (`CHUNK_MAX_CHARS=2500`), Neptune per-query memory (byte-capped UNWIND), and the Bedrock turn budget (`MAX_TURNS=10` + degraded fallback).
-
-**Root-cause before fixing; prove it end-to-end.** The history repeatedly shows a first plausible fix being insufficient and a second independent cause found (phase 4 produced 0 edges for _two_ unrelated reasons; the discovery-tag no-op hid a second crash once fixed). Fixes ship with regression tests and verified counts ("1,742 PART_OF edges, was 0").
-
-**Spec → plan → implement, in writing.** Major features have a dated design spec in `docs/superpowers/specs/` and a task-by-task plan in `docs/superpowers/plans/`. **Read the relevant spec and plan before changing a subsystem — but verify against the code, because specs go stale** (the appendix lists which ones).
-
-**Comment the non-obvious workaround, at the call site and in the commit.** Much of this codebase documents _why a tempting simplification is wrong_, specifically to stop a future contributor from "fixing" it. When you see an odd-looking workaround with a comment, the comment is load-bearing.
+1. **Frontend → API.** User sends a message. `POST /session/{id}/message` emits an EventBridge event `wisconsin-dor.chat-api:ChatMessageReceived` carrying `UserQuery {query, query_id, session_id}`.
+2. **EventBridge → Lambda.** Rule forwards `$.detail` to the AgenticRetrieval Lambda (`retryAttempts: 0`, `maxEventAge: 3 min`).
+3. **Phase A (Research Loop).** Claude calls tools against Neptune until it calls `prepare_answer(cited_doc_ids, answer_plan)`. Returns cited documents, chunks, and an answer plan — no answer text yet.
+4. **Phase B (Answer Stream).** `converse_stream()` with NO tools generates the answer token-by-token, streamed over WebSocket. Research context from Phase A is injected as a formatted prompt.
+5. **Resource cards.** Before the answer stream, document cards and FAQ cards are sent over WebSocket.
+6. **Persistence.** `save_chat_history` writes query, answer, documents, FAQs, and trace log to DynamoDB after streaming completes.
+7. **Frontend.** Each WebSocket frame is Zod-validated. Fragments drive streaming markdown; `documents`/`faq` frames populate source cards; `agent-event` frames drive the live trace.
 
 ---
 
-## 3. The request lifecycle (happy path)
+## 3. Phase A: The Research Loop
 
-One worked trace before the subsystem deep-dives.
+`run_agentic_loop` in `backend/lambdas/agentic_retrieval/main.py`.
 
-1. **Frontend → API.** The user sends a message. The webapp `POST`s `/session/{id}/message` on the Sessions HTTP API (Cognito-authenticated). The handler emits an EventBridge event `wisconsin-dor.chat-api : ChatMessageReceived` carrying a `UserQuery {query, query_id, session_id}` in `detail`, bumps `lastMessageAt`, and sets the session title from the first message.
-2. **EventBridge → Lambda.** The EventBridge rule forwards `$.detail` (just the `UserQuery`, not the envelope) directly to the AgenticRetrieval Lambda (`retryAttempts: 0`).
-3. **AgenticRetrieval Lambda — retrieval phase.** It loads up to 5 prior turns of chat history, looks up the WebSocket connection (best-effort, for trace), and runs `run_agentic_loop`:
-   - **Turn 0a** (only if history exists): `refine_query` rewrites a context-dependent follow-up.
-   - **Turn 0b**: a deterministic, Claude-bypassing `faq_search` on the verbatim query. Its result is _seeded_ into the message list. If the top score ≥ 0.70, a steering message marks the FAQ as primary truth.
-   - **Turns 1–10**: `bedrock.converse` with the tool set; Claude calls `vector_search` (auto-enriched with graph neighbors), `get_neighbors`, `get_authority_chain`, etc., then calls the terminal `answer` tool.
-4. **Streaming phase (same Lambda).** After the loop returns, `_stream_response` sends everything over WebSocket in sequence:
-   - **Document cards** — batched into multiple frames via `batch_documents_for_ws` (shared `websocket_utils.batching` layer) to stay under the 128 KB API Gateway frame limit.
-   - **FAQ card** — a single `FAQMessage` frame if a high-confidence FAQ was found.
-   - **Answer text** — `answer-event:start`, chunked text fragments (80 chars each via `stream_fragments`), then `answer-event:stop`.
-5. **Persistence.** `save_chat_history` writes the query, answer, documents, FAQs, and trace log to DynamoDB — one write, after streaming completes.
-6. **Frontend.** Each WebSocket frame is Zod-validated; fragments drive the streaming markdown, `documents`/`faq` frames drive inline source cards, `agent-event` frames drive the live trace.
+### Pre-loop steps
 
-> **⚠️ Reversed / Do NOT revert — direct invoke replaces Step Function (`dab9f09`).** The prior design used a Step Function (AgenticRetrieval → Choice → Parallel(ResourceStreaming, ResponseStreaming)). This introduced a gap between retrieval completion and streaming start that caused the "hang on background tabs" bug (Task 12), required a second Bedrock call in ResponseStreaming to regenerate the answer, and produced a double DynamoDB write. The direct-invoke design eliminates all three issues. **Do not reintroduce a Step Function for the GraphRAG path.**
+- **Turn 0a — `refine_query`** (only when `chat_history` exists): rewrites context-dependent follow-ups and extracts an optional `target_wpam_year`.
+- **Turn 0b — deterministic `faq_search`**: bypasses Claude entirely, runs the verbatim (or refined) query against Bedrock FAQ KB. Result is **seeded** into the message list as a synthetic `toolUse`/`toolResult` pair so Claude enters the loop already seeing FAQ context.
+- **High-confidence steering**: if top FAQ score ≥ 0.70, a user message tells Claude to treat the FAQ as primary truth and use graph results only to supplement.
 
----
+### The tool loop (turns 1–10)
 
-## 4. The Neptune graph data model
+`bedrock.converse(maxTokens=4096, temperature=0.0)` with the full tool set. Each turn: append assistant message → execute all `toolUse` blocks → append `toolResult`s. Loop terminates when Claude calls `prepare_answer`.
 
-**Engine.** Neptune Analytics (`neptune-graph`), graph `g-ndvl4j73v4`, us-east-1, 1024-dim vector index (matches Titan Embed Text V2), 32 m-NCU (scale to 128 for full re-ingestion loads), IAM auth, **public connectivity, no VPC**. Public connectivity is deliberate (`6bf3ec1`): the project has no VPC, so the graph is publicly reachable but IAM-gated, scoped to the agentic Lambda's `neptune-graph:ExecuteQuery / ReadDataViaQuery / GetQueryStatus`. The trade-off is documented — no network boundary, IAM is the only protection.
+**Turn budget:** at turn 8, a "running low on turns" warning is injected. If the loop exhausts without `prepare_answer`, a degraded fallback extracts the last assistant text with `_(Response incomplete: turn budget reached)_`.
 
-**Node spine.** `Framework → Document → Chunk`, plus `Topic` nodes and on-demand `stub` nodes.
+### Tool set
 
-- **Document** carries `title, source_key, summary, source_url, doc_type, authority_level, citation, effective_date, edition_year`.
-- **Chunk** carries `text, doc_id, source_url, chunk_index, s3_key, start_page, end_page, heading, subheading, edition_year`, plus a 1024-dim `embedding`.
-- **Stub** (`stub: true`) `Statute`/`AdminRule` nodes are `MERGE`d on demand when a citation regex matches a section that was never indexed as full text. They carry only an id/title — see the stub-promotion footgun in §10.
+| Tool | Purpose |
+| --- | --- |
+| `faq_search` | Bedrock FAQ KB retrieve (SEMANTIC). Seeded at turn 0; Claude should not call it again. |
+| `refine_query` | LLM query rewrite + `target_wpam_year` extraction. |
+| `vector_search` | Titan-embed query → Neptune vector index → 6× over-fetch → diversity cap (5 chunks/doc) → WPAM dedup → auto-enrich top-3 doc_ids with `get_neighbors` → direct citation resolution → neighbor-doc citation discovery. |
+| `get_neighbors` | Graph traversal from a node; accepts `edge_types` filter. |
+| `get_document` | Node lookup by ID; falls back to vector search on miss. |
+| `get_authority_chain` | Walk `DERIVED_FROM`/`PART_OF` up and down from a node. |
+| `list_framework_docs` | Enumerate all documents in a framework. |
+| `list_sections` | Table of contents for a document: distinct headings with chunk counts and page ranges. Deterministic graph traversal — no vector search. Preferred for multi-chapter docs (WPAM, guides). |
+| `get_section` | All chunks from a specific section by exact heading match. Use after `list_sections`. Deterministic — always returns the full section in document order. |
+| `search_document` | Semantic search within one document's chunks. Global vector search (fetch_k=800) filtered to target `doc_id`. Fallback when headings alone can't identify the right section. |
+| `fetch_case_opinion` | Fetch full opinion `.txt` from S3 for a case-law stub. |
+| `prepare_answer` | Terminal tool. Claude declares `cited_doc_ids` + `answer_plan`. The loop exits. |
+| `clarify` | Ask the user a disambiguation question (disabled by default). |
 
-Node labels come from `ingest_config.yaml` `doc_types` (e.g. `statute → Statute`, `case_law → CaseLaw`, `assessment_manual → AssessmentManual`).
+### Key behaviors
 
-### The 9-level authority hierarchy
-
-Defined once in `scripts/graphrag/ingest_config.yaml` under `frameworks`, ordered by legal precedence, with a single-parent chain wired as `DERIVED_FROM` edges (child → parent). **It is a tree, not a strict line.**
-
-| Level | Framework                        | Parent       |
-| ----: | -------------------------------- | ------------ |
-|     1 | Constitution (`FW-CONSTITUTION`) | —            |
-|     2 | Statutes (`FW-STATUTES`)         | Constitution |
-|     3 | Case Law (`FW-CASE-LAW`)         | Statutes     |
-|     4 | Admin Rules (`FW-ADMIN-RULES`)   | Statutes     |
-|     5 | WPAM (`FW-WPAM`)                 | Admin Rules  |
-|     6 | FAQ (`FW-FAQ`)                   | WPAM         |
-|     7 | Gov Pubs (`FW-GOV-PUBS`)         | WPAM         |
-|     8 | IAAO (`FW-IAAO`)                 | Gov Pubs     |
-|     9 | USPAP (`FW-USPAP`)               | Gov Pubs     |
-
-`authority_level` (the integer) is the **single source of truth** for the UI's AuthorityBadge. It is resolved per-doc by `resolve_authority_level()` with strict precedence: explicit value → framework-canonical level → **`None`**.
-
-> **⚠️ Do NOT default a missing authority level to a number.** An earlier default of `6` (FAQ) mislabeled 607 gov-pub/advisory nodes as FAQs in the UI — a Supreme Court news page showed the FAQ badge (`f1fc513`). The design now returns `None` (render no badge) rather than a misleading one. This invariant is duplicated in both `extract.py` and `load.py`; keep both.
-
-### Edge types — the _real_ ones
-
-`load.py` actually writes these eight edge labels (verified by grep, not by docs):
-
-| Edge             | Direction                                                     | Meaning                    |
-| ---------------- | ------------------------------------------------------------- | -------------------------- |
-| `CITES`          | Doc/Chunk → Statute/AdminRule; **Statute → CaseLaw (mirror)** | citation reference         |
-| `IMPLEMENTS`     | Doc → Statute                                                 | rule implements statute    |
-| `PART_OF`        | Section → Chapter                                             | statute hierarchy          |
-| `BELONGS_TO`     | Doc → Framework                                               | framework membership       |
-| `HAS_SUBSECTION` | Doc → Doc                                                     | multi-part documents       |
-| `EXTRACTED_FROM` | Chunk → Doc                                                   | chunk provenance           |
-| `DERIVED_FROM`   | Framework → Framework                                         | authority precedence chain |
-| `COVERS_TOPIC`   | Doc → Topic                                                   | semantic grouping          |
-
-Phase 11 additionally creates four **semantic** edge types from `PHASE_11_ALLOWED_TYPES` (`load.py:883`): `RELATED_TO`, `SUPPLEMENTS`, `SUPERSEDES`, `CONFLICTS_WITH`.
+- **`list_sections` + `get_section` (structural browsing):** deterministic graph traversal for navigating multi-chapter documents. Immune to the query-formulation problem that plagues `search_document` on large docs. The system prompt directs Claude to prefer this path for WPAM and similar.
+- **Auto-enrichment:** after `vector_search` returns chunks, `get_neighbors` is called on the top-3 distinct parent doc_ids. Agent gets graph context for free without spending a turn.
+- **6× over-fetch + diversity cap:** WPAM editions dominate the vector space, so `vector_search` always requests `top_k * 6` chunks (90 for default top_k=15) regardless of whether a `target_wpam_year` is set. After WPAM dedup, a per-document cap (default 5) prevents any source from crowding out others.
+- **Tool exceptions → error result:** any tool exception becomes an `{"error": ...}` tool-result fed back to Claude so it self-corrects, never crashes the Lambda.
+- **`cited_doc_ids` is the authoritative sidebar:** only documents Claude explicitly cites via `prepare_answer` become source cards, not all discovered docs.
 
 ---
 
-## 5. Cross-cutting Neptune rules
+## 4. Phase B: Answer Streaming
 
-Neptune Analytics has sharp edges that surfaced _independently_ in the offline loader, the runtime agent, and the ingestion scripts. Learn them once here; they explain a cluster of otherwise-baffling code.
+After `prepare_answer` returns, the handler:
 
-### 5.1 The StreamingBody footgun (highest-impact bug in the codebase)
+1. **Builds resource cards** from `cited_doc_ids` — including opinion backfill (up to 3 case-law stubs fetched from S3).
+2. **Sends resource cards** over WebSocket (documents batched to stay under 128 KB frame limit, then FAQ card).
+3. **Calls `converse_stream()`** with NO tools — just the research context + `ANSWER_STREAM_SYSTEM_PROMPT`. Streams answer token-by-token.
+4. **Fragment buffering:** text deltas are batched (minimum 30 chars) before sending as WebSocket fragments to reduce frame overhead.
+5. **Heartbeat:** a background thread sends keepalive pings every 15 seconds to prevent API Gateway's idle timeout from killing the connection.
 
-`neptune-graph`'s boto3 `execute_query` returns results inside a **streaming body** under `response["payload"]`, _not_ a pre-parsed `response["results"]` dict. The original code read `response.get("results", [])`, so **every query silently returned `[]`** — no error, just empty.
+The answer context is a structured prompt built from: prior conversation (last 3 turns), the user question, the answer plan, and all retrieved chunks grouped by document with page references and opinion text.
 
-The blast radius was enormous and silent:
+**Fallback:** if Phase B streaming fails (WebSocket dead, Bedrock error), a non-streaming `converse()` call generates the answer for DB persistence.
 
-- **Offline loader**: phase 4 (`PART_OF`), phase 9 (stub resolution), phase 12 (GC) were all no-ops. After the fix, a full re-load produced **1,742 `PART_OF` edges (was 0)** and **3,041 Statute→CaseLaw mirror edges (was 0)**; `WIS-STAT-70.32` then resolved 127 cited cases including _Markarian_.
-- **Runtime agent**: every `vector_search` / `get_neighbors` / `get_document` returned nothing, so the agent answered with no citations and the frontend hung.
+---
 
-The same bug had to be fixed in **two** places: `neptune_client.py` (runtime, `4f0e95a`) and `load.py::execute_query` (offline, `610972f`). Both now `json.loads(payload.read())` once, centrally.
+## 5. The Neptune Graph Data Model
 
-> **⚠️ Any new Neptune codepath must decode `payload.read()`.** If anyone "simplifies" `execute_query` back to `response["results"]`, the whole system silently returns empty. This parse is load-bearing.
+**Engine:** Neptune Analytics (`neptune-graph`), graph `g-ndvl4j73v4`, us-east-1, 1024-dim vector index, 32 m-NCU (scale to 128 for full re-ingestion), IAM auth, public connectivity (no VPC — IAM is the only protection).
 
-### 5.2 No parameterized `CALL` args or path bounds
+### Node types
+
+- **Framework** — authority-level grouping (e.g., `FW-STATUTES`, `FW-WPAM`).
+- **Document** — carries `title, source_key, summary, source_url, doc_type, authority_level, citation, effective_date, edition_year`. Labels from `ingest_config.yaml` (e.g., `Statute`, `CaseLaw`, `AssessmentManual`).
+- **Chunk** — carries `text, doc_id, source_url, chunk_index, s3_key, start_page, end_page, heading, subheading, edition_year` + 1024-dim `embedding`.
+- **Topic** — semantic grouping nodes.
+- **Stub** — identity-only `Statute`/`AdminRule`/`CaseLaw` nodes created from citation regex matches.
+
+### Authority hierarchy (9 levels)
+
+| Level | Framework | Parent |
+| ---: | --- | --- |
+| 1 | Constitution | — |
+| 2 | Statutes | Constitution |
+| 3 | Case Law | Statutes |
+| 4 | Admin Rules | Statutes |
+| 5 | WPAM | Admin Rules |
+| 6 | FAQ | WPAM |
+| 7 | Gov Pubs | WPAM |
+| 8 | IAAO | Gov Pubs |
+| 9 | USPAP | Gov Pubs |
+
+`authority_level` defaults to `None` for unresolved docs (never a number — a prior default of `6` mislabeled 607 nodes as FAQs).
+
+### Edge types
+
+| Edge | Direction | Meaning |
+| --- | --- | --- |
+| `CITES` | Doc/Chunk → Statute/AdminRule; Statute → CaseLaw (mirror) | Citation reference |
+| `IMPLEMENTS` | Doc → Statute | Rule implements statute |
+| `PART_OF` | Section → Chapter | Statute hierarchy |
+| `BELONGS_TO` | Doc → Framework | Framework membership |
+| `HAS_SUBSECTION` | Doc → Doc | Multi-part documents |
+| `EXTRACTED_FROM` | Chunk → Doc | Chunk provenance |
+| `DERIVED_FROM` | Framework → Framework | Authority precedence chain |
+| `COVERS_TOPIC` | Doc → Topic | Semantic grouping |
+
+Phase 11 additionally creates semantic edges: `RELATED_TO`, `SUPPLEMENTS`, `SUPERSEDES`, `CONFLICTS_WITH`.
+
+---
+
+## 6. Neptune Analytics Constraints
+
+These constraints recur across the codebase and explain otherwise-baffling patterns.
+
+### StreamingBody response
+
+`neptune-graph`'s boto3 `execute_query` returns results inside a streaming body under `response["payload"]`, not a pre-parsed dict. All query helpers decode via `json.loads(payload.read())`. Reading `response["results"]` silently returns `[]`.
+
+### No parameterized CALL args
 
 Neptune Analytics rejects `$parameters` inside `CALL` procedure arguments and in variable-length path bounds. So:
+- `vector_search` inlines the 1024-float embedding and `topK` as string literals into Cypher.
+- `get_authority_chain` inlines `max_depth`.
+- Phase 10 (vector upserts) inlines each embedding and upserts one vector per query, parallelized over 8 threads.
 
-- `vector_search` inlines the 1024-float embedding and `topK` as **string literals** into the Cypher.
-- `get_authority_chain` inlines `max_depth` into the variable-length path.
-- Phase 10 (`vector upserts`) inlines each embedding literal and upserts **one vector per query** (the `neptune.algo.vectors.upsert` CALL can't UNWIND a batch), parallelized over 8 threads.
+### No WHERE on topKByEmbedding
 
-`_compact_cypher` masks the inlined embedding before logging so logs stay small. **Do not "fix" these to use `$params`** — it silently fails (`de53482`).
+Neptune's `topKByEmbedding` procedure has no pre-filter capability. You cannot filter by properties (e.g., `edition_year`) before the vector search. This drives the over-fetch + post-filter dedup pattern for WPAM recency.
 
-### 5.3 Throttling has two faces
+### Throttling signals
 
-Neptune signals overload via **both** `ThrottlingException` _and_ `UnprocessableException` with message _"Retry for SDK query requests is suppressed, please resubmit the query."_ `execute_query`'s retry loop treats both as throttling (8 attempts, backoff capped at 60s). Catching only `ThrottlingException` crashes the loader mid-run (`c198bc0`). New query helpers must catch both.
+Neptune signals overload via both `ThrottlingException` and `UnprocessableException` with message about suppressed retries. Retry loops must catch both (8 attempts, backoff capped at 60s).
 
-### 5.4 UNWIND must be capped by bytes, not just count
+### UNWIND byte cap
 
-Ingestion write phases batch with `UNWIND $rows`. Capping by **document/row count alone is insufficient**: a single outlier doc (a case-law opinion or WPAM chunk with ~2000+ chars) blows Neptune's per-query memory budget and deterministically OOMs. Phase 8 therefore caps by cumulative chunk-text **bytes** (`PHASE_8_MAX_BYTES_PER_FLUSH = 50_000`) in addition to count (10) and ref-pairs (80) (`26a81e3`). The byte cap is the one that actually prevents the OOM — do not remove it in favor of count-only caps.
-
-> **Gotcha — 32 mCU OOMs on full re-ingestion.** At `CHUNK_MAX_CHARS=2500`, the full corpus produces ~45k chunks. Phase 8's batch MERGE with CITES edges OOMed Neptune at 32 mCU even with batch sizes of 20. The fix: scale Neptune to 128 mCU during load (`aws neptune-graph update-graph --provisioned-memory 128`), then scale back to 32 after completion. The batch size was also reduced to 10/80 pairs as a permanent guard. Always scale back — 128 mCU is 4× the cost.
-
----
-
-## 6. The offline ingestion pipeline
-
-This is the most operationally dangerous subsystem. It is four standalone Python scripts run in sequence against two S3 buckets (raw + work) and the Neptune graph. There is **no orchestrator** — phase ordering, `--force` discipline, and post-re-ingest cleanup are operator responsibility (`run_ingestion.sh` in the repo root is the closest thing). Jonah's note: if Wisconsin likes the product, a probable future step is figuring out a way to automate this on a fixed interval to make sure that the chatbot is up to date. This is kinda like an "eventually consistent" rather than a "strongly consistent" type of system, unless we want to set up a trigger or some automation that does this every time they upload a new version of any document onto their website. Additionally, we will need to re-run the entire ingestion pipeline because the edges that are generated depend on the new chunks that are scraped and parsed.
-
-```
-scrape_documents.py ──▶ raw/{doc_id}/{doc_id}.{pdf|txt} + .metadata.json
-        │
-        ▼
-extract.py ──▶ work: extracted/{doc_id}.json   (PDF→pdfChunker; classify; statute_refs)
-        │
-        ▼
-embed.py ──▶ work: embedded/{doc_id}.json      (Titan v2, 1024-dim; case_law SKIPPED)
-        │
-        ▼
-load.py ──▶ Neptune graph                      (11 CLI phases of UNWIND-batched Cypher)
-```
-
-### 6.1 The four stages
-
-- **`scrape_documents.py`** pulls from a hardcoded `DOCUMENT_SOURCES` dict plus a sitemap-driven `news_pages` category, writing raw PDFs/text + a `.metadata.json` sidecar (`doc_id, source_url, doc_type, framework_id, authority_level` as a _string_, `category`, optional `effective_date`).
-- **`extract.py`** routes PDFs through `pdf_chunking/` (see §7), regex-extracts per-chunk `statute_refs`/`admin_rule_refs`, LLM-classifies the doc (first 4000 chars), and writes `extracted/{doc_id}.json`.
-- **`embed.py`** embeds every chunk + a synthetic doc-level vector with Titan v2 (truncating at `text[:8000]`). **`case_law` is skipped entirely** (no embeddings — see §10).
-- **`load.py`** reads all of `embedded/` and runs the graph build.
-
-### 6.2 `load.py` phase numbering (a real trap)
-
-`load.py`'s `main()` registers **11 CLI-numbered steps**, but the internal **function names diverge by one from the chunk phase onward** because the old phases 6 and 7 were merged into `phase_6_7_hierarchy`:
-
-| CLI step | Name              | Function                    |
-| -------: | ----------------- | --------------------------- |
-|        1 | Scaffold          | `phase_1_scaffold`          |
-|        2 | Document Nodes    | `phase_2_document_nodes`    |
-|        3 | Cross-References  | `phase_3_cross_references`  |
-|        4 | Statute Hierarchy | `phase_4_statute_hierarchy` |
-|        5 | Topic Merging     | `phase_5_topic_merging`     |
-|        6 | Hierarchy Links   | `phase_6_7_hierarchy`       |
-|    **7** | **Chunk Nodes**   | **`phase_8_chunks`**        |
-|        8 | Stub Resolution   | `phase_9_stub_resolution`   |
-|        9 | Vector Upserts    | `phase_10_vectors`          |
-|       10 | Semantic Edges    | `phase_11_semantic_edges`   |
-|       11 | Orphan Cleanup    | `phase_12_cleanup`          |
-
-> **Gotcha.** `--start-phase 7` runs `phase_8_chunks`; CLI step 11 = `phase_12_cleanup`. When a commit message says "phase 8 OOM," it means the function `phase_8_chunks`, which shows in logs as **CLI step 7**. Do not assume `--start-phase N` maps to `phase_N_*`.
-
-### 6.3 Cache-aware resume and scoped re-ingestion
-
-`extract.py`/`embed.py` skip doc_ids already present in their output prefix **unless `--force`**. All three of extract/embed/load accept `--source-filter <prefix>` (e.g. `wpam-`) to scope to a doc_id prefix; in `load.py`, graph-wide phases still run but are MERGE-idempotent. `load.py` also has `--start-phase`/`--stop-after-phase`.
-
-> **⚠️ Edge-logic changes require a FULL re-ingest.** Any change to phase 3/4/11 edge logic, or to chunking/embedding, invalidates stale edges/chunks. MERGE-idempotent re-runs do **not** retroactively fix or remove them. Redeploying code alone does nothing because the work-bucket caches are content-keyed. The one exception that proves the rule: a property-only mutation on existing nodes (like WPAM `edition_year`) can land via a scoped `--source-filter` re-run, because no edges change (see §11).
-
-### 6.4 Cleanup and patch scripts (all dry-run by default)
-
-| Script                        | Purpose                                                                                                                                                                                                                                                                                                                                           |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `purge_orphan_chunks.py`      | Deletes `Chunk` nodes whose deterministic id `{doc_id}_chunk_{i:04d}` has no slot in the current embedded JSON. **Required after any re-ingest that shrinks a doc's chunk count** — MERGE never deletes the now-orphaned high-index chunks, and they pollute `vector_search` until purged. First run removed 71 orphans from the pre-cap chunker. |
-| `clean_stale_extracts.py`     | Deletes `extracted/`+`embedded/` artifacts on missing-raw-doc OR source-key drift (e.g. a stub replaced by full text under a new key).                                                                                                                                                                                                            |
-| `patch_metadata_authority.py` | Rewrites `authority_level` in raw `.metadata.json` to the framework-canonical level (string-preserving).                                                                                                                                                                                                                                          |
-| `patch_work_authority.py`     | Companion: rewrites the cached `authority_level` in `extracted/`+`embedded/` JSONs (int) so a plain `load.py` re-run corrects the graph **without** re-classify/re-embed.                                                                                                                                                                         |
-
-> **Gotcha.** The authority fix needed _both_ patch scripts plus an `extract.py`/`load.py` change, because the wrong value was baked into raw metadata _and_ the work cache _and_ defaulted in code. Forgetting either patch leaves the stale explicit value winning precedence over the framework default (`331d60e`, `7f776b3`, `2b3ef89`).
-
-### 6.5 Known sharp edges in ingestion
-
-- **Phase 4 parent IDs are `WIS-STAT-{N}`, not `CH-{N}`.** The original `CH-{N}` form matched nothing (CITES/PART*OF live in the `WIS-STAT-*` namespace) \_and* only 7 hardcoded chapters existed — a second independent reason phase 4 produced 0 edges (`8ea71a9`). The `statute*families` `CH-*`nodes from phase 1 are now effectively a dead namespace; don't assume they link to`WIS-STAT-\_`.
-- **`make_doc_id` prepends a path discriminator** for generic stems and news sections — `/Manufacturing/home.aspx` and `/RETr/Home.aspx` both stemmed to `home` and silently overwrote each other; COTVC-News and Assessor-News post on the same dates (~62 collisions) (`5688d7a`).
-- **Phase 11's prompt** carries per-doc summaries + positive/negative examples + a decision order (`SUPERSEDES > CONFLICTS_WITH > SUPPLEMENTS > RELATED_TO`). Before this, the LLM defaulted everything to `RELATED_TO` and emitted `CONFLICTS_WITH` once in 11k+ edges (`8ea71a9`). Per-type counts are logged so you can verify.
-- **Docker image must be `--platform linux/amd64`.** Fargate runs amd64; building on Apple Silicon without the flag produces an ARM image that fails with `CannotPullContainerError: image Manifest does not contain descriptor matching platform`. The `build_and_push.sh` script does not currently set `--platform` — build manually with the flag or fix the script.
-- **`AWS_REGION` in shell overrides script defaults.** `run_fargate.sh` uses `${AWS_REGION:-us-east-1}` — if your shell has `AWS_REGION=us-west-2` set, the script targets the wrong region and fails with "Stack does not exist." Always invoke with `AWS_PROFILE=widor AWS_REGION=us-east-1` explicitly.
-- **Neptune `DeleteDataViaQuery` permission required for MERGE.** The Fargate task role needs `neptune-graph:DeleteDataViaQuery` in addition to Read/Write — `MERGE` with `SET` requires it. Without it, load phase 1 (scaffold) fails immediately with `AccessDeniedException`.
-- **Topic clustering batch size.** Phase 5 sends topics to the LLM for synonym clustering. Batch size is 60 topics per call with `maxTokens: 8192`. Larger batches risk output truncation. The full corpus produces ~300+ unique topics across all docs.
+Batch writes (`UNWIND $rows`) must cap by cumulative text bytes (`PHASE_8_MAX_BYTES_PER_FLUSH = 50_000`) in addition to row count. Count-only caps don't prevent per-query OOM. Neptune at 32 mCU OOMs on large batches during full re-ingestion — scale to 128 mCU for loads.
 
 ---
 
-## 7. PDF extraction and chunking
+## 7. PDF Extraction and Chunking
 
-`pdf_chunking/` turns a PDF into page-tracked, sub-8000-char chunks. It is invoked once, from `extract.py`.
+`tools/pdf_chunking/` turns PDFs into page-tracked, sub-2500-char chunks. Invoked from `extract.py`.
 
-**PyMuPDF-first, Textract-fallback.** `process_pdf_from_s3` downloads the PDF, tries `extract_with_pymupdf` (font-metric title/header tagging, statute noise stripping), and gates the result with `extraction_looks_good()` (≥5 lines, ≥1 non-empty, avg stripped line length ≥3). On failure or a failed gate, it falls through to async Textract (LAYOUT+TABLES), whose output is always cleaned up in a `finally`.
+### Extraction
 
-> **⚠️ Do NOT switch to Textract-only as a "fix" for chunking problems.** PyMuPDF-first is the recorded correct design: the corpus is digital-native (OCR adds nothing), Textract is ~$1.50/1k pages and slow, and — critically — Textract text has the _same_ repeating per-page footers, so it would _not_ have fixed the page-range bug below. The chunker was the problem, not the extractor.
+**PyMuPDF-first, Textract-fallback.** `process_pdf_from_s3` tries PyMuPDF (font-metric title/header tagging, noise stripping), gated by `extraction_looks_good()` (≥5 lines, ≥1 non-empty, avg stripped length ≥3). On failure, falls through to async Textract (LAYOUT+TABLES). The corpus is digital-native — OCR adds nothing; PyMuPDF is faster and free.
 
-Both extractors emit the same contract the chunkers consume: `header_split` (text blobs) and `line_page_mapping` (a flat `list[tuple[str, int]]` of every line paired with its 1-based page).
+Both extractors emit: `header_split` (text blobs) and `line_page_mapping` (`list[tuple[str, int]]` of every line + page number).
 
-**Three chunkers, routed by `CHUNKER_BY_SOURCE`:** `statute`, `wpam`, `general`.
+### Chunking strategies
 
-### The bugs that were fixed (and must not return)
+Routed by `CHUNKER_BY_SOURCE` dict in `pdfChunker.py`:
 
-- **Per-line page tracking** (`9bc8346`). The old `get_pages_for_chunk()` reconstructed each chunk's page range by substring-matching its lines against the _whole_ document. Repeating boilerplate (footers, headers) appears on every page, so the match set exploded — corrupting **55% of the deployed corpus** (one chunk spanned pages 1–1349). Now each buffered line is a `(text, page)` tuple and a chunk's `start_page`/`end_page` is the min/max of its buffer. **Do not reintroduce any "reconstruct pages by matching text" helper.**
-- **TOC suppression** (`9bc8346`). A dot-leader line (`"XV. Contact Info . . . 57"`) matches the roman-numeral heading regex and would become the heading for every subsequent chunk. The `_LEADER_IN_LINE` pattern forces such lines to body text, and `is_toc_chunk()` drops whole TOC chunks post-chunking. These are two separate defenses; both exist for a reason.
-- **Table false-positive rejection** (`9bc8346`, `610972f`). PyMuPDF's `find_tables()` flags multi-column prose as tables; row-joining with `" | "` scrambles reading order. `looks_like_real_table()` rejects candidates by row-count/cell-length signature and a >60%-empty-cell ratio.
-- **2500-char cap** (reduced from 7500). Titan v2 **silently truncates** input past 8000 chars — the original 7500 cap prevented truncation but produced overly large chunks that bloated the agent's context window and reduced retrieval precision. `CHUNK_MAX_CHARS=2500` produces ~3× more chunks per document but each is fully embedded, more precise for vector search, and cheaper at query time (fewer tokens in tool results). The cap is enforced at three layers (in-loop, per-chunker `_enforce_chunk_cap`, and a final pass after assembly, because heading prefixes and line-rejoining grow the string after the buffer-time measurement). The retrieval parameters (top_k, diversity cap, fetch_k) were tuned upward to compensate for the smaller chunk size — see §8.
+| Strategy | Docs | Key behavior |
+| --- | --- | --- |
+| **statute** | State law PDFs | Subsection-aware splitting: detects `(1)`, `(a)`, `(am)` markers. Splits at subsection boundaries. Section headers (`70.32`, `70.47`) become chunk headings. |
+| **wpam** | Assessment manual | Quality filters: garbled-column detection (>30% lines <4 chars), running-header stripping, boilerplate removal. Heading hierarchy from font metrics. |
+| **general** | Everything else | Heading-based splitting with `CHUNK_MAX_CHARS=2500` hard cap. |
 
-> **Gotcha — routing is effectively dead for statute/WPAM in production.** `extract.py` passes `source_id = metadata["doc_id"]` (the per-doc id), but `CHUNKER_BY_SOURCE` keys are categories (`"state-laws"`, `"assessment-manual"`). They almost never match, so nearly everything falls through to the `general` chunker. The specialized `chunk_document_statute`/`chunk_document_wpam` paths are maintained and unit-tested but rarely exercised by the real pipeline. If you intend statutes/WPAM to use their specialized chunkers, fix the `source_id` passed by `extract.py` _or_ the dict keys — re-running ingestion alone won't change which chunker fires.
+### Key parameters
 
-> **Gotcha — import side effects.** `pdfChunker.py` calls `ensure_bucket_exists(...)` at _import time_ against a hardcoded bucket name. Tests must pre-stub boto3 in `sys.modules` before importing it (see `test_chunk_size_cap.py`).
-
----
-
-## 8. The agentic retrieval Lambda
-
-`run_agentic_loop` in `backend/lambdas/agentic_retrieval/main.py` is the heart of the system. It handles **both** retrieval and streaming — there is no separate streaming Lambda for the GraphRAG path. After the loop completes, `_stream_response` (same file) delivers documents, FAQs, and answer fragments over WebSocket.
-
-### The loop, step by step
-
-- **Turn 0a — `refine_query`** runs only when `chat_history` exists (fresh sessions skip it to save a Bedrock call). It rewrites context-dependent follow-ups ("what about agriculture") and extracts an optional `target_wpam_year` (see §11).
-- **Turn 0b — deterministic `faq_search`.** A hardcoded, Claude-bypassing FAQ search on the verbatim (or history-refined) query. Its result is **seeded** into the message list as a synthetic `toolUse`/`toolResult` pair (id `faq_search_turn0`) so Claude enters the loop already seeing FAQ context without re-invoking the tool. (Why: Claude paraphrases queries, which measurably hurt KB recall — §9.)
-- **Turns 1–10** (`MAX_TURNS=10`): `bedrock.converse(modelId=AGENTIC_MODEL_ID, maxTokens=4096, temperature=0.0)` with `SYSTEM_PROMPT` and the tool set. Each turn appends the assistant message, executes every `toolUse` block, and appends `toolResult`s.
-- **Termination** is the `answer` tool. The loop returns `(answer_text, cited_doc_ids, rag_documents, faq_resource, trace_log)`.
-
-### Post-loop streaming (`_stream_response`)
-
-After the loop returns, the handler calls `_stream_response` which delivers results over the same WebSocket connection used for agent-trace events:
-
-1. **Document cards** — `batch_documents_for_ws` (from `websocket_utils.batching`) splits documents into multiple `DocumentsMessage` frames to stay under the 128 KB API Gateway limit. Each doc's content is capped at 60 KB (`truncate_doc_content`).
-2. **FAQ card** — a single `FAQMessage` if a high-confidence FAQ resource exists.
-3. **Answer fragments** — `answer-event:start`, then 80-char text chunks via `stream_fragments`, then `answer-event:stop`.
-
-This eliminates the second Bedrock call that ResponseStreaming previously made to regenerate the answer, and removes the Step Function transition gap that caused streaming hangs on background tabs.
-
-**Turn budget and degradation** (`8d45e04`): at loop index `turn == 7` (the 8th turn — `turn_number = turn + 1`) a "running low on turns" message is injected. If the `for` exhausts without `answer`, a degraded fallback extracts the last assistant text and appends `_(Response incomplete: turn budget reached)_`. On the no-tool path, a `max_tokens` stop reason appends `_(Response may be incomplete)_`. Turn 0 is _outside_ this loop and doesn't count against `MAX_TURNS`.
-
-### The tools (`tools.py::execute_tool`)
-
-| Tool                  | Role                                                                                                                   |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `faq_search`          | Bedrock FAQ KB retrieve (`SEMANTIC`).                                                                                  |
-| `refine_query`        | LLM query rewrite + `target_wpam_year` extraction.                                                                     |
-| `vector_search`       | Titan-embed the query → Neptune vector index → **5× over-fetch** → **diversity cap (3 chunks/doc)** → WPAM dedup → **auto-enrich** top-3 parent doc_ids with `get_neighbors` → direct citation resolution → **neighbor-doc citation discovery**. |
-| `get_neighbors`       | Graph traversal; accepts `edge_types` filter.                                                                          |
-| `get_document`        | Node lookup; falls back to vector search on miss.                                                                      |
-| `get_authority_chain` | Walk `DERIVED_FROM`/`PART_OF` up and down.                                                                             |
-| `list_framework_docs` | Enumerate a framework's docs.                                                                                          |
-| `fetch_case_opinion`  | Last-resort: read full opinion `.txt` from S3 (§10).                                                                   |
-| `search_document`     | Semantic search within a single document's chunks. Params: `doc_id`, `query`, optional `top_k` (default 3, max 5). Use when `vector_search` surfaced a relevant doc but the diversity cap limited it to 1–2 chunks and the agent needs a specific section. |
-| `answer`              | Terminal; returns its input.                                                                                           |
-
-### Key design decisions and footguns
-
-- **6× over-fetch + diversity cap** (`tools.py:627`): WPAM editions dominate the vector space, so a naive `top_k=15` risks returning mostly WPAM. When no `target_year` is set, `vector_search` requests `top_k * 6` from Neptune (90 chunks for the default top_k=15). After WPAM dedup, a **per-document cap of 5 chunks** (`DIVERSITY_CAP_PER_DOC` env var, default 5) prevents any single source from crowding out others. The agent sees a diverse survey; it can drill deeper with `search_document`. When `target_year` IS set, no over-fetch (the user wants a specific edition). These parameters were tuned upward from (5×, cap 3) when `CHUNK_MAX_CHARS` was reduced from 7500→2500 — smaller chunks require more results to cover the same ground.
-- **Authority-aware tiebreaking** (`tools.py:652`): after WPAM dedup + diversity cap + `top_k` truncation, chunks are re-sorted so higher-authority sources appear first _among similarly-scored results_. Similarity scores are bucketed (threshold 0.03); within the same bucket, lower `authority_level` wins (1=Constitution beats 9=USPAP). Between buckets, relevance wins — a highly relevant FAQ still beats a tangentially related statute. This exploits the model's primacy bias: authoritative sources appear earlier in context, making the prompt-level hierarchy instructions more effective. `authority_level` is resolved from the parent Document node via the `EXTRACTED_FROM` join already present in the Neptune query. Missing authority defaults to 9 (lowest priority). The `_sort_key` is popped during sort so it never reaches Claude's context.
-- **`search_document` — on-demand depth** (`tools.py:794`): embeds the sub-query with Titan v2 and runs a global vector search (fetch_k=800, env `SEARCH_DOCUMENT_FETCH_K`) filtered to chunks belonging to the target `doc_id`. Returns up to `top_k` (default 5, max 10) chunks from that document. This replaces the depth lost by the diversity cap — the agent gets breadth by default and depth on demand. The system prompt instructs the agent to call it when `vector_search` surfaced only 1–2 chunks from a highly relevant doc (e.g., a WPAM chapter or assessment guide). **Known limitation:** with ~45k chunks in the graph, small docs (e.g., BOR guide with ~20 chunks) may not appear in the top 800 global results. A future fix should replace the global-search-and-filter approach with direct graph traversal (`get_chunks_for_doc`) + local cosine similarity ranking.
-- **Auto-enrichment** (`1864142`): after `vector_search` returns chunks, the executor fetches `get_neighbors` for the top-3 distinct parent doc_ids and returns `{chunks, graph_context}`. The agent gets graph context for free without an extra turn. Best-effort — neighbor errors are swallowed.
-- **Neighbor-doc citation discovery** (`f87e6d7`): after auto-enrichment, `vector_search` runs an additional pass to surface case law mentioned in neighbor doc text but not in the directly-retrieved chunks. It filters neighbors to non-WPAM document nodes, ranks them by shared statute overlap with the query chunks (top 3), fetches their chunk text, regex-extracts case citations, and resolves them to CaseLaw nodes. The chunk text stays in the Lambda (regex only, never enters Claude's context). See `docs/co-cited-case-law-discovery.md` for the full traversal path. This replaced a pure graph-traversal approach that failed because high-degree statute nodes (1500+ CITES edges) made LIMIT-based discovery arbitrary.
-- **`cited_doc_ids` is the authoritative sidebar.** On `answer`, the returned cards are restricted to _exactly_ the agent's cited ids, not all discovered docs — auto-enrichment pulls in far more docs (case-law stubs CITES-linked to statutes) than the answer uses. The turn-budget fallback path is the exception (it returns all discovered ids).
-- **Opinion backfill for graph-discovered case law.** After the agent calls `answer`, a deterministic post-answer step checks `cited_doc_ids` for case-law stubs that weren't already fetched via `fetch_case_opinion`. For up to 3 such stubs, it resolves the citation from Neptune and fetches the full opinion text from S3. This ensures the streamed answer has substantive content for cited case law — without it, graph-discovered cases have empty `content` fields and their holdings can't be incorporated. Capped at 3 to bound latency; best-effort (failures logged and skipped). Discovery tag: `opinion-backfill`.
-- **Tool exceptions never crash the loop** (`686da54`). The model once called `get_document` with `node_id` (the param used by `get_neighbors`) instead of `doc_id`; the handler indexed `tool_input["doc_id"]` directly, raised `KeyError`, crashed the Lambda, and stranded the user on "answering." Now: `get_document` accepts both keys via `.get()`, and any tool exception is converted to an `{"error": ...}` tool-result fed back so the model self-corrects.
-
-> **⚠️ Do NOT revert** the StreamingBody parse (§5.1), the inlined-literal Cypher (§5.2), or the `node_id`/`doc_id` alias. Each is a dead design's replacement.
-
-> **Tech-debt note.** `MAX_TURNS`, `FAQ_SCORE_THRESHOLD`, `MAX_FAQS`, `MAX_HISTORY_TURNS`, the turn-8 index, and `inferenceConfig` are all hardcoded constants in `main.py`. Tuning requires a code change + rebundle. `execute_tool` is a long if/elif with no registry — adding a tool means editing `tools.py` _and_ several summary/discovery sites in `main.py`.
+- `CHUNK_MAX_CHARS = 2500` — enforced at three layers (in-loop, per-chunker cap, and final pass after assembly).
+- **Per-line page tracking:** each buffered line is a `(text, page)` tuple. A chunk's `start_page`/`end_page` is min/max of its buffer. No substring-matching reconstruction.
+- **TOC suppression:** dot-leader lines are forced to body text; `is_toc_chunk()` drops whole TOC chunks.
+- **Table rejection:** `looks_like_real_table()` rejects false-positive tables (multi-column prose flagged by PyMuPDF's `find_tables()`).
 
 ---
 
-## 9. The FAQ layer
+## 8. The FAQ Layer
 
-A Bedrock FAQ Knowledge Base (Titan v2, `ChunkingStrategy.NONE` because each file is exactly one Q&A pair) answers common questions and anchors the final answer.
+A Bedrock FAQ Knowledge Base (Titan v2, `ChunkingStrategy.NONE` — one file = one Q&A pair).
 
-**Turn 0 is deterministic** (`13a90c3`). The prompt-level "call faq*search first" rule had collapsed into \_parallel* `faq_search` + `vector_search` in one turn, citing graph docs the user never needed — and Claude paraphrased the query, hurting KB recall. So turn 0 is now hardcoded Python (`_faq_search_direct`) running the verbatim query, bypassing Claude entirely.
+### Turn 0 is deterministic
 
-**0.70 = primary truth, not a short-circuit.** `FAQ_SCORE_THRESHOLD = 0.70`. When the top score clears it, `_build_faq_resource` builds a `high_confidence_faq` up front and a steering user message tells Claude to treat the FAQ Q&A as the **primary source of truth** that statutes/rules/WPAM supplement and cite but never contradict. The `FAQResource` is returned **unconditionally** even if Claude's `cited_doc_ids` omit the FAQ id, so downstream synthesis always anchors on it.
-Jonah's note: I believe Darren had mentioned that, instead of hardcoding a value, we could look into seeing whether or not the cosine similarity was within a certain percentage compared to the results from the semantic search. Future development could look into this, if it seems like we could get better results that way. 0.70 seemed to work pretty well for the provided test questions, though.
+The FAQ search runs as hardcoded Python (`faq_search_direct`) on the verbatim query, bypassing Claude. Claude paraphrasing the query hurt KB recall.
 
-> **⚠️ The loop ALWAYS continues into the graph now. There is NO short-circuit.** This is the single most important reversal in the FAQ subsystem (`3ae5894`). Originally a score ≥ 0.70 returned _only_ the FAQ and skipped the agentic loop (16.9s → 473ms). But FAQ-only answers had zero citable graph evidence — no statute/rule cards. The new design keeps the plain-language FAQ as the backbone while forcing the agent to find authoritative supporting documents. **Do not re-add the early return on score ≥ 0.70**; that exact design was deliberately removed.
-> Jonah's note: this was a feature that the customer wanted -- even if we get an FAQ, we can still search the graph and provide a richer answer than just spitting out the FAQ answer.
+### Scoring
 
-**FAQ → revenue.wi.gov links.** At query time, each FAQ's public source page is resolved via `_lookup_faq_url(question)`, a DynamoDB `get_item` against `FaqUrlTable` keyed on `_normalize_faq_question(question)`. The table maps normalized question → source_url; it is seeded from `documents/faqs.json` by `seed_faq_url_table.py` and kept fresh by `extract_faq_qa_pairs.py --faq-url-table`. A miss returns `None` (no link button, never fails the query). Fuzzy recovery (`faq_url_map.py`): exact question → exact answer → 50-char prefix, lifting coverage to ~94.5%.
+`FAQ_SCORE_THRESHOLD = 0.70`. At or above this threshold, the FAQ is treated as the primary source of truth. The agentic loop **always continues** into the graph — there is no short-circuit. The FAQ anchors the answer while the graph supplements it with citable authority (statutes, rules, WPAM).
 
-> **⚠️ Gotcha — the byte-identical normalizer.** `_normalize_faq_question` in the Lambda (`main.py`) and `normalize_question` in `scripts/graphrag/faq_url_map.py` **must stay byte-identical**. They are uncoupled copies because the Lambda bundle cannot import from `scripts/`. The seed script writes keys with its normalizer; the Lambda reads keys with its copy. Any silent drift (trailing `?`, whitespace, nbsp/zwsp/BOM, case) makes every lookup miss and silently drops the link. The parity test `test_faq_question_normalizer_matches_seed_script` (`adc34a1`) fails the moment one copy is edited alone — run it after touching either.
+### FAQ URL resolution
 
-> **Operational gotcha — refreshing FAQs is a multi-region dance.** The master FAQ files live in `wis-faq-bucket` (us-west-2); the KB and `FaqUrlTable` are us-east-1. After adding FAQs you must (1) run `sync_faq_bucket.sh` to copy east + trigger a Bedrock `StartIngestionJob` (code redeploy does nothing — the KB is only rebuilt by ingestion), and (2) seed `FaqUrlTable` or new questions get no link. `sync_faq_bucket.sh` reads **root-stack** outputs (`GraphRAGFaqBucketName`, etc.), not the nested-stack output names.
+Each FAQ's public source page is resolved via `_lookup_faq_url(question)` — a DynamoDB `get_item` against `FaqUrlTable`. The normalizer in the Lambda and the seed script must stay byte-identical (tested by `test_faq_question_normalizer_matches_seed_script`).
 
----
+### Refreshing FAQs
 
-## 10. Case law — the deliberately constrained secondary source
-
-**This feature was reworked more than any other. The instinct to make case law vector-searchable is exactly what the team built and then deleted — twice.** Read this section before touching anything case-law.
-
-### Current state
-
-Case law is **thin citation stubs only**. `extract.py::process_case_law_document` emits identity fields (`doc_id, citation, title, statute_refs, source_url, authority_level=3`) with `summary=""`, `topics=[]`, `chunks=[]`. `embed.py` early-returns for `doc_type == "case_law"` — **no chunk embeddings, no doc-level embedding**. Consequences:
-
-- Case-law nodes **never appear in `vector_search`** and are excluded from phase-11 semantic discovery.
-- The **only** way the agent reaches a case is by traversing an inbound `CITES` edge from a statute it already found.
-- Full opinion text lives in S3 (`raw/case-law-{slug}/...txt`) and is fetched on demand by `fetch_case_opinion`, not stored in the graph.
-
-### How discovery works (three complementary paths)
-
-Cases reach the agent through three paths, each catching what the others miss:
-
-1. **Mirror edge traversal** (`aa99634`): phase 3 writes both `(CaseLaw)-[:CITES]->(Statute)` and the mirror `(Statute)-[:CITES]->(CaseLaw)`. The agent's prompt mandates `get_neighbors` on the controlling statute with `edge_types=["CITES"]` (`dbb06c5`). This catches any case directly linked to a statute the agent already found.
-
-2. **Direct citation resolution**: after `vector_search` returns chunks, their text is regex-scanned for case citations (e.g., "45 Wis. 2d 683") and resolved to CaseLaw nodes via an exact-match property lookup. This catches cases mentioned in the chunks you already have — without traversing any graph edges.
-
-3. **Neighbor-doc citation discovery** (`f87e6d7`): catches cases mentioned only in *neighbor* doc text (not the directly-retrieved chunks). The motivating example: Peter Ogden (2019 WI 23) is cited in the Ag Assessment Guide's chunks but never in the WPAM ag chunks that vector search returns. The approach: use shared statutes to rank which neighbor docs are topically relevant, then read their chunk text and regex-extract citations. See `docs/co-cited-case-law-discovery.md` for the full implementation.
-
-   > **⚠️ The pure graph-traversal approach was tried and abandoned.** An earlier implementation traversed neighbor doc → shared statutes → case law (LIMIT 5). This failed because high-degree statute nodes like WIS-STAT-70.32 have 1500+ CITES edges to CaseLaw — no structural graph signal can pick the right 5. The distinction is in **text** (a specific doc literally cites "2019 WI 23"), not in graph topology. Do not re-attempt a graph-only path for this problem.
-
-### The citation extraction system (shared foundation for paths 2 and 3)
-
-Paths 2 and 3 — and also the `find_case_law` tool — share the same extraction-and-resolution machinery. The core insight: every CaseLaw node in Neptune carries a `citation` property set at ingestion time (e.g., `"45 Wis. 2d 683"`). Regex-extracting citations from text and matching them to that property is an O(1) lookup — no traversal needed, no LIMIT arbitrariness.
-
-**Regex extraction** (`tools.py::extract_citations`). Three compiled patterns cover Wisconsin case citation formats:
-
-| Pattern | Catches |
-| --- | --- |
-| `\d+\s+Wis\.?\s*2d\s+\d+` | Wisconsin Reports 2d (e.g., "45 Wis. 2d 683") |
-| `\d+\s+N\.W\.(?:2d\|3d)\s+\d+` | North Western Reporter (e.g., "985 N.W.2d 69") |
-| `\d{4}\s+WI(?:\s+App)?\s+\d+` | Public-domain cites (e.g., "2019 WI 23", "2025 WI App 43") |
-
-After matching, a normalization pass canonicalizes whitespace and `Wis.2d` → `Wis. 2d`. The function returns sorted, deduplicated citation strings.
-
-**Resolution** (`neptune_client.py::resolve_case_citations`). Takes the normalized citation list and does a single parameterized query:
-
-```cypher
-MATCH (n:CaseLaw) WHERE n.citation IN $citations
-RETURN n.id, n.title, n.citation, n.doc_type, n.authority_level, n.source_url, labels(n)
-```
-
-This works because ingestion stamped `citation` on every CaseLaw node. It's an exact property match — no CONTAINS, no fuzzy logic, no traversal.
-
-**Where it's used:**
-
-- **`vector_search` — direct citation resolution (path 2):** joins all retrieved chunk text → `extract_citations` → `resolve_case_citations`. Results populate `related_case_law` in the tool response.
-- **`vector_search` — neighbor-doc citation discovery (path 3):** fetches chunk text from topically-ranked neighbor docs → same `extract_citations` → same `resolve_case_citations`. New cases are appended to `related_case_law`.
-- **`find_case_law` tool:** if the user's `search_text` itself contains a citation pattern, `extract_citations` runs first and attempts resolution. Only if that yields nothing does it fall back to the slower title-substring search (`neptune.find_case_law`).
-
-**Why this replaced the prior approach:** previously, the only way to discover a case was by traversing graph edges from a statute (`get_neighbors` with CITES). But high-degree statute nodes (WIS-STAT-70.32 has 1500+ CITES edges to CaseLaw) made LIMIT-based discovery arbitrary — there was no structural signal to distinguish the right 5 cases from the other 1495. Citation extraction moved the discriminator from graph topology to **text** — a specific document literally writing "2019 WI 23" is the signal that the case matters in that context.
-
-**Supporting infrastructure:**
-
-- **Section-level `statute_refs`** (`6b28018`): refs are emitted at both chapter (`70`) and section (`70.32`) granularity by reading the running page header of the local statute PDF mirror in `docs/state-laws/`. Without section-level refs, `WIS-STAT-70.32` had zero case-law neighbors.
-- **Always link to CourtListener/Scholar** (`6da060c`): both stub cards and fetched-opinion cards link to an external legal database, never the S3 `.txt` (which has no page anchors). ~95% of cases link to CourtListener; the remaining ~5% fall back to Google Scholar. `_apply_case_law_links` enforces this in one post-pass; `_build_opinion_card` sets `s3_key=None`. Opinion text still rides in the card's `content` to inform synthesis — only the user-facing link changed.
-- **Parallel-citation collapse** (`ce7e17c`, `93a229c`): one decision gets a separate node per reporter (N.W.2d + Wis.2d + WI App). `_collapse_case_law_by_title` merges them by normalized case-name + year.
-- **Post-answer opinion backfill**: case law discovered through graph traversal or neighbor-doc citation discovery (paths 1–3 above) arrives as metadata stubs — title, citation, and source_url, but **no chunks and no summary**. The backfill step (after `answer`, before `_build_rag_documents`) fetches up to 3 cited-but-unfetched opinion texts from S3 so that the streamed answer has substantive case-law content. Only fires for cases in `cited_doc_ids`, never for uncited graph-neighbor noise.
-
-### ⚠️ The reversals (do not resurrect)
-
-1. **First-class nodes → annotation-grounded chunks → thin stubs** (`c835f66`). Case law was once vector-searchable with its own embeddings and topics. An annotation-grounding pipeline was then built (and abandoned _the same day_) to store editorial summaries as case chunks. Both were deleted because (a) the annotation already lives on the citing statute's chunks, and (b) embedding the case let the agent answer "from the case" while bypassing the controlling statute — inverting legal authority. The pivot deleted ~180 lines. **Do not re-enable case-law embeddings or the LLM-summary fallback** (`07b2336`, `04e2447` are dead for case nodes). Only `case_annotations.extract_section_for_page` survives in the live path.
-2. **S3 `.txt` links → CourtListener/Scholar** (`6da060c`/`7ecaf0d`). The interim "link to the S3 `.txt` until PDF links land" (`6a9bdac`) was replaced. ~95% of cases link to CourtListener; the remainder fall back to Google Scholar. **Do not reintroduce `s3_key` on case-law cards.**
-3. **`fetch_case_opinion` plumbing** (`7677cbc`): the tool was called _zero times in 24h of production_ because `load.py`'s phase 2 omitted `d.citation`, so the agent never had the verbatim citation string the tool needs. The fix plumbed `citation` through phase 2 → `neptune_client` → prompt. All three layers are load-bearing; the slug derivation (`citation_to_raw_slug`) is the exact inverse of `upload_local_docs.make_doc_id`.
-
-> **Gotcha — silent degradation.** Section-level refs depend on the local PDF mirror in `docs/state-laws/` being present at extract time. If it's missing, `_derive_case_statute_refs` _silently_ falls back to chapter-only refs, and section-anchored CITES traversals find no cases. Not an error — a quiet quality drop.
-
-> **Stub-promotion authority footgun** (`2631d5f`): `WIS-STAT-*` section stubs carry no `authority_level`. When `_build_rag_documents` promotes such a stub to a parent Document for content (often a WPAM doc), it must keep the stub's **own** identity authority (default Statute=2), not borrow the parent's — else "Wis. Stat. 70.49(2)" renders a WPAM badge.
-
-> **Stub-promotion page resolution** (`e37e91d`): `find_stub_promotion` finds the earliest chunk in the parent chapter PDF that cites a stub, using its `start_page` for the citation link. Two fixes prevent linking to the TOC: (1) `c.start_page > 2` skips index/TOC chunks that cite every section, and (2) a `parent_hint` derived from the stub ID (e.g., `WIS-STAT-70.32` → prefer `statutes-70`) ensures the promotion resolves to the stub's own chapter, not a cross-referencing chapter that happens to have a lower page number.
+Multi-region operation: master FAQ files in `wis-faq-bucket` (us-west-2), KB + `FaqUrlTable` in us-east-1. Run `sync_faq_bucket.sh` to copy + trigger KB ingestion, then seed `FaqUrlTable` with `seed_faq_url_table.py`.
 
 ---
 
-## 11. WPAM edition recency
+## 9. WPAM Edition Recency
 
-The Wisconsin Property Assessment Manual is republished annually (the current edition is posted each December for the subsequent calendar year). The graph contains ~15 editions (`wpam-...-2011` through `-2026`). **DOR rule: ALWAYS use the most current WPAM unless the user explicitly asks about a specific year.** Old editions have different chapter structures (the WPAM was reorganized in 2017 — e.g., Chapter 9 changed from Commercial Valuation to Real Property Valuation, with commercial content moving to Chapter 13) and MUST NOT be cited for current guidance.
+The graph contains ~15 WPAM editions (2011–2026). Only the current edition should be cited unless the user asks about a specific year.
 
-### 11.1 The problem
+### The problem
 
-Neptune Analytics `topKByEmbedding` has **no pre-filtering capability** — you cannot filter by `edition_year` before the vector search runs. With ~15 editions of semantically near-identical content, a naive `top_k=10` vector search returns mostly old-edition chunks (the sheer volume of historical editions dominates the vector space). Heading-based dedup alone was insufficient because the 2017 reorganization means old chapters have different headings that don't collapse with current ones.
+Neptune's `topKByEmbedding` has no pre-filtering. With ~15 editions of semantically identical content, a naive top_k returns mostly old-edition chunks.
 
-### 11.2 The solution: over-fetch + strict edition filter
+### The solution: over-fetch + two-pass dedup
 
-Three layers enforce recency:
+1. **`current_wpam_year`** — dynamically resolved from Neptune (`max(edition_year)` across FW-WPAM docs) at Lambda cold start.
+2. **6× over-fetch** — `vector_search` always requests `top_k * 6` chunks regardless of whether a `target_wpam_year` is set.
+3. **Two-pass dedup** (`wpam_dedup.py`):
+   - Pass 1 (heading collapse): groups WPAM chunks by normalized heading, keeps one per group (newest).
+   - Pass 2 (edition filter): only `current_wpam_year` (+ `target_year` if set) survives. All other WPAM editions are dropped.
+4. **Prompt reinforcement** — instructs Claude to cite only the current edition.
 
-1. **`current_wpam_year` — dynamic resolution from Neptune** (`neptune_client.py`). A cached property queries `max(d.edition_year)` across all `FW-WPAM` documents on Lambda cold start. This is the authoritative "what year is current" — no hardcoded year constant.
+### Historical queries
 
-2. **Over-fetch at retrieval time** (`tools.py`). When no `target_wpam_year` is set, `vector_search` requests `top_k * 6` chunks from Neptune (e.g., 90 instead of 15). WPAM editions dominate the chunk count, so the 6× multiplier gives the dedup + diversity filters enough runway to surface non-WPAM results. When a `target_wpam_year` IS set, no over-fetch (the user wants a specific edition, so old results are expected).
+When the user asks about a specific year, `refine_query` extracts `target_wpam_year`. The 6× over-fetch still applies, and `allowed_years = {current, target}`.
 
-3. **Two-pass dedup** (`wpam_dedup.py::dedupe_wpam_chunks`):
-   - **Pass 1 — heading collapse:** groups WPAM chunks by normalized heading, keeps one per group (prefer `target_year` if set, else `max(edition_year)`).
-   - **Pass 2 — strict edition filter:** `allowed_years = {current_wpam_year}`. If `target_year` is set, add it: `allowed_years = {current_wpam_year, target_year}`. Every WPAM chunk whose `edition_year ∉ allowed_years` is **dropped** — including singletons with unique headings from old editions. Non-WPAM chunks and WPAM chunks missing `edition_year` pass through unchanged.
+### `edition_year` stamping
 
-   After dedup, the result is truncated back to `top_k`.
-
-4. **Prompt reinforcement** (`prompt.py`): instructs Claude to ONLY cite the current WPAM edition, ignore any old-edition chunks that slip through, and pass `target_wpam_year` to subsequent tool calls when `refine_query` extracts one.
-
-### 11.3 The two retrieval paths
-
-**Default (no year in query):**
-
-1. User asks: "What information is used to determine my assessment?"
-2. `faq_search` runs on verbatim query (always first)
-3. Claude calls `vector_search(query="...")` — no `target_wpam_year`
-4. Neptune returns top 90 chunks (`top_k * 6` over-fetch, default top_k=15)
-5. `dedupe_wpam_chunks` runs:
-   - Pass 1: heading collapse (same heading across editions → keep newest)
-   - Pass 2: edition filter — `allowed_years = {2026}` (from `neptune.current_wpam_year`). Everything not 2026 is dropped.
-6. Diversity cap (5 chunks/doc), then truncate to 15 chunks, return to Claude
-7. Claude only sees current WPAM + non-WPAM sources (statutes, admin rules, FAQs, etc.)
-
-**User specifies a year:**
-
-1. User asks: "What did the 2018 WPAM say about commercial valuation?"
-2. `faq_search` runs
-3. Claude calls `refine_query` → extracts `target_wpam_year: 2018`
-4. Claude calls `vector_search(query="...", target_wpam_year=2018)` — no over-fetch (`top_k` stays at 10)
-5. `dedupe_wpam_chunks` runs:
-   - Pass 1: heading collapse → prefers 2018 chunks
-   - Pass 2: edition filter — `allowed_years = {2026, 2018}`. Only these two editions survive; 2011, 2020, 2022, etc. are dropped.
-6. Claude sees both the requested historical edition and current for comparison
-7. Prompt tells Claude to cite what the user asked about
-
-### 11.4 Stamping `edition_year` at load time
-
-`wpam_year.py::extract_wpam_year_from_doc_id` grabs the last 4-digit group from the doc_id, plausibility-gated (2010 .. current year + 1; the +1 covers a December-published edition). Both phase 2 (Doc nodes) and phase 7/`phase_8_chunks` (Chunk nodes) call it for `FW-WPAM` docs. `edition_year` is **denormalized onto every Chunk** (`05092f3`) so dedup needs no Neptune join.
-
-### 11.5 Wire path
-
-`edition_year` is carried by `RAGDocument`, set by the agentic Lambda, persisted by `save_chat_history`, copied into `websocket_utils.SourceDocument` by `resource_streaming`, and accepted by the Zod `SourceDocumentSchema` + frontend `Document` type. It reaches the browser store but **no UI component renders it yet** (wire-only v1). Adding an edition badge to the citation card is a frontend-only follow-up; the data is already there. (History note: until this fix, `websocket_utils.SourceDocument` lacked the field and `resource_streaming` didn't copy it, so the value was silently dropped at the WebSocket boundary — guarded now by `test_source_document_carries_edition_year` in `test_resource_streaming.py`.)
-
-> **⚠️ The cosine dedup "pass B" was cut (YAGNI), and there are NO `SUPERSEDES` edges between editions.** Neptune's `vector_search`/`get_neighbors` Cypher returns only similarity _scores_, not raw chunk embeddings, so a cosine pass would need a second algo call + ~10-20KB extra payload per query (`cb13072`). Recency is handled purely at the retrieval layer (over-fetch + edition filter), not as graph edges. The prompt mentions `SUPERSEDES` generically — do not assume edition-supersession is modeled as edges.
-
-> **Gotcha — re-ingest is scoped here, not full.** Because `edition_year` is a property-only mutation (no edges change), populate it with `load.py --source-filter wpam- --start-phase 2 --stop-after-phase 2` then `--start-phase 7 --stop-after-phase 7`. Chunks loaded _before_ this feature have no `edition_year` and are dedup-ineligible (they pass through, never collapsed) — a mixed graph silently under-dedups until a full WPAM chunk re-ingest.
+Extracted from the doc_id (last 4-digit group, plausibility-gated). Denormalized onto every Chunk so dedup needs no Neptune join.
 
 ---
 
-## 12. Citations and source cards
+## 10. Case Law
 
-Citation cards carry a **stable reference** (`s3_key`, `start_page`, `end_page`), never a live URL. The URL is minted **on demand at click time**.
+Case law is **thin citation stubs only** — no embeddings, no chunk text. They never appear in `vector_search`. The only way to reach a case is by traversal or text-based citation extraction.
 
-> **⚠️ The biggest reversal here, and CLAUDE.md is stale on it.** `CLAUDE.md:131` still says _"agentic_retrieval/main.py generates presigned S3 URLs with #page=N fragments."_ **That is the dead design.** Eager presigned URLs (`_generate_source_links`, the module-level `s3_client`, `PRESIGNED_URL_EXPIRY`) were removed (`410b833`). They expired in ~15 min and were frozen into DynamoDB chat history, so every citation in a _restored_ session pointed at a dead URL. Now `agentic_retrieval` populates only `s3_key/start_page/end_page` (`_generate_source_label` returns a label only); a dedicated **`citation_resolver` Lambda** mints a fresh 15-min URL per click. `RAW_BUCKET` still exists in `agentic_retrieval` _only_ because `fetch_case_opinion` GETs the case-law `.txt` directly — unrelated to URL minting.
+### Three discovery paths
 
-### The click-time flow
+1. **Mirror edge traversal:** `(Statute)-[:CITES]->(CaseLaw)` mirror edges. The prompt mandates `get_neighbors` on the controlling statute with `edge_types=["CITES"]`.
+2. **Direct citation resolution:** after `vector_search`, retrieved chunk text is regex-scanned for citation patterns and resolved against CaseLaw node `citation` properties.
+3. **Neighbor-doc citation discovery:** topically-ranked neighbor docs have their chunk text scanned for citations. Catches cases mentioned only in related docs (not in directly-retrieved chunks).
 
-1. Card click → `chooseSourceTarget(document)` (`source-target.ts`) decides the destination: a **PDF `s3Key` wins** (presigned + `#page` anchor); a flat `.txt`/case-law card **yields to a clean public `sourceUrl`** (Scholar/revenue.wi.gov) — because `.txt` has no page anchor (`876a6df`).
-2. For an `s3` target: `window.open('about:blank')` opens a popup _synchronously_ (browsers only allow `window.open` in the sync tail of a click), then `buildResolverUrl` fetches the Cognito id token async and redirects the popup to `GET /citation?s3Key=...&token=<jwt>&page=N`.
-3. The `citation_resolver` Lambda validates the `raw/` prefix + page, `head_object`s the key, mints a 900s presigned URL, appends `#page=N`, and returns a **302** with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
+### Citation extraction
 
-> **⚠️ Several non-obvious things are load-bearing and were each a fix:**
->
-> - `GET /citation` has its **own** JWT authorizer reading the token from `?token=` (`04f47cf`), because `window.open` can't set an `Authorization` header and an HTTP API JWT authorizer allows only one identity source.
-> - The 302's `Referrer-Policy: no-referrer` stops the JWT leaking to S3 via `Referer`; `Cache-Control: no-store` stops a cached dead redirect after expiry. Both required.
-> - The `s3` `window.open` deliberately **omits `noopener`** — `noopener` makes `window.open` return `null`, breaking the popup-first pattern (`5337432`). The `url` case (Scholar/gov) _does_ use `noopener,noreferrer`.
-> - `citation_resolver` reads `RAW_BUCKET` **inside the handler**, not at import, for test isolation and fail-fast on an empty CDK wire (`e3e118a`).
+Three regex patterns cover Wisconsin formats: `\d+ Wis. 2d \d+`, `\d+ N.W.2d/3d \d+`, `\d{4} WI(App)? \d+`. Resolution: parameterized `MATCH (n:CaseLaw) WHERE n.citation IN $citations`.
+
+### Opinion access
+
+Full opinion text lives in S3 (`raw/case-law-{slug}/...txt`). `fetch_case_opinion` fetches on demand. Cards link to CourtListener/Google Scholar (not S3 — `.txt` has no page anchors).
+
+### Post-answer opinion backfill
+
+After `prepare_answer`, up to 3 cited-but-unfetched case-law stubs have their opinions fetched from S3. This ensures the streamed answer has substantive case-law content.
+
+---
+
+## 11. Citations and Source Cards
+
+Citation cards carry stable references (`s3_key`, `start_page`, `end_page`). URLs are minted **on demand at click time** by the `citation_resolver` Lambda — not pre-generated.
+
+### Click-time flow
+
+1. Card click → `chooseSourceTarget(document)` decides: PDF `s3Key` → presigned URL + `#page` anchor; `.txt`/case-law → public `sourceUrl` (Scholar/revenue.wi.gov).
+2. For PDF: `window.open('about:blank')` opens a popup synchronously, then `buildResolverUrl` fetches the Cognito id token async and redirects to `GET /citation?s3Key=...&token=<jwt>&page=N`.
+3. `citation_resolver` validates the key, `head_object`s it, mints a 900s presigned URL, appends `#page=N`, returns a **302** with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
 
 ### Inline prose citations
 
-The agentic retrieval answer uses `[Title](doc:documentId#page=N)` instead of embedding 500-char presigned URLs that broke the markdown parser (`37f0c9c`). The `#page=N` fragment is optional and carries the chunk's `start_page` so the link goes to the specific PDF page the model retrieved — not just the document-level page stored on the source card. The frontend's `animated-markdown.tsx::resolveHref` rewrites `doc:<id>#page=N` to a URL from a per-message `docUrls` map, overriding the `page` query param when a `#page=` fragment is present. The `docUrls` map is built by `chat-message.tsx`: PDFs go through `buildResolverUrl(s3Key, startPage)`, non-PDFs use their public `sourceUrl`. The prompt instructs the model to include `#page=N` whenever a chunk has a `start_page` value, and to only cite documents it has direct chunks for (not documents quoted secondhand by another source).
+The answer uses `[Title](doc:documentId#page=N)`. The frontend's `animated-markdown.tsx::resolveHref` rewrites `doc:<id>#page=N` to a real URL from a per-message `docUrls` map. The `#page=N` fragment carries the chunk's `start_page` for page-specific linking.
 
 ---
 
-## 13. The shared-contract discipline
+## 12. WebSocket Streaming and Contracts
 
-This is the most error-prone cross-boundary concern in the codebase. Shared models live in `backend/layers/step_function_types/models.py` (Pydantic). The `CamelCaseModel` base converts snake_case Python to camelCase JSON via an alias generator — so `start_page` becomes `startPage` on the wire.
+### Message types
 
-**The frontend hard-rejects unknown shapes.** Every WebSocket message is validated by `WebSocketMessageSchema.parse()` against a Zod discriminated union. A backend-only field addition, or a shape the union doesn't know, **drops the entire frame** and shows the user an error. This applies to trace and logging messages too.
+| streamId | Body type | Purpose |
+| --- | --- | --- |
+| `resources` | `DocumentsMessage` / `FAQMessage` | Source cards (batched for 128KB frame limit) |
+| `answer-event` | `AnswerEventType` | `start` / `stop` bookends |
+| `answer` | `FragmentMessage` | Answer text fragments (30-char min buffer) |
+| `agent-trace` | `AgentEventMessage` | Live agent trace events |
+| `heartbeat` | `{}` | Keepalive during long Bedrock calls |
+| `choices` | `ChoicesMessage` | Disambiguation options (when enabled) |
 
-> **⚠️ Adding a citation field requires editing FOUR places** or it silently drops on some path:
->
-> 1. `RAGDocument` (`step_function_types/models.py`)
-> 2. `SourceDocument` (`websocket_utils/models.py`) — note this is a _second_, hand-duplicated `CamelCaseModel`
-> 3. `_stream_response` in `agentic_retrieval/main.py` (constructs `SourceDocument` from `RAGDocument`) and `save_chat_history`
-> 4. the Zod `SourceDocumentSchema` in the frontend
->
-> (Worked example: `editionYear` was added to places 1 and 4 but missed places 2–3, so it was silently dropped at the wire boundary until a follow-up added it to `websocket_utils.SourceDocument` and the streaming construction. See §11.)
+### The shared-contract discipline
 
-> **⚠️ Use `.nullish()`, not `.optional()`, for new Zod optional fields.** Pydantic serializes an unset `Optional` as JSON `null`, but `z.optional()` accepts only `undefined` (key absent). A single `null` on `s3Key` once rejected the _entire_ documents frame and dropped every citation card (`7bd99e0`). The helpers `optStr`/`optInt`/`optNum` do `.nullish().transform(v => v ?? undefined)`.
+Every WebSocket message is validated by `WebSocketMessageSchema.parse()` (Zod discriminated union on the frontend). A shape the union doesn't know **drops the entire frame** and shows an error.
 
-The CLAUDE.md "WebSocket Contract" section is the canonical statement of this rule for runtime messages; this section extends it to the persistence path.
+**Adding a field requires updating:**
+1. `RAGDocument` in `backend/layers/step_function_types/models.py`
+2. `SourceDocument` in `backend/layers/websocket_utils/models.py`
+3. Streaming construction in `agentic_retrieval/main.py` + `save_chat_history`
+4. `SourceDocumentSchema` in `frontend/types/message-types.ts`
 
----
+Use `.nullish()` not `.optional()` for new Zod optional fields — Pydantic serializes unset `Optional` as `null`, but `z.optional()` accepts only `undefined`.
 
-## 14. Live agent-trace streaming
+### Batching
 
-The agent's per-turn reasoning and tool calls stream to the chat UI as a live, collapsible "Thought for Xs" chain-of-thought, replacing a static 3-step placeholder.
-
-**Backend.** `_emit_trace` (`main.py`) is the single emission helper. It builds an `AgentEventMessage` (Pydantic, `responseType: "agent-event"`) and ships it. It is hard-gated: returns immediately if `EMIT_AGENT_TRACE` is false or `ws_server is None`, and swallows all send errors — a dead/stale WebSocket can never abort the loop. `seq` is a per-request monotonic counter. Emission points: `phase` events, turn-0 synthetic `tool_call`→`tool_result` pairs, per-turn `reasoning`/`tool_call`/`tool_result`, and a terminal `loop_complete`. The `answer` tool deliberately emits no `tool_result` (its meaning is in `loop_complete`).
-
-**Backend pre-formats everything.** `_build_tool_call_summary`/`_build_tool_result_summary` produce the human-readable strings and a camelCase metadata dict; `doc_titles` are best-effort-resolved with doc_id fallback so array lengths always match. The UI just picks a verb and renders.
-
-**Frontend.** `appendAgentTraceEvent` dedupes by `seq`, then for a `tool_result` finds the most recent same-key (`tool:<name>:<turn>`) event and, if it's still `pending`, **replaces it in place** (one slot transitions hollow "Searching" → filled "Found N"). Rendering collapses consecutive completed results for the same tool, and encodes dot states: error (red), miss (hollow + muted = ran, found nothing), done (solid), pending (hollow).
-
-> **⚠️ Two reversals + one deliberate vestige:**
->
-> - **Protocol replaced** (`fa210de`): an older `responseType: "agent-trace"` + `TraceContent{event,label,status,...}` was thrown out for `"agent-event"` + `AgentEventMessage{kind,turn,seq,...}` because the frontend schema had drifted from what the deployed Lambda sent. `TraceContent`/`TraceMessage`/`AgentTraceMessageSchema` are **dead**.
-> - **Vestige (not a bug):** the WebSocket _envelope_ `streamId` is still the literal `"agent-trace"` (`utils.py`) even though `responseType` is `"agent-event"`; the frontend `streamId` enum still lists `"agent-trace"` to accept it. Don't "fix" one side without the other.
-> - **`faq_short_circuit` is not a terminalReason.** The 2026-04-30 spec and `f62696e` describe a short-circuit terminal event that no longer exists (the FAQ policy reversal, §9). The only terminalReasons are `answer_tool` and `assistant_text_or_fallback`. Don't test for `faq_short_circuit`.
-
-> **⚠️ The metadata allow-list is duplicated and must stay in lockstep:** `ALLOWED_METADATA_KEYS` (`main.py`) mirrors a Set in `trace-metadata.ts`. This is defense-in-depth so a future edit can't leak raw query/chunk text into the UI. A new key added to only one side is silently dropped. (Three env flags govern this area and are distinct: `EMIT_AGENT_TRACE` = WebSocket kill switch, `LOG_AGENT_TRACE` = CloudWatch logging, `LOG_QUERY_TEXT` = raw query preview in logs.)
-
-> **Trace persistence.** `run_agentic_loop` now accumulates a `trace_log` (list of dicts with `kind`, `turn`, `ts`, tool name, status, etc.) and returns it alongside the answer. `save_chat_history` persists it to the `traceLog` attribute in DynamoDB. However, the frontend does not yet re-render persisted trace on session resume — it still shows the static placeholder for restored conversations.
+`batch_documents_for_ws` (in `websocket_utils.batching`) splits documents into multiple frames to stay under the 128 KB API Gateway limit. Each doc's content is capped at 60 KB.
 
 ---
 
-## 15. Sessions, auth, and chat history
+## 13. Agent Trace UI
 
-Cognito-authenticated users get a sidebar of past chats they can resume, rename, or delete. Two DynamoDB tables, **different key schemas**:
+The agent's per-turn reasoning and tool calls stream as a live, collapsible chain-of-thought.
 
-- **SessionTable** — PK `sessionId`; `userIdIndex` GSI (PK `userId`, SK `lastMessageAt`) for per-user listing; `connectionId` GSI for WebSocket.
-- **ChatHistoryTable** — PK `queryId`; `sessionIdKey` GSI (PK `sessionId`, SK `timestamp`) for per-session reads and the delete cascade.
+### Backend
 
-All session/history handlers live in one Powertools Lambda (`backend/lambdas/chat_api/main.py`) behind an HTTP API with a Cognito JWT authorizer. Routes: `POST /session`, `GET /sessions`, `PATCH /session/{id}`, `DELETE /session/{id}`, `POST /session/{id}/message`, `GET /session/{id}/history`, `POST /session/{id}/feedback`, and the separately-authorized `GET /citation` (§12).
+`emit_trace` is the single emission helper. Hard-gated: returns immediately if `EMIT_AGENT_TRACE` is false or `ws_server` is None, swallows all send errors. Emission points: phase events, tool_call/tool_result pairs, reasoning text, loop_complete.
 
-**Chat history is written after streaming completes.** `agentic_retrieval::save_chat_history` persists `{queryId, sessionId, timestamp, query, answer, resources, traceLog}` after `_stream_response` finishes. DynamoDB is the source of truth for resume; the WebSocket stream is the live delivery mechanism. `get_chat_history` reads back and caps at `MAX_HISTORY_TURNS=5`.
+The backend pre-formats all human-readable strings and camelCase metadata. The UI just picks a verb and renders.
 
-> **⚠️ Adding a `RAGDocument` field requires adding it to `save_chat_history`'s field-by-field rebuild,** or resumed cards silently lose it. This bit twice: `authorityLevel` + `content` were omitted (cards resumed with no badge, blank preview — `b49c6fb`), and `discoveryTag` (`d695792`). Both have regression tests now.
+### Frontend
 
-> **⚠️ JWT accessor: `request_context.authorizer.jwt_claim`** (the flat Powertools property), **not `.jwt.claims`** (which raises `AttributeError` and 500s every authenticated request — `8a00aff`). Easy to "correct" the wrong way.
+`appendAgentTraceEvent` dedupes by `seq`. For a `tool_result`, finds the most recent same-key event and replaces it in place (one slot transitions "Searching" → "Found N"). Dot states: error (red), miss (hollow + muted), done (solid), pending (hollow).
 
-> **⚠️ Decimal encoding.** `TypeDeserializer` returns `Decimal` for any DDB number; `json.dumps` rejects it. Once resources carried numeric `startPage`/`endPage`, `GET /history` began 500ing for _new_ chats while older string-only rows loaded — a confusing partial failure. Every `create_api_response` runs a `_json_default` mapping whole→int, fractional→float (`98621f1`).
+### Metadata allow-list
 
-Other fixed traps: `$connect` uses `update_item` with `ConditionExpression attribute_exists(sessionId)` (a `put_item` would clobber `userId`/`title` and break the GSI — `8a00aff`); delete-session clears the store **only** when the deleted id is the active session (`c8871a2`); `reset()` clears `sessionId` so "New Chat" starts fresh (`8c2bd0e`); CORS allows `GET`/`DELETE` (`a810d21`); the API client unwraps both Lambda-proxy v1 and HTTP-API v2 response shapes (`3e80bd4`).
-
----
-
-## 16. Frontend presentation layer
-
-Next.js + Zustand (immer) + a WebSocket hook. Per query, `ChatMessage` renders four stacked regions: the right-aligned user bubble, a "Thinking for Xs" shimmer label, a collapsible status-step timeline, and the streamed answer + inline sources + feedback bar.
-
-**Optimistic UI with ID swap.** On send, the store immediately adds a `Query` with an optimistic id `pending-<timestamp>` so the user bubble + "Thinking" appear before any round-trip. When the server returns the real `queryId` (or a WebSocket frame arrives first), `replaceQueryId` rewrites the `queries` map, `queryOrder`, and `currentQueryId`. The thinking timer is anchored to the query timestamp so it survives the swap (`d8dd572`).
-
-**Markdown is a local react-markdown wrapper** (`animated-markdown.tsx`), **not flowtoken** (removed from `package.json`). flowtoken had no remark/rehype pipeline, so `$$math$$` leaked as raw text and GFM tables didn't render (`66c3a24`). The wrapper runs `remark-gfm` + `remark-math` + `rehype-katex` and reproduces the streaming word-reveal by recursively splitting string leaves into spans with a CSS animation (`animation-iteration-count: 1` = animate once per mount, so only newly-added words animate). **KaTeX nodes and table cells are passed through intact** — word-splitting them shreds KaTeX internals and shifts column widths. **Do not reintroduce flowtoken.**
-
-**Inline per-message sources** (`f14911b`): each message owns its source cards in a collapsible grid; there is no shared side panel (it made source→answer attribution ambiguous in multi-turn chats). `DocumentList` survives but is used only by the mock-chat demo page — don't wire it back into the live layout.
-
-**Badges.** `AuthorityBadge` maps the 9 integer levels to colors (FAQ hardcodes level 6 client-side). `DiscoveryBadge` maps `discoveryTag` to an outline badge (`unknown` suppressed).
-
-**Light-theme a11y pass** (`91bac57`, `439e9e9`): the background was switched to pure white; the team **darkened** the muted-foreground/input tokens and bumped badge color levels to pass WCAG AA, rather than reverting the white. One Tailwind v4 quirk: `bg-card/90` (token + slash-opacity) failed to resolve on the input, so it uses the literal `bg-white/90`. Don't "fix" low-contrast badges by lightening them back to 100-level colors.
-
-> **Tech-debt notes for the UI:** `LoadingStrip` (`loading-grid.tsx`) is dead code; `getSourceActionLabel` is a brittle string-substring heuristic; `mergeTraceMetadata` carries dead snake_case fallbacks the camelCase backend never emits; there's leftover `console.log` in `MessageOptionsBar`.
+`ALLOWED_METADATA_KEYS` in `main.py` mirrors a Set in `trace-metadata.ts`. Defense-in-depth to prevent raw query/chunk text from leaking to the UI. A new key must be added to both sides.
 
 ---
 
-## 17. Deployment and operations
+## 14. Prompt Management
 
-### Regions and discipline
+All LLM prompts are externalized to `config/model_configs.toml` and loaded from DynamoDB at Lambda cold-start.
 
-| Region        | Stack                            | Rule                                     |
-| ------------- | -------------------------------- | ---------------------------------------- |
-| **us-west-2** | Production (legacy OpenSearch)   | **Do not deploy from feature branches.** |
-| **us-east-1** | `WisconsinBotGraphRAG` (Neptune) | All GraphRAG development.                |
+### Entries
 
-Always use `--profile widor`. Always run `cdk diff` before deploy to confirm only additive changes. GraphRAG changes must be purely additive — the existing stack is protected.
+- `agenticRetrieval` — system prompt for Phase A (the research loop tool instructions).
+- `answerStream` — system prompt for Phase B (answer generation with citation formatting rules).
+- `ragResponse` — legacy RAG generation (unused in GraphRAG path).
+- `faqResponse` — legacy FAQ synthesis (unused in GraphRAG path).
 
-### First-time bring-up checklist
+### Iteration workflow
 
-The pieces are scattered; here is the consolidated order for a fresh GraphRAG stack:
+```bash
+# Edit the prompt, then push to DynamoDB:
+AWS_PROFILE=widor AWS_REGION=us-east-1 uv run tools/upload_model_configs.py --only agenticRetrieval
+```
 
-1. `cdk bootstrap` the account/region (us-east-1).
-2. `bun install`, `bun run bundle`, then `cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG`.
-3. **Seed `ModelConfigTable`.** On a fresh stack this table is empty, and an unseeded config makes the agentic retrieval Lambda use its fallback prompt. The `agenticRetrieval` config (system prompt) lives in `config/model_configs.toml`. Upload with `tools/upload_model_configs.py`.
-4. **Sync FAQs + ingest the KB:** `sync_faq_bucket.sh` (copies us-west-2 → us-east-1, triggers Bedrock `StartIngestionJob`).
-5. **Seed `FaqUrlTable`:** `seed_faq_url_table.py` from `documents/faqs.json`.
-6. **Run the full ingestion** (§6) to populate Neptune: scrape → extract → embed → load.
-
-### Running ingestion locally
-
-Ingestion runs on your machine, not the EC2 instance, unless asked otherwise. Two recurring environment gotchas:
-
-- **SSL on macOS:** set `AWS_CA_BUNDLE` to the certifi cert path, or Python 3.13+/3.14 fails with `SSLError` after ~200 S3 calls. `export CERT=$(.venv/bin/python3 -c "import certifi; print(certifi.where())")`.
-- **Bedrock model IDs** require the full inference-profile format (`us.anthropic.claude-sonnet-4-6`). Verify via `aws bedrock list-inference-profiles`.
-- Use `uv venv` + `requirements.txt`, not one-off pip installs. (Note: lint with `uvx ruff`, not `uv run ruff` — ruff isn't a uv dep.)
-
-### Testing
-
-- TypeScript: `bun run test` (Jest).
-- Python: `uv run pytest`. **But GraphRAG Lambda tests pollute `sys.modules`** — run them per-directory, not combined with the messages tests, or you'll get import collisions. `pdfChunker` requires boto3 pre-stubbed at import (§7).
-- 32 Python test files, 6 TS test files. Notable regression guards: the FAQ normalizer parity test, the `save_chat_history` authority/content test, the phase-8 batching test, the page-tracking/TOC/table tests.
-
-### Observability — tracing one query
-
-A single `query_id` threads through the handler → WebSocket. To debug a failed query: read the agent trace (if `EMIT_AGENT_TRACE`), then CloudWatch structured logs (gated by `LOG_AGENT_TRACE`/`LOG_QUERY_TEXT`). The recurring error signatures to recognize: a silent `[]` from an undecoded Neptune payload (§5.1), a dropped WebSocket frame from a Zod rejection (§13), and a 404 popup from a rotated/re-prefixed raw bucket (§12).
+Hot-reload without redeploy. `cdk deploy` does NOT write prompt content — only the upload script does. `cdk deploy` is only needed when infra changes (new env vars, permissions, etc.).
 
 ---
 
-## 18. Appendix
+## 15. The Ingestion Pipeline
 
-### 18.1 Glossary
+Four scripts run in sequence against two S3 buckets (raw + work) and the Neptune graph. Available as Fargate tasks or local execution.
 
-- **Agentic retrieval** — the Claude tool loop that replaced the legacy classifier + retrieval Lambdas.
-- **Stub node** — a `Statute`/`AdminRule`/`CaseLaw` node with identity only (no chunks/summary), created on demand from a citation regex.
-- **Discovery tag** — how a doc entered the evidence set (`vector-search`, `graph-neighbor`, `fetched`, `framework-list`, `opinion-fetched`, `unknown`); drives the DiscoveryBadge.
-- **Primary truth** — a high-confidence (≥0.70) FAQ that anchors the answer while the graph supplements it.
-- **WPAM** — Wisconsin Property Assessment Manual (annual editions).
+```
+scrape/upload → raw/{doc_id}/{doc_id}.{pdf|txt} + .metadata.json
+       ▼
+extract.py → work: extracted/{doc_id}.json (PDF→chunks, classify, statute_refs)
+       ▼
+embed.py → work: embedded/{doc_id}.json (Titan v2 1024-dim; case_law SKIPPED)
+       ▼
+load.py → Neptune graph (11 CLI phases of batched Cypher)
+```
 
-### 18.2 Catalog of intentional "do NOT revert" decisions
+### Load phases
 
-| Decision                                                   | Why it's right                                                          | Commit               |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------- | -------------------- |
-| `execute_query` decodes `payload.read()`                   | neptune-graph returns a StreamingBody; raw `["results"]` is always `[]` | `610972f`, `4f0e95a` |
-| Inlined-literal Cypher (embedding/topK/depth)              | Neptune rejects parameterized CALL args                                 | `de53482`            |
-| Catch `UnprocessableException` as throttling               | Neptune signals overload two ways                                       | `c198bc0`            |
-| Phase-8 byte-cap on UNWIND + batch size 10                 | count caps don't prevent per-query OOM; 32 mCU OOMs at batch 20+       | `26a81e3`            |
-| FAQ loop **always continues** (no short-circuit)           | FAQ-only answers had no citable evidence                                | `3ae5894`            |
-| Deterministic turn-0 `faq_search` (bypass Claude)          | Claude paraphrase hurt KB recall                                        | `13a90c3`            |
-| Case law = thin stubs, no embeddings                       | annotation lives on the statute; embedding inverts authority            | `c835f66`            |
-| Statute→CaseLaw mirror edge                                | cases unreachable by outgoing traversal otherwise                       | `aa99634`            |
-| Neighbor-doc text scanning (not graph-only traversal)      | high-degree statutes (1500+ CITES) make LIMIT arbitrary; text has the signal | `f87e6d7`      |
-| Case/opinion cards link to CourtListener/Scholar, not S3   | `.txt` has no page anchor                                               | `6da060c`            |
-| On-demand citation resolver (no eager presigned URLs)      | URLs expire and rot into chat history                                   | `410b833`            |
-| `chooseSourceTarget`: PDF s3Key wins, `.txt` yields to URL | `.txt` has no `#page` anchor                                            | `876a6df`            |
-| Tool exception → error tool-result (no crash)              | one bad tool call killed the whole request                              | `686da54`            |
-| `.nullish()` not `.optional()` in Zod                      | Pydantic emits `null`; one null dropped the frame                       | `7bd99e0`            |
-| Per-line page tracking (no substring matching)             | substring matching inflated 55% of page ranges                          | `9bc8346`            |
-| Local react-markdown wrapper (not flowtoken)               | flowtoken couldn't render math/tables                                   | `66c3a24`            |
-| `update_item` on `$connect` (not `put_item`)               | put_item clobbers userId/title                                          | `8a00aff`            |
-| JWT via `jwt_claim` (not `.jwt.claims`)                    | the latter 500s every request                                           | `8a00aff`            |
-| Authority level defaults to `None`, never a number         | a `6` default badged 607 nodes as FAQ                                   | `f1fc513`            |
-| Direct Lambda invoke (no Step Function for GraphRAG)       | Step Function gap caused streaming hang; second Bedrock call was wasteful; double DDB write | `dab9f09` |
+| CLI step | Name | What it does |
+| ---: | --- | --- |
+| 1 | Scaffold | Framework nodes + DERIVED_FROM edges |
+| 2 | Document Nodes | MERGE doc nodes with all properties |
+| 3 | Cross-References | CITES + IMPLEMENTS edges from statute_refs |
+| 4 | Statute Hierarchy | PART_OF edges (section → chapter) |
+| 5 | Topic Merging | LLM-driven synonym clustering |
+| 6 | Hierarchy Links | BELONGS_TO, HAS_SUBSECTION, COVERS_TOPIC |
+| 7 | Chunk Nodes | MERGE chunks + EXTRACTED_FROM edges |
+| 8 | Stub Resolution | Create stub nodes for unresolved citations |
+| 9 | Vector Upserts | Upsert embeddings (one per query, 8 threads) |
+| 10 | Semantic Edges | LLM-classified RELATED_TO/SUPPLEMENTS/etc. |
+| 11 | Orphan Cleanup | Delete chunks/edges with no parent |
 
-### 18.3 Known-stale docs (do not trust at face value)
+**CLI step ≠ function name.** `--start-phase 7` runs the function `phase_8_chunks`. Log references to "phase 8" mean the function name, not the CLI step.
 
-| Doc                                                          | What's stale                                                                                                                            | Reality                                                                                                                                                                                                                        |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `docs/superpowers/specs/2026-04-30-agent-trace-ui-design.md` | Pre-replacement schema, a `faq_short_circuit` terminalReason, and `totalInputTokens`/`totalOutputTokens` dev fields                     | None match shipped code (§14).                                                                                                                                                                                                 |
-| `docs/superpowers/plans/2026-05-24-wpam-edition-recency.md`  | Shows `datetime.utcnow()`                                                                                                               | Shipped code uses `datetime.now(UTC)`.                                                                                                                                                                                         |
-| `README.md`                                                  | Last touched by the original team (2026-02-13)                                                                                          | Predates the entire GraphRAG migration.                                                                                                                                                                                        |
+### Cache-aware resume
 
-### 18.4 Where to start, by task
+`extract.py`/`embed.py` skip already-processed docs unless `--force`. All three accept `--source-filter <prefix>` for scoped runs. `load.py` has `--start-phase`/`--stop-after-phase`.
 
-- **Changing retrieval behavior** → §8 (the loop) + `prompt.py`; remember §13 (contracts) if you add a field.
-- **Changing the graph shape or edges** → §4 + §6; budget for a **full re-ingest** (§6.3).
-- **Changing chunking** → §7; full re-ingest; run `purge_orphan_chunks.py` after.
-- **Adding a citation/source field** → §13's five-place checklist.
-- **Touching FAQs** → §9; run the normalizer parity test; remember the multi-region sync.
-- **Anything case-law** → §10, and read the reversals before writing code.
+### When to re-ingest
 
----
+- **Edge logic changes (phases 3/4/10):** full re-ingest required. MERGE doesn't retroactively remove stale edges.
+- **Chunking or embedding changes:** full re-ingest. Run `purge_orphan_chunks.py` after (MERGE never deletes high-index orphans).
+- **Property-only mutation (e.g., edition_year):** scoped `--source-filter` run is sufficient.
 
-## Known Issues / Future Cleanup
+### Running on Fargate
 
-### Duplicate CaseLaw nodes for parallel reporter citations
+```bash
+./tools/graphrag/run_full_ingest.sh          # full pipeline
+./tools/graphrag/run_fargate.sh extract      # single phase
+./tools/graphrag/run_fargate.sh load --start-phase 5 --stop-after-phase 8
+```
 
-The same court opinion often has multiple reporter citations (e.g., `45 Wis. 2d 683` and `173 N.W.2d 627` are both *State Ex Rel. Markarian v. City of Cudahy*). The ingestion pipeline creates a separate CaseLaw node for each citation, and may create duplicate CITES edges from the same statute to the same node across ingestion passes.
+Docker image must be `--platform linux/amd64` (Fargate requirement on Apple Silicon builds).
 
-**Impact:** `find_case_law` and `get_neighbors` return what appear to be duplicates (same title, different node IDs). The agent may cite both IDs, producing two source cards for one case.
+### Cleanup scripts (dry-run by default)
 
-**Future fix:** Merge parallel reporter nodes into a single canonical node (keyed on the Wisconsin Reports citation when available, falling back to N.W.2d/3d). Store alternate citations as a list property. Deduplicate CITES edges during ingestion (idempotent upsert). This is a data model change in the load phase (`scripts/graphrag/load.py`) and would require a re-ingest or a one-off migration script.
+| Script | Purpose |
+| --- | --- |
+| `purge_orphan_chunks.py` | Delete chunks with no slot in current embedded JSON |
+| `clean_stale_extracts.py` | Delete artifacts for missing/drifted raw docs |
+| `patch_metadata_authority.py` | Fix `authority_level` in raw `.metadata.json` |
+| `patch_work_authority.py` | Fix cached `authority_level` in extracted/embedded JSONs |
 
 ---
 
-_This guide documents the state of `feat/graphrag-migration` as of 2026-06-23. When you change a subsystem, update its section here and add any new "do NOT revert" decision to §18.2 — that table is the cheapest insurance against re-breaking solved problems._
+## 16. Sessions, Auth, and Chat History
 
-Other random notes from Jonah:
-during one of the client meetings, they noticed a message that asked them to allow their computer to discover other computers on the same network. This happens because they have their own cognito setup.
+Cognito-authenticated users get a sidebar of past chats. Two DynamoDB tables:
+
+- **SessionTable** — PK `sessionId`; `userIdIndex` GSI (PK `userId`, SK `lastMessageAt`); `connectionId` GSI for WebSocket.
+- **ChatHistoryTable** — PK `queryId`; `sessionIdKey` GSI (PK `sessionId`, SK `timestamp`).
+
+All routes live in one Powertools Lambda (`backend/lambdas/chat_api/main.py`): `POST /session`, `GET /sessions`, `PATCH /session/{id}`, `DELETE /session/{id}`, `POST /session/{id}/message`, `GET /session/{id}/history`, `POST /session/{id}/feedback`, `GET /citation`.
+
+### Key invariants
+
+- Chat history is written **after** streaming completes. DynamoDB is the source of truth for resumed sessions.
+- `save_chat_history` rebuilds fields explicitly — adding a `RAGDocument` field requires adding it here or resumed cards lose it.
+- JWT accessor: `request_context.authorizer.jwt_claim` (not `.jwt.claims`).
+- `$connect` uses `update_item` with `ConditionExpression attribute_exists(sessionId)` — `put_item` would clobber `userId`/`title`.
+- DynamoDB numbers deserialize as `Decimal`; all responses run through `_json_default` (whole→int, fractional→float).
+
+---
+
+## 17. Deployment and Operations
+
+### Regions
+
+| Region | Stack | Rule |
+| --- | --- | --- |
+| us-east-1 | `WisconsinBotGraphRAG` (Neptune) | All GraphRAG development |
+| us-west-2 | Production (legacy OpenSearch) | Do not deploy from feature branches |
+
+Always use `--profile widor`. Always run `cdk diff` before deploy.
+
+### Deploy checklist
+
+```bash
+bun install
+bun run bundle                          # copy Python lambdas to infra/bundle/
+cd infra
+AWS_PROFILE=widor AWS_REGION=us-east-1 cdk diff -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG
+AWS_PROFILE=widor AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
+```
+
+### First-time setup
+
+1. `cdk bootstrap` us-east-1.
+2. `bun install` → `bun run bundle` → `cdk deploy`.
+3. Seed `ModelConfigTable`: `uv run tools/upload_model_configs.py`.
+4. Sync FAQs: `sync_faq_bucket.sh` → `seed_faq_url_table.py`.
+5. Run full ingestion pipeline.
+
+### Environment gotchas
+
+- **SSL on macOS:** `export CERT=$(.venv/bin/python3 -c "import certifi; print(certifi.where())")` then set `AWS_CA_BUNDLE=$CERT`.
+- **Bedrock model IDs:** require full inference-profile format (`us.anthropic.claude-sonnet-4-6`).
+- **Neptune scaling:** 32 mCU for runtime, 128 mCU during full re-ingestion. Scale back after — 128 mCU is 4× cost.
+- **`AWS_REGION` in shell:** scripts default to us-east-1 but `AWS_REGION` overrides. Always set explicitly.
+
+### Observability
+
+A single `query_id` threads through handler → tools → WebSocket → DynamoDB. To debug a failed query:
+1. DynamoDB `get-item` by `queryId` for the stored question/answer/feedback.
+2. CloudWatch `filter-log-events` on the query_id in the Lambda log group.
+3. Look for: structured log events (`agent_loop_start`, `agent_tool_call`, `agent_tool_result`, `agent_loop_complete`).
+
+---
+
+_Last updated: 2026-06-26. When you change a subsystem, update its section here._
