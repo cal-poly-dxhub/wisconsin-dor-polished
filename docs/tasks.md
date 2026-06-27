@@ -4,13 +4,14 @@
 
 | # | Task | Related Responses |
 |---|------|-------------------|
-| 2 | Fixing linking issues | — |
 | 5 | Replace LLM classification with structural parsers | — |
 | 17 | Handle multipart queries (split or unified answering strategy) | — |
 | 20 | Add user persona setting (government worker vs. citizen) | — |
 | 21 | Investigate z-score normalization for vector_search result filtering | — |
 | 22 | Apply over-fetch multiplier when target_wpam_year is set | — |
 | 26 | Admin ingestion page — ingest documents via URL from the UI | — |
+| 27 | Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags | — |
+| 28 | WPAM 2019 heading loss — boilerplate stripper keeps TOC copy, strips real chapter start | — |
 
 ## Done
 
@@ -35,75 +36,11 @@
 | 14 | Improve case law discovery in vector_search auto-enrichment |
 | 23 | Strip WPAM running headers from chunk text |
 | 25 | Fix WPAM 2025 garbled table chunks and heading metadata |
+| 2 | Fixing linking issues |
 
 ---
 
 ## Task Details
-
-### Task 2: Fixing linking issues
-
-**Problem:** Multiple issues with how source links are generated and presented to users.
-
-**Sub-issues:**
-
-- [ ] **Link TTL** — Harden presigned URL expiration so links don't expire, or find an alternative solution so sources are always accessible to the user.
-- [ ] **Page anchors** — Ensure all source documents can link to correct page numbers and anchors. Testers reported also an off-by-one issue where the link took them to the page after the relevant page. May need to reingest if chunk metadata (start_page/end_page) is sloppy. Additionally, inline citations point to the parent doc's first-chunk page rather than the specific section being cited — e.g., citing "Wis. Stat. § 70.47" links to page 1 of the statutes-70 PDF instead of the page where § 70.47 actually begins. This requires either per-subsection page metadata in Neptune or a smarter page lookup at link-resolution time.
-- [ ] **Inline citations** — All sources cited as cards at the bottom of a response must also be mentioned as inline links within the answer text.
-- [ ] **Remove redundant source list** — The chatbot should not additionally list sources as a line of text at the end of its response (the cards are sufficient).
-- [ ] **Inline ↔ card reconciliation** — The model writes more inline `[Title](doc:id)` links than it puts in `cited_doc_ids`, so those links render in the answer but have no matching source card below. Need a post-filter to enforce the 1:1 invariant programmatically (the model drifts on this bookkeeping despite prompt instructions).
-- [ ] **Statute link promotion** — When the agent describes a statutory rule (e.g., Wis. Stat. § 70.32) but only retrieved guide/publication chunks that paraphrase it, the inline citation links to the guide rather than the actual statute. The user sees "[Wis. Stat. § 70.32](doc:news_pages-...)" which is misleading. **Status: prompt approach deployed (step 5 in WORKFLOW), evaluating effectiveness before considering deterministic post-processing.**
-
-  **Options:**
-  1. **Post-filter (recommended)** — After the model finishes, regex-extract all `doc:ID` patterns from the answer body and union them into `cited_doc_ids` before sending resource cards. Deterministic, guarantees consistency regardless of model drift.
-  2. **Prompt reinforcement** — Strengthen the existing system prompt instruction. Cheaper but unreliable — the model is already juggling complex instructions and will continue to drift on mechanical bookkeeping.
-
-  **Direction question:** Should the filter *add missing IDs to `cited_doc_ids`* (so cards appear for everything linked inline) or *strip orphan inline links* (remove links that don't have cards)? Adding is better UX — the user sees a link, they should be able to click a card for it.
-
-  **Key file:** `backend/lambdas/agentic_retrieval/main.py` — where `cited_doc_ids` is assembled after the tool loop completes.
-
-**Root Cause Analysis (2026-06-23):**
-
-The page anchor off-by-one and same-page-for-different-sections issues trace to a single root cause: **broken chunking strategy routing** in `pdfChunker.py`. The `CHUNKER_BY_SOURCE` dict had keys like `"state-laws"` and `"assessment-manual"` but the actual `source_id` values passed in were `"statutes-70"`, `"wpam-wisconsin-property-assessment-manual-2025"`, etc. — no match, so everything fell through to the `"general"` chunker.
-
-- **WPAM off-by-one (page 618 vs 619):** The general chunker has no chapter-boundary awareness. A chunk straddling the Ch16→Ch17 boundary got `start_page=618` (the first page in the chunk), but Ch17 content actually starts on page 619. The dedicated `chunk_document_wpam` chunker flushes at `"Chapter N"` lines, which would produce a Ch17 chunk starting at page 619. Fix: route WPAMs to the wpam chunker via `source_id.startswith("wpam-")`.
-
-- **Statutes same-page issue (§70.32 and §70.995 both → page 56):** The general chunker produced 2000-char windows with no section awareness. The model only retrieved chunks around pages 55-56 (relevant to "manufacturing") and never saw the §70.32 definition at page 23. It reused `#page=56` for both citations because that's all it had. The dedicated `chunk_document_statute` chunker splits each section into its own chunk with correct page metadata (§70.32 → page 23, §70.995 → page 55). Fix: route statutes/admin-rules to the statute chunker via prefix matching.
-
-- **The inline link system already supports per-link page targeting** — `resolveHref` in `animated-markdown.tsx` parses `#page=N` from each inline link and overrides the base URL's page. The system prompt already instructs the model to use distinct `#page=N` per citation. The only broken link in the chain was chunk metadata accuracy.
-
-**Fix applied:** Routing fix in `get_chunking_strategy()` + smarter `_is_chapter_heading()` for WPAM false-positive rejection. Requires full reingestion.
-
-**Remaining after reingestion:**
-- Statute chunker has ~2.4% false-split rate from cross-references (e.g., "70.995 shall be assessed..." mid-prose triggering a split). These create small decoy chunks with misleading headings but correct page numbers. They won't outrank real definitions in vector search for most queries — low priority.
-- Statute PDF boilerplate ("Updated 23-24 Wis. Stats. Published and certified...") survives into chunk bodies (~55 occurrences per statute). Wastes tokens but doesn't affect page accuracy — low priority.
-
-**Statute Link Promotion (2026-06-24, in progress):**
-
-The agent frequently cites statutory rules (e.g., "Wis. Stat. § 70.32") with inline links pointing to a guide or news page that *describes* the statute rather than the statute document itself. This happens because the agent retrieves guide/publication chunks that paraphrase the statute, satisfying the "only cite docs you have chunks for" rule — but the user sees a statute-named link that opens a guide PDF, which is confusing.
-
-**Observed examples:**
-- Query "How are my property taxes determined?" → `[Wis. Stat. § 70.32](doc:statutes-70#page=23)` correct, but levy/credits citations link to `doc:gov_publications-2026-property-owners-guide#page=29`
-- Query "Can the sale of a dark commercial property..." → `[Wis. Stat. § 70.32](doc:news_pages-assessor-news-2023-03-02)` — statute-named link pointing to a news advisory
-
-**Current approach: prompt-level workflow step (step 5 in WORKFLOW section of `config/model_configs.toml`):**
-> "If your vector_search results are dominated by guides or publications that describe statutory rules, call search_document on the relevant statute chapter to get the actual statute text + page number so you can cite the statute directly."
-
-**Constraint:** The existing inline citation rule requires the agent to only link documents it has chunks for. This is correct and prevents hallucinated page numbers. The prompt approach tells the agent to *retrieve* the statute chunk before citing it.
-
-**If prompt approach proves insufficient, deterministic post-processing options:**
-
-1. **Post-loop statute link rewriting** — After `cite_documents`, regex-scan the answer for inline links where link text matches `Wis. Stat.` / `§ X.Y` but the `doc:` target is a non-statute doc. For each match, call `find_stub_promotion("WIS-STAT-{section}")` to resolve the statute chapter doc + page, then rewrite the href. Works for the DynamoDB-saved answer; for streaming, would need a correction event or the frontend doing client-side resolution.
-
-2. **Frontend-side resolution** — When rendering a `doc:` link whose display text matches a statute pattern, check if a statute source card exists in the resource list and redirect the link target. Loses page-level specificity (card has a single page range, not per-citation pages).
-
-3. **Hybrid: post-process saved copy only** — Rewrite links in the DynamoDB record and let the streamed version go as-is. History/admin views get correct links; live stream is slightly less precise but not broken.
-
-**Streaming consideration:** If the answer is streamed token-by-token, post-processing is too late for the live experience. Options: (a) send a "correction" event after stream ends to replace the answer, (b) do it only on the saved copy, or (c) rely on the prompt approach for streaming and use post-processing only as a DB-level cleanup.
-
-**Key files:**
-- `config/model_configs.toml` — prompt step 5 (deployed 2026-06-24)
-- `backend/lambdas/agentic_retrieval/main.py` — where `cite_documents` result is handled; insertion point for post-processing
-- `backend/lambdas/agentic_retrieval/neptune_client.py` — `find_stub_promotion()` resolves stub → chapter doc + page
 
 ---
 
@@ -378,4 +315,89 @@ fetch_k = top_k * 6 if target_year is None else top_k * 2
 - `tools/graphrag/extract.py`, `embed.py`, `load.py` — pipeline steps to invoke from Lambda
 - `infra/stacks/ingestion-stack.ts` — existing Fargate infra to reuse for bulk path
 - `infra/stacks/sessions-stack.ts` — HTTP API routes (add `POST /admin/ingest`)
+
+---
+
+### Task 27: Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags
+
+**Problem:** WPAM 2026 chunks have solid chapter-level headings (19 distinct chapters, clean "Chapter N Title" format) but subheadings are mostly empty. Only a handful of chunks have useful subheading metadata (e.g., "GRM", "3. Estimate accrued depreciation."). This limits the agent's ability to navigate within a chapter — it can retrieve all 7-15 chunks in a chapter but can't identify which section within that chapter is relevant without reading all of them.
+
+**Root Cause:** The WPAM chunker (`chunk_document_wpam` in `pdfChunker.py`) detects section headers using only regex patterns:
+- `^[A-Z]{2,}(?:\s+[A-Z]{2,}){0,5}\s*$` — ALL-CAPS (2-6 tokens)
+- `^[A-Z]\.\s+[A-Z][A-Za-z]` — letter-prefix ("A. Title")
+- `^\d+\.\s+[A-Z][A-Za-z]` — number-prefix ("1. Methodology")
+- `^[IVX]+\.\s+[A-Z][A-Za-z]` — roman-numeral prefix
+
+These miss the majority of real WPAM subheadings, which are bold/larger-font title-case lines without a letter/number prefix (e.g., "Sales Comparison Approach", "Gross Rent Multiplier", "Cost Approach Overview").
+
+**The signal already exists but is discarded:** `pymupdf_extractor.py` classifies lines as `title`/`header`/`body` using font metrics (bold + size > body_size * 1.05). It wraps detected headers in `<header>` XML tags. However, the WPAM chunker's main loop calls `clean_line()` which strips all XML tags *before* checking for section headers. The font-based classification is never used.
+
+**Compounding factor:** The `repair_wpam_subheadings` post-pass (`wpam_chunk_filter.py`) clears any subheading appearing on >5 chunks. This correctly removes leaked numbered-list items (e.g., "3. Estimate accrued depreciation" carried forward across 10+ chunks), but it means the few subheadings that *do* survive the regex are sometimes cleared too.
+
+**Proposed Fix: Wire up `<header>` tags as subheading signal**
+
+In the main chunk loop (`pdfChunker.py` ~line 696), before calling `clean_line()`, check if the segment contains a `<header>` tag. If so, and it passes length/word guards, treat it as a section header:
+
+```python
+for raw_line, page in line_page_mapping:
+    for segment in sub_header_content_splitter(raw_line):
+        # NEW: detect font-based headers before stripping tags
+        is_font_header = "<header>" in segment
+        line = clean_line(segment)
+        if not line:
+            continue
+
+        # ... existing leader-dot and chapter-heading checks ...
+
+        # Use font tag OR regex to detect section headers
+        if _looks_like_section_header(line) or (
+            is_font_header and len(line) < 60 and len(line.split()) < 6
+        ):
+            flush_chunk(buffer, current_chapter, current_section)
+            current_section, buffer = line, []
+            continue
+```
+
+**Guards to prevent false positives:**
+1. Line must be < 60 chars and < 6 words (avoids bold sentences/paragraphs)
+2. The existing `repair_wpam_subheadings` pass remains as a safety net (clears anything appearing >5 times)
+3. Could add: reject if line ends with common sentence-ending patterns (period followed by lowercase continuation on next line)
+
+**Validation plan:**
+1. Run chunker locally on WPAM 2026 PDF with the fix applied
+2. Compare subheading coverage: before (sparse) vs. after (should populate most chunks)
+3. Spot-check for false positives: bold sentences that shouldn't be subheadings
+4. If quality is good, reingest WPAM 2026 to Neptune and verify with the heading query
+
+**Effort:** Low — ~15 lines of code change in the main loop. No new dependencies, no infra changes. Requires reingestion of WPAM documents afterward.
+
+**Key files:**
+- `tools/pdf_chunking/pdfChunker.py` — `chunk_document_wpam()` main loop (~line 696)
+- `tools/pdf_chunking/pymupdf_extractor.py` — `_classify_line()` (the font-based classifier, already working)
+- `tools/pdf_chunking/wpam_chunk_filter.py` — `repair_wpam_subheadings()` (safety net, keep as-is)
+
+### Task 28: WPAM 2019 heading loss — boilerplate stripper keeps TOC copy, strips real chapter start
+
+**Problem:** The WPAM 2019 edition only gets 6 chapter headings detected during chunking (should be 22+). All content from chapters 6-22 gets lumped under "Chapter 5 Public Relations in the Assessment Office" because the chunker never sees a heading transition.
+
+**Root cause:** `_strip_wpam_running_headers()` in `boilerplate.py` keeps the *first occurrence* of each repeated header and strips the rest. In 2019, the first occurrence of "Chapter 7 Parcel and Information Systems" (and 14 other headers) is on pages 4-7 — in the **Table of Contents**. The TOC uses the exact same string as the running headers (no trailing dots, same casing). So the stripper keeps the TOC copy and strips the real chapter-start at page 139. The TOC chunk is then discarded by `is_probably_toc()`, leaving no heading line for the chunker to split on.
+
+**Why only 2019:** Earlier editions (2012-2018) have TOC lines with trailing dots or different casing (e.g., "Chapter 7 Real property valuation .......") which don't match the running header string. The stripper's first occurrence is the actual chapter start, not the TOC. Tested: 2012, 2015, 2017 all produce 22-25 chapter headings correctly.
+
+**Scope:** Isolated to WPAM 2019 only. Possibly also 2020+ if their TOC format matches (needs verification — 2020-2026 were already reingested with correct results, so they may be fine).
+
+**Possible fixes (needs careful evaluation):**
+
+1. **Keep first occurrence after page N** — Change stripper to keep the first occurrence that appears after page 10 (skip TOC area). Risk: some legitimate first chapters start on page 3-4.
+2. **Keep first AND second occurrence** — Keep first two, let the chunker's `is_probably_toc()` handle discarding the TOC one. Risk: if the TOC line isn't in a toc-like context, it creates a spurious chunk.
+3. **TOC-aware stripping** — Detect the TOC region first (pages with many chapter-title lines clustered together), mark those as TOC, then keep-first only within non-TOC pages. More robust but more complex.
+4. **Skip 2019 entirely** — If 2020 covers the same content, 2019 may not add retrieval value. Simplest but loses historical edition coverage.
+
+**Safe to reingest:** 2012-2018 editions all produce correct chapter headings (22-25 detected) with the existing chunker. They can be reingested without any code changes.
+
+**Caution:** The "keep first" logic was intentional — changing it could reintroduce running headers into chunks for other editions if not carefully scoped.
+
+**Key files:**
+- `tools/pdf_chunking/boilerplate.py` — `_strip_wpam_running_headers()` (lines 76-107)
+- `tools/pdf_chunking/pdfChunker.py` — `chunk_document_wpam()` heading detection loop
 
