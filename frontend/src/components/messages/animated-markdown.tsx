@@ -54,16 +54,17 @@ function splitAnimated(
 
 type SourceTone = 'statute' | 'case-law' | 'admin-rule' | 'wpam' | 'faq' | 'gov-pub' | 'iaao' | 'uspap' | 'default';
 
-function classifySource(text: string): SourceTone {
+function classifySource(text: string, href?: string): SourceTone {
   const t = text.toLowerCase();
-  if (t.includes('stat.') || t.includes('statute') || t.includes('§')) return 'statute';
-  if (t.includes('v.') || t.includes('case') || t.includes('f.4th') || t.includes('wis.2d')) return 'case-law';
-  if (t.includes('admin') || t.includes('rule') || t.includes('tax ')) return 'admin-rule';
-  if (t.includes('wpam')) return 'wpam';
-  if (t.includes('faq')) return 'faq';
-  if (t.includes('guide') || t.includes('bulletin') || t.includes('publication')) return 'gov-pub';
-  if (t.includes('iaao')) return 'iaao';
-  if (t.includes('uspap')) return 'uspap';
+  const h = (href ?? '').toLowerCase();
+  if (t.includes('stat.') || t.includes('statute') || t.includes('§') || h.includes('statutes-')) return 'statute';
+  if (t.includes('v.') || t.includes('case') || t.includes('f.4th') || t.includes('wis.2d') || h.includes('case-law') || h.includes('case_law')) return 'case-law';
+  if (t.includes('admin') || t.includes('rule') || t.includes('tax ') || h.includes('admin_rules')) return 'admin-rule';
+  if (t.includes('wpam') || h.includes('wpam')) return 'wpam';
+  if (t.includes('faq') || h.includes('faq')) return 'faq';
+  if (t.includes('guide') || t.includes('bulletin') || t.includes('publication') || h.includes('gov_publications')) return 'gov-pub';
+  if (t.includes('iaao') || h.includes('iaao')) return 'iaao';
+  if (t.includes('uspap') || h.includes('uspap')) return 'uspap';
   return 'default';
 }
 
@@ -79,7 +80,7 @@ function extractText(node: React.ReactNode): string {
 
 function SourceLink({ href, children }: { href: string; children: React.ReactNode }) {
   const text = extractText(children);
-  const tone = classifySource(text);
+  const tone = classifySource(text, href);
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" className={`source-link source-link--${tone}`}>
       {children}

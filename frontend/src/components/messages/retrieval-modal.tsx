@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
@@ -33,70 +33,559 @@ function StaggerSquare({ index, className, style }: { index: number; className: 
   );
 }
 
-interface RetrievalStep {
+// --- Card data model ---
+
+interface PipelineCard {
   id: string;
-  title: string;
-  subtitle: string;
-  status: 'idle' | 'active' | 'complete';
-  events: AgentTraceEvent[];
+  toolName: string;
+  summary: string;
+  callSummary: string;
+  status: 'pending' | 'complete' | 'miss' | 'error';
+  callPayload: Record<string, unknown>;
+  resultPayload: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
 }
 
-function deriveSteps(trace: AgentTraceEvent[]): RetrievalStep[] {
-  const steps: RetrievalStep[] = [
-    { id: 'faq', title: '1. FAQ Search', subtitle: 'Deterministic FAQ knowledge base lookup', status: 'idle', events: [] },
-    { id: 'vector', title: '2. Vector Search', subtitle: 'Semantic similarity over embedded chunks', status: 'idle', events: [] },
-    { id: 'graph', title: '3. Graph Expansion', subtitle: 'Traverse neighbors and authority chains', status: 'idle', events: [] },
-    { id: 'specialized', title: '4. Specialized Retrieval', subtitle: 'Document search, case law, recency filtering', status: 'idle', events: [] },
-    { id: 'synthesis', title: '5. Answer Synthesis', subtitle: 'Assemble evidence and generate response', status: 'idle', events: [] },
-  ];
+type PipelineItem =
+  | { type: 'card'; card: PipelineCard };
 
-  const toolToStep: Record<string, string> = {
-    faq_search: 'faq',
-    vector_search: 'vector',
-    get_neighbors: 'graph',
-    get_authority_chain: 'graph',
-    search_document: 'specialized',
-    find_case_law: 'specialized',
-    fetch_case_opinion: 'specialized',
-    list_framework_docs: 'specialized',
-    get_document: 'specialized',
-    cite_documents: 'synthesis',
-    answer: 'synthesis',
-  };
+const TOOL_TITLES: Record<string, string> = {
+  reasoning: 'Thinking',
+  faq_search: 'FAQ Search',
+  refine_query: 'Query Refinement',
+  vector_search: 'Vector Search',
+  search_document: 'Document Search',
+  list_sections: 'List Sections',
+  get_section: 'Get Section',
+  get_document: 'Get Document',
+  get_neighbors: 'Graph Neighbors',
+  get_authority_chain: 'Authority Chain',
+  list_framework_docs: 'Framework Documents',
+  find_case_law: 'Case Law Search',
+  fetch_case_opinion: 'Fetch Case Opinion',
+  prepare_answer: 'Answer Synthesis',
+  answer: 'Answer Synthesis',
+  cite_documents: 'Cite Documents',
+};
+
+const TOOL_SUBTITLES: Record<string, string> = {
+  reasoning: 'Agent reasoning step',
+  faq_search: 'Deterministic FAQ knowledge base lookup',
+  refine_query: 'Rewriting query for precision',
+  vector_search: 'Semantic similarity over embedded chunks',
+  search_document: 'Full-text search within a document',
+  list_sections: 'Listing available document sections',
+  get_section: 'Fetching a specific section',
+  get_document: 'Retrieving full document content',
+  get_neighbors: 'Traversing graph relationships',
+  get_authority_chain: 'Tracing legal authority hierarchy',
+  list_framework_docs: 'Listing documents in framework',
+  find_case_law: 'Searching for relevant case law',
+  fetch_case_opinion: 'Fetching full court opinion text',
+  prepare_answer: 'Assembling evidence into response',
+  answer: 'Assembling evidence into response',
+  cite_documents: 'Selecting sources for citation',
+};
+
+function deriveItems(trace: AgentTraceEvent[]): PipelineItem[] {
+  const items: PipelineItem[] = [];
+  const pendingCalls = new Map<string, PipelineCard>();
 
   for (const event of trace) {
-    if (event.kind === 'tool_call' || event.kind === 'tool_result') {
-      const toolName = event.payload.toolName as string;
-      const stepId = toolToStep[toolName];
-      if (stepId) {
-        const step = steps.find(s => s.id === stepId);
-        if (step) step.events.push(event);
+    if (event.kind === 'reasoning') {
+      const text = String(event.payload.text ?? '');
+      if (text) {
+        const card: PipelineCard = {
+          id: `thinking-${event.seq}`,
+          toolName: 'reasoning',
+          summary: text,
+          callSummary: '',
+          status: 'complete',
+          callPayload: {},
+          resultPayload: null,
+          metadata: {},
+        };
+        items.push({ type: 'card', card });
+      }
+      continue;
+    }
+
+    if (event.kind === 'tool_call') {
+      const toolName = String(event.payload.toolName ?? '');
+      const summary = String(event.payload.summary ?? '');
+      const card: PipelineCard = {
+        id: `card-${event.seq}`,
+        toolName,
+        summary,
+        callSummary: summary,
+        status: 'pending',
+        callPayload: event.payload,
+        resultPayload: null,
+        metadata: {},
+      };
+      pendingCalls.set(`${toolName}-${event.seq}`, card);
+      items.push({ type: 'card', card });
+      continue;
+    }
+
+    if (event.kind === 'tool_result') {
+      const toolName = String(event.payload.toolName ?? '');
+      const status = String(event.payload.status ?? 'ok');
+      const metadata = (event.payload.metadata as Record<string, unknown>) ?? {};
+
+      let matched = false;
+      for (const [key, card] of pendingCalls) {
+        if (card.toolName === toolName && card.status === 'pending') {
+          card.status = status === 'ok' || status === 'terminal' ? 'complete' : status === 'miss' ? 'miss' : 'error';
+          card.resultPayload = event.payload;
+          card.metadata = metadata;
+          if (event.payload.summary) card.summary = String(event.payload.summary);
+          pendingCalls.delete(key);
+          matched = true;
+          break;
+        }
+      }
+
+      if (!matched) {
+        const card: PipelineCard = {
+          id: `card-result-${event.seq}`,
+          toolName,
+          summary: String(event.payload.summary ?? ''),
+          callSummary: '',
+          status: status === 'ok' || status === 'terminal' ? 'complete' : status === 'miss' ? 'miss' : 'error',
+          callPayload: {},
+          resultPayload: event.payload,
+          metadata,
+        };
+        items.push({ type: 'card', card });
       }
     }
-    if (event.kind === 'reasoning') {
-      steps[4].events.push(event);
+  }
+
+  return items;
+}
+
+// --- Visualization components per tool type ---
+
+const BAR_CHART_HEIGHT = 160;
+
+function FAQCardViz({ card }: { card: PipelineCard }) {
+  const m = card.metadata;
+  const faqCount = typeof m.faqCount === 'number' ? m.faqCount : 0;
+  const topScore = typeof m.topScore === 'number' ? m.topScore : 0;
+  const threshold = typeof m.faqScoreThreshold === 'number' ? m.faqScoreThreshold : 0.70;
+  const faqScores = Array.isArray(m.faqScores) ? (m.faqScores as number[]) : [];
+  const topFaqSnippet = typeof m.topFaqSnippet === 'string' ? m.topFaqSnippet : '';
+
+  if (faqCount === 0 && card.status === 'complete') {
+    return <p className="text-xs text-muted-foreground/60 mt-2">No FAQ matches</p>;
+  }
+  if (card.status === 'pending') return null;
+
+  const scores = faqScores.length > 0 ? faqScores : Array.from({ length: faqCount }, (_, i) => i === 0 ? topScore : 0);
+  const ceilScore = Math.max(...scores, threshold) * 1.2;
+  const thresholdPct = (threshold / ceilScore) * 100;
+
+  return (
+    <FadeIn>
+      <div className="mt-3">
+        {topFaqSnippet && (
+          <p className="text-xs text-foreground/70 mb-3 leading-relaxed line-clamp-2">
+            {topFaqSnippet}
+          </p>
+        )}
+        <div className="relative w-full overflow-visible" style={{ height: BAR_CHART_HEIGHT }}>
+          <div className="flex items-end gap-1.5 h-full w-full">
+            {scores.map((score, i) => {
+              const aboveThreshold = score >= threshold;
+              const heightPct = (score / ceilScore) * 100;
+              return (
+                <motion.div
+                  key={i}
+                  className="relative flex-1 flex flex-col items-center justify-end h-full"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.2, delay: i * 0.04 }}
+                >
+                  <motion.div
+                    className={`w-full rounded-t-[4px] ${
+                      aboveThreshold ? 'bg-foreground/75' : 'bg-foreground/20'
+                    }`}
+                    initial={{ height: 0 }}
+                    animate={{ height: `${heightPct}%` }}
+                    transition={{ duration: 0.4, delay: i * 0.06, ease: [0.4, 0, 0.2, 1] }}
+                  />
+                  <span className="mt-1.5 text-[10px] text-muted-foreground/60 tabular-nums">
+                    {score.toFixed(2)}
+                  </span>
+                </motion.div>
+              );
+            })}
+          </div>
+          <motion.div
+            className="absolute left-0 right-0 z-10 pointer-events-none"
+            style={{ bottom: `${thresholdPct}%` }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4, delay: 0.3 }}
+          >
+            <div
+              className="w-full"
+              style={{
+                height: '2px',
+                backgroundImage: 'repeating-linear-gradient(to right, rgb(248 113 113 / 0.9), rgb(248 113 113 / 0.9) 6px, transparent 6px, transparent 12px)',
+              }}
+            />
+            <span className="absolute top-1.5 right-0 text-[10px] text-red-400 font-medium tabular-nums">
+              {threshold.toFixed(2)}
+            </span>
+          </motion.div>
+        </div>
+        <p className="text-xs text-muted-foreground/60 mt-3">
+          {scores.filter(s => s >= threshold).length} above threshold · {faqCount} total
+        </p>
+      </div>
+    </FadeIn>
+  );
+}
+
+const DIVERSITY_CAP = 5;
+
+const DOC_TYPE_COLORS: Record<string, { bg: string; label: string }> = {
+  statutes: { bg: 'bg-blue-500', label: 'Statute' },
+  'case-law': { bg: 'bg-purple-500', label: 'Case Law' },
+  'admin-rules': { bg: 'bg-teal-500', label: 'Admin Rule' },
+  wpam: { bg: 'bg-green-500', label: 'WPAM' },
+  'faq-pages': { bg: 'bg-yellow-500', label: 'FAQ' },
+  faq: { bg: 'bg-yellow-500', label: 'FAQ' },
+  'gov-publications': { bg: 'bg-orange-500', label: 'Gov. Pub.' },
+  'gov-pubs': { bg: 'bg-orange-500', label: 'Gov. Pub.' },
+  iaao: { bg: 'bg-rose-500', label: 'IAAO' },
+  uspap: { bg: 'bg-rose-400', label: 'USPAP' },
+  constitution: { bg: 'bg-indigo-500', label: 'Constitution' },
+};
+
+function docTypeFromId(docId: string): { bg: string; label: string } {
+  for (const [prefix, meta] of Object.entries(DOC_TYPE_COLORS)) {
+    if (docId.startsWith(prefix)) return meta;
+  }
+  return { bg: 'bg-foreground/50', label: 'Other' };
+}
+
+function VectorCardViz({ card }: { card: PipelineCard }) {
+  const m = card.metadata;
+  const preDedupCount = typeof m.preDedupCount === 'number' ? m.preDedupCount : 0;
+  const chunkCount = typeof m.chunkCount === 'number' ? m.chunkCount : 0;
+  const caseLawCount = typeof m.caseLawCount === 'number' ? m.caseLawCount : 0;
+  const autoEnrichedCount = typeof m.autoEnrichedCount === 'number' ? m.autoEnrichedCount : 0;
+  const targetWpamYear = typeof m.targetWpamYear === 'number' ? m.targetWpamYear : null;
+  const docChunks = (m.docChunks as Record<string, number>) ?? {};
+
+  if (chunkCount === 0 && preDedupCount === 0 && card.status !== 'pending') {
+    return <p className="text-xs text-muted-foreground/60 mt-2">No results</p>;
+  }
+  if (card.status === 'pending') return null;
+
+  const hasDocChunks = Object.keys(docChunks).length > 0;
+
+  // Build flat grid of squares colored by doc type
+  const squares: { bg: string; label: string }[] = [];
+  if (hasDocChunks) {
+    const entries = Object.entries(docChunks).sort(([, a], [, b]) => b - a);
+    for (const [docId, count] of entries) {
+      const meta = docTypeFromId(docId);
+      for (let i = 0; i < count; i++) squares.push(meta);
     }
   }
 
+  // Derive legend from what's actually shown
+  const legendEntries: { bg: string; label: string }[] = [];
+  const seenLabels = new Set<string>();
+  for (const sq of squares) {
+    if (!seenLabels.has(sq.label)) {
+      seenLabels.add(sq.label);
+      legendEntries.push(sq);
+    }
+  }
+
+  return (
+    <div className="mt-2">
+      {hasDocChunks ? (
+        <FadeIn>
+          <div className="mt-3">
+            <p className="text-xs text-muted-foreground/70 mb-3">
+              {preDedupCount > 0 ? `${preDedupCount} candidates → ` : ''}{chunkCount} kept (cap {DIVERSITY_CAP}/doc)
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {squares.map((sq, i) => (
+                <StaggerSquare
+                  key={i}
+                  index={i}
+                  className={`h-3.5 w-3.5 rounded-[3px] ${sq.bg}`}
+                />
+              ))}
+            </div>
+            {legendEntries.length > 1 && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3">
+                {legendEntries.map(entry => (
+                  <span key={entry.label} className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+                    <span className={`h-2.5 w-2.5 rounded-[2px] ${entry.bg}`} />
+                    {entry.label}
+                  </span>
+                ))}
+              </div>
+            )}
+            {(() => {
+              const topDocs = Object.entries(docChunks).sort(([, a], [, b]) => b - a).slice(0, 3);
+              if (topDocs.length === 0) return null;
+              return (
+                <div className="mt-3 space-y-1">
+                  {topDocs.map(([docId, count]) => {
+                    const meta = docTypeFromId(docId);
+                    const shortId = docId.length > 36 ? docId.slice(0, 36) + '…' : docId;
+                    return (
+                      <div key={docId} className="flex items-center gap-2">
+                        <span className={`h-2.5 w-2.5 rounded-[2px] shrink-0 ${meta.bg}`} />
+                        <span className="text-xs text-muted-foreground truncate">{shortId}</span>
+                        <span className="text-xs text-muted-foreground/50 tabular-nums shrink-0">{count}</span>
+                      </div>
+                    );
+                  })}
+                  {Object.keys(docChunks).length > 3 && (
+                    <p className="text-xs text-muted-foreground/50 italic pl-[18px]">
+                      +{Object.keys(docChunks).length - 3} more sources
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </FadeIn>
+      ) : preDedupCount > 0 ? (
+        <ChunkSquares total={preDedupCount} kept={chunkCount} label="Dedup + diversity filtering" />
+      ) : null}
+      {targetWpamYear && (
+        <FadeIn delay={0.15}>
+          <p className="text-xs text-muted-foreground/60 mt-2">
+            Filtered to WPAM {targetWpamYear} edition
+          </p>
+        </FadeIn>
+      )}
+      {autoEnrichedCount > 0 && (
+        <FadeIn delay={0.25}>
+          <p className="text-xs text-muted-foreground/60 mt-2">
+            + {autoEnrichedCount} graph neighbor{autoEnrichedCount !== 1 ? 's' : ''} auto-enriched
+          </p>
+        </FadeIn>
+      )}
+      {caseLawCount > 0 && (
+        <FadeIn delay={0.3}>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            + {caseLawCount} case law citation{caseLawCount !== 1 ? 's' : ''} discovered
+          </p>
+        </FadeIn>
+      )}
+    </div>
+  );
+}
+
+function GraphNeighborsViz({ card }: { card: PipelineCard }) {
+  const m = card.metadata;
+  const neighborCount = typeof m.neighborCount === 'number' ? m.neighborCount : 0;
+  const neighborEdges = Array.isArray(m.neighborEdges)
+    ? (m.neighborEdges as { title: string; relationship: string }[])
+    : [];
+  const neighborTitles = Array.isArray(m.neighborTitles) ? (m.neighborTitles as string[]) : [];
+
+  if (neighborCount === 0 && card.status !== 'pending') {
+    return <p className="text-xs text-muted-foreground/60 mt-2">No neighbors found</p>;
+  }
+  if (card.status === 'pending') return null;
+
+  const hasEdges = neighborEdges.length > 0;
+  const items = hasEdges
+    ? neighborEdges.map(e => ({ title: e.title, edge: e.relationship }))
+    : neighborTitles.map(t => ({ title: t, edge: '' }));
+
+  if (items.length === 0 && neighborCount > 0) {
+    return (
+      <FadeIn>
+        <div className="mt-2">
+          <div className="flex flex-wrap gap-1">
+            {Array.from({ length: Math.min(neighborCount, 30) }).map((_, i) => (
+              <StaggerSquare key={i} index={i} className="h-3 w-3 rounded-[3px] bg-foreground/60" />
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground/60 mt-1.5">
+            {neighborCount} neighbor{neighborCount !== 1 ? 's' : ''}
+          </p>
+        </div>
+      </FadeIn>
+    );
+  }
+
+  return (
+    <motion.div
+      className="flex-1 flex flex-col mt-4 -mx-6 -mb-6"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+    >
+      {neighborCount > items.length && (
+        <p className="text-[10px] text-muted-foreground/50 px-6 mb-2">
+          {items.length} of {neighborCount}
+        </p>
+      )}
+      <div className="grid grid-cols-2 border-t border-border/60 flex-1">
+        {items.map((item, i) => (
+          <motion.div
+            key={i}
+            className="flex flex-col items-center justify-center px-2 py-3 border-border/60 [&:not(:nth-child(-n+2))]:border-t [&:nth-child(odd)]:border-r"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.15, delay: i * 0.025 }}
+          >
+            <span className="text-xs text-muted-foreground text-center leading-tight line-clamp-2">
+              {item.title}
+            </span>
+            {item.edge && (
+              <span className="text-[11px] text-muted-foreground/50 uppercase tracking-wide mt-1">
+                {item.edge}
+              </span>
+            )}
+          </motion.div>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
+function AuthorityChainViz({ card }: { card: PipelineCard }) {
+  const m = card.metadata;
+  const chainLength = typeof m.chainLength === 'number' ? m.chainLength : 0;
+
+  if (chainLength === 0 && card.status !== 'pending') {
+    return <p className="text-xs text-muted-foreground/60 mt-2">No chain found</p>;
+  }
+  if (card.status === 'pending') return null;
+
+  return (
+    <FadeIn>
+      <div className="mt-3 flex items-center gap-1">
+        {Array.from({ length: chainLength }).map((_, i) => (
+          <motion.div
+            key={i}
+            className="flex items-center gap-1"
+            initial={{ opacity: 0, x: -4 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.2, delay: i * 0.08 }}
+          >
+            <div className="h-3 w-3 rounded-[3px] bg-foreground/60"
+              style={{ opacity: 1 - i * 0.15 }}
+            />
+            {i < chainLength - 1 && (
+              <span className="text-xs text-muted-foreground/40">→</span>
+            )}
+          </motion.div>
+        ))}
+        <span className="text-xs text-muted-foreground/60 ml-1">
+          {chainLength} step{chainLength !== 1 ? 's' : ''}
+        </span>
+      </div>
+    </FadeIn>
+  );
+}
+
+function SynthesisViz({ trace }: { trace: AgentTraceEvent[] }) {
   const loopComplete = trace.find(e => e.kind === 'loop_complete');
+  const discoveryCounts = (loopComplete?.payload?.discoveryCounts as Record<string, number>) ?? {};
+  const discoveryTitles = (loopComplete?.payload?.discoveryTitles as Record<string, string>) ?? {};
+  const citedDocCount = typeof loopComplete?.payload?.citedDocCount === 'number'
+    ? loopComplete.payload.citedDocCount : 0;
 
-  for (const step of steps) {
-    if (step.events.length > 0) {
-      const hasResult = step.events.some(e => e.kind === 'tool_result');
-      const hasPending = step.events.some(
-        e => e.kind === 'tool_call' && e.payload.status === 'pending'
-      );
-      step.status = hasResult || loopComplete ? 'complete' : hasPending ? 'active' : 'complete';
-    }
+  if (!loopComplete) {
+    return (
+      <motion.div
+        className="mt-3 flex items-center gap-2 text-xs text-muted-foreground/70"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.3 }}
+      >
+        <span className="h-2 w-2 rounded-full bg-foreground/30 animate-pulse" />
+        <span>Generating answer...</span>
+      </motion.div>
+    );
   }
 
-  if (loopComplete) {
-    steps[4].status = 'complete';
-  } else if (trace.some(e => e.kind === 'reasoning')) {
-    steps[4].status = 'active';
-  }
+  const titleEntries = Object.entries(discoveryTitles).slice(0, 10);
 
-  return steps;
+  return (
+    <FadeIn>
+      <div className="mt-2">
+        {Object.keys(discoveryCounts).length > 0 && (
+          <DiscoverySquares counts={discoveryCounts} />
+        )}
+        {titleEntries.length > 0 && (
+          <div className="mt-3">
+            <p className="text-xs text-muted-foreground/70 mb-1.5">Cited sources</p>
+            <div className="space-y-1">
+              {titleEntries.map(([docId, title], i) => (
+                <motion.div
+                  key={docId}
+                  className="flex items-center gap-2"
+                  initial={{ opacity: 0, x: -4 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.2, delay: i * 0.03 }}
+                >
+                  <div className="h-3 w-3 rounded-[3px] bg-foreground/70 shrink-0" />
+                  <span className="text-xs text-muted-foreground truncate">{title}</span>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        )}
+        {citedDocCount > 0 && (
+          <motion.p
+            className="text-xs text-muted-foreground mt-2 font-medium"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3, delay: 0.2 }}
+          >
+            {citedDocCount} source{citedDocCount !== 1 ? 's' : ''} cited in answer
+          </motion.p>
+        )}
+      </div>
+    </FadeIn>
+  );
+}
+
+function GenericToolViz({ card }: { card: PipelineCard }) {
+  if (card.status === 'pending') return null;
+  const m = card.metadata;
+  const parts: string[] = [];
+
+  const chunkCount = typeof m.chunkCount === 'number' ? m.chunkCount : 0;
+  const docCount = typeof m.docCount === 'number' ? m.docCount : 0;
+  const documentCount = typeof m.documentCount === 'number' ? m.documentCount : 0;
+  const latencyMs = typeof m.latencyMs === 'number' ? m.latencyMs : (typeof m.elapsedMs === 'number' ? (m.elapsedMs as number) : 0);
+  const opinionChars = typeof m.opinionChars === 'number' ? m.opinionChars : 0;
+
+  if (chunkCount > 0) parts.push(`${chunkCount} chunk${chunkCount !== 1 ? 's' : ''}`);
+  if (docCount > 0) parts.push(`${docCount} source${docCount !== 1 ? 's' : ''}`);
+  if (documentCount > 0) parts.push(`${documentCount} document${documentCount !== 1 ? 's' : ''}`);
+  if (opinionChars > 0) parts.push(`${opinionChars.toLocaleString()} chars`);
+  if (latencyMs > 0) parts.push(`${latencyMs}ms`);
+
+  if (parts.length === 0 && card.status === 'miss') {
+    return <p className="text-xs text-muted-foreground/50 mt-2 italic">Not found</p>;
+  }
+  if (parts.length === 0) return null;
+
+  return (
+    <FadeIn>
+      <p className="text-xs text-muted-foreground/60 mt-2">{parts.join(' · ')}</p>
+    </FadeIn>
+  );
 }
 
 // --- Square visualization helpers ---
@@ -129,54 +618,66 @@ function ChunkSquares({ total, kept, label }: { total: number; kept: number; lab
   );
 }
 
-function AuthoritySquares({ breakdown }: { breakdown: Record<string, number> }) {
-  const AUTHORITY_LABELS: Record<string, string> = {
-    '1': 'Constitution',
-    '2': 'Statutes',
-    '3': 'Case Law',
-    '4': 'Admin Rules',
-    '5': 'WPAM',
-    '6': 'FAQs',
-    '7': 'Gov Pubs',
-    '8': 'IAAO',
-    '9': 'USPAP',
-  };
-  const levels = Object.entries(breakdown)
-    .sort(([a], [b]) => Number(a) - Number(b))
-    .filter(([, count]) => count > 0);
 
-  if (levels.length === 0) return null;
-
-  let globalIdx = 0;
+function ScrollableItemList({ items, totalCount }: { items: string[]; totalCount: number }) {
+  const overflow = totalCount > items.length;
   return (
-    <div className="mt-3 space-y-1.5">
-      {levels.map(([level, count], rowIdx) => (
-        <motion.div
-          key={level}
-          className="flex items-center gap-2"
-          initial={{ opacity: 0, x: -4 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.2, delay: rowIdx * 0.04 }}
-        >
-          <span className="text-xs text-muted-foreground/70 w-16 shrink-0 tabular-nums">
-            {AUTHORITY_LABELS[level] ?? `L${level}`}
-          </span>
-          <div className="flex gap-1">
-            {Array.from({ length: Math.min(count, 20) }).map((_, i) => {
-              const idx = globalIdx++;
-              return (
-                <StaggerSquare
-                  key={i}
-                  index={idx}
-                  className="h-3 w-3 rounded-[3px] bg-foreground/70"
-                  style={{ opacity: 1 - (Number(level) - 1) * 0.08 }}
-                />
-              );
-            })}
-          </div>
-          <span className="text-xs text-muted-foreground/50">{count}</span>
-        </motion.div>
-      ))}
+    <div className="relative my-5 h-[150px] rounded-md border border-border/60 bg-muted/20">
+      <div className="h-full overflow-y-auto">
+        <div className="divide-y divide-border/40">
+          {items.map((item, i) => (
+            <motion.div
+              key={i}
+              className="px-3 py-1.5 text-xs text-muted-foreground truncate"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.15, delay: i * 0.02 }}
+            >
+              {item}
+            </motion.div>
+          ))}
+          {overflow && (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground/50 italic">
+              +{totalCount - items.length} more
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 rounded-b-md bg-gradient-to-t from-muted/80 to-transparent" />
+    </div>
+  );
+}
+
+function ScrollableEdgeList({ edges, totalCount }: { edges: { title: string; relationship: string }[]; totalCount: number }) {
+  const overflow = totalCount > edges.length;
+  return (
+    <div className="relative my-5 h-[150px] rounded-md border border-border/60 bg-muted/20">
+      <div className="h-full overflow-y-auto">
+        <div className="divide-y divide-border/40">
+          {edges.map((edge, i) => (
+            <motion.div
+              key={i}
+              className="flex items-center gap-2 px-3 py-1.5"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.15, delay: i * 0.02 }}
+            >
+              <span className="text-xs text-muted-foreground truncate flex-1">{edge.title}</span>
+              {edge.relationship && (
+                <span className="text-[10px] text-muted-foreground/50 font-medium uppercase tracking-wide shrink-0">
+                  {edge.relationship}
+                </span>
+              )}
+            </motion.div>
+          ))}
+          {overflow && (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground/50 italic">
+              +{totalCount - edges.length} more
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 rounded-b-md bg-gradient-to-t from-muted/80 to-transparent" />
     </div>
   );
 }
@@ -190,7 +691,7 @@ function RelationshipSquares({ counts }: { counts: Record<string, number> }) {
 
   let globalIdx = 0;
   return (
-    <div className="mt-3 space-y-1.5">
+    <div className="mt-2 space-y-1.5">
       {entries.map(([rel, count], rowIdx) => (
         <motion.div
           key={rel}
@@ -232,7 +733,7 @@ function DiscoverySquares({ counts }: { counts: Record<string, number> }) {
 
   let globalIdx = 0;
   return (
-    <div className="mt-3 space-y-1.5">
+    <div className="space-y-1.5">
       {entries.map(([tag, count], rowIdx) => (
         <motion.div
           key={tag}
@@ -263,483 +764,188 @@ function DiscoverySquares({ counts }: { counts: Record<string, number> }) {
   );
 }
 
-// --- Step-specific visualizations ---
 
-function getMetadataFromEvents(events: AgentTraceEvent[], toolName?: string) {
-  const results = events.filter(e => e.kind === 'tool_result' && (!toolName || e.payload.toolName === toolName));
-  const merged: Record<string, unknown> = {};
-  for (const e of results) {
-    const m = e.payload.metadata as Record<string, unknown> | undefined;
-    if (m) Object.assign(merged, m);
+// --- Card visualization router ---
+
+function CardVisualization({ card, trace }: { card: PipelineCard; trace: AgentTraceEvent[] }) {
+  switch (card.toolName) {
+    case 'faq_search':
+      return <FAQCardViz card={card} />;
+    case 'vector_search':
+      return <VectorCardViz card={card} />;
+    case 'get_neighbors':
+      return <GraphNeighborsViz card={card} />;
+    case 'get_authority_chain':
+      return <AuthorityChainViz card={card} />;
+    case 'answer':
+    case 'prepare_answer':
+    case 'cite_documents':
+      return <SynthesisViz trace={trace} />;
+    default:
+      return <GenericToolViz card={card} />;
   }
-  return merged;
 }
 
-const BAR_CHART_HEIGHT = 180;
+// --- Card panel ---
 
-function FAQVisualization({ step }: { step: RetrievalStep }) {
-  const m = getMetadataFromEvents(step.events, 'faq_search');
-  const faqCount = typeof m.faqCount === 'number' ? m.faqCount : 0;
-  const topScore = typeof m.topScore === 'number' ? m.topScore : 0;
-  const threshold = typeof m.faqScoreThreshold === 'number' ? m.faqScoreThreshold : 0.70;
-  const faqScores = Array.isArray(m.faqScores) ? (m.faqScores as number[]) : [];
+function CardInfoContent({ card }: { card: PipelineCard }) {
+  const m = card.metadata;
+  const latencyMs = typeof m.latencyMs === 'number' ? m.latencyMs : 0;
 
-  if (faqCount === 0) return <IdleSquares />;
-
-  const scores = faqScores.length > 0 ? faqScores : Array.from({ length: faqCount }, (_, i) => i === 0 ? topScore : 0);
-  const ceilScore = Math.max(...scores, threshold) * 1.2;
-  const thresholdPct = (threshold / ceilScore) * 100;
-
-  return (
-    <FadeIn>
-      <div className="mt-4">
-        <div className="relative w-full overflow-visible" style={{ height: BAR_CHART_HEIGHT }}>
-          {/* Bars */}
-          <div className="flex items-end gap-1.5 h-full w-full">
-            {scores.map((score, i) => {
-              const aboveThreshold = score >= threshold;
-              const heightPct = (score / ceilScore) * 100;
-              return (
-                <motion.div
-                  key={i}
-                  className="relative flex-1 flex flex-col items-center justify-end h-full"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.2, delay: i * 0.04 }}
-                >
-                  <motion.div
-                    className={`w-full rounded-t-[4px] ${
-                      aboveThreshold ? 'bg-foreground/75' : 'bg-foreground/20'
-                    }`}
-                    initial={{ height: 0 }}
-                    animate={{ height: `${heightPct}%` }}
-                    transition={{ duration: 0.4, delay: i * 0.06, ease: [0.4, 0, 0.2, 1] }}
-                  />
-                  <span className="mt-1.5 text-[10px] text-muted-foreground/60 tabular-nums">
-                    {score.toFixed(2)}
-                  </span>
-                </motion.div>
-              );
-            })}
-          </div>
-
-          {/* Threshold line — rendered after bars so it sits on top */}
-          <motion.div
-            className="absolute left-0 right-0 z-10 pointer-events-none"
-            style={{ bottom: `${thresholdPct}%` }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, delay: 0.3 }}
-          >
-            <div
-              className="w-full"
-              style={{
-                height: '2px',
-                backgroundImage: 'repeating-linear-gradient(to right, rgb(248 113 113 / 0.9), rgb(248 113 113 / 0.9) 6px, transparent 6px, transparent 12px)',
-              }}
-            />
-            <span className="absolute top-1.5 right-0 text-[10px] text-red-400 font-medium tabular-nums">
-              {threshold.toFixed(2)}
-            </span>
-          </motion.div>
-        </div>
-        <p className="text-xs text-muted-foreground/60 mt-3">
-          {scores.filter(s => s >= threshold).length} above threshold · {faqCount} total
-        </p>
-      </div>
-    </FadeIn>
-  );
-}
-
-function ScoreBuckets({ buckets }: { buckets: Record<string, number> }) {
-  const BUCKET_ORDER = ['0.9+', '0.8-0.9', '0.7-0.8', '<0.7'];
-  const BUCKET_OPACITY: Record<string, string> = {
-    '0.9+': 'bg-foreground/90',
-    '0.8-0.9': 'bg-foreground/65',
-    '0.7-0.8': 'bg-foreground/40',
-    '<0.7': 'bg-foreground/20',
-  };
-  const entries = BUCKET_ORDER.filter(k => buckets[k] && buckets[k] > 0);
-  if (entries.length === 0) return null;
-
-  let globalIdx = 0;
-  return (
-    <div className="space-y-1.5">
-          {entries.map((bucket, rowIdx) => (
-            <motion.div
-              key={bucket}
-              className="flex items-center gap-2"
-              initial={{ opacity: 0, x: -4 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.2, delay: rowIdx * 0.04 }}
-            >
-              <span className="text-xs text-muted-foreground/70 w-14 shrink-0 tabular-nums">{bucket}</span>
-              <div className="flex gap-1">
-                {Array.from({ length: Math.min(buckets[bucket], 20) }).map((_, i) => {
-                  const idx = globalIdx++;
-                  return (
-                    <StaggerSquare key={i} index={idx} className={`h-3 w-3 rounded-[3px] ${BUCKET_OPACITY[bucket]}`} />
-                  );
-                })}
-              </div>
-              <span className="text-xs text-muted-foreground/50">{buckets[bucket]}</span>
-            </motion.div>
-          ))}
-    </div>
-  );
-}
-
-type VectorBreakdownView = 'scores' | 'authority';
-
-function VectorBreakdownToggle({ scoreBuckets, authorityBreakdown }: { scoreBuckets: Record<string, number>; authorityBreakdown: Record<string, number> }) {
-  const [view, setView] = useState<VectorBreakdownView>('scores');
-  const hasScores = Object.keys(scoreBuckets).length > 0;
-  const hasAuthority = Object.keys(authorityBreakdown).length > 0;
-
-  if (!hasScores && !hasAuthority) return null;
-
-  return (
-    <FadeIn delay={0.1}>
-      <div className="mt-3">
-        <select
-          value={view}
-          onChange={e => setView(e.target.value as VectorBreakdownView)}
-          className="mb-3 text-xs bg-muted/40 border border-border/80 rounded-lg px-3 py-2.5 text-foreground/80 font-medium cursor-pointer shadow-sm focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors hover:bg-muted/60"
-        >
-          {hasScores && <option value="scores">Score distribution</option>}
-          {hasAuthority && <option value="authority">Authority level</option>}
-        </select>
-
-        <div className="pt-1">
-          {view === 'scores' && hasScores && <ScoreBuckets buckets={scoreBuckets} />}
-          {view === 'authority' && hasAuthority && <AuthoritySquares breakdown={authorityBreakdown} />}
-        </div>
-      </div>
-    </FadeIn>
-  );
-}
-
-const DIVERSITY_CAP = 5;
-
-function DocChunkGroups({ docChunks, preDedupCount, chunkCount }: { docChunks: Record<string, number>; preDedupCount: number; chunkCount: number }) {
-  const entries = Object.entries(docChunks).sort(([, a], [, b]) => b - a);
-  if (entries.length === 0) return null;
-
-  return (
-    <FadeIn>
-      <div className="mt-3">
-        <p className="text-xs text-muted-foreground/70 mb-3">
-          {preDedupCount} candidates → {chunkCount} kept (cap {DIVERSITY_CAP}/doc)
-        </p>
-        <div className="space-y-4">
-          {entries.map(([docId, count], groupIdx) => {
-            const atCap = count >= DIVERSITY_CAP;
-            const shortId = docId.length > 32 ? docId.slice(0, 32) + '…' : docId;
-            return (
-              <motion.div
-                key={docId}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.2, delay: groupIdx * 0.05 }}
-              >
-                <p className={`text-[11px] mb-2 truncate ${atCap ? 'text-foreground/70 font-medium' : 'text-muted-foreground/60'}`}>
-                  {shortId}
-                  {atCap && <span className="text-muted-foreground/50 font-normal"> (capped)</span>}
-                </p>
-                <div className="flex gap-1">
-                  {Array.from({ length: count }).map((_, i) => (
-                    <StaggerSquare
-                      key={i}
-                      index={i}
-                      className={`h-3 w-3 rounded-[3px] ${atCap ? 'bg-foreground/70' : 'bg-foreground/45'}`}
-                    />
-                  ))}
-                </div>
-              </motion.div>
-            );
-          })}
-        </div>
-      </div>
-    </FadeIn>
-  );
-}
-
-function VectorVisualization({ step }: { step: RetrievalStep }) {
-  const m = getMetadataFromEvents(step.events, 'vector_search');
-  const preDedupCount = typeof m.preDedupCount === 'number' ? m.preDedupCount : 0;
-  const chunkCount = typeof m.chunkCount === 'number' ? m.chunkCount : 0;
-  const authorityBreakdown = (m.authorityBreakdown as Record<string, number>) ?? {};
-  const caseLawCount = typeof m.caseLawCount === 'number' ? m.caseLawCount : 0;
-  const autoEnrichedCount = typeof m.autoEnrichedCount === 'number' ? m.autoEnrichedCount : 0;
-  const scoreBuckets = (m.scoreBuckets as Record<string, number>) ?? {};
-  const targetWpamYear = typeof m.targetWpamYear === 'number' ? m.targetWpamYear : null;
-  const docChunks = (m.docChunks as Record<string, number>) ?? {};
-
-  if (chunkCount === 0 && preDedupCount === 0) return <IdleSquares />;
-
-  const hasDocChunks = Object.keys(docChunks).length > 0;
-
-  return (
-    <div>
-      {hasDocChunks ? (
-        <DocChunkGroups docChunks={docChunks} preDedupCount={preDedupCount} chunkCount={chunkCount} />
-      ) : preDedupCount > 0 ? (
-        <ChunkSquares total={preDedupCount} kept={chunkCount} label="Dedup + diversity filtering" />
-      ) : null}
-      {targetWpamYear && (
-        <FadeIn delay={0.15}>
-          <p className="text-xs text-muted-foreground/60 mt-2">
-            Filtered to WPAM {targetWpamYear} edition
-          </p>
-        </FadeIn>
-      )}
-      <VectorBreakdownToggle scoreBuckets={scoreBuckets} authorityBreakdown={authorityBreakdown} />
-      {autoEnrichedCount > 0 && (
-        <FadeIn delay={0.25}>
-          <p className="text-xs text-muted-foreground/60 mt-2">
-            + {autoEnrichedCount} graph neighbor{autoEnrichedCount !== 1 ? 's' : ''} auto-enriched
-          </p>
-        </FadeIn>
-      )}
-      {caseLawCount > 0 && (
-        <FadeIn delay={0.3}>
-          <p className="text-xs text-muted-foreground/60 mt-1">
-            + {caseLawCount} case law citation{caseLawCount !== 1 ? 's' : ''} discovered
-          </p>
-        </FadeIn>
-      )}
-    </div>
-  );
-}
-
-function GraphVisualization({ step }: { step: RetrievalStep }) {
-  const m = getMetadataFromEvents(step.events, 'get_neighbors');
-  const relationshipCounts = (m.relationshipCounts as Record<string, number>) ?? {};
-  const neighborCount = typeof m.neighborCount === 'number' ? m.neighborCount : 0;
-  const chainEvents = step.events.filter(
-    e => e.kind === 'tool_result' && e.payload.toolName === 'get_authority_chain'
-  );
-  const chainLength = chainEvents.length > 0
-    ? (chainEvents[0].payload.metadata as Record<string, unknown>)?.chainLength as number ?? 0
-    : 0;
-
-  if (neighborCount === 0 && chainLength === 0) return <IdleSquares />;
-
-  return (
-    <div>
-      {Object.keys(relationshipCounts).length > 0 && (
+  if (card.toolName === 'refine_query') {
+    const refined = typeof m.refinedQuery === 'string' ? m.refinedQuery : '';
+    if (refined && card.status === 'complete') {
+      return (
         <FadeIn>
-          <RelationshipSquares counts={relationshipCounts} />
+          <p className="mt-2 text-sm text-foreground/90 font-medium leading-snug">
+            &ldquo;{refined}&rdquo;
+          </p>
+          {latencyMs > 0 && (
+            <p className="text-xs text-muted-foreground/50 mt-2">{latencyMs}ms</p>
+          )}
         </FadeIn>
-      )}
-      {Object.keys(relationshipCounts).length === 0 && neighborCount > 0 && (
-        <FadeIn>
-          <div className="mt-3">
-            <div className="flex flex-wrap gap-1">
-              {Array.from({ length: Math.min(neighborCount, 30) }).map((_, i) => (
-                <StaggerSquare key={i} index={i} className="h-3 w-3 rounded-[3px] bg-foreground/60" />
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground/60 mt-1.5">
-              {neighborCount} neighbor{neighborCount !== 1 ? 's' : ''}
-            </p>
-          </div>
-        </FadeIn>
-      )}
-      {chainLength > 0 && (
-        <FadeIn delay={0.1}>
-          <div className="mt-2 flex items-center gap-1">
-            {Array.from({ length: chainLength }).map((_, i) => (
-              <motion.div
-                key={i}
-                className="flex items-center gap-1"
-                initial={{ opacity: 0, x: -4 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.2, delay: i * 0.08 }}
-              >
-                <div className="h-3 w-3 rounded-[3px] bg-foreground/60"
-                  style={{ opacity: 1 - i * 0.15 }}
-                />
-                {i < chainLength - 1 && (
-                  <span className="text-xs text-muted-foreground/40">→</span>
-                )}
-              </motion.div>
-            ))}
-            <span className="text-xs text-muted-foreground/60 ml-1">
-              authority chain
-            </span>
-          </div>
-        </FadeIn>
-      )}
-    </div>
-  );
-}
+      );
+    }
+    return null;
+  }
 
-function SynthesisVisualization({ step, trace }: { step: RetrievalStep; trace: AgentTraceEvent[] }) {
-  const loopComplete = trace.find(e => e.kind === 'loop_complete');
-  const discoveryCounts = (loopComplete?.payload?.discoveryCounts as Record<string, number>) ?? {};
-  const discoveryTitles = (loopComplete?.payload?.discoveryTitles as Record<string, string>) ?? {};
-  const citedDocCount = typeof loopComplete?.payload?.citedDocCount === 'number'
-    ? loopComplete.payload.citedDocCount : 0;
-
-  if (step.status === 'idle') return <IdleSquares />;
-  if (!loopComplete) {
+  if (card.toolName === 'list_sections') {
+    const docTitle = typeof m.docTitle === 'string' ? m.docTitle : '';
+    const headings = Array.isArray(m.sectionHeadings) ? (m.sectionHeadings as string[]) : [];
+    const totalSections = typeof m.sectionCount === 'number' ? (m.sectionCount as number) : headings.length;
+    if (card.status !== 'complete') return null;
     return (
-      <motion.div
-        className="mt-3 flex items-center gap-2 text-xs text-muted-foreground/70"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.3 }}
-      >
-        <span className="h-2 w-2 rounded-full bg-foreground/30 animate-pulse" />
-        <span>Generating answer...</span>
-      </motion.div>
+      <FadeIn>
+        <div className="mt-2">
+          {docTitle && (
+            <p className="text-xs text-muted-foreground/70 mb-2">
+              from <span className="text-foreground/70 font-medium">{docTitle}</span>
+            </p>
+          )}
+          {headings.length > 0 && (
+            <ScrollableItemList items={headings} totalCount={totalSections} />
+          )}
+          {latencyMs > 0 && (
+            <p className="text-xs text-muted-foreground/50 mt-2">{latencyMs}ms</p>
+          )}
+        </div>
+      </FadeIn>
     );
   }
 
-  const titleEntries = Object.entries(discoveryTitles).slice(0, 10);
-
-  return (
-    <FadeIn>
-      <div>
-        {Object.keys(discoveryCounts).length > 0 && (
-          <DiscoverySquares counts={discoveryCounts} />
-        )}
-        {titleEntries.length > 0 && (
-          <div className="mt-3">
-            <p className="text-xs text-muted-foreground/70 mb-1.5">Cited sources</p>
-            <div className="space-y-1">
-              {titleEntries.map(([docId, title], i) => (
-                <motion.div
-                  key={docId}
-                  className="flex items-center gap-2"
-                  initial={{ opacity: 0, x: -4 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.2, delay: i * 0.03 }}
-                >
-                  <div className="h-3 w-3 rounded-[3px] bg-foreground/70 shrink-0" />
-                  <span className="text-xs text-muted-foreground truncate">{title}</span>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        )}
-        {citedDocCount > 0 && (
-          <motion.p
-            className="text-xs text-muted-foreground mt-2 font-medium"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.3, delay: 0.2 }}
-          >
-            {citedDocCount} source{citedDocCount !== 1 ? 's' : ''} cited in answer
-          </motion.p>
-        )}
-      </div>
-    </FadeIn>
-  );
-}
-
-function SpecializedVisualization({ step }: { step: RetrievalStep }) {
-  const results = step.events.filter(e => e.kind === 'tool_result');
-  if (results.length === 0) return <IdleSquares />;
-
-  type CollapsedEntry = { summary: string; status: string; count: number; totalChunks: number; totalMs: number };
-  const collapsed: CollapsedEntry[] = [];
-  for (const e of results) {
-    const status = e.payload.status as string;
-    const summary = String(e.payload.summary ?? (e.payload.toolName as string));
-    const meta = e.payload.metadata as Record<string, unknown> | undefined;
-    const docId = meta?.['docId'] as string | undefined;
-    const chunkCount = typeof meta?.['chunkCount'] === 'number' ? meta['chunkCount'] as number : 0;
-    const elapsedMs = typeof meta?.['elapsedMs'] === 'number' ? meta['elapsedMs'] as number : 0;
-    const prev = collapsed[collapsed.length - 1];
-    if (prev && docId && prev.summary === summary) {
-      prev.count += 1;
-      prev.totalChunks += chunkCount;
-      prev.totalMs += elapsedMs;
-      continue;
-    }
-    collapsed.push({ summary, status, count: 1, totalChunks: chunkCount, totalMs: elapsedMs });
+  if (card.toolName === 'get_section') {
+    const docTitle = typeof m.docTitle === 'string' ? m.docTitle : '';
+    const heading = typeof m.heading === 'string' ? m.heading : '';
+    const chunkCount = typeof m.chunkCount === 'number' ? m.chunkCount : 0;
+    if (card.status !== 'complete' && card.status !== 'miss') return null;
+    return (
+      <FadeIn>
+        <div className="mt-2">
+          {heading && (
+            <p className="text-sm text-foreground/85 font-medium leading-snug">
+              {heading}
+            </p>
+          )}
+          {docTitle && (
+            <p className="text-xs text-muted-foreground/70 mt-1">
+              from <span className="text-foreground/70 font-medium">{docTitle}</span>
+            </p>
+          )}
+          {chunkCount > 0 && (
+            <p className="text-xs text-muted-foreground/60 mt-1">
+              {chunkCount} chunk{chunkCount !== 1 ? 's' : ''} retrieved
+            </p>
+          )}
+          {latencyMs > 0 && (
+            <p className="text-xs text-muted-foreground/50 mt-1">{latencyMs}ms</p>
+          )}
+        </div>
+      </FadeIn>
+    );
   }
 
-  return (
-    <div className="mt-3 space-y-1.5">
-      {collapsed.map((entry, i) => (
-        <motion.div
-          key={i}
-          className="flex items-center gap-2"
-          initial={{ opacity: 0, x: -4 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.2, delay: i * 0.04 }}
-        >
-          <div className={`h-3 w-3 rounded-[3px] shrink-0 ${
-            entry.status === 'ok' || entry.status === 'terminal' ? 'bg-foreground/70'
-              : entry.status === 'miss' ? 'border border-foreground/30'
-                : 'bg-destructive/50'
-          }`} />
-          <span className="text-xs text-muted-foreground truncate">
-            {entry.summary}
-            {entry.count > 1 && (
-              <span className="text-muted-foreground/60"> ×{entry.count} · {entry.totalChunks} chunks</span>
-            )}
-          </span>
-        </motion.div>
-      ))}
-    </div>
-  );
+  if (card.toolName === 'search_document') {
+    const docTitle = typeof m.docTitle === 'string' ? m.docTitle : '';
+    const chunkCount = typeof m.chunkCount === 'number' ? m.chunkCount : 0;
+    if (card.status !== 'complete' && card.status !== 'miss') return null;
+    return (
+      <FadeIn>
+        <div className="mt-2">
+          {card.callSummary && (
+            <p className="text-sm text-foreground/85 font-medium leading-snug mb-1">
+              {card.callSummary}
+            </p>
+          )}
+          {!card.callSummary && docTitle && (
+            <p className="text-xs text-muted-foreground/70">
+              in <span className="text-foreground/70 font-medium">{docTitle}</span>
+            </p>
+          )}
+          {chunkCount > 0 ? (
+            <p className="text-xs text-muted-foreground/60 mt-1">
+              {chunkCount} chunk{chunkCount !== 1 ? 's' : ''} matched
+            </p>
+          ) : card.status === 'miss' ? (
+            <p className="text-xs text-muted-foreground/50 italic mt-1">No matches found</p>
+          ) : null}
+          {latencyMs > 0 && (
+            <p className="text-xs text-muted-foreground/50 mt-1">{latencyMs}ms</p>
+          )}
+        </div>
+      </FadeIn>
+    );
+  }
+
+  return null;
 }
 
-function IdleSquares() {
-  return (
-    <div className="mt-3 flex gap-1">
-      {Array.from({ length: 8 }).map((_, i) => (
-        <motion.div
-          key={i}
-          className="h-3 w-3 rounded-[3px] bg-muted-foreground/10"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.2, delay: i * 0.02 }}
-        />
-      ))}
-    </div>
-  );
-}
+function CardPanel({ card, trace, index }: { card: PipelineCard; trace: AgentTraceEvent[]; index: number }) {
+  const title = TOOL_TITLES[card.toolName] ?? card.toolName;
+  const subtitle = TOOL_SUBTITLES[card.toolName] ?? '';
+  const isThinking = card.toolName === 'reasoning';
+  const hasInfoContent = ['refine_query', 'list_sections', 'get_section', 'search_document'].includes(card.toolName);
 
-// --- Main panel ---
-
-function StepPanel({ step, trace }: { step: RetrievalStep; trace: AgentTraceEvent[] }) {
   return (
-    <div
-      className={`retrieval-step-panel h-full rounded-lg border p-6 transition-all duration-300 ${
-        step.status === 'active'
-          ? 'border-foreground/30 bg-card shadow-sm'
-          : step.status === 'complete'
-            ? 'border-border bg-card'
-            : 'border-border/50 bg-muted/30'
-      }`}
-    >
+    <div className="h-full p-6 flex flex-col">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className={`text-base font-semibold tracking-tight ${
-            step.status === 'idle' ? 'text-muted-foreground/60' : 'text-foreground'
+            card.status === 'miss' ? 'text-muted-foreground/60' : 'text-foreground'
           }`}>
-            {step.title}
+            {title}
           </h3>
-          <p className="text-sm text-muted-foreground mt-0.5">{step.subtitle}</p>
+          {!isThinking && subtitle && (
+            <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
+          )}
+          {!isThinking && !hasInfoContent && card.callSummary && (
+            <p className="text-xs text-foreground/70 font-medium mt-1 truncate">
+              {card.callSummary}
+            </p>
+          )}
+          {!isThinking && !hasInfoContent && card.summary && card.summary !== card.callSummary && (
+            <p className="text-xs text-muted-foreground/70 mt-1 truncate">
+              {card.summary}
+            </p>
+          )}
         </div>
-        <StepIndicator status={step.status} />
+        <CardIndicator status={card.status} index={index} />
       </div>
 
-      {step.id === 'faq' && step.status !== 'idle' && <FAQVisualization step={step} />}
-      {step.id === 'vector' && step.status !== 'idle' && <VectorVisualization step={step} />}
-      {step.id === 'graph' && step.status !== 'idle' && <GraphVisualization step={step} />}
-      {step.id === 'specialized' && step.status !== 'idle' && <SpecializedVisualization step={step} />}
-      {step.id === 'synthesis' && <SynthesisVisualization step={step} trace={trace} />}
-      {step.status === 'idle' && step.id !== 'synthesis' && <IdleSquares />}
+      {isThinking ? (
+        <p className="mt-3 text-sm text-muted-foreground/80 leading-relaxed">
+          {card.summary}
+        </p>
+      ) : hasInfoContent ? (
+        <CardInfoContent card={card} />
+      ) : (
+        <div className="flex-1 flex flex-col">
+          <CardVisualization card={card} trace={trace} />
+        </div>
+      )}
 
-      {step.status === 'active' && (
+      {card.status === 'pending' && (
         <motion.div
-          className="mt-2 flex items-center gap-2 text-xs text-muted-foreground/70"
+          className="mt-3 flex items-center gap-2 text-xs text-muted-foreground/70"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
@@ -752,35 +958,179 @@ function StepPanel({ step, trace }: { step: RetrievalStep; trace: AgentTraceEven
   );
 }
 
-function StepIndicator({ status }: { status: 'idle' | 'active' | 'complete' }) {
-  if (status === 'idle') {
-    return <div className="h-5 w-5 rounded-full border border-border/50 shrink-0" />;
-  }
-  if (status === 'active') {
+function ArrowConnector() {
+  return (
+    <div className="absolute top-1/2 -right-[13px] -translate-y-1/2 z-10">
+      <div className="h-[22px] w-[22px] rounded-[4px] border border-border bg-background flex items-center justify-center">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M3 2L7 5L3 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground/60" />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function DownArrowConnector() {
+  return (
+    <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 z-10">
+      <div className="h-[22px] w-[22px] rounded-[4px] border border-border bg-background flex items-center justify-center">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M2 3L5 7L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground/60" />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function LeftArrowConnector() {
+  return (
+    <div className="absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 z-10">
+      <div className="h-[22px] w-[22px] rounded-[4px] border border-border bg-background flex items-center justify-center">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M7 2L3 5L7 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground/60" />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function CardIndicator({ status, index }: { status: PipelineCard['status']; index: number }) {
+  const num = index + 1;
+  if (status === 'pending') {
     return (
       <motion.div
-        className="h-5 w-5 rounded-full border-2 border-foreground/50 flex items-center justify-center shrink-0"
+        className="h-6 w-6 rounded-full border-2 border-foreground/50 flex items-center justify-center shrink-0"
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.2 }}
       >
-        <div className="h-2 w-2 rounded-full bg-foreground/50 animate-pulse" />
+        <span className="text-[10px] font-semibold text-foreground/50 tabular-nums animate-pulse">{num}</span>
+      </motion.div>
+    );
+  }
+  if (status === 'miss') {
+    return (
+      <motion.div
+        className="h-6 w-6 rounded-full border border-muted-foreground/40 flex items-center justify-center shrink-0"
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ duration: 0.2 }}
+      >
+        <span className="text-[10px] font-semibold text-muted-foreground/50 tabular-nums">{num}</span>
+      </motion.div>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <motion.div
+        className="h-6 w-6 rounded-full bg-destructive/20 flex items-center justify-center shrink-0"
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ duration: 0.2 }}
+      >
+        <span className="text-[10px] font-semibold text-destructive tabular-nums">{num}</span>
       </motion.div>
     );
   }
   return (
     <motion.div
-      className="h-5 w-5 rounded-full bg-foreground/10 flex items-center justify-center shrink-0"
+      className="h-6 w-6 rounded-full bg-foreground/10 flex items-center justify-center shrink-0"
       initial={{ scale: 0.8, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ duration: 0.2 }}
     >
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-        <path d="M2 5L4.5 7.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-foreground/70" />
-      </svg>
+      <span className="text-[10px] font-semibold text-foreground/70 tabular-nums">{num}</span>
     </motion.div>
   );
 }
+
+// --- Grid with shared borders and arrow connectors ---
+
+function PipelineGrid({ items, trace }: { items: PipelineItem[]; trace: AgentTraceEvent[] }) {
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [cols, setCols] = useState(1);
+
+  const measure = useCallback(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const style = getComputedStyle(el);
+    const colCount = style.gridTemplateColumns.split(' ').length;
+    setCols(colCount);
+  }, []);
+
+  useEffect(() => {
+    measure();
+    const el = gridRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measure, items.length]);
+
+  const total = items.length;
+  const totalRows = Math.ceil(total / cols);
+
+  // Build snake-ordered grid positions
+  // Even rows (0,2,4...): left-to-right. Odd rows (1,3,5...): right-to-left.
+  const gridSlots = useMemo(() => {
+    return items.map((item, i) => {
+      const row = Math.floor(i / cols);
+      const col = i % cols;
+      const isReversedRow = row % 2 === 1;
+      const gridCol = isReversedRow ? (cols - 1 - col) : col;
+      return { item, index: i, row, gridCol, isReversedRow };
+    });
+  }, [items, cols]);
+
+  return (
+    <div
+      ref={gridRef}
+      className="border border-border rounded-lg overflow-visible grid grid-cols-[repeat(auto-fill,minmax(400px,1fr))]"
+    >
+      <AnimatePresence mode="popLayout">
+        {gridSlots.map(({ item, index: i, row, gridCol, isReversedRow }) => {
+          const isLast = i === total - 1;
+          const isLastRow = row === totalRows - 1;
+
+          // Border logic: vertical borders between cells in the same row
+          const hasRightBorder = gridCol < cols - 1 && !(isLast && gridCol === cols - 1);
+          const hasBottomBorder = !isLastRow;
+
+          // Arrow logic for snake
+          const nextI = i + 1;
+          const nextRow = nextI < total ? Math.floor(nextI / cols) : -1;
+          const sameRow = nextRow === row;
+
+          let connector: React.ReactNode = null;
+          if (!isLast) {
+            if (sameRow) {
+              connector = isReversedRow ? <LeftArrowConnector /> : <ArrowConnector />;
+            } else {
+              connector = <DownArrowConnector />;
+            }
+          }
+
+          return (
+            <motion.div
+              key={item.card.id}
+              className={`relative ${hasRightBorder ? 'border-r border-border' : ''} ${hasBottomBorder ? 'border-b border-border' : ''}`}
+              style={{ gridColumn: gridCol + 1, gridRow: row + 1 }}
+              layout
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.3, delay: i * 0.04, ease: [0.4, 0, 0.2, 1] }}
+            >
+              <CardPanel card={item.card} trace={trace} index={i} />
+              {connector}
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// --- Elapsed badge ---
 
 function ElapsedBadge({ trace }: { trace: AgentTraceEvent[] }) {
   const loopComplete = trace.find(e => e.kind === 'loop_complete');
@@ -799,6 +1149,8 @@ function ElapsedBadge({ trace }: { trace: AgentTraceEvent[] }) {
   );
 }
 
+// --- Main modal ---
+
 export interface RetrievalModalProps {
   queryId: string;
   open: boolean;
@@ -809,7 +1161,7 @@ export function RetrievalModal({ queryId, open, onClose }: RetrievalModalProps) 
   const agentTrace = useChatStore(s => s.queries[queryId]?.agentTrace);
   const query = useChatStore(s => s.queries[queryId]?.query);
 
-  const steps = useMemo(() => deriveSteps(agentTrace ?? []), [agentTrace]);
+  const items = useMemo(() => deriveItems(agentTrace ?? []), [agentTrace]);
 
   useEffect(() => {
     if (!open) return;
@@ -863,18 +1215,9 @@ export function RetrievalModal({ queryId, open, onClose }: RetrievalModalProps) 
               </div>
             </div>
 
-            {/* Steps grid */}
-            <div className="p-6 grid grid-cols-[repeat(auto-fill,minmax(400px,1fr))] gap-4">
-              {steps.map((step, i) => (
-                <motion.div
-                  key={step.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.25, delay: i * 0.05, ease: [0.4, 0, 0.2, 1] }}
-                >
-                  <StepPanel step={step} trace={agentTrace ?? []} />
-                </motion.div>
-              ))}
+            {/* Dynamic cards grid — shared borders with arrow connectors */}
+            <div className="p-6">
+              <PipelineGrid items={items} trace={agentTrace ?? []} />
             </div>
 
             {/* Legend */}

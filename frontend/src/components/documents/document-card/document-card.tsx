@@ -156,7 +156,7 @@ function cleanContentText(text: string): string {
     .replace(/\n+$/, '');
 }
 
-function getSourceActionLabel(document: Document) {
+function _getSourceActionLabel(document: Document) {
   const text = `${document.documentId} ${document.title} ${document.source ?? ''}`.toLowerCase();
 
   if (text.includes('case-law') || text.includes('case law') || text.includes(' v. ')) {
@@ -260,7 +260,7 @@ export function DocumentCardCompact({
 
         {citations && citations.length > 0 && document.s3Key ? (
           <div className="mt-auto flex flex-col divide-y divide-border border-t border-border">
-            {citations.map((c) => {
+            {citations.slice(0, 2).map((c) => {
               const snippet = document.chunks?.find(ch => ch.page === c.page);
               return (
                 <button
@@ -289,6 +289,15 @@ export function DocumentCardCompact({
                 </button>
               );
             })}
+            {citations.length > 2 && (
+              <button
+                type="button"
+                className="w-full px-4 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-[color,background-color,border-color] cursor-pointer text-center"
+                onClick={(e) => { e.stopPropagation(); onClick(); }}
+              >
+                +{citations.length - 2} more
+              </button>
+            )}
           </div>
         ) : (
           <>
