@@ -401,6 +401,37 @@ class NeptuneClient:
         )
         return results
 
+    def list_document_sections(self, doc_id: str) -> list[dict]:
+        """List distinct section headings for a document with chunk counts and page ranges."""
+        results = self.query(
+            "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: $doc_id}) "
+            "WITH c.heading AS heading, count(c) AS chunk_count, "
+            "min(c.start_page) AS first_page, max(c.end_page) AS last_page, "
+            "min(c.chunk_index) AS first_index "
+            "WHERE heading IS NOT NULL AND heading <> '' "
+            "RETURN heading, chunk_count, first_page, last_page "
+            "ORDER BY first_index",
+            {"doc_id": doc_id},
+            query_name="list_document_sections",
+        )
+        return results
+
+    def get_section_chunks(self, doc_id: str, heading: str) -> list[dict]:
+        """Get all chunks for a specific section (heading) within a document."""
+        results = self.query(
+            "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: $doc_id}) "
+            "WHERE c.heading = $heading "
+            "RETURN c.id AS chunk_id, c.text AS text, c.doc_id AS doc_id, "
+            "c.source_url AS source_url, c.s3_key AS s3_key, "
+            "c.start_page AS start_page, c.end_page AS end_page, "
+            "c.heading AS heading, c.subheading AS subheading, "
+            "c.chunk_index AS chunk_index "
+            "ORDER BY c.chunk_index",
+            {"doc_id": doc_id, "heading": heading},
+            query_name="get_section_chunks",
+        )
+        return results
+
     def get_chunk_statute_ids(self, chunk_ids: list[str]) -> list[str]:
         """Return statute IDs cited by the given chunks (via CITES edges)."""
         if not chunk_ids:

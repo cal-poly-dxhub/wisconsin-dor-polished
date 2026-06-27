@@ -204,10 +204,10 @@ TOOL_DEFINITIONS = [
             "name": "search_document",
             "description": (
                 "Search within a specific document's chunks using semantic similarity. "
-                "Use this when vector_search surfaced a relevant document but you "
-                "only got 1-2 chunks from it and need to find a specific section. "
-                "Returns the top chunks from that document matching your sub-query. "
-                "Much more efficient than loading the entire document."
+                "Consider list_sections + get_section first for multi-chapter documents "
+                "(WPAM, large guides) — they are more reliable. Use search_document only "
+                "when you cannot identify the right section from headings alone. "
+                "Returns the top chunks from that document matching your sub-query."
             ),
             "inputSchema": {
                 "json": {
@@ -239,6 +239,67 @@ TOOL_DEFINITIONS = [
                         },
                     },
                     "required": ["doc_id", "query"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "list_sections",
+            "description": (
+                "List all section headings (table of contents) for a document. "
+                "Returns each heading with its chunk count and page range. "
+                "Use this when you know which document is relevant but need to "
+                "find the right section — much more reliable than guessing "
+                "search terms for search_document. Especially useful for large "
+                "multi-chapter documents like the WPAM."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "doc_id": {
+                            "type": "string",
+                            "description": (
+                                "The document ID to list sections for "
+                                "(from a previous tool result)"
+                            ),
+                        },
+                    },
+                    "required": ["doc_id"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "get_section",
+            "description": (
+                "Retrieve all chunks from a specific section of a document. "
+                "Use after list_sections to fetch the full content of a "
+                "chapter or section by its exact heading. Returns chunks in "
+                "document order. This is a direct lookup — no vector search "
+                "involved — so it always returns the complete section content."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "doc_id": {
+                            "type": "string",
+                            "description": (
+                                "The document ID containing the section"
+                            ),
+                        },
+                        "heading": {
+                            "type": "string",
+                            "description": (
+                                "The exact section heading from list_sections "
+                                "(e.g., 'Chapter 12 Residential Property Valuation')"
+                            ),
+                        },
+                    },
+                    "required": ["doc_id", "heading"],
                 }
             },
         }
@@ -629,10 +690,7 @@ def execute_tool(
         embedding = embed_query(tool_input["query"])
         top_k = min(tool_input.get("top_k", 15), 25)
         target_year = tool_input.get("target_wpam_year")
-        # Over-fetch: WPAM editions dominate the vector space. fetch_k gives
-        # the dedup + diversity filters enough runway to surface non-WPAM
-        # results that would otherwise be crowded out.
-        fetch_k = top_k * 6 if target_year is None else top_k
+        fetch_k = top_k * 6
         vector_started = time.perf_counter()
         chunks = neptune.vector_search(embedding, top_k=fetch_k)
         pre_dedup_count = len(chunks)
@@ -909,6 +967,43 @@ def execute_tool(
                     ),
                 }
         return {"chunks": matched, "doc_id": target_doc_id, "keyword_fallback": keyword_fallback}
+
+    elif tool_name == "list_sections":
+        doc_id = tool_input.get("doc_id") or tool_input.get("node_id") or ""
+        if not doc_id:
+            return {"error": "doc_id is required"}
+        sections = neptune.list_document_sections(doc_id)
+        _log_tool_event(
+            "list_sections_complete",
+            tool_name=tool_name,
+            doc_id=doc_id,
+            section_count=len(sections),
+            latency_ms=round((time.perf_counter() - started) * 1000),
+        )
+        if not sections:
+            return {"error": f"No sections found for document '{doc_id}'"}
+        return {"doc_id": doc_id, "sections": sections}
+
+    elif tool_name == "get_section":
+        doc_id = tool_input.get("doc_id") or tool_input.get("node_id") or ""
+        heading = tool_input.get("heading", "")
+        if not doc_id or not heading:
+            return {"error": "Both doc_id and heading are required"}
+        chunks = neptune.get_section_chunks(doc_id, heading)
+        _log_tool_event(
+            "get_section_complete",
+            tool_name=tool_name,
+            doc_id=doc_id,
+            heading=heading,
+            chunk_count=len(chunks),
+            latency_ms=round((time.perf_counter() - started) * 1000),
+        )
+        if not chunks:
+            return {
+                "error": f"No chunks found for heading '{heading}' in document '{doc_id}'",
+                "suggestion": "Use list_sections to see available headings for this document",
+            }
+        return {"chunks": chunks, "doc_id": doc_id, "heading": heading}
 
     elif tool_name == "get_document":
         # The model occasionally passes `node_id` (the param name used by

@@ -159,8 +159,31 @@ def build_tool_call_summary(tool_name: str, tool_input: dict, neptune_client=Non
         if query:
             return f'"{query}" in {title}'
         return title
+    if tool_name == "list_sections":
+        doc_id = tool_input.get("doc_id") or tool_input.get("node_id") or ""
+        title = doc_id
+        if doc_id and neptune_client:
+            try:
+                info = neptune_client.get_document(doc_id)
+                title = (info or {}).get("title") or doc_id
+            except Exception:
+                pass
+        return title
+    if tool_name == "get_section":
+        doc_id = tool_input.get("doc_id") or tool_input.get("node_id") or ""
+        heading = tool_input.get("heading", "")
+        title = doc_id
+        if doc_id and neptune_client:
+            try:
+                info = neptune_client.get_document(doc_id)
+                title = (info or {}).get("title") or doc_id
+            except Exception:
+                pass
+        if heading:
+            return f'"{heading}" from {title}'
+        return title
     if tool_name == "get_neighbors":
-        doc_id = tool_input.get("doc_id", "")
+        doc_id = tool_input.get("doc_id", "") or tool_input.get("node_id", "")
         title = doc_id
         if doc_id and neptune_client:
             try:
@@ -173,7 +196,7 @@ def build_tool_call_summary(tool_name: str, tool_input: dict, neptune_client=Non
         doc_id = tool_input.get("doc_id", "")
         return doc_id
     if tool_name == "get_authority_chain":
-        doc_id = tool_input.get("doc_id", "")
+        doc_id = tool_input.get("doc_id", "") or tool_input.get("node_id", "")
         title = doc_id
         if doc_id and neptune_client:
             try:
@@ -183,7 +206,7 @@ def build_tool_call_summary(tool_name: str, tool_input: dict, neptune_client=Non
                 pass
         return title
     if tool_name == "list_framework_docs":
-        framework = tool_input.get("framework_name", "")
+        framework = tool_input.get("framework_name", "") or tool_input.get("framework_id", "")
         return framework
     if tool_name == "fetch_case_opinion":
         citation = tool_input.get("citation", "")
@@ -306,7 +329,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             summary_text = f"Keyword fallback: found {len(chunks)} chunks in {doc_title}"
         else:
             summary_text = f"Searched {doc_title}"
-        metadata = {"chunkCount": len(chunks), "docId": target_doc}
+        metadata = {"chunkCount": len(chunks), "docId": target_doc, "docTitle": doc_title}
         if fallback_used:
             metadata["keywordFallback"] = True
 
@@ -314,6 +337,10 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         faqs = result.get("faqs", [])
         top = faqs[0].get("score", 0.0) if faqs else 0.0
         faq_scores = [round(float(f.get("score", 0.0)), 4) for f in faqs]
+        top_faq_text = ""
+        if faqs:
+            raw_text = faqs[0].get("text", "")
+            top_faq_text = raw_text[:120]
         summary_text = (
             f"FAQ semantic match score {top:.2f}"
             if faqs
@@ -324,6 +351,51 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             "topScore": round(float(top), 4),
             "faqScoreThreshold": 0.70,
             "faqScores": faq_scores,
+            "topFaqSnippet": top_faq_text,
+        }
+
+    elif tool_name == "list_sections":
+        sections = result.get("sections", [])
+        target_doc = result.get("doc_id", "")
+        doc_ids = [target_doc] if target_doc else []
+        doc_title = target_doc
+        if target_doc:
+            try:
+                info = neptune_client.get_document(target_doc)
+                doc_title = (info or {}).get("title") or target_doc
+            except Exception:
+                pass
+        n = len(sections)
+        summary_text = f"Found {n} {'section' if n == 1 else 'sections'} in {doc_title}"
+        section_headings = [s.get("heading", "") for s in sections[:12]]
+        metadata = {
+            "sectionCount": n,
+            "docId": target_doc,
+            "docTitle": doc_title,
+            "sectionHeadings": section_headings,
+        }
+
+    elif tool_name == "get_section":
+        chunks = result.get("chunks", [])
+        target_doc = result.get("doc_id", "")
+        heading = result.get("heading", "")
+        doc_ids = [target_doc] if target_doc else []
+        doc_title = target_doc
+        if target_doc:
+            try:
+                info = neptune_client.get_document(target_doc)
+                doc_title = (info or {}).get("title") or target_doc
+            except Exception:
+                pass
+        if not chunks:
+            status = "miss"
+        n = len(chunks)
+        summary_text = f'Got "{heading}" ({n} chunks) from {doc_title}'
+        metadata = {
+            "chunkCount": n,
+            "docId": target_doc,
+            "docTitle": doc_title,
+            "heading": heading,
         }
 
     elif tool_name == "get_neighbors":
@@ -335,7 +407,22 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         for neighbor in neighbors:
             rel = neighbor.get("relationship", "unknown")
             relationship_counts[rel] = relationship_counts.get(rel, 0) + 1
-        metadata = {"neighborCount": len(neighbors), "relationshipCounts": relationship_counts}
+        neighbor_titles = [
+            nb.get("title") or nb.get("id", "")
+            for nb in neighbors[:8]
+            if nb.get("title") or nb.get("id")
+        ]
+        neighbor_edges = [
+            {"title": nb.get("title") or nb.get("id", ""), "relationship": nb.get("relationship", "")}
+            for nb in neighbors[:8]
+            if nb.get("title") or nb.get("id")
+        ]
+        metadata = {
+            "neighborCount": len(neighbors),
+            "relationshipCounts": relationship_counts,
+            "neighborTitles": neighbor_titles,
+            "neighborEdges": neighbor_edges,
+        }
 
     elif tool_name == "get_document":
         doc = result.get("document")
@@ -379,7 +466,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
     elif tool_name == "refine_query":
         refined = result.get("refined_query", "")
         summary_text = f'Refined to "{refined}"' if refined else "No refinement"
-        metadata = {"refined": bool(refined)}
+        metadata = {"refined": bool(refined), "refinedQuery": refined}
 
     elif tool_name == "clarify":
         question = result.get("question", "")

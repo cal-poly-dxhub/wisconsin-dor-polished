@@ -14,6 +14,8 @@ ALLOWED_METADATA_KEYS = frozenset({
     "chunkCount",
     "docCount",
     "docId",
+    "docTitle",
+    "heading",
     "neighborCount",
     "topScore",
     "faqCount",
@@ -21,7 +23,9 @@ ALLOWED_METADATA_KEYS = frozenset({
     "chainLength",
     "opinionChars",
     "refined",
+    "refinedQuery",
     "citedDocCount",
+    "hasPlan",
     "latencyMs",
     "keywordFallback",
     "preDedupCount",
@@ -35,6 +39,12 @@ ALLOWED_METADATA_KEYS = frozenset({
     "discoveryTitles",
     "faqScoreThreshold",
     "faqScores",
+    "sectionCount",
+    "sectionHeadings",
+    "docChunks",
+    "topFaqSnippet",
+    "neighborTitles",
+    "neighborEdges",
 })
 
 
