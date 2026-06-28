@@ -45,6 +45,7 @@ from step_function_types.models import (
     UserQuery,
 )
 from agent_tools import TOOL_DEFINITIONS, execute_tool
+from bedrock_messages import converse_with_cache, converse_stream_with_cache
 from trace_summaries import (
     build_tool_call_summary,
     build_tool_result_summary,
@@ -527,12 +528,13 @@ def run_agentic_loop(
             heartbeat_thread.start()
 
         try:
-            response = bedrock.converse(
-                modelId=AGENTIC_MODEL_ID,
+            response = converse_with_cache(
+                bedrock,
+                model_id=AGENTIC_MODEL_ID,
                 messages=messages,
                 system=[{"text": SYSTEM_PROMPT}],
-                toolConfig=tool_config,
-                inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+                tool_config=tool_config,
+                inference_config={"maxTokens": 4096, "temperature": 0.0},
             )
         except Exception as exc:
             heartbeat_stop.set()
@@ -1180,14 +1182,15 @@ def _stream_answer(
     if ws_connection_alive[0]:
         heartbeat_thread.start()
 
-    # Start converse_stream with NO tools — pure text output
+    # Start streaming answer with NO tools — pure text output
     stream_started = time.perf_counter()
     try:
-        stream_response = bedrock.converse_stream(
-            modelId=AGENTIC_MODEL_ID,
+        stream_response = converse_stream_with_cache(
+            bedrock,
+            model_id=AGENTIC_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": answer_context}]}],
             system=[{"text": ANSWER_STREAM_SYSTEM_PROMPT}],
-            inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+            inference_config={"maxTokens": 4096, "temperature": 0.0},
         )
     except Exception as exc:
         heartbeat_stop.set()

@@ -174,7 +174,7 @@ class TestRunAgenticLoop:
                 "metrics": {"latencyMs": 120},
             },
         ]
-        main.bedrock.converse = MagicMock(side_effect=responses)
+        main.converse_with_cache = MagicMock(side_effect=responses)
 
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "vector_search":
@@ -236,7 +236,7 @@ class TestRunAgenticLoop:
                 "metrics": {"latencyMs": 120},
             },
         ]
-        main.bedrock.converse = MagicMock(side_effect=responses)
+        main.converse_with_cache = MagicMock(side_effect=responses)
 
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "get_document":
@@ -260,7 +260,7 @@ class TestRunAgenticLoop:
         )
         assert result.fallback_answer is None
         assert result.cited_doc_ids == []
-        assert main.bedrock.converse.call_count == 2
+        assert main.converse_with_cache.call_count == 2
 
     def test_high_confidence_faq_continues_into_graph(self, monkeypatch):
         main = _import_main()
@@ -298,7 +298,7 @@ class TestRunAgenticLoop:
                 "metrics": {"latencyMs": 120},
             },
         ]
-        main.bedrock.converse = MagicMock(side_effect=responses)
+        main.converse_with_cache = MagicMock(side_effect=responses)
 
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "vector_search":
@@ -323,7 +323,7 @@ class TestRunAgenticLoop:
             ws_server=mock_ws, trace_seq=itertools.count(1).__next__,
         )
 
-        assert main.bedrock.converse.call_count == 2
+        assert main.converse_with_cache.call_count == 2
         # high_confidence_faq is stored on the result for the handler to use
         assert result.high_confidence_faq is not None
         assert result.high_confidence_faq.faqs[0].faq_id == "faq_1"
