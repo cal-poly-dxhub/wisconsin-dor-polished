@@ -238,41 +238,54 @@ Extract: `query`, `answer`, `feedback`, `thumbUp`, `timestamp`, and `resources` 
 
 Log group: `/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf`
 
-```bash
-# Find the log stream by timestamp (convert ISO timestamp from Step 1 to epoch ms):
-EPOCH_MS=$(date -j -f "%Y-%m-%dT%H:%M:%S" "<TIMESTAMP_PREFIX>" +%s)000
+**IMPORTANT TIMING NOTE:** The DynamoDB `timestamp` is when the response finished streaming (end of Phase B). The Lambda logs start 30-60 seconds BEFORE that timestamp (Phase A retrieval + Phase B streaming). Always search a window starting **90 seconds before** the DynamoDB timestamp.
 
-# List streams around that time:
+**Preferred approach — get-log-events on the most recent stream, then grep:**
+
+Lambda reuses log streams within the same execution environment. The most recent stream(s) usually contain the query. This is faster and more reliable than `filter-log-events` (which has indexing lag and tokenizes UUIDs poorly).
+
+```bash
+# 1. List recent streams:
 AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs describe-log-streams \
   --log-group-name "/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf" \
-  --order-by LastEventTime --descending --limit 10 \
-  --query 'logStreams[*].[logStreamName, lastEventTimestamp]' --output table
+  --order-by LastEventTime --descending --limit 5 \
+  --output json | jq '.logStreams[] | {name: .logStreamName, lastEvent: (.lastEventTimestamp / 1000 | todate)}'
 
-# Pick the stream whose lastEventTimestamp is closest to (but >= ) the query timestamp.
-# Convert epoch to verify: date -r $((EPOCH_MS / 1000)) -u
-
-# Fetch and grep for the queryId:
+# 2. Fetch events from the stream and grep for queryId:
+#    Use a start-time ~90s before the DynamoDB timestamp to catch Phase A start.
+#    Example: if DynamoDB says 04:03:18, compute epoch for 04:01:45.
 AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs get-log-events \
   --log-group-name "/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf" \
   --log-stream-name '<STREAM_NAME>' \
+  --start-time <EPOCH_MS_MINUS_90s> \
   --no-paginate --output json | jq '.events[] | .message' -r | grep "<QUERY_ID>"
 ```
 
-**Alternatively, use `filter-log-events` (slower but skips stream guessing):**
+**Epoch conversion (macOS):**
 ```bash
+# ISO to epoch ms (strip timezone suffix first):
+python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('2026-06-28T04:03:18+00:00').timestamp() * 1000))"
+```
+
+**Fallback — filter-log-events (slower, but no stream guessing):**
+```bash
+# Compute EPOCH_MS from the DynamoDB timestamp, then search a wide window BEFORE it:
 AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs filter-log-events \
   --log-group-name "/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf" \
-  --start-time $((EPOCH_MS - 60000)) --end-time $((EPOCH_MS + 120000)) \
+  --start-time $((EPOCH_MS - 90000)) --end-time $((EPOCH_MS + 5000)) \
   --filter-pattern "<QUERY_ID>" \
   --output json | jq '.events[] | .message' -r
 ```
 
+**If filter-log-events returns nothing:** The CloudWatch filter pattern tokenizer splits on hyphens, so UUID patterns may not match. Fall back to `get-log-events` on the stream + local grep (Step 2 above), which does a simple string search on the full message text.
+
 **Key structured log events to look for (all keyed by `query_id`):**
-- `agentic_retrieval_request_received` — confirms the request hit the Lambda
-- `agent_tool_call` — each tool invocation (vector_search, search_document, get_neighbors, answer)
+- `agentic_retrieval_request_received` — confirms the request hit the Lambda (this is the TRUE start time)
+- `agent_tool_call` — each tool invocation (vector_search, search_document, get_section, get_neighbors, prepare_answer)
 - `agent_tool_result` — tool output summary (chunk counts, doc IDs discovered)
 - `wpam_dedup` — shows edition filtering/dedup decisions
 - `agent_loop_complete` — final stats (turns, cited docs, discovery map)
+- `answer_stream_complete` — Phase B finished (this timestamp ≈ DynamoDB timestamp)
 
 **What to provide:** The **queryId** is the fastest identifier — it's a direct DynamoDB key and a unique grep token in logs. A timestamp alone requires a scan + stream correlation.
 
