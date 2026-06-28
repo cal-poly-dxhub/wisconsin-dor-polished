@@ -354,6 +354,7 @@ class NeptuneClient:
             "n.effective_date AS effective_date, "
             "n.edition_year AS edition_year, "
             "n.heading AS heading, "
+            "n.authority_level AS authority_level, "
             "fw.id AS framework_id, "
             "labels(n) AS labels "
             f"LIMIT {int(limit)}",

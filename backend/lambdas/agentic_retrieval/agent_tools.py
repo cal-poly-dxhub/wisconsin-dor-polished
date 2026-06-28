@@ -873,11 +873,38 @@ def execute_tool(
                 if len(seen) >= 3:
                     break
 
+        _ENRICH_CAP = int(os.environ.get("ENRICH_CAP_PER_DOC", "20"))
+        _ENRICH_CAP_PER_TYPE = int(os.environ.get("ENRICH_CAP_PER_TYPE", "4"))
+        _EDGE_PRIORITY = {"CITES": 0, "IMPLEMENTS": 0, "DERIVED_FROM": 1,
+                          "BELONGS_TO": 2, "COVERS_TOPIC": 3, "RELATED_TO": 4,
+                          "SUPPLEMENTS": 4, "SUPERSEDES": 4, "CONFLICTS_WITH": 4}
+
+        def _rank_neighbors(neighbors: list[dict]) -> list[dict]:
+            """Rank by edge priority then authority, diversity-cap per doc_type."""
+            for n in neighbors:
+                n["_edge_pri"] = _EDGE_PRIORITY.get(n.get("relationship", ""), 5)
+                n["_auth"] = n.get("authority_level") or 9
+            neighbors.sort(key=lambda n: (n["_edge_pri"], n["_auth"]))
+            result = []
+            type_counts: dict[str, int] = {}
+            for n in neighbors:
+                dt = n.get("doc_type") or "unknown"
+                if type_counts.get(dt, 0) >= _ENRICH_CAP_PER_TYPE:
+                    continue
+                type_counts[dt] = type_counts.get(dt, 0) + 1
+                n.pop("_edge_pri", None)
+                n.pop("_auth", None)
+                result.append(n)
+                if len(result) >= _ENRICH_CAP:
+                    break
+            return result
+
         for doc_id in seen:
             try:
                 enrich_started = time.perf_counter()
                 neighbors = neptune.get_neighbors(doc_id)
                 neighbors = [n for n in neighbors if "Chunk" not in (n.get("labels") or [])]
+                neighbors = _rank_neighbors(neighbors)
                 if neighbors:
                     graph_context[doc_id] = neighbors
                 _log_tool_event(
