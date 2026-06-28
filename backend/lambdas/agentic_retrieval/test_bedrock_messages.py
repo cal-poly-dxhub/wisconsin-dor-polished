@@ -202,6 +202,7 @@ class TestConverseWithCache:
         body = json.loads(call_kwargs["body"])
         assert body["tools"][-1]["cache_control"] == {"type": "ephemeral"}
         assert body["system"][-1]["cache_control"] == {"type": "ephemeral"}
+        assert body["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
         assert body["temperature"] == 0.0
 
 

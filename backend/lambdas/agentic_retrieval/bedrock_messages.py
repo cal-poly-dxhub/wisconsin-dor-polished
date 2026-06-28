@@ -138,10 +138,18 @@ def converse_with_cache(
     inference_config = inference_config or {}
 
     # Build Anthropic Messages API body
+    converted_messages = _convert_messages(messages)
+
+    # Messages with cache breakpoint on last message (turn-over-turn caching)
+    if converted_messages:
+        last_msg = converted_messages[-1]
+        if last_msg.get("content") and isinstance(last_msg["content"], list):
+            last_msg["content"][-1]["cache_control"] = {"type": "ephemeral"}
+
     body: dict[str, Any] = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens": inference_config.get("maxTokens", 4096),
-        "messages": _convert_messages(messages),
+        "messages": converted_messages,
     }
 
     if inference_config.get("temperature") is not None:
@@ -202,10 +210,18 @@ def converse_stream_with_cache(
     """
     inference_config = inference_config or {}
 
+    converted_messages = _convert_messages(messages)
+
+    # Messages with cache breakpoint on last message (turn-over-turn caching)
+    if converted_messages:
+        last_msg = converted_messages[-1]
+        if last_msg.get("content") and isinstance(last_msg["content"], list):
+            last_msg["content"][-1]["cache_control"] = {"type": "ephemeral"}
+
     body: dict[str, Any] = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens": inference_config.get("maxTokens", 4096),
-        "messages": _convert_messages(messages),
+        "messages": converted_messages,
     }
 
     if inference_config.get("temperature") is not None:
