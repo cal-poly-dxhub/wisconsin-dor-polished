@@ -247,6 +247,10 @@ interface MessageOptionsBarProps {
   onOpenRetrieval?: () => void;
 }
 
+// Strip trailing incomplete markdown structures that cause visual glitches
+// during streaming (e.g. a bare "1." rendered as an empty list item).
+const TRAILING_INCOMPLETE_MD = /(?:\n\d+\.\s*|\n[-*+]\s*|\n#{1,6}\s*)$/;
+
 export function StreamResponse({
   content,
   className,
@@ -261,11 +265,16 @@ export function StreamResponse({
   // silently refuses to activate on left-click.
   const [animate] = useState(() => !streamingComplete);
 
+  const displayContent = useMemo(() => {
+    if (streamingComplete) return content;
+    return content.replace(TRAILING_INCOMPLETE_MD, '');
+  }, [content, streamingComplete]);
+
   return (
     <div className={`chat-response font-sans ${className || ''}`}>
       <div className="markdown-container">
         <AnimatedMarkdown
-          content={content}
+          content={displayContent}
           animate={animate}
           animationDuration="0.6s"
           docUrls={docUrls}
@@ -624,19 +633,11 @@ export function ChatMessage({
   const messageContentClassName = useMemo(() => `mb-3`, []);
 
   return (
-    <motion.div
+    <div
       ref={messageRef}
       className={containerClassName}
       data-message-observe
       data-message-id={queryId}
-      animate={{
-        scale: 1,
-        opacity: 1,
-      }}
-      transition={{
-        duration: 0.2,
-        ease: 'easeInOut',
-      }}
     >
       {/* Message Content */}
       <div>
@@ -768,6 +769,6 @@ export function ChatMessage({
         </div>
       </div>
       <RetrievalModal queryId={queryId} open={retrievalModalOpen} onClose={() => setRetrievalModalOpen(false)} />
-    </motion.div>
+    </div>
   );
 }

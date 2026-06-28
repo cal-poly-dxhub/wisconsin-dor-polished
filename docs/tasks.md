@@ -12,6 +12,8 @@
 | 26 | Admin ingestion page — ingest documents via URL from the UI | — |
 | 27 | Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags | — |
 | 28 | WPAM 2019 heading loss — boilerplate stripper keeps TOC copy, strips real chapter start | — |
+| 29 | Enable prompt caching for agentic retrieval (switch to invoke_model) | — |
+| 30 | get_section chunk grid visualization — show cosine/z-score per chunk in trace UI | — |
 
 ## Done
 
@@ -400,4 +402,124 @@ for raw_line, page in line_page_mapping:
 **Key files:**
 - `tools/pdf_chunking/boilerplate.py` — `_strip_wpam_running_headers()` (lines 76-107)
 - `tools/pdf_chunking/pdfChunker.py` — `chunk_document_wpam()` heading detection loop
+
+---
+
+### Task 29: Enable prompt caching for agentic retrieval (switch to invoke_model)
+
+**Problem:** The agentic retrieval Lambda uses the Bedrock Converse API (`bedrock.converse()` / `bedrock.converse_stream()`), which does not support prompt caching. Each turn in the multi-turn tool loop resends the full message history — input tokens grow from ~8.5K (turn 1) to ~92K (turn 6). The system prompt (~4K tokens) and tool definitions (~4K tokens) are identical on every turn and every request, but are re-billed at full input price each time.
+
+**Measured cost (single query, 6 turns):** 233K total input tokens, 0 cache hits. With caching, the stable prefix (tools + system + first user message ≈ 10K tokens) would be cached for turns 2-6, saving ~50K tokens of full-price input billing per query.
+
+**Estimated savings:** ~$0.10/query at Sonnet pricing ($3/MTok input → $0.30/MTok cache read = 90% discount on cached prefix). At 100 queries/day = ~$300/month savings.
+
+**Required change:** Switch from Converse API to `invoke_model` / `invoke_model_with_response_stream` with the raw Anthropic Messages API format, adding `cache_control: {"type": "ephemeral"}` breakpoints.
+
+**Cache breakpoint placement (max 4):**
+
+1. Last tool definition in the `tools` array — caches all tool schemas (stable across all requests)
+2. System prompt text block — caches the system prompt (stable across all requests)
+3. First user message (optional) — contains pre-seeded FAQ results (stable within a single query's multi-turn loop)
+
+Render order for prefix matching: `tools` → `system` → `messages`. Breakpoints 1+2 create a shared cache across all queries (5-min TTL). Breakpoint 3 is per-query but saves across turns 2-6 within that query.
+
+**Breaking changes requiring refactoring:**
+
+| Area | Converse API (current) | Anthropic Messages format (target) |
+|------|----------------------|-----------------------------------|
+| Tool definitions | `{"toolSpec": {"name": ..., "inputSchema": {"json": {...}}}}` | `{"name": ..., "input_schema": {...}}` |
+| Message content | `[{"text": "..."}]`, `[{"toolUse": {...}}]`, `[{"toolResult": {...}}]` | `[{"type": "text", "text": "..."}]`, `[{"type": "tool_use", ...}]`, `[{"type": "tool_result", ...}]` |
+| Response parsing | `response["output"]["message"]`, `response["stopReason"]` | `response["content"]`, `response["stop_reason"]` |
+| Usage fields | `response["usage"]["inputTokens"]` | `response["usage"]["input_tokens"]`, `response["usage"]["cache_read_input_tokens"]` |
+| Streaming (Phase B) | `converse_stream()` event types | `invoke_model_with_response_stream()` SSE events: `message_start`, `content_block_delta`, `message_delta`, `message_stop` |
+
+**Implementation approach:**
+
+1. Create a helper module (`bedrock_messages.py`) that wraps `invoke_model` with:
+   - Tool definition format conversion (toolSpec → Anthropic format)
+   - Message format conversion (Converse → Messages)
+   - Response parsing back to the dict shape the rest of `main.py` expects
+   - Cache breakpoint injection on tools[-1] and system[0]
+2. Replace `bedrock.converse()` call in the agent loop (line 530) with the wrapper
+3. Replace `bedrock.converse_stream()` in Phase B (line 1186) with streaming wrapper
+4. Add `cache_read_input_tokens` and `cache_creation_input_tokens` to usage logging
+
+**Risk assessment:**
+- No functional behavior change — same model, same prompts, same tools, same message content
+- Streaming still works via `invoke_model_with_response_stream()` (SSE format, not Converse event format)
+- Minimum cacheable prefix for Sonnet: 2048 tokens (our prefix is ~10K — well above)
+- Cache TTL is 5 minutes; if traffic is sparse, cache misses increase (first request per 5-min window pays `cache_creation_input_tokens` at 25% premium, subsequent requests get 90% discount)
+- The `additionalModelRequestFields` param on Converse API does NOT enable caching — confirmed not supported
+
+**Validation:**
+1. Deploy and run a test query
+2. Check `usage` in response for `cache_read_input_tokens > 0` on turns 2+
+3. Compare total billed input tokens before/after across a set of queries
+
+**Effort:** Medium (half day). Mostly mechanical format conversion with a thin adapter layer. No infra/CDK changes needed.
+
+**Key files:**
+- `backend/lambdas/agentic_retrieval/main.py` — lines 530-536 (Phase A converse call), lines 1186-1191 (Phase B stream call)
+- `backend/lambdas/agentic_retrieval/agent_tools.py` — `TOOL_DEFINITIONS` (line 112, needs format conversion)
+- `backend/lambdas/agentic_retrieval/bedrock_messages.py` — new adapter module (to create)
+
+---
+
+### Task 30: get_section chunk grid visualization — show cosine/z-score per chunk in trace UI
+
+**Problem:** When the agent calls `get_section`, the trace UI currently shows only the section heading, document name, chunk count, and latency. There's no visibility into *which* chunks were selected or how relevant each one was (cosine similarity, z-score). This makes it impossible to debug retrieval quality from the frontend — you have to dig through CloudWatch logs (which don't even log scores today).
+
+**Two parts:**
+
+#### Part A: Backend — emit per-chunk scores in the WebSocket trace payload
+
+The `_rank_chunks_by_relevance()` function in `agent_tools.py` (line 594) computes cosine similarity and z-scores but doesn't log or emit them. The `get_section` tool result sent over WebSocket (as a trace event) needs to include per-chunk scoring data.
+
+**Data to emit per chunk:**
+- `chunk_index` (positional rank, 0-based, sorted by relevance)
+- `chunk_id` (the Neptune chunk ID)
+- `cosine` (raw cosine similarity score, 4 decimal places)
+- `z_score` (normalized z-score, 2 decimal places)
+- `heading` / `subheading` (for display context)
+- `start_page` / `end_page`
+
+Also emit:
+- `query` — the query string used for ranking (from the tool input)
+- `section_chunk_count` — total chunks in the section (before filtering)
+- `returned_chunk_count` — how many passed the z-score threshold
+
+**Where to emit:** The existing trace/logging WebSocket message for `get_section` tool results. The frontend already receives tool call trace events — extend the payload shape.
+
+#### Part B: Frontend — 4x4 chunk relevance grid in the trace detail view
+
+**Design (based on screenshot of current Get Section trace card):**
+
+Below the existing metadata (heading, document name, chunk count, latency), add:
+
+1. **Query label:** `Searched for "[query]"` — shows the semantic query used for ranking
+2. **4x4 grid (16 cells):** Represents the chunk "slots" available
+   - Chunks fill cells left-to-right, top-to-bottom, ranked by relevance (top-left = best match)
+   - Maximum 10 filled cells (top_k max is 10); remaining cells stay empty/grey
+   - Each filled cell shows:
+     - **Title:** "Chunk 1", "Chunk 2", etc. (rank number)
+     - **Cosine:** e.g., `0.8234`
+     - **Z-score:** e.g., `1.42`
+   - Color coding: higher z-score = more saturated/brighter fill (visual heat)
+   - Empty cells: dark grey placeholder with dashed border
+3. **Section total indicator:** "5 of 13 chunks" or similar, showing how selective the filter was
+
+**Why 4x4:** Simulates the "enormity" of large sections — a 13-chunk section like WPAM Chapter 14 visually fills most of the grid, while a 1-chunk section (like the Ag Guide "C. Assessing other" heading) shows 1 filled cell and 15 empty, making it immediately obvious how much content was available vs. retrieved.
+
+**WebSocket contract change:** This adds fields to the `get_section` trace event payload. Per project conventions, must update:
+1. Backend — `websocket_utils/models.py` (add chunk score array to tool result trace model)
+2. Frontend — `frontend/types/message-types.ts` (extend Zod schema for the trace event)
+3. Frontend — trace detail component (render the grid)
+
+**Key files:**
+- `backend/lambdas/agentic_retrieval/agent_tools.py` — `_rank_chunks_by_relevance()` (line 594), `execute_tool()` get_section handler
+- `backend/layers/websocket_utils/models.py` — trace event model
+- `backend/layers/websocket_utils/utils.py` — `send_json` trace emission
+- `frontend/types/message-types.ts` — Zod schema for tool trace events
+- `frontend/src/components/messages/` — trace detail rendering component (find the Get Section card)
+- `frontend/src/components/messages/chat-message.tsx` — may contain or reference trace rendering
 
