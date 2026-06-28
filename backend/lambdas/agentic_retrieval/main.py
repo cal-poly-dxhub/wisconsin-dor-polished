@@ -95,6 +95,52 @@ def _is_document_neighbor(neighbor: dict) -> bool:
     return not any(label in _NON_DOCUMENT_LABELS for label in labels)
 
 
+_CHUNK_FIELDS_FOR_MODEL = frozenset({
+    "chunk_id", "text", "doc_id", "heading", "subheading",
+    "start_page", "end_page", "authority_level", "doc_title",
+})
+
+_NEIGHBOR_FIELDS_FOR_MODEL = frozenset({
+    "id", "title", "relationship", "labels", "authority_level", "framework_id",
+})
+
+
+def _compact_for_model(result: dict, tool_name: str) -> dict:
+    """Strip fields from tool results that the model doesn't need for reasoning.
+
+    Removes null values, internal scores, and verbose metadata to reduce token
+    count in the conversation history. The full result is still available in
+    all_chunks for citation generation.
+    """
+    if tool_name not in ("vector_search", "search_document", "get_section"):
+        return result
+
+    compacted: dict = {}
+    for key, value in result.items():
+        if value is None:
+            continue
+        if key == "chunks":
+            compacted["chunks"] = [
+                {k: v for k, v in chunk.items()
+                 if k in _CHUNK_FIELDS_FOR_MODEL and v is not None}
+                for chunk in value
+            ]
+        elif key == "graph_context":
+            compacted["graph_context"] = {
+                doc_id: [
+                    {k: v for k, v in n.items()
+                     if k in _NEIGHBOR_FIELDS_FOR_MODEL and v is not None}
+                    for n in neighbors
+                ]
+                for doc_id, neighbors in value.items()
+            }
+        elif key in ("score", "pre_dedup_count", "ranking_stats"):
+            continue
+        else:
+            compacted[key] = value
+    return compacted
+
+
 # Property-type detection for disambiguation. When retrieved chunks discuss
 # 3+ distinct property classifications and the user didn't specify one, the
 # agent is nudged to call the clarify tool.
@@ -901,7 +947,7 @@ def run_agentic_loop(
             tool_results.append({
                 "toolResult": {
                     "toolUseId": tool_use_id,
-                    "content": [{"json": result}],
+                    "content": [{"json": _compact_for_model(result, tool_name)}],
                 }
             })
 
