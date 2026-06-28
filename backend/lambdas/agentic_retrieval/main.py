@@ -709,12 +709,12 @@ def run_agentic_loop(
                             all_doc_ids.add(neighbor_id)
                             discovery.setdefault(neighbor_id, "graph-neighbor")
 
-            if tool_name == "search_document" and "chunks" in result:
+            if tool_name in ("search_document", "get_section") and "chunks" in result:
                 for chunk in result["chunks"]:
                     doc_id = chunk.get("doc_id", "")
                     if doc_id:
                         all_doc_ids.add(doc_id)
-                        discovery.setdefault(doc_id, "search-document")
+                        discovery.setdefault(doc_id, tool_name.replace("_", "-"))
                     all_chunks.append(chunk)
 
             if tool_name == "get_neighbors" and "neighbors" in result:
@@ -1106,11 +1106,22 @@ def _build_answer_context(
             parts.append(f"Authority level: {authority}")
 
         if doc_chunks:
+            # Sub-group by heading so chapter boundaries are unambiguous
+            chunks_by_heading: dict[str, list[dict]] = {}
             for chunk in doc_chunks:
-                page = chunk.get("start_page")
-                page_ref = f" (page {page})" if page else ""
-                parts.append(f"\n**Chunk{page_ref}:**")
-                parts.append(chunk.get("text", "")[:2000])
+                h = chunk.get("heading", "")
+                chunks_by_heading.setdefault(h, []).append(chunk)
+
+            for heading, h_chunks in chunks_by_heading.items():
+                if heading:
+                    pages = sorted({c.get("start_page") for c in h_chunks if c.get("start_page")})
+                    page_range = f" (pages {pages[0]}-{pages[-1]})" if len(pages) > 1 else (f" (page {pages[0]})" if pages else "")
+                    parts.append(f"\n#### {heading}{page_range}")
+                for chunk in h_chunks:
+                    page = chunk.get("start_page")
+                    page_ref = f" (page {page})" if page else ""
+                    parts.append(f"\n**Chunk{page_ref}:**")
+                    parts.append(chunk.get("text", "")[:2000])
 
         # Include case opinion text if available
         if doc_id in fetched_opinions:
