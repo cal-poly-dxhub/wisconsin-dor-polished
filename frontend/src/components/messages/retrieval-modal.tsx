@@ -68,24 +68,192 @@ const TOOL_TITLES: Record<string, string> = {
   cite_documents: 'Cite Documents',
 };
 
-const TOOL_SUBTITLES: Record<string, string> = {
-  reasoning: 'Agent reasoning step',
-  faq_search: 'Deterministic FAQ knowledge base lookup',
-  refine_query: 'Rewriting query for precision',
-  vector_search: 'Semantic similarity over embedded chunks',
-  search_document: 'Full-text search within a document',
-  list_sections: 'Listing available document sections',
-  get_section: 'Fetching a specific section',
-  get_document: 'Retrieving full document content',
-  get_neighbors: 'Traversing graph relationships',
-  get_authority_chain: 'Tracing legal authority hierarchy',
-  list_framework_docs: 'Listing documents in framework',
-  find_case_law: 'Searching for relevant case law',
-  fetch_case_opinion: 'Fetching full court opinion text',
-  prepare_answer: 'Assembling evidence into response',
-  answer: 'Assembling evidence into response',
-  cite_documents: 'Selecting sources for citation',
-};
+function stripQuotes(s: string): string {
+  const t = s.trim();
+  if (
+    (t.startsWith('"') && t.endsWith('"')) ||
+    (t.startsWith('\u201c') && t.endsWith('\u201d'))
+  ) {
+    return t.slice(1, -1);
+  }
+  return t;
+}
+
+function Emphasis({ children }: { children: React.ReactNode }) {
+  return <span className="text-foreground font-semibold">{children}</span>;
+}
+
+function ActionLead({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+      {children}
+    </p>
+  );
+}
+
+function CardContextLine({ card }: { card: PipelineCard }) {
+  const m = card.metadata;
+  const call = card.callSummary;
+
+  switch (card.toolName) {
+    case 'refine_query': {
+      const refined = typeof m.refinedQuery === 'string' ? m.refinedQuery : '';
+      const original = stripQuotes(call);
+      if (refined && card.status === 'complete') {
+        return (
+          <ActionLead>
+            Rewriting the query to <Emphasis>&ldquo;{refined}&rdquo;</Emphasis>
+          </ActionLead>
+        );
+      }
+      if (original) {
+        return (
+          <ActionLead>
+            Rewriting the query <Emphasis>&ldquo;{original}&rdquo;</Emphasis>
+          </ActionLead>
+        );
+      }
+      return null;
+    }
+    case 'faq_search': {
+      const query = stripQuotes(call);
+      if (!query) return null;
+      return (
+        <ActionLead>
+          Searching FAQs for <Emphasis>&ldquo;{query}&rdquo;</Emphasis>
+        </ActionLead>
+      );
+    }
+    case 'vector_search': {
+      const query = stripQuotes(call);
+      if (!query) return null;
+      return (
+        <ActionLead>
+          Searching the knowledge graph for <Emphasis>&ldquo;{query}&rdquo;</Emphasis>
+        </ActionLead>
+      );
+    }
+    case 'search_document': {
+      const docTitle = typeof m.docTitle === 'string' ? m.docTitle : '';
+      const inMatch = call.match(/^"(.+)" in (.+)$/);
+      if (inMatch) {
+        return (
+          <ActionLead>
+            Searching <Emphasis>&ldquo;{inMatch[1]}&rdquo;</Emphasis> in{' '}
+            <Emphasis>{inMatch[2]}</Emphasis>
+          </ActionLead>
+        );
+      }
+      if (docTitle && call) {
+        return (
+          <ActionLead>
+            Searching <Emphasis>&ldquo;{stripQuotes(call)}&rdquo;</Emphasis> in{' '}
+            <Emphasis>{docTitle}</Emphasis>
+          </ActionLead>
+        );
+      }
+      if (docTitle) {
+        return (
+          <ActionLead>
+            Searching in <Emphasis>{docTitle}</Emphasis>
+          </ActionLead>
+        );
+      }
+      return null;
+    }
+    case 'list_sections': {
+      const docTitle =
+        (typeof m.docTitle === 'string' ? m.docTitle : '') || call;
+      if (!docTitle) return null;
+      return (
+        <ActionLead>
+          Listing sections in <Emphasis>{docTitle}</Emphasis>
+        </ActionLead>
+      );
+    }
+    case 'get_section': {
+      const heading = typeof m.heading === 'string' ? m.heading : '';
+      const docTitle = typeof m.docTitle === 'string' ? m.docTitle : '';
+      const query = typeof m.query === 'string' ? m.query : '';
+      if (heading || docTitle || query) {
+        return (
+          <ActionLead>
+            Searching {heading && <Emphasis>{heading}</Emphasis>}
+            {docTitle && <> in {docTitle}</>}
+            {query && (
+              <> for <Emphasis>&ldquo;{query}&rdquo;</Emphasis></>
+            )}
+          </ActionLead>
+        );
+      }
+      const fromMatch = call.match(/^"(.+)" from (.+)$/);
+      if (fromMatch) {
+        return (
+          <ActionLead>
+            Searching <Emphasis>{fromMatch[1]}</Emphasis> in {fromMatch[2]}
+          </ActionLead>
+        );
+      }
+      return null;
+    }
+    case 'get_neighbors': {
+      const source = call;
+      if (!source) return null;
+      return (
+        <ActionLead>
+          Exploring neighbors of <Emphasis>{source}</Emphasis>
+        </ActionLead>
+      );
+    }
+    case 'get_authority_chain': {
+      const source = call;
+      if (!source) return null;
+      return (
+        <ActionLead>
+          Tracing authority from <Emphasis>{source}</Emphasis>
+        </ActionLead>
+      );
+    }
+    case 'get_document': {
+      const target = call;
+      if (!target) return null;
+      return (
+        <ActionLead>
+          Fetching <Emphasis>{target}</Emphasis>
+        </ActionLead>
+      );
+    }
+    case 'list_framework_docs': {
+      const framework = call;
+      if (!framework) return null;
+      return (
+        <ActionLead>
+          Listing documents in <Emphasis>{framework}</Emphasis>
+        </ActionLead>
+      );
+    }
+    case 'find_case_law': {
+      const query = stripQuotes(call) || call;
+      if (!query) return null;
+      return (
+        <ActionLead>
+          Searching case law for <Emphasis>&ldquo;{query}&rdquo;</Emphasis>
+        </ActionLead>
+      );
+    }
+    case 'fetch_case_opinion': {
+      const citation = call;
+      if (!citation) return null;
+      return (
+        <ActionLead>
+          Fetching opinion for <Emphasis>{citation}</Emphasis>
+        </ActionLead>
+      );
+    }
+    default:
+      return null;
+  }
+}
 
 function deriveItems(trace: AgentTraceEvent[]): PipelineItem[] {
   const items: PipelineItem[] = [];
@@ -188,7 +356,7 @@ function FAQCardViz({ card }: { card: PipelineCard }) {
 
   return (
     <FadeIn>
-      <div className="mt-3">
+      <div>
         {topFaqSnippet && (
           <p className="text-xs text-foreground/70 mb-3 leading-relaxed line-clamp-2">
             {topFaqSnippet}
@@ -309,10 +477,10 @@ function VectorCardViz({ card }: { card: PipelineCard }) {
   }
 
   return (
-    <div className="mt-2">
+    <div>
       {hasDocChunks ? (
         <FadeIn>
-          <div className="mt-3">
+          <div>
             <p className="text-xs text-muted-foreground/70 mb-3">
               {preDedupCount > 0 ? `${preDedupCount} candidates → ` : ''}{chunkCount} kept (cap {DIVERSITY_CAP}/doc)
             </p>
@@ -389,6 +557,112 @@ function VectorCardViz({ card }: { card: PipelineCard }) {
   );
 }
 
+interface ChunkScore {
+  chunkId: string;
+  cosine: number;
+  zScore: number | null;
+  heading: string;
+  subheading: string;
+  startPage: number | null;
+  endPage: number | null;
+  included?: boolean;
+}
+
+function GetSectionViz({ card }: { card: PipelineCard }) {
+  const m = card.metadata;
+  const sectionChunkCount = typeof m.sectionChunkCount === 'number' ? m.sectionChunkCount : 0;
+  const returnedChunkCount = typeof m.returnedChunkCount === 'number' ? m.returnedChunkCount : 0;
+  const chunkCount = typeof m.chunkCount === 'number' ? m.chunkCount : 0;
+  const latencyMs = typeof m.latencyMs === 'number' ? m.latencyMs : 0;
+  const chunkScores = Array.isArray(m.chunkScores) ? (m.chunkScores as ChunkScore[]) : [];
+
+  if (card.status === 'pending') return null;
+
+  const hasRanking = chunkScores.length > 0;
+  const GRID_CELLS = 15;
+  const maxZ = hasRanking
+    ? Math.max(...chunkScores.map(c => c.zScore ?? 0), 1)
+    : 1;
+
+  return (
+    <FadeIn>
+      <div>
+        {hasRanking ? (
+          <div>
+            <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
+              {Array.from({ length: GRID_CELLS }).map((_, i) => {
+                const chunk = chunkScores[i];
+                if (!chunk) {
+                  return (
+                    <motion.div
+                      key={`empty-${i}`}
+                      className="rounded-[4px] border border-dashed border-muted-foreground/20 bg-muted/30"
+                      style={{ minHeight: '64px' }}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.2, delay: i * 0.02 }}
+                    />
+                  );
+                }
+                const z = chunk.zScore ?? 0;
+                const saturation = Math.min(Math.max(z / maxZ, 0.15), 1);
+                const included = chunk.included !== false;
+                return (
+                  <motion.div
+                    key={chunk.chunkId || i}
+                    className={`rounded-[4px] p-1.5 flex flex-col overflow-hidden ${
+                      included
+                        ? 'border border-foreground/20'
+                        : 'border border-dashed border-muted-foreground/30'
+                    }`}
+                    style={{
+                      minHeight: '64px',
+                      backgroundColor: included
+                        ? `hsl(142 60% 45% / ${saturation * 0.35})`
+                        : 'hsl(0 0% 50% / 0.08)',
+                    }}
+                    initial={{ opacity: 0, scale: 0.6 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.2, delay: i * 0.03, ease: [0.4, 0, 0.2, 1] }}
+                  >
+                    <span className="text-[10px] font-semibold text-foreground/80 leading-none">
+                      {i + 1}
+                    </span>
+                    <div className="mt-auto">
+                      <span className="block text-xs tabular-nums text-foreground/70 font-medium leading-tight">
+                        {chunk.cosine.toFixed(3)}
+                      </span>
+                      {chunk.zScore !== null && (
+                        <span className={`block text-xs tabular-nums font-medium leading-tight ${
+                          included ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground/60'
+                        }`}>
+                          z{chunk.zScore >= 0 ? '+' : ''}{chunk.zScore.toFixed(1)}
+                        </span>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+            <p className="text-sm font-medium text-foreground mt-3">
+              {returnedChunkCount} of {sectionChunkCount} chunks passed z-score filter
+            </p>
+          </div>
+        ) : (
+          chunkCount > 0 && (
+            <p className="text-xs text-muted-foreground/60 mt-1">
+              {chunkCount} chunk{chunkCount !== 1 ? 's' : ''} retrieved
+            </p>
+          )
+        )}
+        {latencyMs > 0 && (
+          <p className="text-xs text-muted-foreground/50 mt-1">{latencyMs}ms</p>
+        )}
+      </div>
+    </FadeIn>
+  );
+}
+
 function GraphNeighborsViz({ card }: { card: PipelineCard }) {
   const m = card.metadata;
   const neighborCount = typeof m.neighborCount === 'number' ? m.neighborCount : 0;
@@ -426,7 +700,7 @@ function GraphNeighborsViz({ card }: { card: PipelineCard }) {
 
   return (
     <motion.div
-      className="flex-1 flex flex-col mt-4 -mx-6 -mb-6"
+      className="flex-1 flex flex-col -mx-6 -mb-6"
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
@@ -471,7 +745,7 @@ function AuthorityChainViz({ card }: { card: PipelineCard }) {
 
   return (
     <FadeIn>
-      <div className="mt-3 flex items-center gap-1">
+      <div className="flex items-center gap-1">
         {Array.from({ length: chainLength }).map((_, i) => (
           <motion.div
             key={i}
@@ -773,6 +1047,8 @@ function CardVisualization({ card, trace }: { card: PipelineCard; trace: AgentTr
       return <FAQCardViz card={card} />;
     case 'vector_search':
       return <VectorCardViz card={card} />;
+    case 'get_section':
+      return <GetSectionViz card={card} />;
     case 'get_neighbors':
       return <GraphNeighborsViz card={card} />;
     case 'get_authority_chain':
@@ -793,16 +1069,10 @@ function CardInfoContent({ card }: { card: PipelineCard }) {
   const latencyMs = typeof m.latencyMs === 'number' ? m.latencyMs : 0;
 
   if (card.toolName === 'refine_query') {
-    const refined = typeof m.refinedQuery === 'string' ? m.refinedQuery : '';
-    if (refined && card.status === 'complete') {
+    if (latencyMs > 0 && card.status === 'complete') {
       return (
         <FadeIn>
-          <p className="mt-2 text-sm text-foreground/90 font-medium leading-snug">
-            &ldquo;{refined}&rdquo;
-          </p>
-          {latencyMs > 0 && (
-            <p className="text-xs text-muted-foreground/50 mt-2">{latencyMs}ms</p>
-          )}
+          <p className="text-xs text-muted-foreground/50">{latencyMs}ms</p>
         </FadeIn>
       );
     }
@@ -810,18 +1080,12 @@ function CardInfoContent({ card }: { card: PipelineCard }) {
   }
 
   if (card.toolName === 'list_sections') {
-    const docTitle = typeof m.docTitle === 'string' ? m.docTitle : '';
     const headings = Array.isArray(m.sectionHeadings) ? (m.sectionHeadings as string[]) : [];
     const totalSections = typeof m.sectionCount === 'number' ? (m.sectionCount as number) : headings.length;
     if (card.status !== 'complete') return null;
     return (
       <FadeIn>
-        <div className="mt-2">
-          {docTitle && (
-            <p className="text-xs text-muted-foreground/70 mb-2">
-              from <span className="text-foreground/70 font-medium">{docTitle}</span>
-            </p>
-          )}
+        <div>
           {headings.length > 0 && (
             <ScrollableItemList items={headings} totalCount={totalSections} />
           )}
@@ -833,60 +1097,18 @@ function CardInfoContent({ card }: { card: PipelineCard }) {
     );
   }
 
-  if (card.toolName === 'get_section') {
-    const docTitle = typeof m.docTitle === 'string' ? m.docTitle : '';
-    const heading = typeof m.heading === 'string' ? m.heading : '';
-    const chunkCount = typeof m.chunkCount === 'number' ? m.chunkCount : 0;
-    if (card.status !== 'complete' && card.status !== 'miss') return null;
-    return (
-      <FadeIn>
-        <div className="mt-2">
-          {heading && (
-            <p className="text-sm text-foreground/85 font-medium leading-snug">
-              {heading}
-            </p>
-          )}
-          {docTitle && (
-            <p className="text-xs text-muted-foreground/70 mt-1">
-              from <span className="text-foreground/70 font-medium">{docTitle}</span>
-            </p>
-          )}
-          {chunkCount > 0 && (
-            <p className="text-xs text-muted-foreground/60 mt-1">
-              {chunkCount} chunk{chunkCount !== 1 ? 's' : ''} retrieved
-            </p>
-          )}
-          {latencyMs > 0 && (
-            <p className="text-xs text-muted-foreground/50 mt-1">{latencyMs}ms</p>
-          )}
-        </div>
-      </FadeIn>
-    );
-  }
-
   if (card.toolName === 'search_document') {
-    const docTitle = typeof m.docTitle === 'string' ? m.docTitle : '';
     const chunkCount = typeof m.chunkCount === 'number' ? m.chunkCount : 0;
     if (card.status !== 'complete' && card.status !== 'miss') return null;
     return (
       <FadeIn>
-        <div className="mt-2">
-          {card.callSummary && (
-            <p className="text-sm text-foreground/85 font-medium leading-snug mb-1">
-              {card.callSummary}
-            </p>
-          )}
-          {!card.callSummary && docTitle && (
-            <p className="text-xs text-muted-foreground/70">
-              in <span className="text-foreground/70 font-medium">{docTitle}</span>
-            </p>
-          )}
+        <div>
           {chunkCount > 0 ? (
-            <p className="text-xs text-muted-foreground/60 mt-1">
+            <p className="text-xs text-muted-foreground/60">
               {chunkCount} chunk{chunkCount !== 1 ? 's' : ''} matched
             </p>
           ) : card.status === 'miss' ? (
-            <p className="text-xs text-muted-foreground/50 italic mt-1">No matches found</p>
+            <p className="text-xs text-muted-foreground/50 italic">No matches found</p>
           ) : null}
           {latencyMs > 0 && (
             <p className="text-xs text-muted-foreground/50 mt-1">{latencyMs}ms</p>
@@ -901,59 +1123,47 @@ function CardInfoContent({ card }: { card: PipelineCard }) {
 
 function CardPanel({ card, trace, index }: { card: PipelineCard; trace: AgentTraceEvent[]; index: number }) {
   const title = TOOL_TITLES[card.toolName] ?? card.toolName;
-  const subtitle = TOOL_SUBTITLES[card.toolName] ?? '';
   const isThinking = card.toolName === 'reasoning';
-  const hasInfoContent = ['refine_query', 'list_sections', 'get_section', 'search_document'].includes(card.toolName);
+  const hasInfoContent = ['refine_query', 'list_sections', 'search_document'].includes(card.toolName);
 
   return (
     <div className="h-full p-6 flex flex-col">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-3 shrink-0">
         <div className="min-w-0">
           <h3 className={`text-base font-semibold tracking-tight ${
             card.status === 'miss' ? 'text-muted-foreground/60' : 'text-foreground'
           }`}>
             {title}
           </h3>
-          {!isThinking && subtitle && (
-            <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
-          )}
-          {!isThinking && !hasInfoContent && card.callSummary && (
-            <p className="text-xs text-foreground/70 font-medium mt-1 truncate">
-              {card.callSummary}
-            </p>
-          )}
-          {!isThinking && !hasInfoContent && card.summary && card.summary !== card.callSummary && (
-            <p className="text-xs text-muted-foreground/70 mt-1 truncate">
-              {card.summary}
-            </p>
-          )}
         </div>
         <CardIndicator status={card.status} index={index} />
       </div>
 
-      {isThinking ? (
-        <p className="mt-3 text-sm text-muted-foreground/80 leading-relaxed">
-          {card.summary}
-        </p>
-      ) : hasInfoContent ? (
-        <CardInfoContent card={card} />
-      ) : (
-        <div className="flex-1 flex flex-col">
-          <CardVisualization card={card} trace={trace} />
-        </div>
-      )}
+      <div className="flex-1 flex flex-col min-h-0 mt-4">
+        {!isThinking && <CardContextLine card={card} />}
 
-      {card.status === 'pending' && (
-        <motion.div
-          className="mt-3 flex items-center gap-2 text-xs text-muted-foreground/70"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3 }}
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-pulse shrink-0" />
-          <span>Processing...</span>
-        </motion.div>
-      )}
+        {isThinking ? (
+          <p className="text-sm text-muted-foreground/80 leading-relaxed">
+            {card.summary}
+          </p>
+        ) : hasInfoContent ? (
+          <CardInfoContent card={card} />
+        ) : (
+          <CardVisualization card={card} trace={trace} />
+        )}
+
+        {card.status === 'pending' && (
+          <motion.div
+            className="mt-3 flex items-center gap-2 text-xs text-muted-foreground/70"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3 }}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-pulse shrink-0" />
+            <span>Processing...</span>
+          </motion.div>
+        )}
+      </div>
     </div>
   );
 }
