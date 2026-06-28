@@ -397,6 +397,16 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             "docTitle": doc_title,
             "heading": heading,
         }
+        ranking_stats = result.get("ranking_stats")
+        if ranking_stats:
+            metadata["query"] = result.get("query", "")
+            metadata["sectionChunkCount"] = ranking_stats["sectionChunkCount"]
+            metadata["returnedChunkCount"] = ranking_stats["returnedChunkCount"]
+            metadata["mean"] = ranking_stats["mean"]
+            metadata["std"] = ranking_stats["std"]
+            metadata["zThreshold"] = ranking_stats["zThreshold"]
+            metadata["flatDistribution"] = ranking_stats["flatDistribution"]
+            metadata["chunkScores"] = ranking_stats["chunkScores"]
 
     elif tool_name == "get_neighbors":
         neighbors = result.get("neighbors", [])

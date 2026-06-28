@@ -595,12 +595,12 @@ def _rank_chunks_by_relevance(
     chunks: list[dict],
     query_embedding: list[float],
     top_k: int,
-) -> list[dict]:
+) -> dict:
     """Rank section chunks by cosine similarity + z-score filtering.
 
-    Returns up to top_k chunks that are statistically more relevant than
-    the section average. When all chunks score similarly (std ≈ 0), falls
-    back to top_k by raw cosine.
+    Returns a dict with:
+      - chunks: up to top_k chunks that pass the z-score threshold
+      - ranking_stats: per-chunk scores and aggregate stats for trace UI
     """
     import math
 
@@ -624,7 +624,7 @@ def _rank_chunks_by_relevance(
     scores = [s for s, _ in scored]
     n = len(scores)
     if n == 0:
-        return []
+        return {"chunks": [], "ranking_stats": None}
 
     mean = sum(scores) / n
     variance = sum((s - mean) ** 2 for s in scores) / n
@@ -634,7 +634,31 @@ def _rank_chunks_by_relevance(
 
     if std < 1e-6:
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [chunk for _, chunk in scored[:top_k]]
+        result_chunks = [chunk for _, chunk in scored[:top_k]]
+        chunk_scores = [
+            {
+                "chunkId": chunk.get("id", ""),
+                "cosine": round(score, 4),
+                "zScore": None,
+                "heading": chunk.get("heading", ""),
+                "subheading": chunk.get("subheading", ""),
+                "startPage": chunk.get("start_page"),
+                "endPage": chunk.get("end_page"),
+            }
+            for score, chunk in scored[:top_k]
+        ]
+        return {
+            "chunks": result_chunks,
+            "ranking_stats": {
+                "sectionChunkCount": n,
+                "returnedChunkCount": len(result_chunks),
+                "mean": round(mean, 4),
+                "std": 0.0,
+                "zThreshold": _Z_THRESHOLD,
+                "flatDistribution": True,
+                "chunkScores": chunk_scores,
+            },
+        }
 
     ranked = []
     for score, chunk in scored:
@@ -643,14 +667,35 @@ def _rank_chunks_by_relevance(
     ranked.sort(key=lambda x: x[0], reverse=True)
 
     results = []
-    for z, score, chunk in ranked:
-        if len(results) >= top_k:
-            break
-        if z >= _Z_THRESHOLD or len(results) == 0:
+    all_chunk_scores = []
+    for i, (z, score, chunk) in enumerate(ranked):
+        included = (len(results) < top_k) and (z >= _Z_THRESHOLD or len(results) == 0)
+        if included:
             chunk["relevance_score"] = round(score, 4)
             results.append(chunk)
+        all_chunk_scores.append({
+            "chunkId": chunk.get("id", ""),
+            "cosine": round(score, 4),
+            "zScore": round(z, 2),
+            "heading": chunk.get("heading", ""),
+            "subheading": chunk.get("subheading", ""),
+            "startPage": chunk.get("start_page"),
+            "endPage": chunk.get("end_page"),
+            "included": included,
+        })
 
-    return results
+    return {
+        "chunks": results,
+        "ranking_stats": {
+            "sectionChunkCount": n,
+            "returnedChunkCount": len(results),
+            "mean": round(mean, 4),
+            "std": round(std, 4),
+            "zThreshold": _Z_THRESHOLD,
+            "flatDistribution": False,
+            "chunkScores": all_chunk_scores,
+        },
+    }
 
 
 def execute_tool(
@@ -1080,12 +1125,13 @@ def execute_tool(
         else:
             chunks = neptune.get_section_chunks(doc_id, heading)
 
+        section_chunk_count = len(chunks)
         _log_tool_event(
             "get_section_complete",
             tool_name=tool_name,
             doc_id=doc_id,
             heading=heading,
-            chunk_count=len(chunks),
+            chunk_count=section_chunk_count,
             query_provided=bool(query),
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
@@ -1095,11 +1141,18 @@ def execute_tool(
                 "suggestion": "Use list_sections to see available headings for this document",
             }
 
+        ranking_stats = None
         if query:
             query_embedding = embed_query(query)
-            chunks = _rank_chunks_by_relevance(chunks, query_embedding, top_k)
+            rank_result = _rank_chunks_by_relevance(chunks, query_embedding, top_k)
+            chunks = rank_result["chunks"]
+            ranking_stats = rank_result["ranking_stats"]
 
-        return {"chunks": chunks, "doc_id": doc_id, "heading": heading}
+        result = {"chunks": chunks, "doc_id": doc_id, "heading": heading}
+        if ranking_stats:
+            result["ranking_stats"] = ranking_stats
+            result["query"] = query
+        return result
 
     elif tool_name == "get_document":
         # The model occasionally passes `node_id` (the param name used by

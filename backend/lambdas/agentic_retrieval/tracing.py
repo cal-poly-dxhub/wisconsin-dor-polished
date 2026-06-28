@@ -45,6 +45,14 @@ ALLOWED_METADATA_KEYS = frozenset({
     "topFaqSnippet",
     "neighborTitles",
     "neighborEdges",
+    "query",
+    "sectionChunkCount",
+    "returnedChunkCount",
+    "mean",
+    "std",
+    "zThreshold",
+    "flatDistribution",
+    "chunkScores",
 })
 
 
