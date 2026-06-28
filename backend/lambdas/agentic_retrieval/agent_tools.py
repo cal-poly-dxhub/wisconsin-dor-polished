@@ -275,11 +275,14 @@ TOOL_DEFINITIONS = [
         "toolSpec": {
             "name": "get_section",
             "description": (
-                "Retrieve all chunks from a specific section of a document. "
-                "Use after list_sections to fetch the full content of a "
-                "chapter or section by its exact heading. Returns chunks in "
-                "document order. This is a direct lookup — no vector search "
-                "involved — so it always returns the complete section content."
+                "Retrieve chunks from a specific section of a document. "
+                "Use after list_sections to fetch content from a chapter or "
+                "section by its exact heading. When a query is provided, "
+                "returns only the most relevant chunks (ranked by semantic "
+                "similarity); without a query, returns all chunks in document "
+                "order. ALWAYS provide a query when the section has more than "
+                "~10 chunks — it dramatically reduces noise. Omit the query "
+                "only when you need the full sequential text of a short section."
             ),
             "inputSchema": {
                 "json": {
@@ -297,6 +300,24 @@ TOOL_DEFINITIONS = [
                                 "The exact section heading from list_sections "
                                 "(e.g., 'Chapter 12 Residential Property Valuation')"
                             ),
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "A natural-language question describing what you "
+                                "need from this section. Used to rank and filter "
+                                "chunks by relevance. Be specific — include the "
+                                "property type, assessment concept, or statute "
+                                "reference you are investigating."
+                            ),
+                        },
+                        "top_k": {
+                            "type": "integer",
+                            "description": (
+                                "Max chunks to return when query is provided "
+                                "(default: 5, max: 10). Ignored without a query."
+                            ),
+                            "default": 5,
                         },
                     },
                     "required": ["doc_id", "heading"],
@@ -568,6 +589,68 @@ def embed_query(query: str, model_id: str = "amazon.titan-embed-text-v2:0") -> l
         **_query_fields(query),
     )
     return embedding
+
+
+def _rank_chunks_by_relevance(
+    chunks: list[dict],
+    query_embedding: list[float],
+    top_k: int,
+) -> list[dict]:
+    """Rank section chunks by cosine similarity + z-score filtering.
+
+    Returns up to top_k chunks that are statistically more relevant than
+    the section average. When all chunks score similarly (std ≈ 0), falls
+    back to top_k by raw cosine.
+    """
+    import math
+
+    def _cosine(a: list[float], b: list[float]) -> float:
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    scored = []
+    for chunk in chunks:
+        emb = chunk.pop("embedding", None)
+        if emb is None:
+            scored.append((0.0, chunk))
+            continue
+        score = _cosine(query_embedding, emb)
+        scored.append((score, chunk))
+
+    scores = [s for s, _ in scored]
+    n = len(scores)
+    if n == 0:
+        return []
+
+    mean = sum(scores) / n
+    variance = sum((s - mean) ** 2 for s in scores) / n
+    std = math.sqrt(variance)
+
+    _Z_THRESHOLD = 0.5
+
+    if std < 1e-6:
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [chunk for _, chunk in scored[:top_k]]
+
+    ranked = []
+    for score, chunk in scored:
+        z = (score - mean) / std
+        ranked.append((z, score, chunk))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+
+    results = []
+    for z, score, chunk in ranked:
+        if len(results) >= top_k:
+            break
+        if z >= _Z_THRESHOLD or len(results) == 0:
+            chunk["relevance_score"] = round(score, 4)
+            results.append(chunk)
+
+    return results
 
 
 def execute_tool(
@@ -987,15 +1070,23 @@ def execute_tool(
     elif tool_name == "get_section":
         doc_id = tool_input.get("doc_id") or tool_input.get("node_id") or ""
         heading = tool_input.get("heading", "")
+        query = tool_input.get("query", "")
+        top_k = min(tool_input.get("top_k", 5), 10)
         if not doc_id or not heading:
             return {"error": "Both doc_id and heading are required"}
-        chunks = neptune.get_section_chunks(doc_id, heading)
+
+        if query:
+            chunks = neptune.get_section_chunks_with_embeddings(doc_id, heading)
+        else:
+            chunks = neptune.get_section_chunks(doc_id, heading)
+
         _log_tool_event(
             "get_section_complete",
             tool_name=tool_name,
             doc_id=doc_id,
             heading=heading,
             chunk_count=len(chunks),
+            query_provided=bool(query),
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
         if not chunks:
@@ -1003,6 +1094,11 @@ def execute_tool(
                 "error": f"No chunks found for heading '{heading}' in document '{doc_id}'",
                 "suggestion": "Use list_sections to see available headings for this document",
             }
+
+        if query:
+            query_embedding = embed_query(query)
+            chunks = _rank_chunks_by_relevance(chunks, query_embedding, top_k)
+
         return {"chunks": chunks, "doc_id": doc_id, "heading": heading}
 
     elif tool_name == "get_document":

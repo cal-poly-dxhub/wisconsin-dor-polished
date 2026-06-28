@@ -432,6 +432,23 @@ class NeptuneClient:
         )
         return results
 
+    def get_section_chunks_with_embeddings(self, doc_id: str, heading: str) -> list[dict]:
+        """Get section chunks with their stored vector embeddings for local ranking."""
+        results = self.query(
+            "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: $doc_id}) "
+            "WHERE c.heading = $heading "
+            "WITH c ORDER BY c.chunk_index "
+            "CALL neptune.algo.vectors.get(c) YIELD embedding "
+            "RETURN c.id AS chunk_id, c.text AS text, c.doc_id AS doc_id, "
+            "c.source_url AS source_url, c.s3_key AS s3_key, "
+            "c.start_page AS start_page, c.end_page AS end_page, "
+            "c.heading AS heading, c.subheading AS subheading, "
+            "c.chunk_index AS chunk_index, embedding",
+            {"doc_id": doc_id, "heading": heading},
+            query_name="get_section_chunks_with_embeddings",
+        )
+        return results
+
     def get_chunk_statute_ids(self, chunk_ids: list[str]) -> list[str]:
         """Return statute IDs cited by the given chunks (via CITES edges)."""
         if not chunk_ids:
