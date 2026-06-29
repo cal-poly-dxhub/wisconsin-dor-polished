@@ -21,6 +21,7 @@ import {
   ArrowRight,
   FileText,
   ExternalLink,
+  HardDrive,
 } from 'lucide-react';
 
 interface DocSummary {
@@ -60,6 +61,7 @@ interface DocMeta {
 const DOCS_CACHE_KEY = 'admin_chunks_docs';
 const CHUNK_CACHE_PREFIX = 'admin_chunks_doc_';
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const LOCAL_PREFIX = 'LOCAL:';
 
 function getCached<T>(key: string): T | null {
   try {
@@ -99,17 +101,56 @@ function invalidateAllCaches() {
   keys.forEach(k => sessionStorage.removeItem(k));
 }
 
+function getHeadingPrefix(heading: string | null): string {
+  if (!heading) return '';
+  const match = heading.match(/^(\d+\.\d+)/);
+  return match ? match[1] : heading;
+}
+
+interface ChunkGroup {
+  prefix: string;
+  chunks: ChunkData[];
+}
+
+function groupChunksByHeading(chunks: ChunkData[]): ChunkGroup[] {
+  const groups: ChunkGroup[] = [];
+  let currentPrefix: string | null = null;
+  let currentChunks: ChunkData[] = [];
+
+  for (const chunk of chunks) {
+    const prefix = getHeadingPrefix(chunk.heading);
+    if (prefix !== currentPrefix) {
+      if (currentChunks.length > 0) {
+        groups.push({ prefix: currentPrefix || '', chunks: currentChunks });
+      }
+      currentPrefix = prefix;
+      currentChunks = [chunk];
+    } else {
+      currentChunks.push(chunk);
+    }
+  }
+  if (currentChunks.length > 0) {
+    groups.push({ prefix: currentPrefix || '', chunks: currentChunks });
+  }
+  return groups;
+}
+
 function ChunkGrid({
   chunks,
   docMeta,
   maxChars,
   onChunkClick,
+  grouped,
 }: {
   chunks: ChunkData[];
   docMeta: DocMeta;
   maxChars: number;
   onChunkClick: (chunk: ChunkData) => void;
+  grouped: boolean;
 }) {
+  const groups = groupChunksByHeading(chunks);
+  const hasGroups = groups.some(g => g.chunks.length > 1);
+
   return (
     <div className="space-y-4">
       {/* Stats bar */}
@@ -127,6 +168,12 @@ function ChunkGrid({
         )}
         {docMeta.authority_level != null && (
           <Badge variant="outline">authority {docMeta.authority_level}</Badge>
+        )}
+        {hasGroups && (
+          <>
+            <span className="text-border">|</span>
+            <span>{groups.length} sections</span>
+          </>
         )}
       </div>
 
@@ -147,25 +194,57 @@ function ChunkGrid({
       </div>
 
       {/* Grid */}
-      <div className="flex flex-wrap gap-1">
-        {chunks.map((chunk, i) => {
-          const ratio = maxChars > 0 ? chunk.char_count / maxChars : 0;
-          // Brighter = smaller, darker = bigger
-          const lightness = Math.round(85 - ratio * 60); // 85% (small/bright) to 25% (large/dark)
-          const saturation = Math.round(50 + ratio * 30); // more saturated when larger
-          return (
-            <button
-              key={i}
-              onClick={() => onChunkClick(chunk)}
-              className="h-6 w-6 rounded-sm border border-border/30 transition-all hover:scale-150 hover:border-foreground hover:z-10 cursor-pointer"
-              style={{
-                backgroundColor: `hsl(160, ${saturation}%, ${lightness}%)`,
-              }}
-              title={`#${chunk.idx} — ${chunk.char_count} chars`}
-            />
-          );
-        })}
-      </div>
+      {grouped ? (
+        <div className="flex flex-wrap gap-1.5 items-start">
+          {groups.map((group, gi) => (
+            <div
+              key={gi}
+              className={
+                group.chunks.length > 1
+                  ? 'flex flex-wrap gap-1 rounded-lg border border-foreground/50 p-1'
+                  : 'flex flex-wrap gap-1 rounded-lg border border-foreground/15 p-1'
+              }
+              title={group.prefix ? `§${group.prefix}` : undefined}
+            >
+              {group.chunks.map((chunk, ci) => {
+                const ratio = maxChars > 0 ? chunk.char_count / maxChars : 0;
+                const lightness = Math.round(85 - ratio * 60);
+                const saturation = Math.round(50 + ratio * 30);
+                return (
+                  <button
+                    key={ci}
+                    onClick={() => onChunkClick(chunk)}
+                    className="h-6 w-6 rounded-sm border border-border/30 transition-all hover:scale-150 hover:border-foreground hover:z-10 cursor-pointer"
+                    style={{
+                      backgroundColor: `hsl(160, ${saturation}%, ${lightness}%)`,
+                    }}
+                    title={`#${chunk.idx} §${group.prefix} — ${chunk.char_count} chars`}
+                  />
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-1">
+          {chunks.map((chunk, i) => {
+            const ratio = maxChars > 0 ? chunk.char_count / maxChars : 0;
+            const lightness = Math.round(85 - ratio * 60);
+            const saturation = Math.round(50 + ratio * 30);
+            return (
+              <button
+                key={i}
+                onClick={() => onChunkClick(chunk)}
+                className="h-6 w-6 rounded-sm border border-border/30 transition-all hover:scale-150 hover:border-foreground hover:z-10 cursor-pointer"
+                style={{
+                  backgroundColor: `hsl(160, ${saturation}%, ${lightness}%)`,
+                }}
+                title={`#${chunk.idx} — ${chunk.char_count} chars`}
+              />
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -306,6 +385,7 @@ function MetaRow({
 
 export default function AdminChunksPage() {
   const [documents, setDocuments] = useState<DocSummary[]>([]);
+  const [localDocs, setLocalDocs] = useState<DocSummary[]>([]);
   const [filteredDocs, setFilteredDocs] = useState<DocSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -316,6 +396,7 @@ export default function AdminChunksPage() {
   const [selectedChunk, setSelectedChunk] = useState<ChunkData | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [invalidated, setInvalidated] = useState(false);
+  const [grouped, setGrouped] = useState(true);
   const fetchedRef = useRef(false);
 
   const fetchDocuments = useCallback(async (skipCache = false) => {
@@ -324,18 +405,25 @@ export default function AdminChunksPage() {
       if (cached) {
         setDocuments(cached);
         setFilteredDocs(cached);
-        return;
       }
     }
 
     setLoading(true);
     try {
-      const res = await http
-        .get('admin/chunks/documents')
-        .json<{ statusCode?: number; body?: string; documents?: DocSummary[] }>();
-      const data = res.body ? JSON.parse(res.body) : res;
-      const docs = data.documents || [];
+      const [remoteRes, localRes] = await Promise.all([
+        http
+          .get('admin/chunks/documents')
+          .json<{ statusCode?: number; body?: string; documents?: DocSummary[] }>()
+          .catch(() => ({ documents: [] as DocSummary[] }) as { statusCode?: number; body?: string; documents?: DocSummary[] }),
+        fetch('/api/local-chunks')
+          .then(r => r.json())
+          .catch(() => ({ documents: [] as DocSummary[] })),
+      ]);
+      const remoteData = remoteRes.body ? JSON.parse(remoteRes.body) : remoteRes;
+      const docs = (remoteData.documents || []) as DocSummary[];
+      const local = (localRes.documents || []) as DocSummary[];
       setDocuments(docs);
+      setLocalDocs(local);
       setFilteredDocs(docs);
       setCache(DOCS_CACHE_KEY, docs);
     } catch (err) {
@@ -360,15 +448,25 @@ export default function AdminChunksPage() {
 
       setChunksLoading(true);
       try {
-        const res = await http
-          .get(`admin/chunks/${docId}`)
-          .json<{ statusCode?: number; body?: string; document?: DocMeta; chunks?: ChunkData[] }>();
-        const data = res.body ? JSON.parse(res.body) : res;
-        const meta = data.document as DocMeta;
-        const chks = data.chunks as ChunkData[];
-        setDocMeta(meta);
-        setChunks(chks);
-        setCache(`${CHUNK_CACHE_PREFIX}${docId}`, { meta, chunks: chks });
+        if (docId.startsWith(LOCAL_PREFIX)) {
+          const file = docId.slice(LOCAL_PREFIX.length);
+          const res = await fetch(`/api/local-chunks/${encodeURIComponent(file)}`).then(r => r.json());
+          const meta = res.document as DocMeta;
+          const chks = res.chunks as ChunkData[];
+          setDocMeta(meta);
+          setChunks(chks);
+          if (meta) setCache(`${CHUNK_CACHE_PREFIX}${docId}`, { meta, chunks: chks });
+        } else {
+          const res = await http
+            .get(`admin/chunks/${docId}`)
+            .json<{ statusCode?: number; body?: string; document?: DocMeta; chunks?: ChunkData[] }>();
+          const data = res.body ? JSON.parse(res.body) : res;
+          const meta = data.document as DocMeta;
+          const chks = data.chunks as ChunkData[];
+          setDocMeta(meta);
+          setChunks(chks);
+          setCache(`${CHUNK_CACHE_PREFIX}${docId}`, { meta, chunks: chks });
+        }
       } catch (err) {
         console.error('Failed to fetch chunks:', err);
       } finally {
@@ -474,6 +572,28 @@ export default function AdminChunksPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {/* Local chunks from pdf_chunking/final_chunks */}
+            {localDocs.map(doc => (
+              <button
+                key={`local-${doc.doc_id}`}
+                onClick={() => handleDocSelect(`${LOCAL_PREFIX}${doc.doc_id}`)}
+                className="flex items-center gap-3 rounded-md border border-dashed border-amber-500/50 bg-amber-500/5 p-3 text-left transition-colors hover:bg-amber-500/10 cursor-pointer"
+              >
+                <HardDrive className="h-4 w-4 shrink-0 text-amber-600" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {doc.doc_id.replace(/\.jsonl$/, '').replace(/_\d{8}_\d{6}$/, '')}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {(doc.size_bytes / 1024).toFixed(0)} KB
+                  </p>
+                </div>
+                <Badge variant="outline" className="text-xs border-amber-500/50 text-amber-600">
+                  local
+                </Badge>
+              </button>
+            ))}
+
             {filteredDocs.map(doc => (
               <button
                 key={doc.doc_id}
@@ -512,7 +632,9 @@ export default function AdminChunksPage() {
           </Button>
           <div>
             <h1 className="text-lg font-semibold text-foreground">
-              {selectedDocId}
+              {selectedDocId?.startsWith(LOCAL_PREFIX)
+                ? selectedDocId.slice(LOCAL_PREFIX.length).replace(/\.jsonl$/, '').replace(/_\d{8}_\d{6}$/, '')
+                : selectedDocId}
             </h1>
             {docMeta?.title && (
               <p className="text-sm text-muted-foreground">{docMeta.title}</p>
@@ -532,6 +654,14 @@ export default function AdminChunksPage() {
               </a>
             </Button>
           )}
+          <Button
+            variant={grouped ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setGrouped(g => !g)}
+          >
+            <Grid3X3 className="mr-1 h-3 w-3" />
+            Group
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -569,6 +699,7 @@ export default function AdminChunksPage() {
               docMeta={docMeta}
               maxChars={docMeta.max_chunk_chars}
               onChunkClick={handleChunkClick}
+              grouped={grouped}
             />
           </CardContent>
         </Card>
