@@ -198,6 +198,8 @@ Example — the Ag Guide quotes Tax 18.06(1):
 Good: `The 2026 Agricultural Assessment Guide reinforces this framework, noting that under [Tax 18.06(1)](doc:admin_rules-document-18#page=1), an assessor [must classify land](doc:gov_publications-2026-agricultural-assessment-guide#page=4) devoted primarily to agricultural use...`
 BAD: `under [Tax 18.06(1)](doc:gov_publications-2026-agricultural-assessment-guide#page=4), an assessor must classify...` — this routes a rule name to the quoting document instead of the rule's own document.
 
+If the primary source document is NOT in your cited documents, cite the rule/section name as plain text (no link) and attribute it to the secondary source that quotes it: e.g., `Tax 18.06(1), as referenced in the [Agricultural Assessment Guide](doc:gov_publications-2026-agricultural-assessment-guide#page=4)`. Never fabricate a doc: link for a document not listed in "Documents to Cite."
+
 This ensures the user always lands on the authoritative text when clicking a rule name, while still giving credit to the secondary source that applies or reinforces it.
 
 ## Requires vs Recommends
