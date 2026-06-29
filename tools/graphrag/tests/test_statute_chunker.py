@@ -11,6 +11,7 @@ from pdf_chunking.pdfChunker import (
     CHUNK_MAX_CHARS,
     chunk_document_admin_rule,
     chunk_document_statute,
+    get_chunk_cap,
     _split_statute_section,
 )
 
@@ -113,9 +114,10 @@ class TestChunkDocumentStatute:
 
         chunks = chunk_document_statute(None, "statutes-70.pdf", "bucket", mapping)
 
+        statute_cap = get_chunk_cap("statute")
         for c in chunks:
-            assert len(c["text"]) <= CHUNK_MAX_CHARS, (
-                f"Chunk exceeds cap: {len(c['text'])} > {CHUNK_MAX_CHARS}"
+            assert len(c["text"]) <= statute_cap, (
+                f"Chunk exceeds cap: {len(c['text'])} > {statute_cap}"
             )
 
     def test_no_duplicate_ids_after_split(self):
@@ -305,7 +307,7 @@ class TestChunkDocumentAdminRule:
         assert "following approaches" in chunks[0]["text"]
 
     def test_no_chunk_exceeds_cap(self):
-        """All output chunks respect CHUNK_MAX_CHARS."""
+        """All output chunks respect the admin_rule cap."""
         body = "Detail about assessment rules. " * 200
         mapping = [
             ("Tax 20.03 Assessment requirements.", 1),
@@ -313,8 +315,9 @@ class TestChunkDocumentAdminRule:
         ]
         chunks = chunk_document_admin_rule(None, "admin_rules-document-20.pdf", "bucket", mapping)
 
+        cap = get_chunk_cap("admin_rule")
         for c in chunks:
-            assert len(c["text"]) <= CHUNK_MAX_CHARS
+            assert len(c["text"]) <= cap
 
     def test_boilerplate_in_body_not_treated_as_heading(self):
         """Lines like 'WISCONSIN ADMINISTRATIVE CODE' don't create new chunks

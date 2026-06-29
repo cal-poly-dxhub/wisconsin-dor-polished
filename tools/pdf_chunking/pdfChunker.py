@@ -217,7 +217,16 @@ _LEADER_IN_LINE = re.compile(r"(?:\.[ \t\xa0]*){5,}\.")
 # the match decision. 7500 leaves a margin for character-counting imprecision
 # between the chunker (which measures the buffer) and the final joined text
 # (which includes heading prefixes added at flush time).
-CHUNK_MAX_CHARS = 3500
+CHUNK_MAX_CHARS = 2500
+
+_CHUNK_CAP_BY_STRATEGY = {
+    "statute": 3500,
+    "admin_rule": 3500,
+}
+
+
+def get_chunk_cap(strategy: str = "") -> int:
+    return _CHUNK_CAP_BY_STRATEGY.get(strategy, CHUNK_MAX_CHARS)
 
 
 def _count_chars_in_buffer(buffer: list[tuple[str, int]]) -> int:
@@ -326,32 +335,34 @@ def chunk_document(header_split, file, BUCKET, line_page_mapping):
     return _enforce_chunk_cap(chunks)
 
 
-def _enforce_chunk_cap(chunks: list[dict]) -> list[dict]:
-    """Split any residual chunks that exceed CHUNK_MAX_CHARS.
+def _enforce_chunk_cap(chunks: list[dict], cap: int = 0) -> list[dict]:
+    """Split any residual chunks that exceed the cap.
 
     The in-loop word/char triggers only fire at line boundaries, so a chunk
     with one very long line or whose heading+body sum pushes past the cap
     can still escape the primary flush. This pass walks the output and hard-
     splits any over-cap chunk at paragraph/line breaks, preferring natural
     seams within the last 20% of the cap window. Worst case is a mid-line
-    hard-cut for single-line paragraphs longer than CHUNK_MAX_CHARS — which
+    hard-cut for single-line paragraphs longer than the cap — which
     is still better than Titan's silent truncation, because the tail content
     becomes its own embeddable chunk instead of being vector-invisible.
     """
+    if not cap:
+        cap = CHUNK_MAX_CHARS
     final: list[dict] = []
     for chunk in chunks:
         text = chunk["text"]
-        if len(text) <= CHUNK_MAX_CHARS:
+        if len(text) <= cap:
             final.append(chunk)
             continue
         pieces: list[str] = []
         start = 0
         while start < len(text):
-            end = min(start + CHUNK_MAX_CHARS, len(text))
+            end = min(start + cap, len(text))
             if end < len(text):
-                break_hint = text.rfind("\n\n", start + int(CHUNK_MAX_CHARS * 0.8), end)
+                break_hint = text.rfind("\n\n", start + int(cap * 0.8), end)
                 if break_hint == -1:
-                    break_hint = text.rfind("\n", start + int(CHUNK_MAX_CHARS * 0.8), end)
+                    break_hint = text.rfind("\n", start + int(cap * 0.8), end)
                 if break_hint != -1 and break_hint > start:
                     end = break_hint
             piece = text[start:end].strip()
@@ -539,13 +550,14 @@ def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
         })
 
     # Split oversized sections at subsection/sentence boundaries
+    cap = get_chunk_cap("statute")
     final_chunks: list[dict] = []
     for chunk in merged_chunks:
         text = chunk["text"]
-        if len(text) <= CHUNK_MAX_CHARS:
+        if len(text) <= cap:
             final_chunks.append(chunk)
             continue
-        parts = _split_statute_section(text)
+        parts = _split_statute_section(text, cap=cap)
         for part in parts:
             split_chunk = {k: (dict(v) if isinstance(v, dict) else v) for k, v in chunk.items()}
             split_chunk["text"] = part
@@ -594,6 +606,7 @@ def chunk_document_admin_rule(header_split, file, BUCKET, line_page_mapping):
 
     # Third pass: build chunks, drop stubs, split oversized.
     _MIN_BODY_CHARS = 80
+    cap = get_chunk_cap("admin_rule")
     final_chunks: list[dict] = []
 
     for rule_id, body_lines in grouped.items():
@@ -604,7 +617,7 @@ def chunk_document_admin_rule(header_split, file, BUCKET, line_page_mapping):
         start_page, end_page = (min(pages), max(pages)) if pages else (1, 1)
         chunk_text = f"{rule_id}\n{body_text}"
 
-        if len(chunk_text) <= CHUNK_MAX_CHARS:
+        if len(chunk_text) <= cap:
             final_chunks.append({
                 "text": chunk_text,
                 "metadata": {
@@ -615,7 +628,7 @@ def chunk_document_admin_rule(header_split, file, BUCKET, line_page_mapping):
                 }
             })
         else:
-            parts = _split_statute_section(chunk_text)
+            parts = _split_statute_section(chunk_text, cap=cap)
             for part in parts:
                 final_chunks.append({
                     "text": part,
@@ -1189,8 +1202,8 @@ def process_pdf_from_s3(
         # Final cap enforcement: extract_clean_plaintext rejoins lines with
         # double newlines which can push a chunk past the cap that was
         # compliant during chunk_document's buffer-time measurement. Re-run
-        # the splitter so the emitted chunks are guaranteed <= CHUNK_MAX_CHARS.
-        all_chunks = _enforce_chunk_cap(all_chunks)
+        # the splitter so the emitted chunks are guaranteed <= cap.
+        all_chunks = _enforce_chunk_cap(all_chunks, cap=get_chunk_cap(strategy))
 
         # Merge short tail fragments created by _enforce_chunk_cap back into
         # their predecessor. Must run AFTER cap enforcement to catch fragments
