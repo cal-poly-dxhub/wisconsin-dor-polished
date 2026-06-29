@@ -20,6 +20,7 @@ import itertools
 import json
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -1170,6 +1171,62 @@ def _build_answer_context(
                     page_ref = f" (page {page})" if page else ""
                     parts.append(f"\n**Chunk{page_ref}:**")
                     parts.append(chunk.get("text", "")[:2000])
+
+        # For statute docs, include a section→page index so the model
+        # can look up correct page numbers for sections not in the
+        # retrieved chunks.
+        if doc_id.startswith("statutes-") and neptune_client:
+            try:
+                sections = neptune_client.list_document_sections(doc_id)
+                if sections:
+                    # Extract numeric chapter (e.g. "70" from "statutes-70")
+                    chapter_match = re.match(r"statutes-(\d+)", doc_id)
+                    chapter = chapter_match.group(1) if chapter_match else doc_id.replace("statutes-", "")
+                    # Same pattern the statute chunker uses to identify
+                    # canonical section headings (rejects cross-references
+                    # like "70.32 (2) (a) 6..." that appear inside other
+                    # sections).
+                    section_pattern = re.compile(
+                        rf"^({re.escape(chapter)}\.\d+[A-Za-z\-]*)(?:\s+[A-Z]|\s*$)"
+                    )
+                    # Fallback: any heading starting with the section number
+                    # (used when no canonical heading exists)
+                    loose_pattern = re.compile(rf"^{re.escape(chapter)}\.\d+")
+                    index_lines = []
+                    seen_sections: dict[str, int] = {}
+                    fallback_sections: dict[str, int] = {}
+                    for sec in sections:
+                        heading = sec.get("heading", "")
+                        first_page = sec.get("first_page")
+                        if not heading or first_page is None:
+                            continue
+                        m = section_pattern.match(heading)
+                        if m:
+                            sec_num = m.group(1)
+                            if sec_num not in seen_sections:
+                                seen_sections[sec_num] = first_page
+                        else:
+                            m2 = loose_pattern.match(heading)
+                            if m2:
+                                sec_num = m2.group(0)
+                                if sec_num not in fallback_sections:
+                                    fallback_sections[sec_num] = first_page
+                    merged = {**fallback_sections, **seen_sections}
+                    # Only include sections referenced in chunk text
+                    chunk_text_blob = " ".join(
+                        c.get("text", "") for c in doc_chunks
+                    )
+                    referenced = set(
+                        re.findall(rf"{re.escape(chapter)}\.\d+[A-Za-z\-]*", chunk_text_blob)
+                    )
+                    for sec_num, page in merged.items():
+                        if sec_num in referenced:
+                            index_lines.append(f"- § {sec_num} → page {page}")
+                    if index_lines:
+                        parts.append("\n**Section Page Index** (use these page numbers for `#page=N` citations):")
+                        parts.extend(index_lines)
+            except Exception:
+                pass
 
         # Include case opinion text if available
         if doc_id in fetched_opinions:

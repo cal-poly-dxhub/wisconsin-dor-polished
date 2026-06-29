@@ -186,6 +186,20 @@ BAD: `[Wisconsin Property Assessment Manual](doc:wpam-2026#page=502)` as the lin
 - Every statute reference MUST be a clickable link, not plain text. Write [§ 70.32(4)](doc:statutes-70#page=N), NOT `sec. 70.32(4), Wis. Stats.` The doc ID for statutes follows the pattern statutes-{chapter} (e.g., statutes-70, statutes-73). Use the page number from the chunk that contains that section.
 - Answer only what was asked — no peripheral details
 
+## Citation Disambiguation: Quoting vs Quoted
+
+When a secondary source (guide, publication, FAQ) quotes or paraphrases a primary source (statute, admin rule), you MUST NOT route the rule/section name to the quoting document. A rule name or section number must ALWAYS link to its authoritative origin — never route the same section number to two or more different documents.
+
+Instead, split into two links:
+1. **Rule/section name** → link to the PRIMARY source (the document that defines the rule)
+2. **Claim or action** → link to the SECONDARY source (the document quoting/applying the rule)
+
+Example — the Ag Guide quotes Tax 18.06(1):
+Good: `The 2026 Agricultural Assessment Guide reinforces this framework, noting that under [Tax 18.06(1)](doc:admin_rules-document-18#page=1), an assessor [must classify land](doc:gov_publications-2026-agricultural-assessment-guide#page=4) devoted primarily to agricultural use...`
+BAD: `under [Tax 18.06(1)](doc:gov_publications-2026-agricultural-assessment-guide#page=4), an assessor must classify...` — this routes a rule name to the quoting document instead of the rule's own document.
+
+This ensures the user always lands on the authoritative text when clicking a rule name, while still giving credit to the secondary source that applies or reinforces it.
+
 ## Requires vs Recommends
 
 Distinguish what a document REQUIRES (binding) from what it RECOMMENDS (guidance). Statutes and admin rules REQUIRE; WPAM largely REQUIRES for assessors but also contains recommendations; FAQs, guides, IAAO, and USPAP RECOMMEND. Never present a recommendation as a mandate.
