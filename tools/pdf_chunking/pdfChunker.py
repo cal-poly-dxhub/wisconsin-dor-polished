@@ -2,6 +2,7 @@ import os
 import re
 import json
 import boto3
+from collections import OrderedDict
 from datetime import datetime
 import botocore
 from botocore.config import Config
@@ -40,7 +41,10 @@ def _get_s3():
         _s3 = boto3.client("s3")
         session = boto3.session.Session()
         _region_name = session.region_name
-        _ensure_bucket_exists(_s3, MEDIA_BUCKET_NAME)
+        try:
+            _ensure_bucket_exists(_s3, MEDIA_BUCKET_NAME)
+        except Exception:
+            pass
     return _s3
 
 
@@ -59,14 +63,16 @@ def _ensure_bucket_exists(s3_client, bucket_name: str):
 
 CHUNKER_BY_SOURCE = {
     "state-laws": "statute",
-    "admin-rules": "statute",
+    "admin-rules": "admin_rule",
     "assessment-manual": "wpam",
 }
 
 def get_chunking_strategy(source_id: str) -> str:
     if source_id.startswith("wpam-"):
         return "wpam"
-    if source_id.startswith(("statutes-", "admin_rules-")):
+    if source_id.startswith("admin_rules-"):
+        return "admin_rule"
+    if source_id.startswith("statutes-"):
         return "statute"
     return CHUNKER_BY_SOURCE.get(source_id, "general")
 
@@ -211,7 +217,7 @@ _LEADER_IN_LINE = re.compile(r"(?:\.[ \t\xa0]*){5,}\.")
 # the match decision. 7500 leaves a margin for character-counting imprecision
 # between the chunker (which measures the buffer) and the final joined text
 # (which includes heading prefixes added at flush time).
-CHUNK_MAX_CHARS = 2500
+CHUNK_MAX_CHARS = 3500
 
 
 def _count_chars_in_buffer(buffer: list[tuple[str, int]]) -> int:
@@ -338,6 +344,7 @@ def _enforce_chunk_cap(chunks: list[dict]) -> list[dict]:
         if len(text) <= CHUNK_MAX_CHARS:
             final.append(chunk)
             continue
+        pieces: list[str] = []
         start = 0
         while start < len(text):
             end = min(start + CHUNK_MAX_CHARS, len(text))
@@ -349,10 +356,15 @@ def _enforce_chunk_cap(chunks: list[dict]) -> list[dict]:
                     end = break_hint
             piece = text[start:end].strip()
             if piece:
-                split_chunk = {k: (dict(v) if isinstance(v, dict) else v) for k, v in chunk.items()}
-                split_chunk["text"] = piece
-                final.append(split_chunk)
+                pieces.append(piece)
             start = end
+        if len(pieces) >= 2 and len(pieces[-1]) < 200:
+            pieces[-2] = pieces[-2] + "\n" + pieces[-1]
+            pieces.pop()
+        for piece in pieces:
+            split_chunk = {k: (dict(v) if isinstance(v, dict) else v) for k, v in chunk.items()}
+            split_chunk["text"] = piece
+            final.append(split_chunk)
     return final
 
 
@@ -444,23 +456,25 @@ def _split_at_lines(text: str, cap: int) -> list[str]:
 
 def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
     """
-    Chunk WI Statute / Administrative Code PDFs.
-    Each 'Tax XX.XX' rule becomes its own chunk, using the same page mapping logic
-    that gives good page numbers for manuals/publications.
+    Chunk WI Statute PDFs.
+    Each numbered section becomes its own chunk.
     """
     doc_id = os.path.basename(file)
     chunks = []
 
-    # Pattern for statute sections like "Tax 16.01" or "Tax 18.05"
-    if "statute" in doc_id.lower():
-        rule_pattern = re.compile(r"(\d+\.\d+[A-Za-z\-]*)")
+    # Pattern for statute sections like "70.32 Real estate, how valued."
+    # Must NOT match subsection references like "70.32 (2) (a) 6."
+    chapter_match = re.search(r"statutes-(?:document-)?(\d+)", doc_id)
+    if chapter_match:
+        chapter = chapter_match.group(1)
+        rule_pattern = re.compile(rf"({re.escape(chapter)}\.\d+[A-Za-z\-]*)(?:\s+[A-Z]|\s*$)")
     else:
-        rule_pattern = re.compile(r"(Tax\s\d+\.\d+[^ \n]*)")
+        rule_pattern = re.compile(r"(\d+\.\d+[A-Za-z\-]*)(?:\s+[A-Z]|\s*$)")
 
     heading, local_buffer = None, []
 
     def flush_chunk(heading, buffer):
-        """Flush one statute rule into a chunk with correct page metadata."""
+        """Flush one statute section into a chunk with correct page metadata."""
         if heading and buffer:
             pages = {p for _, p in buffer}
             start_page, end_page = min(pages), max(pages)
@@ -482,7 +496,6 @@ def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
             continue
 
         if rule_pattern.match(clean):
-            # Found a new rule — flush the previous one
             flush_chunk(heading, local_buffer)
             heading, local_buffer = clean, []
         else:
@@ -537,6 +550,82 @@ def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
             split_chunk = {k: (dict(v) if isinstance(v, dict) else v) for k, v in chunk.items()}
             split_chunk["text"] = part
             final_chunks.append(split_chunk)
+
+    return final_chunks
+
+
+def chunk_document_admin_rule(header_split, file, BUCKET, line_page_mapping):
+    """
+    Chunk Wisconsin Administrative Code PDFs (Tax XX.XX rules).
+
+    Addresses admin-rule-specific issues:
+    - TOC entries on page 1 match the rule pattern but carry no body content.
+    - Page-continuation headers restate the rule ID with different trailing text.
+    - Groups all fragments by normalized rule ID, then drops stubs.
+    """
+    doc_id = os.path.basename(file)
+    rule_pattern = re.compile(r"(Tax\s\d+\.\d+[^ \n]*)")
+
+    # First pass: collect (rule_id, body_lines, pages) per rule-match boundary.
+    raw_sections: list[tuple[str, list[tuple[str, int]]]] = []
+    current_id, local_buffer = None, []
+
+    for line, page_num in line_page_mapping:
+        clean = line.strip()
+        if not clean:
+            continue
+        m = rule_pattern.match(clean)
+        if m:
+            if current_id is not None:
+                raw_sections.append((current_id, local_buffer))
+            current_id = m.group(1)
+            remainder = clean[m.end():].strip()
+            local_buffer = [(remainder, page_num)] if remainder else []
+        else:
+            local_buffer.append((clean, page_num))
+
+    if current_id is not None:
+        raw_sections.append((current_id, local_buffer))
+
+    # Second pass: group by rule_id (merges non-adjacent TOC + body occurrences).
+    grouped: OrderedDict[str, list[tuple[str, int]]] = OrderedDict()
+    for rule_id, lines in raw_sections:
+        grouped.setdefault(rule_id, []).extend(lines)
+
+    # Third pass: build chunks, drop stubs, split oversized.
+    _MIN_BODY_CHARS = 80
+    final_chunks: list[dict] = []
+
+    for rule_id, body_lines in grouped.items():
+        body_text = "\n".join(txt for txt, _ in body_lines).strip()
+        if len(body_text) < _MIN_BODY_CHARS:
+            continue
+        pages = {p for _, p in body_lines}
+        start_page, end_page = (min(pages), max(pages)) if pages else (1, 1)
+        chunk_text = f"{rule_id}\n{body_text}"
+
+        if len(chunk_text) <= CHUNK_MAX_CHARS:
+            final_chunks.append({
+                "text": chunk_text,
+                "metadata": {
+                    "doc_id": doc_id,
+                    "heading": rule_id,
+                    "start_page": start_page,
+                    "end_page": end_page,
+                }
+            })
+        else:
+            parts = _split_statute_section(chunk_text)
+            for part in parts:
+                final_chunks.append({
+                    "text": part,
+                    "metadata": {
+                        "doc_id": doc_id,
+                        "heading": rule_id,
+                        "start_page": start_page,
+                        "end_page": end_page,
+                    }
+                })
 
     return final_chunks
 
@@ -931,7 +1020,7 @@ def process_pdf_from_s3(
     """
     doc_id = os.path.basename(s3_file_path)
     strategy = get_chunking_strategy(source_id)
-    is_statute = strategy == "statute"
+    is_statute = strategy in ("statute", "admin_rule")
     print(f"Processing {doc_id} (strategy={strategy}, source_id={source_id})")
 
     # --- Download PDF locally (shared by both extraction paths) ---
@@ -981,7 +1070,9 @@ def process_pdf_from_s3(
 
     try:
         # --- Run chunking ---
-        if strategy == "statute":
+        if strategy == "admin_rule":
+            raw_chunks = chunk_document_admin_rule(header_split, s3_file_path, bucket_name, line_page_mapping)
+        elif strategy == "statute":
             raw_chunks = chunk_document_statute(header_split, s3_file_path, bucket_name, line_page_mapping)
         elif strategy == "wpam":
             raw_chunks = chunk_document_wpam(header_split, s3_file_path, bucket_name, line_page_mapping)

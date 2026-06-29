@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pdf_chunking.pdfChunker import (
     CHUNK_MAX_CHARS,
+    chunk_document_admin_rule,
     chunk_document_statute,
     _split_statute_section,
 )
@@ -33,8 +34,8 @@ class TestSplitStatuteSection:
         assert parts == [text]
 
     def test_splits_at_subsection_boundaries(self):
-        sub1 = "(1) " + "First subsection content. " * 50  # ~1300 chars
-        sub2 = "(2) " + "Second subsection content. " * 50  # ~1350 chars
+        sub1 = "(1) " + "First subsection content. " * 70  # ~1820 chars
+        sub2 = "(2) " + "Second subsection content. " * 70  # ~1890 chars
         text = f"70.05 Heading\n{sub1}\n{sub2}"
         assert len(text) > CHUNK_MAX_CHARS
 
@@ -56,7 +57,7 @@ class TestSplitStatuteSection:
         assert parts[0] == text
 
     def test_falls_back_to_sentence_split_when_no_subsections(self):
-        sentences = [f"Sentence {i} describes a tax assessment rule in detail.  " for i in range(60)]
+        sentences = [f"Sentence {i} describes a tax assessment rule in detail.  " for i in range(80)]
         text = "70.32 Long section no subsections\n" + "".join(sentences)
         assert len(text) > CHUNK_MAX_CHARS
 
@@ -180,15 +181,16 @@ class TestChunkDocumentStatute:
             assert c["metadata"]["heading"] == "70.47 Board of review"
 
     def test_admin_rule_pattern(self):
-        """Administrative code (Tax XX.XX) uses the same splitting."""
+        """Administrative code (Tax XX.XX) now routes to chunk_document_admin_rule."""
         lines = [(f"Rule detail {i}. " * 4, 1) for i in range(60)]
         mapping = _statute_mapping([
             ("Tax 16.01 Scope", lines[:30]),
             ("Tax 16.02 Definitions", lines[30:]),
         ])
 
-        chunks = chunk_document_statute(None, "admin-rules-tax-16.pdf", "bucket", mapping)
+        chunks = chunk_document_admin_rule(None, "admin-rules-tax-16.pdf", "bucket", mapping)
 
+        assert len(chunks) >= 2
         for c in chunks:
             assert len(c["text"]) <= CHUNK_MAX_CHARS
 
@@ -206,3 +208,125 @@ class TestChunkDocumentStatute:
         assert len(section_11) == 1
         assert "First page content" in section_11[0]["text"]
         assert "Second page content" in section_11[0]["text"]
+
+    def test_cross_references_not_treated_as_headings(self):
+        """Cross-references to other chapters don't split sections."""
+        mapping = [
+            ("70.01 General property taxes", 1),
+            ("All property subject to taxation under ch. 70.", 1),
+            ("292.31 (8) (i) or 292.81, and is effective as of January 1 in the", 1),
+            ("year of the assessment shall be valued as if not contaminated.", 1),
+            ("70.02 Definition of general property", 2),
+            ("General property is all taxable property.", 2),
+        ]
+
+        chunks = chunk_document_statute(None, "statutes-70.pdf", "bucket", mapping)
+
+        headings = [c["metadata"]["heading"] for c in chunks]
+        assert "70.01 General property taxes" in headings
+        assert "70.02 Definition of general property" in headings
+        # Cross-reference should NOT be its own heading
+        assert all("292.31" not in h for h in headings)
+        # The cross-reference text should be part of the 70.01 chunk
+        chunk_70_01 = next(c for c in chunks if c["metadata"]["heading"] == "70.01 General property taxes")
+        assert "292.31" in chunk_70_01["text"]
+
+    def test_decimal_numbers_not_treated_as_headings(self):
+        """Decimal numbers like '0.0267' don't trigger heading splits."""
+        mapping = [
+            ("70.50 Interest rate", 1),
+            ("The interest rate is", 1),
+            ("0.0267 percent per day for the period of time between", 1),
+            ("the due date and the payment date.", 1),
+        ]
+
+        chunks = chunk_document_statute(None, "statutes-70.pdf", "bucket", mapping)
+
+        assert len(chunks) == 1
+        assert chunks[0]["metadata"]["heading"] == "70.50 Interest rate"
+        assert "0.0267" in chunks[0]["text"]
+
+
+class TestChunkDocumentAdminRule:
+    """Tests for admin-rule-specific chunker (Tax XX.XX pattern)."""
+
+    def test_toc_stubs_dropped(self):
+        """TOC entries with no real body are dropped."""
+        mapping = [
+            ("Tax 12.05", 1), ("Temporary assessor certification.", 1),
+            ("Tax 12.06", 1), ("Duties of assessors.", 1),
+            ("Tax 12.07", 1), ("Assessment districts.", 1),
+        ]
+        chunks = chunk_document_admin_rule(None, "admin_rules-document-12.pdf", "bucket", mapping)
+        assert len(chunks) == 0
+
+    def test_toc_merges_with_body(self):
+        """TOC stub for a rule merges into its real body section."""
+        body_text = "APPROVAL.  Temporary assessor certification shall be " + "x" * 100
+        mapping = [
+            # TOC entry
+            ("Tax 12.05", 1), ("Temporary assessor certification.", 1),
+            # Other TOC entries in between
+            ("Tax 12.06", 1), ("Duties of assessors.", 1),
+            # Real body for 12.05 later in the document
+            ("Tax 12.05 Temporary assessor certification.  (1)", 2),
+            (body_text, 2),
+            # Real body for 12.06
+            ("Tax 12.06 Duties of assessors.  The following levels of", 3),
+            ("certification are established: " + "y" * 100, 3),
+        ]
+        chunks = chunk_document_admin_rule(None, "admin_rules-document-12.pdf", "bucket", mapping)
+
+        rule_ids = [c["metadata"]["heading"] for c in chunks]
+        assert "Tax 12.05" in rule_ids
+        assert "Tax 12.06" in rule_ids
+
+        ch_05 = next(c for c in chunks if c["metadata"]["heading"] == "Tax 12.05")
+        assert "APPROVAL" in ch_05["text"]
+        assert ch_05["metadata"]["start_page"] == 1
+        assert ch_05["metadata"]["end_page"] == 2
+
+    def test_page_continuation_merged(self):
+        """Same rule appearing across pages is merged into one chunk."""
+        mapping = [
+            ("Tax 18.05 Valuation methods.", 1),
+            ("The department shall use " + "a" * 100, 1),
+            # Page break, rule restated by running header
+            ("Tax 18.05", 2),
+            ("the following approaches " + "b" * 100, 2),
+        ]
+        chunks = chunk_document_admin_rule(None, "admin_rules-document-18.pdf", "bucket", mapping)
+
+        assert len(chunks) == 1
+        assert chunks[0]["metadata"]["heading"] == "Tax 18.05"
+        assert chunks[0]["metadata"]["start_page"] == 1
+        assert chunks[0]["metadata"]["end_page"] == 2
+        assert "department shall use" in chunks[0]["text"]
+        assert "following approaches" in chunks[0]["text"]
+
+    def test_no_chunk_exceeds_cap(self):
+        """All output chunks respect CHUNK_MAX_CHARS."""
+        body = "Detail about assessment rules. " * 200
+        mapping = [
+            ("Tax 20.03 Assessment requirements.", 1),
+            (body, 1),
+        ]
+        chunks = chunk_document_admin_rule(None, "admin_rules-document-20.pdf", "bucket", mapping)
+
+        for c in chunks:
+            assert len(c["text"]) <= CHUNK_MAX_CHARS
+
+    def test_boilerplate_in_body_not_treated_as_heading(self):
+        """Lines like 'WISCONSIN ADMINISTRATIVE CODE' don't create new chunks
+        (they should be stripped by boilerplate, but even if they survive,
+        they shouldn't match the Tax XX.XX rule pattern)."""
+        mapping = [
+            ("Tax 12.06 Duties of assessors.", 1),
+            ("Certification levels are established: " + "z" * 80, 1),
+            ("WISCONSIN ADMINISTRATIVE CODE", 2),
+            ("Additional content about assessor duties " + "w" * 80, 2),
+        ]
+        chunks = chunk_document_admin_rule(None, "admin_rules-document-12.pdf", "bucket", mapping)
+
+        assert len(chunks) == 1
+        assert "WISCONSIN ADMINISTRATIVE CODE" in chunks[0]["text"]
