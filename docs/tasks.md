@@ -7,13 +7,9 @@
 | 5 | Replace LLM classification with structural parsers | — |
 | 17 | Handle multipart queries (split or unified answering strategy) | — |
 | 20 | Add user persona setting (government worker vs. citizen) | — |
-| 21 | Investigate z-score normalization for vector_search result filtering | — |
-| 22 | Apply over-fetch multiplier when target_wpam_year is set | — |
+| 21 | Add z-score normalization to search_document result filtering | — |
 | 26 | Admin ingestion page — ingest documents via URL from the UI | — |
 | 27 | Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags | — |
-| 28 | WPAM 2019 heading loss — boilerplate stripper keeps TOC copy, strips real chapter start | — |
-| 29 | Enable prompt caching for agentic retrieval (switch to invoke_model) | — |
-| 30 | get_section chunk grid visualization — show cosine/z-score per chunk in trace UI | — |
 
 ## Done
 
@@ -39,6 +35,10 @@
 | 23 | Strip WPAM running headers from chunk text |
 | 25 | Fix WPAM 2025 garbled table chunks and heading metadata |
 | 2 | Fixing linking issues |
+| 22 | Apply over-fetch multiplier when target_wpam_year is set |
+| 29 | Enable prompt caching for agentic retrieval (switch to invoke_model) |
+| 30 | get_section chunk grid visualization — show cosine/z-score per chunk in trace UI |
+| 28 | WPAM 2019 heading loss — boilerplate stripper keeps TOC copy, strips real chapter start |
 
 ---
 
@@ -107,79 +107,15 @@
 
 ---
 
-### Task 21: Investigate z-score normalization for vector_search result filtering
+### Task 21: Add z-score normalization to search_document result filtering
 
-**Status: Investigated 2026-06-25 — not viable for primary vector_search; viable for `search_document` only.**
+**Context:** Z-score normalization was investigated for `vector_search` (2026-06-25) and found non-viable there — heterogeneous source types create overlapping score distributions where below-mean often means "authoritative but linguistically different," not "irrelevant." However, `search_document` operates within a single document where all chunks share the same writing style, vocabulary density, and embedding characteristics.
 
-**Original Idea:** Use z-score normalization (keep chunks with z >= 0) as an adaptive quality floor after Neptune returns results. Instead of a static top-N cutoff, dynamically shrink the result set based on score distribution — tight clusters yield fewer results, broad distributions retain more.
+**Why it works for search_document:** When searching within one document (e.g., "find the section about agricultural classification in WPAM"), score differences genuinely reflect relevance differences — it's one distribution, not five overlapping ones. Z-score can separate "this chapter answers your question" from "this chapter mentions a keyword in passing."
 
----
+**Current behavior:** `search_document` fetches 800 chunks globally, filters to the target doc (often 30-100 matches for WPAM), then returns top_k. No adaptive quality floor — it always returns exactly top_k results regardless of whether the bottom results are noise.
 
-#### Why z-score doesn't work after vector_search + dedup
-
-The pipeline after WPAM dedup produces a **heterogeneous result set** mixing chunks from statutes, WPAM, guides, FAQs, news pages, and admin rules. These source types have fundamentally different embedding characteristics, which means their scores form **multiple overlapping distributions, not one**. Z-score assumes a single population where below-mean = noise — but in practice, below-mean = authoritative sources with different linguistic patterns.
-
-**The core problem: embedding similarity ≠ answer quality.** The embedding model (Titan Embed v2) produces vectors that are closer when text shares vocabulary, phrasing patterns, and topical density with the query. A guide that says "the levy limit restricts how much a municipality can increase its property tax levy..." scores high because it *sounds like the question* — same words, explanatory register, repeated keywords. A statute that says "No political subdivision may increase its levy by a percentage that exceeds..." scores lower because it's terse legal language with formal phrasing, no repetition, and fewer shared surface tokens. The statute *is the authoritative answer* but doesn't resemble the question linguistically.
-
-After dedup removes WPAM duplicates, what remains is:
-- A cluster of high-scoring dense-prose chunks (guides, WPAM, news pages — verbose, keyword-rich)
-- Scattered lower-scoring but highly authoritative sources (statutes, admin rules, FAQs — terse, formal)
-
-The mean gets pulled up by the dense-prose cluster, and z-score cuts the authoritative sources.
-
----
-
-#### Empirical evidence (2026-06-25, live Neptune queries)
-
-**Query: "what is a levy limit?"** — 115 chunks post-dedup, mean=1.26, std=0.22
-
-| Source | Score | Z-score | Verdict |
-|--------|-------|---------|---------|
-| `statutes-66 §66.0602` (the actual levy limit law) | 0.83 | -1.95 | **CUT** |
-| `faq_pages-slf-levy` (FAQ page literally about levy limits) | 0.60 | -3.01 | **CUT** |
-| 72 news/guide chunks mentioning levies tangentially | 1.26+ | ≥ 0 | kept |
-
-Z-score would remove the primary statute AND the dedicated FAQ page, returning only tangential mentions from guides and news posts.
-
-**Query: "Does my 501c3 property qualify for exemption?"** — 21 chunks, mean=1.26, std=0.046, spread=0.14
-
-| Source | Score | Z-score | Verdict |
-|--------|-------|---------|---------|
-| `statutes-70 §70.11` (the property tax exemption statute) | 1.24 | -0.62 | **CUT** |
-| `faq_pages-slf-taxempt` (tax exemption FAQ) | 1.26 | -0.04 | **CUT** (barely) |
-| IAAO policy papers, property owner guides | 1.28-1.32 | ≥ 0 | kept |
-
-The total spread is only 0.14 — scores form a continuous slope with no natural gap. The z=0 cut point is arbitrary and happens to land just above the most important results.
-
-**Query: "How much of a building needs to be used for manufacturing..."** — 17 chunks, mean=1.17, std=0.11
-
-| Source | Score | Z-score | Verdict |
-|--------|-------|---------|---------|
-| `statutes-70 §70.995` (manufacturing assessment statute) | 0.97 | -1.86 | **CUT** |
-| `gov_publications manufacturing classification` (directly relevant) | 1.08 | -0.87 | **CUT** |
-| Other statute sections and guide chunks | 1.17+ | ≥ 0 | kept |
-
-Would remove 6 of 15 chunks including the primary statute.
-
----
-
-#### Why the current pipeline already handles this correctly
-
-The existing pipeline — dedup → diversity cap (5/doc) → truncate(top_k) → authority tiebreak — solves the problem differently and better:
-
-- **Diversity cap** ensures no single dense-prose source monopolizes all 15 slots
-- **Authority tiebreak** promotes statutes over guides when scores are within 0.03 of each other
-- **Over-fetch (6x)** gives these filters enough runway to surface authoritative minority sources
-
-Z-score would run *before* diversity/authority and eliminate the very sources those later stages exist to promote.
-
----
-
-#### Where z-score IS viable: `search_document`
-
-When searching **within a single document** (e.g., "find the section about agricultural classification in WPAM"), all chunks share the same writing style, vocabulary density, and embedding characteristics. Score differences within one document genuinely reflect relevance differences — it's one distribution, not five overlapping ones.
-
-`search_document` fetches 800 chunks globally, filters to the target doc (often 30-100 matches for WPAM), then returns top_k. Z-score here could separate "this chapter answers your question" from "this chapter mentions a keyword in passing." The garbled table chunks from Task 25 would also tend to cluster below-mean within their own document.
+**Proposed:** After filtering to the target doc's chunks, compute z-scores and drop chunks with z < 0 (below mean). This adaptively shrinks results when scores form a tight cluster with a few outliers, while preserving more results when scores are broadly distributed.
 
 **Other potential locations:**
 - **FAQ search** — signal "no confident match" when all scores are low and flat
@@ -189,103 +125,12 @@ When searching **within a single document** (e.g., "find the section about agric
 - `backend/lambdas/agentic_retrieval/tools.py` — `search_document` (line 857), `faq_search` (line 534)
 - `backend/lambdas/agentic_retrieval/neptune_client.py` — raw scores returned from Neptune
 
-**Priority:** Low. The primary retrieval path doesn't benefit. `search_document` and FAQ are secondary tools that the agent calls less frequently. Revisit if garbled chunk filtering (Task 25) proves insufficient at the data layer.
-
 ---
-
-### Task 22: Apply over-fetch multiplier when target_wpam_year is set
-
-**Problem:** When `target_wpam_year` is set, `vector_search` uses `fetch_k = top_k` (no multiplier). The intent is that the user explicitly wants WPAM content so diversity isn't needed. However, Neptune's vector index still returns chunks from *all* WPAM editions — if the user asks for 15 results and 10 of those are from other edition years, dedup removes them and only ~5 results survive. This under-fetching degrades answer quality for year-targeted queries.
-
-**Why it works today (sometimes):** Year-targeted queries tend to be narrow enough (specific chapter/section) that the target year's chunks rank high in similarity. But for broader WPAM queries scoped to a year (e.g., "WPAM 2023 guidance on agricultural land"), the other editions' chunks are semantically near-identical and dominate the top results.
-
-**Direction:** Apply a smaller over-fetch multiplier (e.g., 2x) when `target_wpam_year` is set, instead of no multiplier at all. The 6x multiplier is designed to surface non-WPAM diversity — that's not needed here — but a 2x buffer gives dedup enough runway to filter other-year editions without leaving the result set too thin.
-
-```python
-# Current (tools.py:630):
-fetch_k = top_k * 6 if target_year is None else top_k
-
-# Proposed:
-fetch_k = top_k * 6 if target_year is None else top_k * 2
-```
-
-**Validation:** Run a few year-targeted queries and compare chunk counts pre/post dedup with and without the multiplier. If post-dedup count consistently stays near `top_k`, no multiplier is needed. If it drops significantly below, the 2x buffer is justified.
-
-**Key file:** `backend/lambdas/agentic_retrieval/tools.py` line 630
 
 ---
 
 ---
 
-## Flawed Responses
-
-### Response A
-
-**Query:** What Information is Used to Determine my assessment?
-
-**Issue:** Cites manufacturing manual when question didn't specifically ask about manufacturing.
-
-<details>
-<summary>Full response</summary>
-
-> What Information Is Used to Determine Your Assessment?
->
-> The information used depends on whether your property is real estate or involves a general assessment cycle. Here's what the documents say:
->
-> **Approaches to Value** — According to the Guide to Wisconsin Manufacturing Property Assessment – 2026, appraisers consider one or more of the following approaches:
-> - Sales Comparison Approach
-> - Cost Approach
-> - Income Approach
->
-> **Current Market Activity** — The Guide to Wisconsin Manufacturing Property Assessment – 2026 also notes current market activity is considered (improved/vacant land sales, listings, lease rates, vacancy rates, economic changes, lending practices, new construction).
->
-> **Property Record Data** — The 2025 Wisconsin Property Assessment Manual outlines data sources (physical view, public area view, owner-requested data, other info such as listings/permits).
->
-> **Sales Ratio Studies and Market Analysis** — assessors analyze sales through assessment/sales ratio studies, monitor zoning changes, building permits, and land use factors.
-
-</details>
-
----
-
-### Response B
-
-**Query:** Is the expansion of a non-profit hospital that is under construction on the assessment date qualify for an exemption from property tax?
-
-**Issue:** On 06/21, the system failed to discover and cite *Children's Hospital of Wisconsin, Inc. v. City of Wauwatosa* (2025 WI App 43) — the most directly on-point case — despite it existing in the graph with a CITES edge to WIS-STAT-70.11. The 06/18 run of the same query correctly found and cited it, producing a substantially better answer with the case's specific facts and holding.
-
-<details>
-<summary>06/21 response (missing Children's Hospital)</summary>
-
-> # Nonprofit Hospital Expansion Under Construction: Property Tax Exemption
->
-> ## Short Answer
->
-> **Generally, no.** A hospital expansion that is still under construction on the January 1 assessment date typically does **not** qualify for the property tax exemption under Wis. Stat. § 70.11(4m)(a), because the property is not yet being **"owned and used"** exclusively for hospital purposes on that date. However, the analysis is fact-specific and depends on the degree to which the property is actually being put to hospital use.
->
-> [cites Covenant Healthcare (2011 WI 80), Saint Joseph's Hospital (276 Wis. 2d 574), but NOT Children's Hospital (2025 WI App 43)]
-
-</details>
-
-<details>
-<summary>06/18 response (correctly cites Children's Hospital)</summary>
-
-> # Non-Profit Hospital Expansion Under Construction: Property Tax Exemption
->
-> ## Short Answer
->
-> **Generally, no** — a non-profit hospital expansion that is only partially constructed on the January 1 assessment date does **not** qualify for the property tax exemption under Wis. Stat. § 70.11(4m). However, a fully constructed expansion that is in the **final stages of being readied** for hospital use (but not yet operational) **may** qualify under the "readying rule."
->
-> ### The 2025 Court of Appeals Decision — Directly On Point
->
-> In ***Children's Hospital of Wisconsin, Inc. v. City of Wauwatosa*, 2025 WI App 43**, the Court of Appeals addressed precisely the question you are asking: whether a non-profit hospital's **expansion tower under construction** on the assessment date qualifies for the § 70.11(4m) exemption.
->
-> **Facts:** Children's Hospital of Wisconsin (CHW) began constructing the "North Tower" addition to its existing hospital complex. On January 1, 2020 (the assessment date), the North Tower was only approximately **14% completed** (excavation, footings, foundation walls, some exterior walls). CHW argued the property was exempt because it was being "readied" for use as a nonprofit hospital.
->
-> **Holding:** The Court of Appeals **affirmed** the City of Wauwatosa's denial of the exemption...
-
-</details>
-
----
 
 ---
 
@@ -405,121 +250,5 @@ for raw_line, page in line_page_mapping:
 
 ---
 
-### Task 29: Enable prompt caching for agentic retrieval (switch to invoke_model)
 
-**Problem:** The agentic retrieval Lambda uses the Bedrock Converse API (`bedrock.converse()` / `bedrock.converse_stream()`), which does not support prompt caching. Each turn in the multi-turn tool loop resends the full message history — input tokens grow from ~8.5K (turn 1) to ~92K (turn 6). The system prompt (~4K tokens) and tool definitions (~4K tokens) are identical on every turn and every request, but are re-billed at full input price each time.
-
-**Measured cost (single query, 6 turns):** 233K total input tokens, 0 cache hits. With caching, the stable prefix (tools + system + first user message ≈ 10K tokens) would be cached for turns 2-6, saving ~50K tokens of full-price input billing per query.
-
-**Estimated savings:** ~$0.10/query at Sonnet pricing ($3/MTok input → $0.30/MTok cache read = 90% discount on cached prefix). At 100 queries/day = ~$300/month savings.
-
-**Required change:** Switch from Converse API to `invoke_model` / `invoke_model_with_response_stream` with the raw Anthropic Messages API format, adding `cache_control: {"type": "ephemeral"}` breakpoints.
-
-**Cache breakpoint placement (max 4):**
-
-1. Last tool definition in the `tools` array — caches all tool schemas (stable across all requests)
-2. System prompt text block — caches the system prompt (stable across all requests)
-3. First user message (optional) — contains pre-seeded FAQ results (stable within a single query's multi-turn loop)
-
-Render order for prefix matching: `tools` → `system` → `messages`. Breakpoints 1+2 create a shared cache across all queries (5-min TTL). Breakpoint 3 is per-query but saves across turns 2-6 within that query.
-
-**Breaking changes requiring refactoring:**
-
-| Area | Converse API (current) | Anthropic Messages format (target) |
-|------|----------------------|-----------------------------------|
-| Tool definitions | `{"toolSpec": {"name": ..., "inputSchema": {"json": {...}}}}` | `{"name": ..., "input_schema": {...}}` |
-| Message content | `[{"text": "..."}]`, `[{"toolUse": {...}}]`, `[{"toolResult": {...}}]` | `[{"type": "text", "text": "..."}]`, `[{"type": "tool_use", ...}]`, `[{"type": "tool_result", ...}]` |
-| Response parsing | `response["output"]["message"]`, `response["stopReason"]` | `response["content"]`, `response["stop_reason"]` |
-| Usage fields | `response["usage"]["inputTokens"]` | `response["usage"]["input_tokens"]`, `response["usage"]["cache_read_input_tokens"]` |
-| Streaming (Phase B) | `converse_stream()` event types | `invoke_model_with_response_stream()` SSE events: `message_start`, `content_block_delta`, `message_delta`, `message_stop` |
-
-**Implementation approach:**
-
-1. Create a helper module (`bedrock_messages.py`) that wraps `invoke_model` with:
-   - Tool definition format conversion (toolSpec → Anthropic format)
-   - Message format conversion (Converse → Messages)
-   - Response parsing back to the dict shape the rest of `main.py` expects
-   - Cache breakpoint injection on tools[-1] and system[0]
-2. Replace `bedrock.converse()` call in the agent loop (line 530) with the wrapper
-3. Replace `bedrock.converse_stream()` in Phase B (line 1186) with streaming wrapper
-4. Add `cache_read_input_tokens` and `cache_creation_input_tokens` to usage logging
-
-**Risk assessment:**
-- No functional behavior change — same model, same prompts, same tools, same message content
-- Streaming still works via `invoke_model_with_response_stream()` (SSE format, not Converse event format)
-- Minimum cacheable prefix for Sonnet: 2048 tokens (our prefix is ~10K — well above)
-- Cache TTL is 5 minutes; if traffic is sparse, cache misses increase (first request per 5-min window pays `cache_creation_input_tokens` at 25% premium, subsequent requests get 90% discount)
-- The `additionalModelRequestFields` param on Converse API does NOT enable caching — confirmed not supported
-
-**Validation:**
-1. Deploy and run a test query
-2. Check `usage` in response for `cache_read_input_tokens > 0` on turns 2+
-3. Compare total billed input tokens before/after across a set of queries
-
-**Effort:** Medium (half day). Mostly mechanical format conversion with a thin adapter layer. No infra/CDK changes needed.
-
-**Key files:**
-- `backend/lambdas/agentic_retrieval/main.py` — lines 530-536 (Phase A converse call), lines 1186-1191 (Phase B stream call)
-- `backend/lambdas/agentic_retrieval/agent_tools.py` — `TOOL_DEFINITIONS` (line 112, needs format conversion)
-- `backend/lambdas/agentic_retrieval/bedrock_messages.py` — new adapter module (to create)
-
----
-
-### Task 30: get_section chunk grid visualization — show cosine/z-score per chunk in trace UI
-
-**Problem:** When the agent calls `get_section`, the trace UI currently shows only the section heading, document name, chunk count, and latency. There's no visibility into *which* chunks were selected or how relevant each one was (cosine similarity, z-score). This makes it impossible to debug retrieval quality from the frontend — you have to dig through CloudWatch logs (which don't even log scores today).
-
-**Two parts:**
-
-#### Part A: Backend — emit per-chunk scores in the WebSocket trace payload
-
-The `_rank_chunks_by_relevance()` function in `agent_tools.py` (line 594) computes cosine similarity and z-scores but doesn't log or emit them. The `get_section` tool result sent over WebSocket (as a trace event) needs to include per-chunk scoring data.
-
-**Data to emit per chunk:**
-- `chunk_index` (positional rank, 0-based, sorted by relevance)
-- `chunk_id` (the Neptune chunk ID)
-- `cosine` (raw cosine similarity score, 4 decimal places)
-- `z_score` (normalized z-score, 2 decimal places)
-- `heading` / `subheading` (for display context)
-- `start_page` / `end_page`
-
-Also emit:
-- `query` — the query string used for ranking (from the tool input)
-- `section_chunk_count` — total chunks in the section (before filtering)
-- `returned_chunk_count` — how many passed the z-score threshold
-
-**Where to emit:** The existing trace/logging WebSocket message for `get_section` tool results. The frontend already receives tool call trace events — extend the payload shape.
-
-#### Part B: Frontend — 4x4 chunk relevance grid in the trace detail view
-
-**Design (based on screenshot of current Get Section trace card):**
-
-Below the existing metadata (heading, document name, chunk count, latency), add:
-
-1. **Query label:** `Searched for "[query]"` — shows the semantic query used for ranking
-2. **4x4 grid (16 cells):** Represents the chunk "slots" available
-   - Chunks fill cells left-to-right, top-to-bottom, ranked by relevance (top-left = best match)
-   - Maximum 10 filled cells (top_k max is 10); remaining cells stay empty/grey
-   - Each filled cell shows:
-     - **Title:** "Chunk 1", "Chunk 2", etc. (rank number)
-     - **Cosine:** e.g., `0.8234`
-     - **Z-score:** e.g., `1.42`
-   - Color coding: higher z-score = more saturated/brighter fill (visual heat)
-   - Empty cells: dark grey placeholder with dashed border
-3. **Section total indicator:** "5 of 13 chunks" or similar, showing how selective the filter was
-
-**Why 4x4:** Simulates the "enormity" of large sections — a 13-chunk section like WPAM Chapter 14 visually fills most of the grid, while a 1-chunk section (like the Ag Guide "C. Assessing other" heading) shows 1 filled cell and 15 empty, making it immediately obvious how much content was available vs. retrieved.
-
-**WebSocket contract change:** This adds fields to the `get_section` trace event payload. Per project conventions, must update:
-1. Backend — `websocket_utils/models.py` (add chunk score array to tool result trace model)
-2. Frontend — `frontend/types/message-types.ts` (extend Zod schema for the trace event)
-3. Frontend — trace detail component (render the grid)
-
-**Key files:**
-- `backend/lambdas/agentic_retrieval/agent_tools.py` — `_rank_chunks_by_relevance()` (line 594), `execute_tool()` get_section handler
-- `backend/layers/websocket_utils/models.py` — trace event model
-- `backend/layers/websocket_utils/utils.py` — `send_json` trace emission
-- `frontend/types/message-types.ts` — Zod schema for tool trace events
-- `frontend/src/components/messages/` — trace detail rendering component (find the Get Section card)
-- `frontend/src/components/messages/chat-message.tsx` — may contain or reference trace rendering
 

@@ -922,7 +922,7 @@ function ScrollableItemList({ items, totalCount }: { items: string[]; totalCount
   );
 }
 
-function ScrollableEdgeList({ edges, totalCount }: { edges: { title: string; relationship: string }[]; totalCount: number }) {
+function _ScrollableEdgeList({ edges, totalCount }: { edges: { title: string; relationship: string }[]; totalCount: number }) {
   const overflow = totalCount > edges.length;
   return (
     <div className="relative my-5 h-[150px] rounded-md border border-border/60 bg-muted/20">
@@ -956,7 +956,7 @@ function ScrollableEdgeList({ edges, totalCount }: { edges: { title: string; rel
   );
 }
 
-function RelationshipSquares({ counts }: { counts: Record<string, number> }) {
+function _RelationshipSquares({ counts }: { counts: Record<string, number> }) {
   const entries = Object.entries(counts)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 6);
