@@ -258,7 +258,7 @@ export function DocumentCardCompact({
           )}
         </CardHeader>
 
-        {citations && citations.length > 0 && document.s3Key ? (
+        {citations && citations.length > 0 && (document.s3Key || document.sourceUrl) ? (
           <div className="mt-auto flex flex-col divide-y divide-border border-t border-border">
             {citations.slice(0, 2).map((c) => {
               const snippet = document.chunks?.find(ch => ch.page === c.page);
@@ -269,11 +269,16 @@ export function DocumentCardCompact({
                   className="flex flex-col w-full px-4 py-2.5 text-left hover:bg-accent transition-[color,background-color,border-color] cursor-pointer"
                   onClick={(e) => {
                     e.stopPropagation();
-                    const popup = window.open('about:blank', '_blank');
-                    if (!popup) return;
-                    void buildResolverUrl(document.s3Key!, c.page)
-                      .then(url => { if (url) popup.location.href = url; else popup.close(); })
-                      .catch(() => popup.close());
+                    const target = chooseSourceTarget(document);
+                    if (target?.kind === 's3') {
+                      const popup = window.open('about:blank', '_blank');
+                      if (!popup) return;
+                      void buildResolverUrl(target.s3Key, c.page)
+                        .then(url => { if (url) popup.location.href = url; else popup.close(); })
+                        .catch(() => popup.close());
+                    } else if (target?.kind === 'url') {
+                      window.open(target.url, '_blank', 'noopener,noreferrer');
+                    }
                   }}
                 >
                   <div className="flex items-center gap-1 w-full">
@@ -395,7 +400,7 @@ function DocumentCardModal({
           </div>
 
           {/* Per-page citation links */}
-          {citations && citations.length > 0 && document.s3Key ? (
+          {citations && citations.length > 0 && (document.s3Key || document.sourceUrl) ? (
             <CardContent className="flex-1 overflow-y-auto px-5 pt-5 pb-5">
               <p className="text-sm font-medium text-foreground mb-3">
                 Cited {citations.length} {citations.length === 1 ? 'location' : 'locations'} in this response
@@ -410,11 +415,16 @@ function DocumentCardModal({
                       className="w-full text-left rounded-lg border border-border bg-background px-4 py-3 hover:bg-accent/50 hover:border-primary/40 transition-[color,background-color,border-color,box-shadow] cursor-pointer shadow-sm hover:shadow-md"
                       onClick={(e) => {
                         e.stopPropagation();
-                        const popup = window.open('about:blank', '_blank');
-                        if (!popup) return;
-                        void buildResolverUrl(document.s3Key!, c.page)
-                          .then(url => { if (url) popup.location.href = url; else popup.close(); })
-                          .catch(() => popup.close());
+                        const target = chooseSourceTarget(document);
+                        if (target?.kind === 's3') {
+                          const popup = window.open('about:blank', '_blank');
+                          if (!popup) return;
+                          void buildResolverUrl(target.s3Key, c.page)
+                            .then(url => { if (url) popup.location.href = url; else popup.close(); })
+                            .catch(() => popup.close());
+                        } else if (target?.kind === 'url') {
+                          window.open(target.url, '_blank', 'noopener,noreferrer');
+                        }
                       }}
                     >
                       <div className="flex items-center justify-between">
