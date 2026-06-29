@@ -10,6 +10,8 @@
 | 21 | Add z-score normalization to search_document result filtering | — |
 | 26 | Admin ingestion page — ingest documents via URL from the UI | — |
 | 27 | Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags | — |
+| 31 | Reingest all admin rules documents | — |
+| 32 | Show trimmed section page index in answer synthesis trace card | — |
 
 ## Done
 
@@ -250,5 +252,81 @@ for raw_line, page in line_page_mapping:
 
 ---
 
+### Task 31: Reingest all admin rules documents
+
+**Status:** Code complete, awaiting reingestion.
+
+**What was fixed (commits `227b0c6`, `3be66e4`):**
+
+The admin rules chunking pipeline had three quality issues producing garbage chunks:
+
+1. **TOC entries created false heading chunks** — Page 1 TOC lines like "Tax 12.05  Temporary assessor certification." matched the rule pattern, creating 30+ stub chunks (19-168 chars) with just a section number and title — no body content.
+
+2. **Page-continuation merge failures** — The merge step compared full heading strings exactly. TOC produced "Tax 12.06" while the body produced "Tax 12.06 Duties of assessors.  The following levels of" — they never merged, leaving duplicates and orphan fragments.
+
+3. **Running header pollution** — "WISCONSIN ADMINISTRATIVE CODE", "Published under s. 35.93...", and "Register November 2024 No. 827" survived into chunks and sometimes triggered false heading splits after page breaks.
+
+**Fixes applied:**
+
+- **Dedicated `chunk_document_admin_rule()` function** — Groups all fragments by normalized rule ID (Tax XX.XX) using an OrderedDict, merges non-adjacent TOC + body occurrences, drops stubs with < 80 chars of body. Completely isolated from the statute chunker.
+- **Admin-rule-specific boilerplate patterns** — Strips "WISCONSIN ADMINISTRATIVE CODE", "WISCONSIN DEPARTMENT OF REVENUE", "Published under s. 35.93…", "Register … No. \d+", "Chapter Tax \d+".
+- **Per-strategy chunk cap** — Admin rules use 3500 chars (matching statutes) to keep legal sections intact.
+
+**Before/after (7 admin rules docs):**
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Total chunks | 93 | 41 |
+| Stub/garbage chunks (<200 chars) | 41 | 0 |
+| Chunks with duplicate headings | 51 | 0 |
+| Avg chunk size | ~800 chars | ~1800 chars |
+
+**To reingest:**
+
+```bash
+./tools/graphrag/run_fargate.sh extract --source-filter admin_rules- --force
+./tools/graphrag/run_fargate.sh embed --source-filter admin_rules-
+./tools/graphrag/run_fargate.sh load --start-phase 5 --stop-after-phase 8
+```
+
+Or full pipeline: `./tools/graphrag/run_full_ingest.sh` with source filter.
+
+**Key files:**
+- `tools/pdf_chunking/pdfChunker.py` — `chunk_document_admin_rule()`, `get_chunk_cap()`, routing in `get_chunking_strategy()`
+- `tools/pdf_chunking/boilerplate.py` — `ADMIN_RULE_PATTERNS`
+- `tools/graphrag/tests/test_statute_chunker.py` — `TestChunkDocumentAdminRule` (5 tests)
+
+---
+
+### Task 32: Show trimmed section page index in answer synthesis trace card
+
+**Problem:** The retrieval trace modal shows tool calls, chunks, and the answer plan — but doesn't expose the section page index that's passed to the answer model during `prepare_answer`. This index is critical for citation accuracy (maps section numbers to correct PDF pages) and was recently fixed to use the statute chunker's canonical heading pattern + chunk-text intersection filtering. Making it visible in the trace helps verify citation correctness without digging through CloudWatch logs.
+
+**What to show:** The trimmed section page index for each statute doc in `cited_doc_ids`. Example:
+```
+statutes-70:
+  § 70.04 → page 2
+  § 70.17 → page 19
+  § 70.27 → page 22
+  § 70.32 → page 23
+```
+
+**Where to show it:** In the answer synthesis card (the `prepare_answer` tool result in the pipeline retrieval modal). This card already shows `cited_doc_ids` and `answer_plan` — the section index is the missing third piece.
+
+**Implementation:**
+
+1. **Backend** — In `_build_answer_context()` (main.py ~line 1175), after building `index_lines`, include them in the `prepare_answer` tool result that gets sent to the trace WebSocket message. Currently the tool result only sends `cited_doc_count`, `cited_doc_ids`, `has_plan` — add a `section_page_index` field (dict of doc_id → list of index lines).
+
+2. **Frontend** — In the retrieval modal's answer synthesis card (`retrieval-modal.tsx`), render the section index below the answer plan. Use a collapsible section or compact list since it's typically 3-15 entries per statute doc.
+
+3. **WebSocket schema** — Add `section_page_index` to the trace message Zod schema (optional field, only present when statute docs are cited).
+
+**Key files:**
+- `backend/lambdas/agentic_retrieval/main.py` — `_build_answer_context()`, trace emission near line 926
+- `frontend/src/components/messages/retrieval-modal.tsx` — answer synthesis card rendering
+- `frontend/types/message-types.ts` — Zod schema for trace messages
+- `backend/layers/websocket_utils/models.py` — WebSocket message models
+
+---
 
 
