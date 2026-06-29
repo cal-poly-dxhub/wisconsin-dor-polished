@@ -251,6 +251,52 @@ class TestWpamRunningHeaders:
         content = [l for l, _ in result if "Chapter 20" not in l]
         assert len(content) == 4
 
+    def test_toc_occurrence_skipped_for_real_chapter_start(self):
+        """When the first occurrence is in a TOC (leader-dot context), keep the next non-TOC one."""
+        lpm = [
+            # TOC area — leader dots surround the chapter heading
+            ("Staffing Requirements ..................................", 5),
+            ("Chapter 7 Parcel and Information Systems", 5),
+            ("Listing ................................................", 5),
+            ("Assessment Roll ........................................", 5),
+        ]
+        # Spacer content to separate TOC from real start
+        for i in range(10):
+            lpm.append((f"Filler content line {i}.", 50 + i))
+        # Real chapter start (no leader dots nearby)
+        lpm.append(("Content about prior chapter.", 138))
+        lpm.append(("Chapter 7 Parcel and Information Systems", 139))
+        lpm.append(("7-1", 139))
+        lpm.append(("Content about parcel systems.", 139))
+        # More running header occurrences to exceed threshold
+        for page in range(140, 155):
+            lpm.append(("Chapter 7 Parcel and Information Systems", page))
+            lpm.append(("More content.", page))
+
+        result = strip_boilerplate(lpm, strategy="wpam")
+        ch7 = [(l, p) for l, p in result if "Chapter 7" in l]
+        assert len(ch7) == 1
+        assert ch7[0][1] == 139  # kept the real chapter start, not the TOC one
+
+    def test_fallback_to_first_when_all_in_toc(self):
+        """If every occurrence is in TOC context, fall back to keeping the first."""
+        lpm = [
+            ("Intro .................................................", 4),
+            ("Chapter 99 Hypothetical Chapter", 4),
+            ("Details ................................................", 4),
+            ("More dots ..............................................", 5),
+            ("Chapter 99 Hypothetical Chapter", 5),
+            ("Even more ..............................................", 5),
+            ("Chapter 99 Hypothetical Chapter", 6),
+            ("Still dotted ...........................................", 6),
+            ("Chapter 99 Hypothetical Chapter", 7),
+            ("Dotted .................................................", 7),
+        ]
+        result = strip_boilerplate(lpm, strategy="wpam")
+        ch99 = [(l, p) for l, p in result if "Chapter 99" in l]
+        assert len(ch99) == 1
+        assert ch99[0][1] == 4
+
 
 # --- Strategy routing ---
 
