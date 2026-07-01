@@ -1,32 +1,19 @@
 /** @bun */
 import { describe, test, expect } from 'bun:test';
-import { chooseSourceTarget } from '../source-target';
+import { appendPageFragment, chooseSourceTarget } from '../source-target';
 
 describe('chooseSourceTarget', () => {
-  test('PDF s3Key wins over sourceUrl (presigned URL carries #page anchor)', () => {
+  test('sourceUrl wins over s3Key (public link is stable, no auth needed)', () => {
     const target = chooseSourceTarget({
       s3Key: 'raw/statutes-70/statutes-70.pdf',
-      sourceUrl: 'https://docs.legis.wisconsin.gov/statutes/70',
+      sourceUrl: 'https://docs.legis.wisconsin.gov/statutes/statutes/70.pdf',
     });
-    expect(target).toEqual({ kind: 's3', s3Key: 'raw/statutes-70/statutes-70.pdf' });
+    expect(target).toEqual({ kind: 'url', url: 'https://docs.legis.wisconsin.gov/statutes/statutes/70.pdf' });
   });
 
-  test('non-PDF .txt s3Key yields to gov sourceUrl (flat text has no page anchor)', () => {
-    // This is the advisory/news-page case: a .txt blob in S3 plus a clean
-    // revenue.wi.gov page. The gov page is the better destination.
-    const target = chooseSourceTarget({
-      s3Key: 'raw/news_pages-assessor-news-2023-03-02/news_pages-assessor-news-2023-03-02.txt',
-      sourceUrl: 'https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2023-03-02.aspx',
-    });
-    expect(target).toEqual({
-      kind: 'url',
-      url: 'https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2023-03-02.aspx',
-    });
-  });
-
-  test('non-PDF s3Key with no sourceUrl still falls back to s3Key', () => {
-    const target = chooseSourceTarget({ s3Key: 'raw/x/opinion.txt' });
-    expect(target).toEqual({ kind: 's3', s3Key: 'raw/x/opinion.txt' });
+  test('s3Key used as fallback when no sourceUrl', () => {
+    const target = chooseSourceTarget({ s3Key: 'raw/iaao-standard/iaao-standard.pdf' });
+    expect(target).toEqual({ kind: 's3', s3Key: 'raw/iaao-standard/iaao-standard.pdf' });
   });
 
   test('sourceUrl only', () => {
@@ -36,5 +23,19 @@ describe('chooseSourceTarget', () => {
 
   test('neither yields null', () => {
     expect(chooseSourceTarget({})).toBeNull();
+  });
+});
+
+describe('appendPageFragment', () => {
+  test('appends #page=N for positive page', () => {
+    expect(appendPageFragment('https://example.com/doc.pdf', 5)).toBe('https://example.com/doc.pdf#page=5');
+  });
+
+  test('returns url unchanged when page is undefined', () => {
+    expect(appendPageFragment('https://example.com/doc.pdf', undefined)).toBe('https://example.com/doc.pdf');
+  });
+
+  test('returns url unchanged when page is 0', () => {
+    expect(appendPageFragment('https://example.com/doc.pdf', 0)).toBe('https://example.com/doc.pdf');
   });
 });

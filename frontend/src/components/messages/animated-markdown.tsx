@@ -57,12 +57,12 @@ type SourceTone = 'statute' | 'case-law' | 'admin-rule' | 'wpam' | 'faq' | 'gov-
 function classifySource(text: string, href?: string): SourceTone {
   const t = text.toLowerCase();
   const h = (href ?? '').toLowerCase();
-  if (t.includes('stat.') || t.includes('statute') || t.includes('§') || h.includes('statutes-')) return 'statute';
-  if (t.includes('v.') || t.includes('case') || t.includes('f.4th') || t.includes('wis.2d') || h.includes('case-law') || h.includes('case_law')) return 'case-law';
-  if (t.includes('admin') || t.includes('rule') || t.includes('tax ') || h.includes('admin_rules')) return 'admin-rule';
+  if (t.includes('stat.') || t.includes('statute') || t.includes('§') || h.includes('statutes-') || h.includes('/statutes/statutes/')) return 'statute';
+  if (t.includes('v.') || t.includes('case') || t.includes('f.4th') || t.includes('wis.2d') || h.includes('case-law') || h.includes('case_law') || h.includes('courtlistener.com')) return 'case-law';
+  if (t.includes('admin') || t.includes('rule') || t.includes('tax ') || h.includes('admin_rules') || h.includes('/admin_code/')) return 'admin-rule';
   if (t.includes('wpam') || h.includes('wpam')) return 'wpam';
   if (t.includes('faq') || h.includes('faq')) return 'faq';
-  if (t.includes('guide') || t.includes('bulletin') || t.includes('publication') || h.includes('gov_publications')) return 'gov-pub';
+  if (t.includes('guide') || t.includes('bulletin') || t.includes('publication') || h.includes('gov_publications') || h.includes('dor%20publications') || h.includes('dor+publications')) return 'gov-pub';
   if (t.includes('iaao') || h.includes('iaao')) return 'iaao';
   if (t.includes('uspap') || h.includes('uspap')) return 'uspap';
   return 'default';
@@ -92,6 +92,7 @@ function SourceLink({ href, children }: { href: string; children: React.ReactNod
 }
 
 const DOC_HREF_PREFIX = 'doc:';
+const STATUTE_DOC_RE = /^statutes-(\d+[A-Za-z]*)$/;
 
 function resolveHref(href: string | undefined, docUrls?: Record<string, string>): string | undefined {
   if (!href) return href;
@@ -100,15 +101,18 @@ function resolveHref(href: string | undefined, docUrls?: Record<string, string>)
     const hashIdx = rest.indexOf('#page=');
     const docId = hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
     const pageOverride = hashIdx >= 0 ? parseInt(rest.slice(hashIdx + 6), 10) : NaN;
-    const baseUrl = docUrls[docId];
-    if (!baseUrl) return undefined;
+    let baseUrl = docUrls[docId];
+    if (!baseUrl) {
+      const statuteMatch = docId.match(STATUTE_DOC_RE);
+      if (statuteMatch) {
+        baseUrl = `https://docs.legis.wisconsin.gov/statutes/statutes/${statuteMatch[1]}.pdf`;
+      } else {
+        return undefined;
+      }
+    }
     if (!Number.isNaN(pageOverride) && pageOverride > 0) {
-      // Replace the page param in the resolved URL
-      const url = new URL(baseUrl, 'http://placeholder');
-      url.searchParams.set('page', String(pageOverride));
-      // Strip the placeholder origin if it was a relative URL
-      const resolved = baseUrl.startsWith('http') ? url.toString() : url.pathname + url.search;
-      return resolved;
+      const stripped = baseUrl.replace(/#.*$/, '');
+      return `${stripped}#page=${pageOverride}`;
     }
     return baseUrl;
   }

@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { Info, ThumbsUp, ThumbsDown, FileText, Network } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAssignFeedback } from '@/hooks/api/chat';
 import { useChatStore } from '@/stores/chat-store';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -9,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { DocumentCard, type Document } from '../documents/document-card/document-card';
 import { FAQCard } from '../documents/document-card/faq-card';
 import { buildResolverUrl } from '@/lib/citation-resolver';
+import { appendPageFragment, chooseSourceTarget } from '../documents/document-card/source-target';
 import { parseInlineCitations, type InlineCitation } from '@/lib/parse-inline-citations';
 import { useDevTrace } from '@/hooks/use-dev-trace';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -399,11 +401,22 @@ function MessageOptionsBar({
   const handleFeedback = (thumbUp: boolean, feedback?: string) => {
     if (!sessionId) return;
 
-    assignFeedback.mutate({
-      sessionId: sessionId!,
-      payload: { queryId, thumbUp, feedback },
-    });
-    setSubmittedRating(thumbUp ? 'up' : 'down');
+    assignFeedback.mutate(
+      { sessionId: sessionId!, payload: { queryId, thumbUp, feedback } },
+      {
+        onSuccess: () => {
+          setSubmittedRating(thumbUp ? 'up' : 'down');
+          toast.success('Feedback submitted', {
+            style: { borderColor: '#10b981', background: '#0f2a1f' },
+          });
+        },
+        onError: () => {
+          toast.error('Failed to submit feedback', {
+            style: { borderColor: '#ef4444', background: '#2a0f0f' },
+          });
+        },
+      }
+    );
   };
 
   return (
@@ -462,7 +475,7 @@ function MessageOptionsBar({
             <Button
               variant={submittedRating === 'up' ? 'default' : 'outline'}
               size="icon"
-              className="cursor-pointer"
+              className={`cursor-pointer ${submittedRating === 'up' ? 'bg-emerald-900 hover:bg-emerald-800 border-emerald-400 text-white' : ''}`}
               aria-label="Thumbs Up"
               onClick={() => setFeedbackModal('up')}
             >
@@ -471,7 +484,7 @@ function MessageOptionsBar({
             <Button
               variant={submittedRating === 'down' ? 'default' : 'outline'}
               size="icon"
-              className="cursor-pointer"
+              className={`cursor-pointer ${submittedRating === 'down' ? 'bg-red-900 hover:bg-red-800 border-red-400 text-white' : ''}`}
               aria-label="Thumbs Down"
               onClick={() => setFeedbackModal('down')}
             >
@@ -581,13 +594,11 @@ export function ChatMessage({
         if (item.type === 'document') {
           const doc = item.data as Document;
           let url: string | undefined;
-          // Match source-card logic: PDFs go through citation resolver
-          // (presigned URL with #page=N), non-PDFs prefer public sourceUrl.
-          const isPdf = !!doc.s3Key && /\.pdf$/i.test(doc.s3Key);
-          if (doc.s3Key && (isPdf || !doc.sourceUrl)) {
-            url = (await buildResolverUrl(doc.s3Key, doc.startPage)) ?? undefined;
-          } else if (doc.sourceUrl) {
-            url = doc.sourceUrl;
+          const target = chooseSourceTarget(doc);
+          if (target?.kind === 'url') {
+            url = appendPageFragment(target.url, doc.startPage);
+          } else if (target?.kind === 's3') {
+            url = (await buildResolverUrl(target.s3Key, doc.startPage)) ?? undefined;
           }
           if (url) {
             map[doc.documentId] = url;

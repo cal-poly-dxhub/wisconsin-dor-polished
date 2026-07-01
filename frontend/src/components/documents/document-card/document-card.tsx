@@ -16,7 +16,7 @@ import { buildResolverUrl } from '@/lib/citation-resolver';
 import type { InlineCitation } from '@/lib/parse-inline-citations';
 import { AuthorityBadge } from './authority-badge';
 import { DiscoveryBadge } from './discovery-badge';
-import { chooseSourceTarget } from './source-target';
+import { appendPageFragment, chooseSourceTarget } from './source-target';
 
 export interface ChunkSnippet {
   page: number;
@@ -277,7 +277,7 @@ export function DocumentCardCompact({
                         .then(url => { if (url) popup.location.href = url; else popup.close(); })
                         .catch(() => popup.close());
                     } else if (target?.kind === 'url') {
-                      window.open(target.url, '_blank', 'noopener,noreferrer');
+                      window.open(appendPageFragment(target.url, c.page), '_blank', 'noopener,noreferrer');
                     }
                   }}
                 >
@@ -423,7 +423,7 @@ function DocumentCardModal({
                             .then(url => { if (url) popup.location.href = url; else popup.close(); })
                             .catch(() => popup.close());
                         } else if (target?.kind === 'url') {
-                          window.open(target.url, '_blank', 'noopener,noreferrer');
+                          window.open(appendPageFragment(target.url, c.page), '_blank', 'noopener,noreferrer');
                         }
                       }}
                     >
@@ -504,10 +504,10 @@ export const DocumentCard = memo(function DocumentCard({
       e.stopPropagation();
 
       const target = chooseSourceTarget(document);
+      const page = (citations && citations.length > 0 ? citations[0].page : undefined) ?? document.startPage;
       if (target?.kind === 's3') {
         const popup = window.open('about:blank', '_blank');
         if (!popup) return;
-        const page = (citations && citations.length > 0 ? citations[0].page : undefined) ?? document.startPage;
         void buildResolverUrl(target.s3Key, page)
           .then(url => {
             if (url) {
@@ -518,7 +518,7 @@ export const DocumentCard = memo(function DocumentCard({
           })
           .catch(() => popup.close());
       } else if (target?.kind === 'url') {
-        window.open(target.url, '_blank', 'noopener,noreferrer');
+        window.open(appendPageFragment(target.url, page), '_blank', 'noopener,noreferrer');
       }
 
       onSourceClick?.(document);
