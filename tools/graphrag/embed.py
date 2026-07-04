@@ -129,6 +129,7 @@ def main():
     parser.add_argument("--config", default="scripts/graphrag/ingest_config.yaml")
     parser.add_argument("--max-workers", type=int, default=5)
     parser.add_argument("--force", action="store_true", help="Re-embed all documents, ignoring cache")
+    parser.add_argument("--smart", action="store_true", help="Only re-embed docs whose extraction is newer than embedding cache")
     parser.add_argument(
         "--source-filter",
         default="",
@@ -150,7 +151,25 @@ def main():
             f"Source filter '{args.source_filter}': {before} → {len(docs)} documents"
         )
 
-    if not args.force:
+    if args.force:
+        pass
+    elif args.smart:
+        from botocore.exceptions import ClientError
+        stale = []
+        for doc in docs:
+            doc_id = doc["doc_id"]
+            ext_key = f"extracted/{doc_id}.json"
+            emb_key = f"embedded/{doc_id}.json"
+            try:
+                ext_head = s3.head_object(Bucket=args.work_bucket, Key=ext_key)
+                emb_head = s3.head_object(Bucket=args.work_bucket, Key=emb_key)
+                if ext_head["LastModified"] > emb_head["LastModified"]:
+                    stale.append(doc)
+            except ClientError:
+                stale.append(doc)
+        logger.info(f"Smart mode: {len(stale)}/{len(docs)} documents have stale embeddings")
+        docs = stale
+    else:
         already_done = list_already_embedded(args.work_bucket)
         before = len(docs)
         docs = [d for d in docs if d["doc_id"] not in already_done]

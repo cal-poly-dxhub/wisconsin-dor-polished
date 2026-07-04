@@ -22,7 +22,8 @@ case "$PHASE" in
       --config "$CONFIG" \
       --max-workers "${MAX_WORKERS:-5}" \
       ${SOURCE_FILTER:+--source-filter "$SOURCE_FILTER"} \
-      ${FORCE:+--force}
+      ${FORCE:+--force} \
+      ${SMART:+--smart}
     ;;
   load)
     exec python -m tools.graphrag.load \
@@ -52,7 +53,8 @@ case "$PHASE" in
       --config "$CONFIG" \
       --max-workers "${MAX_WORKERS:-5}" \
       ${SOURCE_FILTER:+--source-filter "$SOURCE_FILTER"} \
-      ${FORCE:+--force}
+      ${FORCE:+--force} \
+      ${SMART:+--smart}
 
     echo "--- Phase: load ---"
     python -m tools.graphrag.load \
