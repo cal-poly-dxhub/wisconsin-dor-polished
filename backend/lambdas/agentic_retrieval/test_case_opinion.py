@@ -27,11 +27,11 @@ def test_fetch_case_opinion_success():
 
     assert result["found"] is True
     assert result["citation"] == "109 Wis. 2d 290"
-    assert result["raw_key"] == "raw/case-law-109-wis-2d-290/case-law-109-wis-2d-290.txt"
+    assert result["raw_key"] == "raw/case-law/wis-2d/109-wis-2d-290.txt"
     assert "CORROON" in result["text"]
     mock_s3.get_object.assert_called_once_with(
         Bucket="test-bucket",
-        Key="raw/case-law-109-wis-2d-290/case-law-109-wis-2d-290.txt",
+        Key="raw/case-law/wis-2d/109-wis-2d-290.txt",
     )
 
 
