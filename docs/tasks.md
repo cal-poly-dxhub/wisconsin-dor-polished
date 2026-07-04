@@ -10,8 +10,9 @@
 | 21 | Add z-score normalization to search_document result filtering | — |
 | 26 | Admin ingestion page — ingest documents via URL from the UI | — |
 | 27 | Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags | — |
-| 31 | Reingest all admin rules documents | — |
 | 32 | Show trimmed section page index in answer synthesis trace card | — |
+| 35 | Eliminate WIS-STAT stubs — rewire CITES edges to full statute docs | — |
+| 36 | Full corpus refresh — scrape, ingest missing docs, reingest stale content | — |
 
 ## Done
 
@@ -126,13 +127,6 @@
 **Key files:**
 - `backend/lambdas/agentic_retrieval/tools.py` — `search_document` (line 857), `faq_search` (line 534)
 - `backend/lambdas/agentic_retrieval/neptune_client.py` — raw scores returned from Neptune
-
----
-
----
-
----
-
 
 ---
 
@@ -252,50 +246,6 @@ for raw_line, page in line_page_mapping:
 
 ---
 
-### Task 31: Reingest all admin rules documents
-
-**Status:** Code complete, awaiting reingestion.
-
-**What was fixed (commits `227b0c6`, `3be66e4`):**
-
-The admin rules chunking pipeline had three quality issues producing garbage chunks:
-
-1. **TOC entries created false heading chunks** — Page 1 TOC lines like "Tax 12.05  Temporary assessor certification." matched the rule pattern, creating 30+ stub chunks (19-168 chars) with just a section number and title — no body content.
-
-2. **Page-continuation merge failures** — The merge step compared full heading strings exactly. TOC produced "Tax 12.06" while the body produced "Tax 12.06 Duties of assessors.  The following levels of" — they never merged, leaving duplicates and orphan fragments.
-
-3. **Running header pollution** — "WISCONSIN ADMINISTRATIVE CODE", "Published under s. 35.93...", and "Register November 2024 No. 827" survived into chunks and sometimes triggered false heading splits after page breaks.
-
-**Fixes applied:**
-
-- **Dedicated `chunk_document_admin_rule()` function** — Groups all fragments by normalized rule ID (Tax XX.XX) using an OrderedDict, merges non-adjacent TOC + body occurrences, drops stubs with < 80 chars of body. Completely isolated from the statute chunker.
-- **Admin-rule-specific boilerplate patterns** — Strips "WISCONSIN ADMINISTRATIVE CODE", "WISCONSIN DEPARTMENT OF REVENUE", "Published under s. 35.93…", "Register … No. \d+", "Chapter Tax \d+".
-- **Per-strategy chunk cap** — Admin rules use 3500 chars (matching statutes) to keep legal sections intact.
-
-**Before/after (7 admin rules docs):**
-
-| Metric | Before | After |
-|--------|--------|-------|
-| Total chunks | 93 | 41 |
-| Stub/garbage chunks (<200 chars) | 41 | 0 |
-| Chunks with duplicate headings | 51 | 0 |
-| Avg chunk size | ~800 chars | ~1800 chars |
-
-**To reingest:**
-
-```bash
-./tools/graphrag/run_fargate.sh extract --source-filter admin_rules- --force
-./tools/graphrag/run_fargate.sh embed --source-filter admin_rules-
-./tools/graphrag/run_fargate.sh load --start-phase 5 --stop-after-phase 8
-```
-
-Or full pipeline: `./tools/graphrag/run_full_ingest.sh` with source filter.
-
-**Key files:**
-- `tools/pdf_chunking/pdfChunker.py` — `chunk_document_admin_rule()`, `get_chunk_cap()`, routing in `get_chunking_strategy()`
-- `tools/pdf_chunking/boilerplate.py` — `ADMIN_RULE_PATTERNS`
-- `tools/graphrag/tests/test_statute_chunker.py` — `TestChunkDocumentAdminRule` (5 tests)
-
 ---
 
 ### Task 32: Show trimmed section page index in answer synthesis trace card
@@ -329,4 +279,86 @@ statutes-70:
 
 ---
 
+### Task 35: Eliminate WIS-STAT stubs — rewire CITES edges to full statute docs
+
+**Problem:** The graph has ~hundreds of `WIS-STAT-{chapter}.{section}` stub nodes (label: `Statute`) with no chunks, no s3_key, no source_url. They exist as CITES targets — e.g., ag guide → CITES → `WIS-STAT-73.03`. But the agent can't do anything useful with them: can't `search_document` (no chunks), can't link to them (no URL), can't get_section. They eat neighbor slots and create dead-end traversals.
+
+Meanwhile, full statute docs (`statutes-70`, `statutes-73`, etc.) have chunks with page numbers, source_urls, and section headings — everything needed for citation. But there's no edge connecting stubs to their parent full doc.
+
+**Current graph structure:**
+```
+ag_guide --CITES--> WIS-STAT-73.03 --PART_OF--> WIS-STAT-73 --BELONGS_TO--> FW-STATUTES
+statutes-73 --BELONGS_TO--> FW-STATUTES  (disconnected from stubs)
+```
+
+**Desired outcome:** When the agent traverses from a guide/publication via CITES, it arrives at a node it can actually search/cite — the full statute chapter doc.
+
+**Options (pick one):**
+
+1. **Rewire CITES edges to chapter docs** — For every `CITES` edge pointing at a `WIS-STAT-{ch}.{sec}` stub where `statutes-{ch}` exists, redirect it to `statutes-{ch}`. Optionally preserve the section number as an edge property (`section: "73.03"`) so the agent knows which section was cited. Then delete orphaned stubs. Simple, loses section-level granularity in the graph.
+
+2. **Add HAS_SECTION edges from chapter docs to stubs** — Keep stubs as lightweight "section pointers" but wire them to the parent doc: `statutes-73 --HAS_SECTION--> WIS-STAT-73.03`. Agent can then traverse stub → parent doc → search_document. Preserves section granularity but adds traversal hops.
+
+3. **Merge stub metadata into chunk properties** — Delete stubs entirely. The section information they represent is already encoded in chunk headings (`c.heading = "73.03 Department of Revenue..."`) within the full doc. The agent already uses `list_sections` + `get_section` to navigate within a doc. Stubs add nothing that chunks don't already provide.
+
+**Recommendation:** Option 3 (delete stubs, they're redundant). The section→page index and chunk headings already give the agent fine-grained section navigation within statute docs. Stubs are a legacy artifact from before full statute PDFs were ingested.
+
+**For stubs with NO corresponding full doc:** These are statute chapters we haven't ingested yet (e.g., `WIS-STAT-341.45`). They should either be ingested (download from legislature, add to S3) or the stubs should get a `source_url` property pointing to `https://docs.legis.wisconsin.gov/statutes/statutes/{chapter}.pdf` so at minimum the frontend can resolve links.
+
+**Temp fix in place:** `_build_answer_context()` in `main.py` now scans cited chunk text for statute chapter references not in `cited_doc_ids`, queries Neptune for their section→page index, and appends it to the answer context. This lets the model emit `doc:statutes-{N}#page=X` links even when the agent didn't fetch the statute directly. Remove once CITES edges point to real statute docs and the agent naturally cites them.
+
+**Scope estimate:** ~1 hour. Neptune queries to identify stubs with matching full docs, batch delete, verify no broken traversals. Separate pass for orphan stubs (no full doc) to add source_url or ingest the chapter.
+
+**Key files:**
+- `tools/graphrag/load.py` — phases 6-7 create CITES/IMPLEMENTS edges and stub nodes
+- `backend/lambdas/agentic_retrieval/neptune_client.py` — `get_neighbors`, `find_stub_promotion`
+- `backend/lambdas/agentic_retrieval/rag_documents.py` — `build_rag_documents` stub promotion logic (lines 122-158)
+
+---
+
+### Task 36: Full corpus refresh — scrape, ingest missing docs, reingest stale content
+
+**Status:** Tooling complete (scraper with hash-based change detection, `--smart` extract mode). Ready to execute.
+
+**Source of truth:** `tools/graphrag/document_manifest.yaml` — 198 documents across all categories.
+
+**What's built:**
+- `scrape_documents.py` — reads manifest, MD5/ETag change detection, `--dry-run`, `--force`, `--category` flags
+- `extract.py --smart` — only re-extracts docs whose raw S3 file is newer than the extraction cache
+- `run_fargate.sh --smart` / `entrypoint.sh` — Fargate support for smart mode
+
+**What's left to ingest:**
+
+| Gap | Category | Count | Notes |
+|-----|----------|-------|-------|
+| 2026 news | news_pages | ~20 | Assessor + COTVC 2026 messages |
+| Form instructions | form_instructions (NEW) | ~50 PDFs + 4 xlsx | Needs new framework in `ingest_config.yaml` (authority_level 6) |
+| dolcre.pdf | faq_pages | 1 | Dollar Lottery Credit FAQ (PDF, not HTML) |
+| IAAO standards | iaao | 5 | Download from iaao.org |
+| Admin rules | admin_rules | 7 | Already in S3, just needs reingest with updated chunker |
+| Gov pubs | gov_publications | 3 | pb062, pa600, pb061 — in S3, need extract/embed/load |
+
+**Execution order:**
+1. Admin rules reingest + 3 gov pubs (no downloads, just Fargate runs)
+2. dolcre.pdf (single download + pipeline)
+3. 2026 news pages (scraper + pipeline)
+4. 5 IAAO standards (download + pipeline)
+5. Form instructions (new framework setup, ~50 downloads, pipeline — largest effort)
+
+**Annual refresh workflow (for future content updates):**
+```bash
+# Scrape all categories — only uploads docs with changed content (hash-gated)
+python tools/graphrag/scrape_documents.py --manifest tools/graphrag/document_manifest.yaml
+
+# Re-extract/embed/load only stale docs
+./tools/graphrag/run_fargate.sh extract --smart
+./tools/graphrag/run_fargate.sh embed
+./tools/graphrag/run_fargate.sh load
+```
+
+**Key files:**
+- `tools/graphrag/document_manifest.yaml` — single source of truth for all corpus URLs
+- `tools/graphrag/scrape_documents.py` — hash-gated scraper
+- `tools/graphrag/ingest_config.yaml` — framework definitions (needs `form_instructions` added)
+- `tools/graphrag/run_fargate.sh` — pipeline execution with `--smart` support
 

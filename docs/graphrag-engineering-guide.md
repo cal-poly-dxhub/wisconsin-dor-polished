@@ -90,7 +90,7 @@ Key facts:
 | `get_authority_chain` | Walk `DERIVED_FROM`/`PART_OF` up and down from a node. |
 | `list_framework_docs` | Enumerate all documents in a framework. |
 | `list_sections` | Table of contents for a document: distinct headings with chunk counts and page ranges. Deterministic graph traversal — no vector search. Preferred for multi-chapter docs (WPAM, guides). |
-| `get_section` | All chunks from a specific section by exact heading match. Use after `list_sections`. Deterministic — always returns the full section in document order. |
+| `get_section` | Chunks from a specific section by exact heading match. Use after `list_sections`. Without `query`: returns all chunks in document order (deterministic). With `query`: fetches stored embeddings via `neptune.algo.vectors.get`, ranks by cosine similarity + z-score filtering (threshold 0.5), returns up to `top_k` (default 5, max 10) relevant chunks. |
 | `search_document` | Semantic search within one document's chunks. Global vector search (fetch_k=800) filtered to target `doc_id`. Fallback when headings alone can't identify the right section. |
 | `fetch_case_opinion` | Fetch full opinion `.txt` from S3 for a case-law stub. |
 | `prepare_answer` | Terminal tool. Claude declares `cited_doc_ids` + `answer_plan`. The loop exits. |
@@ -98,7 +98,7 @@ Key facts:
 
 ### Key behaviors
 
-- **`list_sections` + `get_section` (structural browsing):** deterministic graph traversal for navigating multi-chapter documents. Immune to the query-formulation problem that plagues `search_document` on large docs. The system prompt directs Claude to prefer this path for WPAM and similar.
+- **`list_sections` + `get_section` (structural browsing):** `list_sections` is a deterministic graph traversal. `get_section` supports two modes: without a `query` it returns all chunks in order (deterministic); with a `query` it fetches stored embeddings from Neptune (`neptune.algo.vectors.get`), computes cosine similarity against the query embedding, applies z-score filtering (threshold=0.5, always includes at least 1 chunk), and returns up to `top_k` ranked results. This hybrid approach avoids the query-formulation problem of `search_document` while still surfacing the most relevant chunks in large sections. The system prompt directs Claude to prefer this path for WPAM and similar.
 - **Auto-enrichment:** after `vector_search` returns chunks, `get_neighbors` is called on the top-3 distinct parent doc_ids. Agent gets graph context for free without spending a turn.
 - **6× over-fetch + diversity cap:** WPAM editions dominate the vector space, so `vector_search` always requests `top_k * 6` chunks (90 for default top_k=15) regardless of whether a `target_wpam_year` is set. After WPAM dedup, a per-document cap (default 5) prevents any source from crowding out others.
 - **Tool exceptions → error result:** any tool exception becomes an `{"error": ...}` tool-result fed back to Claude so it self-corrects, never crashes the Lambda.
@@ -198,30 +198,73 @@ Batch writes (`UNWIND $rows`) must cap by cumulative text bytes (`PHASE_8_MAX_BY
 
 ## 7. PDF Extraction and Chunking
 
-`tools/pdf_chunking/` turns PDFs into page-tracked, sub-2500-char chunks. Invoked from `extract.py`.
+`tools/pdf_chunking/` turns PDFs into page-tracked chunks. Entry point: `process_pdf_from_s3()` in `pdfChunker.py`, invoked from `extract.py`.
 
 ### Extraction
 
-**PyMuPDF-first, Textract-fallback.** `process_pdf_from_s3` tries PyMuPDF (font-metric title/header tagging, noise stripping), gated by `extraction_looks_good()` (≥5 lines, ≥1 non-empty, avg stripped length ≥3). On failure, falls through to async Textract (LAYOUT+TABLES). The corpus is digital-native — OCR adds nothing; PyMuPDF is faster and free.
+**PyMuPDF-first, Textract-fallback.** `process_pdf_from_s3` tries `extract_with_pymupdf()` (font-metric title/header/body classification, table detection), gated by `extraction_looks_good()` (≥5 lines, ≥1 non-empty, avg stripped length ≥3). On failure, falls through to async Textract (LAYOUT+TABLES via `TextLinearizationConfig`). The corpus is digital-native — OCR adds nothing; PyMuPDF is faster and free.
 
-Both extractors emit: `header_split` (text blobs) and `line_page_mapping` (`list[tuple[str, int]]` of every line + page number).
+**PyMuPDF extraction (`pymupdf_extractor.py`):**
+- Determines body font size (`_get_body_font_size`) by character-count-weighted mode across all pages.
+- Classifies each text line as title (≥1.4× body size, or ≥1.15× + bold), header (≥1.1× body size), or body based on span font metrics.
+- Detects tables via `page.find_tables()`, validates with `looks_like_real_table()` (rejects sparse grids >60% empty cells, multi-column prose with long cells + few rows). Genuine tables are rendered as `" | "`-joined rows.
+- Tags lines with XML markers (`<titles>`, `<headers>`, `<tables>`) for downstream splitting.
+
+Both extractors emit: `header_split` (text split on `<titles>` markers) and `line_page_mapping` (`list[tuple[str, int]]` — every line + 1-based page number).
+
+### Boilerplate stripping
+
+Applied between extraction and chunking (`boilerplate.py`). Strategy-aware regex patterns remove:
+- **General (all docs):** bare page numbers, "Wisconsin Department of Revenue" headers, "Back to table of contents" links, date-only lines.
+- **Statute:** "Updated 20XX Wisconsin Statutes" running headers, bare "Chapter N" lines, all-caps section-title running headers.
+- **Admin Rule:** "WISCONSIN ADMINISTRATIVE CODE" headers, register lines, "Published under s. X.X" lines.
+- **WPAM:** "Wisconsin Property Assessment Manual" headers, volume/page references. Additionally strips repeated "Chapter N Title" running headers (keeps only the first non-TOC occurrence per unique heading text).
 
 ### Chunking strategies
 
-Routed by `CHUNKER_BY_SOURCE` dict in `pdfChunker.py`:
+Routed by `get_chunking_strategy()` which checks `source_id` prefixes (`wpam-`, `admin_rules-`, `statutes-`) then falls back to `CHUNKER_BY_SOURCE` dict:
 
-| Strategy | Docs | Key behavior |
-| --- | --- | --- |
-| **statute** | State law PDFs | Subsection-aware splitting: detects `(1)`, `(a)`, `(am)` markers. Splits at subsection boundaries. Section headers (`70.32`, `70.47`) become chunk headings. |
-| **wpam** | Assessment manual | Quality filters: garbled-column detection (>30% lines <4 chars), running-header stripping, boilerplate removal. Heading hierarchy from font metrics. |
-| **general** | Everything else | Heading-based splitting with `CHUNK_MAX_CHARS=2500` hard cap. |
+| Strategy | Cap | Docs | Key behavior |
+| --- | --- | --- | --- |
+| **statute** | 3500 | State law PDFs (`statutes-*`) | Section-boundary splitting: regex `{chapter}.\d+` detects section headers (e.g., `70.32 Real estate, how valued.`). Merges multi-page fragments of the same section. Oversized sections split at subsection markers `(1)`, `(a)`, `(4m)`, then sentence boundaries, then line breaks (`_split_statute_section`). Greedy-merges small adjacent subsections back together. |
+| **admin_rule** | 3500 | Admin code PDFs (`admin_rules-*`) | Rule-boundary splitting: regex `Tax\s\d+\.\d+` detects rule IDs. Groups all fragments by normalized rule ID (merges TOC entries + body occurrences). Drops stubs (<80 chars body). Oversized rules split via same `_split_statute_section` logic. |
+| **wpam** | 2500 | Assessment manual (`wpam-*`) | Chapter/section hierarchy: `_is_chapter_heading()` detects real chapter titles (rejects mid-prose references via suffix/remainder heuristics, 80-char/8-word caps). Section headers detected by 4 patterns (ALL-CAPS, `A. Title`, `1. Title`, `IV. Title`). Merges adjacent small chunks (<80 words) within the same chapter if combined <500 words and <2500 chars. |
+| **general** | 2500 | Everything else | Heading-based splitting at roman-numeral (`^[IVXLCDM]+\s*[.\-–:]`) and capital-letter (`^[A-Z]\s*[.\-–:]`) section markers. Word limit (1200) and char cap both trigger flushes. |
+
+### Post-chunking pipeline
+
+After strategy-specific chunking, `process_pdf_from_s3` applies these steps in order:
+
+1. **TOC chunk removal** (`toc_detector.py`): `is_toc_chunk()` flags chunks with high leader-dot coverage (≥20% of text is `......` sequences, ≥2 matches, ≤1500 chars) or chunks with pure-roman-numeral headings (`V.`, `XIV.`) containing any leader dots.
+
+2. **WPAM quality filters** (`wpam_chunk_filter.py`, WPAM only):
+   - `filter_wpam_chunks`: drops chunks with body <60 chars, garbled column-interleaved text (high pipe density + fragmented lines), or single-character table cells (>30% of lines ≤2 chars).
+   - `repair_wpam_subheadings`: clears subheadings appearing on >5 chunks (leaked numbered-list items the chunker carried forward without reset).
+
+3. **Clean plaintext** (`extract_clean_plaintext`): strips residual XML tags, drops chunks with <50 words and only 1 sentence (unless they match a heading pattern), drops statute index-page stubs (<15 words).
+
+4. **Final cap enforcement** (`_enforce_chunk_cap`): splits any chunk exceeding the strategy cap at paragraph (`\n\n`) or line (`\n`) boundaries within the last 20% of the cap window. Tiny tail fragments (<200 chars) are merged back into the predecessor.
+
+5. **Short-chunk merge** (WPAM only, `merge_short_chunks`): merges chunks <200 chars into their predecessor when they share the same heading and combined length stays ≤3000 chars. Prevents concentrated short-chunk embeddings from artificially outscoring substantive chunks.
 
 ### Key parameters
 
-- `CHUNK_MAX_CHARS = 2500` — enforced at three layers (in-loop, per-chunker cap, and final pass after assembly).
-- **Per-line page tracking:** each buffered line is a `(text, page)` tuple. A chunk's `start_page`/`end_page` is min/max of its buffer. No substring-matching reconstruction.
-- **TOC suppression:** dot-leader lines are forced to body text; `is_toc_chunk()` drops whole TOC chunks.
-- **Table rejection:** `looks_like_real_table()` rejects false-positive tables (multi-column prose flagged by PyMuPDF's `find_tables()`).
+| Parameter | Value | Location |
+| --- | --- | --- |
+| `CHUNK_MAX_CHARS` | 2500 (general/wpam) | `pdfChunker.py` |
+| `_CHUNK_CAP_BY_STRATEGY` | 3500 (statute, admin_rule) | `pdfChunker.py` |
+| `max_words` | 1200 (general/wpam in-loop) | `chunk_document` / `chunk_document_wpam` |
+| `min_merge_words` | 80 (wpam) | `chunk_document_wpam` |
+| `_MIN_BODY_CHARS` | 80 (admin_rule stub filter) | `chunk_document_admin_rule` |
+| `min_chars` (short merge) | 200 | `merge_short_chunks` |
+| `max_merged_chars` | 3000 | `merge_short_chunks` |
+
+### Design invariants
+
+- **Per-line page tracking:** each buffered line is a `(text, page)` tuple. A chunk's `start_page`/`end_page` is min/max of its buffer pages. No substring-matching reconstruction (prior approach inflated page ranges when chunks contained repeated boilerplate).
+- **TOC-immune headings:** dot-leader lines (`≥5` consecutive dots) are always treated as body text, never allowed to become the current heading — TOC entries match heading regexes textually but reference page numbers rather than starting sections.
+- **Table validation:** `looks_like_real_table()` rejects false-positive tables using row count, max cell length, and cell sparsity (>60% empty). Multi-column prose misdetected by `find_tables()` falls through to normal text extraction.
+- **Embedding alignment:** 2500-char general cap stays well below Titan Embed v2's 8000-char silent-truncation threshold, ensuring the full chunk text is vector-represented.
 
 ---
 
