@@ -36,6 +36,7 @@ doc_types:
   guide:              Guide
   advisory:           Advisory
   template:           Template
+  form_instruction:   FormInstruction
   iaao_standard:      IAOStandard
   uspap_standard:     USPAPStandard
 
@@ -95,6 +96,7 @@ source_to_framework:
   "raw/faq_pages-":              FW-FAQ
   "raw/gov_publications-":       FW-GOV-PUBS
   "raw/complex_inquiry_pages-":  FW-GOV-PUBS
+  "raw/form_instructions-":       FW-GOV-PUBS
   "raw/iaao-":                   FW-IAAO
   "raw/uspap-":                  FW-USPAP
 
