@@ -14,7 +14,6 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   neptuneGraphId: string;
   neptuneGraphEndpoint: string;
   rawBucketName: string;
-  enabled: boolean;
   faqKnowledgeBaseId: string;
   faqUrlTable: cdk.aws_dynamodb.ITable;
   modelConfigTable: cdk.aws_dynamodb.ITable;
@@ -70,7 +69,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           LOG_MAX_TEXT_CHARS: '500',
           LOG_MAX_QUERY_CHARS: '1000',
           EMIT_AGENT_TRACE: 'true',
-          ENABLE_DISAMBIGUATION: 'false',
+          ENABLE_DISAMBIGUATION: 'true',
         },
       }
     );
@@ -173,7 +172,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           source: ['wisconsin-dor.chat-api'],
           detailType: ['ChatMessageReceived'],
         },
-        enabled: props.enabled,
+        enabled: true,
       }
     );
 

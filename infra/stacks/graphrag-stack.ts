@@ -14,6 +14,7 @@ export class GraphRAGStack extends cdk.NestedStack {
   public readonly faqBucketName: string;
   public readonly faqDataSourceId: string;
   public readonly faqUrlTable: dynamodb.Table;
+  public readonly modelConfigTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -52,6 +53,16 @@ export class GraphRAGStack extends cdk.NestedStack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
     this.faqUrlTable = faqUrlTable;
+
+    this.modelConfigTable = new dynamodb.Table(this, 'ModelConfigTable', {
+      partitionKey: {
+        name: 'id',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
 
     const faqKb = new bedrock.VectorKnowledgeBase(this, 'WisDorFaqKbGraphRAG', {
       name: 'wis-faq-graphrag',
@@ -119,6 +130,10 @@ export class GraphRAGStack extends cdk.NestedStack {
     new cdk.CfnOutput(this, 'FaqUrlTableName', {
       value: faqUrlTable.tableName,
       description: 'DynamoDB table mapping normalized FAQ question -> source URL',
+    });
+    new cdk.CfnOutput(this, 'ModelConfigTableName', {
+      value: this.modelConfigTable.tableName,
+      description: 'DynamoDB table for externalized LLM prompt configs',
     });
   }
 }

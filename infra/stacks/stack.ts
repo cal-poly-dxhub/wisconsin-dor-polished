@@ -2,7 +2,6 @@ import * as cdk from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 import { SessionsStack } from './sessions-stack';
-import { MessagesStack } from './messages-stack';
 import { LambdaLayersStack } from './lambda-layers-stack';
 import { GraphRAGStack } from './graphrag-stack';
 import { GraphRAGMessagesStack } from './graphrag-messages-stack';
@@ -20,8 +19,6 @@ export class WisconsinBotStack extends cdk.Stack {
       description: 'Shared lambda layers for the Wisconsin bot.',
     });
 
-    // GraphRAG infra (Neptune + S3 buckets) must come before SessionsStack
-    // so the citation_resolver can wire its env var to the raw bucket.
     const graphRAGStack = new GraphRAGStack(this, 'WisconsinGraphRAGStack', {
       description:
         'Stack providing GraphRAG services (Neptune Analytics + S3).',
@@ -34,40 +31,6 @@ export class WisconsinBotStack extends cdk.Stack {
       websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
       rawBucketName: graphRAGStack.rawBucketName,
       workBucketName: graphRAGStack.workBucketName,
-    });
-
-    // GraphRAG feature flag: mutually exclusive EventBridge rules
-    const USE_GRAPHRAG = this.node.tryGetContext('useGraphRAG') === 'true';
-
-    // Legacy KnowledgeBaseStack (OpenSearch Serverless backed) is only needed
-    // when NOT using GraphRAG. Each KB provisions an OpenSearch Serverless
-    // collection with a ~$300/month minimum — skip them when unused.
-    let knowledgeBaseStack: any;
-    if (!USE_GRAPHRAG) {
-      const { KnowledgeBaseStack } = require('../../archive/knowledge-base/infra/knowledge-base-stack');
-      knowledgeBaseStack = new KnowledgeBaseStack(
-        this,
-        'WisconsinKnowledgeBaseStack',
-        {
-          description:
-            'Stack providing knowledge base services for the Wisconsin bot.',
-        }
-      );
-    }
-
-    const messagesStack = new MessagesStack(this, 'WisconsinMessagesStack', {
-      description:
-        'Stack providing messaging services (classifier and workflows).',
-      stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
-      websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
-      sessionsTable: sessionsStack.sessionsTable,
-      websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
-      ...(knowledgeBaseStack && {
-        faqKnowledgeBase: knowledgeBaseStack.faqKnowledgeBase,
-        ragKnowledgeBase: knowledgeBaseStack.ragKnowledgeBase,
-      }),
-      chatHistoryTable: sessionsStack.chatHistoryTable,
-      useGraphRAG: USE_GRAPHRAG,
     });
 
     const graphRAGMessagesStack = new GraphRAGMessagesStack(
@@ -84,10 +47,9 @@ export class WisconsinBotStack extends cdk.Stack {
         neptuneGraphId: graphRAGStack.neptuneGraphId,
         neptuneGraphEndpoint: graphRAGStack.neptuneGraphEndpoint,
         rawBucketName: graphRAGStack.rawBucketName,
-        enabled: USE_GRAPHRAG,
         faqKnowledgeBaseId: graphRAGStack.faqKnowledgeBaseId,
         faqUrlTable: graphRAGStack.faqUrlTable,
-        modelConfigTable: messagesStack.modelConfigTable,
+        modelConfigTable: graphRAGStack.modelConfigTable,
       }
     );
 
@@ -184,27 +146,12 @@ export class WisconsinBotStack extends cdk.Stack {
       description: 'URL of the web application',
     });
 
-    if (knowledgeBaseStack) {
-      new cdk.CfnOutput(this, 'FaqBucketName', {
-        value: knowledgeBaseStack.faqBucketName,
-        description: 'S3 bucket for FAQ documents',
-        exportName: 'WisconsinBot-FaqBucketName',
-      });
-
-      new cdk.CfnOutput(this, 'RagBucketName', {
-        value: knowledgeBaseStack.ragBucketName,
-        description: 'S3 bucket for RAG documents',
-        exportName: 'WisconsinBot-RagBucketName',
-      });
-    }
-
     new cdk.CfnOutput(this, 'ModelConfigTableName', {
-      value: messagesStack.modelConfigTable.tableName,
+      value: graphRAGStack.modelConfigTable.tableName,
       description: 'Name of the Model Configuration DynamoDB table',
       exportName: 'WisconsinBot-ModelConfigTableName',
     });
 
-    // GraphRAG outputs
     new cdk.CfnOutput(this, 'GraphRAGRawBucketName', {
       value: graphRAGStack.rawBucketName,
       description: 'S3 bucket for GraphRAG raw documents',
@@ -222,7 +169,6 @@ export class WisconsinBotStack extends cdk.Stack {
       description: 'Neptune Analytics Graph ID',
       exportName: 'WisconsinBot-NeptuneGraphId',
     });
-
 
     new cdk.CfnOutput(this, 'GraphRAGFaqKnowledgeBaseId', {
       value: graphRAGStack.faqKnowledgeBaseId,

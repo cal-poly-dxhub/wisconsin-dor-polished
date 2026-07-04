@@ -50,21 +50,6 @@ sources = [
     "./backend/lambdas/websocket/requirements.txt",
 ]
 
-[[bundles]]
-dest = "classifier"
-sources = ["./archive/messages-legacy/classifier"]
-
-[[bundles]]
-dest = "retrieval"
-sources = ["./archive/messages-legacy/retrieval"]
-
-[[bundles]]
-dest = "resource_streaming"
-sources = ["./backend/lambdas/resource_streaming"]
-
-[[bundles]]
-dest = "streaming"
-sources = ["./backend/lambdas/streaming"]
 
 [[bundles]]
 dest = "agentic_retrieval"
