@@ -159,26 +159,26 @@
 }
 
 /* Source type tints — light mode (subtle) */
-.source-link--statute { background: rgba(59, 130, 246, 0.06); border-color: rgba(59, 130, 246, 0.15); color: #3b82f6; }
-.source-link--case-law { background: rgba(139, 92, 246, 0.06); border-color: rgba(139, 92, 246, 0.15); color: #8b5cf6; }
-.source-link--admin-rule { background: rgba(20, 184, 166, 0.06); border-color: rgba(20, 184, 166, 0.15); color: #0d9488; }
-.source-link--wpam { background: rgba(34, 197, 94, 0.06); border-color: rgba(34, 197, 94, 0.15); color: #16a34a; }
-.source-link--faq { background: rgba(202, 138, 4, 0.06); border-color: rgba(202, 138, 4, 0.15); color: #a16207; }
-.source-link--gov-pub { background: rgba(234, 88, 12, 0.06); border-color: rgba(234, 88, 12, 0.15); color: #c2410c; }
-.source-link--iaao { background: rgba(225, 29, 72, 0.06); border-color: rgba(225, 29, 72, 0.15); color: #be123c; }
-.source-link--uspap { background: rgba(225, 29, 72, 0.06); border-color: rgba(225, 29, 72, 0.15); color: #be123c; }
-.source-link--default { background: rgba(107, 114, 128, 0.06); border-color: rgba(107, 114, 128, 0.15); color: #6b7280; }
+.markdown-container .source-link--statute { background: rgba(59, 130, 246, 0.06); border-color: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+.markdown-container .source-link--case-law { background: rgba(139, 92, 246, 0.06); border-color: rgba(139, 92, 246, 0.15); color: #8b5cf6; }
+.markdown-container .source-link--admin-rule { background: rgba(20, 184, 166, 0.06); border-color: rgba(20, 184, 166, 0.15); color: #0d9488; }
+.markdown-container .source-link--wpam { background: rgba(34, 197, 94, 0.06); border-color: rgba(34, 197, 94, 0.15); color: #16a34a; }
+.markdown-container .source-link--faq { background: rgba(202, 138, 4, 0.06); border-color: rgba(202, 138, 4, 0.15); color: #a16207; }
+.markdown-container .source-link--gov-pub { background: rgba(234, 88, 12, 0.06); border-color: rgba(234, 88, 12, 0.15); color: #c2410c; }
+.markdown-container .source-link--iaao { background: rgba(225, 29, 72, 0.06); border-color: rgba(225, 29, 72, 0.15); color: #be123c; }
+.markdown-container .source-link--uspap { background: rgba(225, 29, 72, 0.06); border-color: rgba(225, 29, 72, 0.15); color: #be123c; }
+.markdown-container .source-link--default { background: rgba(107, 114, 128, 0.06); border-color: rgba(107, 114, 128, 0.15); color: #6b7280; }
 
 /* Source type tints — dark mode (subtle) */
-.dark .source-link--statute { background: rgba(59, 130, 246, 0.07); border-color: rgba(59, 130, 246, 0.15); color: #93c5fd; }
-.dark .source-link--case-law { background: rgba(139, 92, 246, 0.07); border-color: rgba(139, 92, 246, 0.15); color: #c4b5fd; }
-.dark .source-link--admin-rule { background: rgba(20, 184, 166, 0.07); border-color: rgba(20, 184, 166, 0.15); color: #5eead4; }
-.dark .source-link--wpam { background: rgba(34, 197, 94, 0.07); border-color: rgba(34, 197, 94, 0.15); color: #86efac; }
-.dark .source-link--faq { background: rgba(234, 179, 8, 0.07); border-color: rgba(234, 179, 8, 0.15); color: #fde047; }
-.dark .source-link--gov-pub { background: rgba(249, 115, 22, 0.07); border-color: rgba(249, 115, 22, 0.15); color: #fdba74; }
-.dark .source-link--iaao { background: rgba(244, 63, 94, 0.07); border-color: rgba(244, 63, 94, 0.15); color: #fda4af; }
-.dark .source-link--uspap { background: rgba(244, 63, 94, 0.07); border-color: rgba(244, 63, 94, 0.15); color: #fda4af; }
-.dark .source-link--default { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.08); color: #d1d5db; }
+.dark .markdown-container .source-link--statute { background: rgba(59, 130, 246, 0.07); border-color: rgba(59, 130, 246, 0.15); color: #93c5fd; }
+.dark .markdown-container .source-link--case-law { background: rgba(139, 92, 246, 0.07); border-color: rgba(139, 92, 246, 0.15); color: #c4b5fd; }
+.dark .markdown-container .source-link--admin-rule { background: rgba(20, 184, 166, 0.07); border-color: rgba(20, 184, 166, 0.15); color: #5eead4; }
+.dark .markdown-container .source-link--wpam { background: rgba(34, 197, 94, 0.07); border-color: rgba(34, 197, 94, 0.15); color: #86efac; }
+.dark .markdown-container .source-link--faq { background: rgba(234, 179, 8, 0.07); border-color: rgba(234, 179, 8, 0.15); color: #fde047; }
+.dark .markdown-container .source-link--gov-pub { background: rgba(249, 115, 22, 0.07); border-color: rgba(249, 115, 22, 0.15); color: #fdba74; }
+.dark .markdown-container .source-link--iaao { background: rgba(244, 63, 94, 0.07); border-color: rgba(244, 63, 94, 0.15); color: #fda4af; }
+.dark .markdown-container .source-link--uspap { background: rgba(244, 63, 94, 0.07); border-color: rgba(244, 63, 94, 0.15); color: #fda4af; }
+.dark .markdown-container .source-link--default { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.08); color: #d1d5db; }
 
 /* Blockquotes */
 .markdown-container blockquote {

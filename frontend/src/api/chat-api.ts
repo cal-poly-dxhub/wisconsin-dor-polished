@@ -24,7 +24,8 @@ const FeedbackRequest = z.object({
   feedback: z.string().optional(),
 });
 const FeedbackResponse = z.object({
-  successful: z.boolean(),
+  message: z.string(),
+  queryId: z.string().uuid(),
 });
 const Session = z.object({
   sessionId: z.string().uuid(),
