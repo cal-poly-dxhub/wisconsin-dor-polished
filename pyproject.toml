@@ -10,14 +10,14 @@ dependencies = []
 python-platform = "darwin"
 python-interpreter = ".venv/bin/python"
 search-path = [
-  "packages/shared/lambda_layers/",
-  "packages/shared/lambda_layers/websocket_utils/",
-  "packages/sessions/lambdas/websocket/",
+  "backend/layers/",
+  "backend/layers/websocket_utils/",
+  "backend/lambdas/websocket/",
 ]
 replace-imports-with-any = [
-  "packages/shared/lambda_layers/websocket_utils",
-  "packages/sessions/lambdas/websocket",
-  "packages/shared/lambda_layers",
+  "backend/layers/websocket_utils",
+  "backend/lambdas/websocket",
+  "backend/layers",
 ]
 
 
@@ -63,9 +63,14 @@ dev = [
 ]
 websocket = ["pydantic>=2.11.7"]
 websocket-utils = ["pydantic>=2.11.7"]
-classifier = ["boto3>=1.40.7", "pydantic>=2.11.7"]
-streaming = ["boto3>=1.40.7", "pydantic>=2.11.7", "baml-py==0.218.1"]
-retrieval = ["boto3>=1.40.7", "pydantic>=2.11.7"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend", "tools"]
+pythonpath = [
+    "backend/layers",
+    "backend/lambdas/websocket",
+    "tools",
+]
 
 [tool.ruff.lint.isort]
-known-first-party = ["scripts"]
+known-first-party = ["tools"]

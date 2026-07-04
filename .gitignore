@@ -1,4 +1,10 @@
-/packages/infra/cdk_out_dir
+infra/cdk_out_dir/
+pdf_chunking/
+
+# Source documents (too large for git, uploaded to S3 separately)
+docs/**/*.pdf
+docs/**/*.docx
+docs/case-law-progress.json
 
 # Dependencies
 node_modules/
@@ -301,3 +307,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# superpowers brainstorm server artifacts
+.superpowers/
+tools/graphrag/.ingest-case-law-progress.json
