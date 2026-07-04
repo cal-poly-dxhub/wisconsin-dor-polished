@@ -29,7 +29,7 @@ from typing import Any
 import boto3
 import pydantic
 from case_law_handling import is_case_law_stub
-from case_opinion import citation_to_raw_slug, fetch_case_opinion
+from case_opinion import citation_to_doc_id, fetch_case_opinion
 from chat_history import get_chat_history, save_chat_history
 from faq_handling import (
     build_cited_faq_resource,
@@ -787,7 +787,7 @@ def run_agentic_loop(
             if tool_name == "fetch_case_opinion" and result.get("found"):
                 citation = result.get("citation", "")
                 if citation:
-                    stub_doc_id = citation_to_raw_slug(citation)
+                    stub_doc_id = citation_to_doc_id(citation)
                     fetched_opinions[stub_doc_id] = {
                         "citation": citation,
                         "raw_key": result.get("raw_key", ""),
@@ -1212,18 +1212,21 @@ def _build_answer_context(
                                 if sec_num not in fallback_sections:
                                     fallback_sections[sec_num] = first_page
                     merged = {**fallback_sections, **seen_sections}
-                    # Only include sections referenced in chunk text
-                    chunk_text_blob = " ".join(
-                        c.get("text", "") for c in doc_chunks
+                    # Search ALL cited chunks for statute section references,
+                    # not just chunks from this statute. Other documents (guides,
+                    # WPAM, admin rules) frequently reference statute sections,
+                    # and the model needs page numbers for those references.
+                    all_text_blob = " ".join(
+                        c.get("text", "") for c in cited_chunks
                     )
                     referenced = set(
-                        re.findall(rf"{re.escape(chapter)}\.\d+[A-Za-z\-]*", chunk_text_blob)
+                        re.findall(rf"{re.escape(chapter)}\.\d+[A-Za-z\-]*", all_text_blob)
                     )
                     for sec_num, page in merged.items():
                         if sec_num in referenced:
                             index_lines.append(f"- § {sec_num} → page {page}")
                     if index_lines:
-                        parts.append("\n**Section Page Index** (use these page numbers for `#page=N` citations):")
+                        parts.append("\n**Section Page Index** (use these page numbers for `#page=N` citations; subsections like 70.32(2)(c)1g use the parent section's page, e.g. § 70.32 → page 23 means all 70.32(...) subsections start at page 23):")
                         parts.extend(index_lines)
             except Exception:
                 pass
@@ -1235,6 +1238,67 @@ def _build_answer_context(
             parts.append(opinion.get("text", "")[:3000])
 
         parts.append("")
+
+    # Fallback: build section page indexes for statute chapters referenced
+    # in cited chunks but not explicitly in cited_doc_ids. The agent often
+    # discovers statutes via get_neighbors but doesn't fetch them directly.
+    if neptune_client and cited_chunks:
+        all_text_blob = " ".join(c.get("text", "") for c in cited_chunks)
+        # Match patterns like "70.32", "73.03", "74.485" — real statute refs.
+        # Also handles OCR artifacts with spaces: "70. 32", "73. 03".
+        raw_refs = re.findall(r"(\d+)\.\s*(\d+)", all_text_blob)
+        referenced_chapters: set[str] = set()
+        for chap, _sec in raw_refs:
+            doc_id_candidate = f"statutes-{chap}"
+            if doc_id_candidate not in cited_doc_ids and int(chap) >= 70:
+                referenced_chapters.add(chap)
+
+        for chapter in sorted(referenced_chapters):
+            stat_doc_id = f"statutes-{chapter}"
+            try:
+                sections = neptune_client.list_document_sections(stat_doc_id)
+                if not sections:
+                    continue
+                section_pattern = re.compile(
+                    rf"^({re.escape(chapter)}\.\d+[A-Za-z\-]*)(?:\s+[A-Z]|\s*$)"
+                )
+                loose_pattern = re.compile(rf"^{re.escape(chapter)}\.\d+")
+                seen_sections: dict[str, int] = {}
+                fallback_sections: dict[str, int] = {}
+                for sec in sections:
+                    heading = sec.get("heading", "")
+                    first_page = sec.get("first_page")
+                    if not heading or first_page is None:
+                        continue
+                    m = section_pattern.match(heading)
+                    if m:
+                        sec_num = m.group(1)
+                        if sec_num not in seen_sections:
+                            seen_sections[sec_num] = first_page
+                    else:
+                        m2 = loose_pattern.match(heading)
+                        if m2:
+                            sec_num = m2.group(0)
+                            if sec_num not in fallback_sections:
+                                fallback_sections[sec_num] = first_page
+                merged = {**fallback_sections, **seen_sections}
+                # Filter to sections actually referenced in chunk text
+                referenced = set(
+                    re.findall(rf"{re.escape(chapter)}\.\s*\d+[A-Za-z\-]*", all_text_blob)
+                )
+                # Normalize OCR spaces: "70. 32" → "70.32"
+                referenced_normalized = {r.replace(" ", "") for r in referenced}
+                index_lines = []
+                for sec_num, page in merged.items():
+                    if sec_num in referenced_normalized:
+                        index_lines.append(f"- § {sec_num} → page {page}")
+                if index_lines:
+                    parts.append(f"### Statute Chapter {chapter} — Section Page Index")
+                    parts.append("(Link directly with `doc:statutes-" + chapter + "#page=N`; subsections use the parent section's page)")
+                    parts.extend(index_lines)
+                    parts.append("")
+            except Exception:
+                pass
 
     parts.append(f"\n## Documents to Cite\nYou MUST cite these document IDs: {sorted(cited_doc_ids)}")
 

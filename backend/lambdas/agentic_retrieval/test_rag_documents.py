@@ -175,11 +175,11 @@ class TestBuildRagDocuments:
             "authority_level": 3,
             "citation": "200 Wis. 2d 1",
             "source_url": "https://www.courtlistener.com/opinion/12345/",
-            "s3_key": "raw/case-law-200-wis-2d-1/file.txt",
+            "s3_key": "raw/case-law/wis-2d/200-wis-2d-1.txt",
         }
         mock.find_stub_promotion.return_value = None
 
-        chunks = [{"doc_id": "case-law-200-wis-2d-1", "text": "stub summary", "s3_key": "raw/case-law-200-wis-2d-1/file.txt"}]
+        chunks = [{"doc_id": "case-law-200-wis-2d-1", "text": "stub summary", "s3_key": "raw/case-law/wis-2d/200-wis-2d-1.txt"}]
         docs = build_rag_documents(chunks, {"case-law-200-wis-2d-1"}, {}, neptune_client=mock)
         card = docs[0]
         assert card.s3_key is None
@@ -192,7 +192,7 @@ class TestBuildRagDocuments:
             "authority_level": 3,
             "citation": "200 Wis. 2d 1",
             "source_url": None,
-            "s3_key": "raw/case-law-200-wis-2d-1/file.txt",
+            "s3_key": "raw/case-law/wis-2d/200-wis-2d-1.txt",
         }
         mock.find_stub_promotion.return_value = None
 

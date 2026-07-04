@@ -258,7 +258,7 @@ class TestBuildOpinionCard:
         }
         payload = {
             "citation": "123 Wis. 2d 45",
-            "raw_key": "raw/case-law-123-wis-2d-45/123-wis-2d-45.txt",
+            "raw_key": "raw/case-law/wis-2d/123-wis-2d-45.txt",
             "text": "full opinion text...",
             "scholar_url": "https://scholar.google.com/foo",
         }
@@ -299,7 +299,7 @@ class TestApplyCaseLawLinks:
                 document_id="case-law-200-wis-2d-1-abc",
                 title="Some Case",
                 content="text",
-                s3_key="raw/case-law-200-wis-2d-1/file.txt",
+                s3_key="raw/case-law/wis-2d/200-wis-2d-1.txt",
                 source_url=None,
             ),
         }
