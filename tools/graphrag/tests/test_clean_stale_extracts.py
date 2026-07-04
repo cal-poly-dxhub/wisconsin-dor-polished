@@ -39,10 +39,10 @@ def test_find_stale_extracts_ignores_nonexistent_extracts():
 
 def test_find_stale_artifacts_flags_source_key_mismatch():
     raw_source_keys = {
-        "case-law-2017-wi-79": "raw/case-law-2017-wi-79/case-law-2017-wi-79.txt",
+        "case-law-2017-wi-79": "raw/case-law/wi/2017-wi-79.txt",
     }
     artifact_source_keys = {
-        "case-law-2017-wi-79": "raw/case-law-2017-wi-79/case-law-2017-wi-79.json",
+        "case-law-2017-wi-79": "raw/case-law/wi/2017-wi-79.json",
     }
 
     stale = find_stale_artifacts(raw_source_keys, artifact_source_keys)
@@ -52,15 +52,15 @@ def test_find_stale_artifacts_flags_source_key_mismatch():
 
 def test_find_stale_artifacts_flags_missing_raw_doc():
     stale = find_stale_artifacts(
-        raw_source_keys={"case-law-current": "raw/case-law-current/case-law-current.txt"},
-        artifact_source_keys={"case-law-old": "raw/case-law-old/case-law-old.json"},
+        raw_source_keys={"case-law-current": "raw/case-law/misc/current.txt"},
+        artifact_source_keys={"case-law-old": "raw/case-law/misc/old.json"},
     )
 
     assert stale == {"case-law-old": "missing-raw-doc"}
 
 
 def test_find_stale_artifacts_keeps_current_artifact():
-    source_key = "raw/case-law-109-wis-2d-290/case-law-109-wis-2d-290.txt"
+    source_key = "raw/case-law/wis-2d/109-wis-2d-290.txt"
 
     stale = find_stale_artifacts(
         raw_source_keys={"case-law-109-wis-2d-290": source_key},
@@ -75,19 +75,19 @@ def test_artifact_source_key_falls_back_to_chunk_metadata():
         "chunks": [
             {
                 "metadata": {
-                    "source": "raw/case-law-109-wis-2d-290/case-law-109-wis-2d-290.txt",
+                    "source": "raw/case-law/wis-2d/109-wis-2d-290.txt",
                 }
             }
         ]
     }
 
-    assert artifact_source_key(doc) == "raw/case-law-109-wis-2d-290/case-law-109-wis-2d-290.txt"
+    assert artifact_source_key(doc) == "raw/case-law/wis-2d/109-wis-2d-290.txt"
 
 
 def test_source_key_rank_prefers_txt_over_json_stub():
     keys = [
-        "raw/case-law-2017-wi-79/case-law-2017-wi-79.json",
-        "raw/case-law-2017-wi-79/case-law-2017-wi-79.txt",
+        "raw/case-law/wi/2017-wi-79.json",
+        "raw/case-law/wi/2017-wi-79.txt",
     ]
 
     assert sorted(keys, key=source_key_rank)[0].endswith(".txt")

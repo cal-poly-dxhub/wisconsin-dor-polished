@@ -1,237 +1,48 @@
 """
-Scrape all documents from wisco-doc-links.docx URLs and upload to S3.
+Scrape documents from the manifest and upload to S3 with change detection.
+
+Reads document_manifest.yaml (single source of truth for all corpus URLs),
+downloads each document, compares content hash against S3 ETag, and only
+uploads files that have changed. Produces a summary of new/changed/unchanged.
 
 Usage:
-    python scripts/graphrag/scrape_documents.py \
+    python tools/graphrag/scrape_documents.py \
         --bucket <raw-bucket-name> \
         --prefix raw/
+
+    # Only scrape specific categories:
+    python tools/graphrag/scrape_documents.py \
+        --bucket <raw-bucket-name> --category statutes --category admin_rules
+
+    # Force re-upload even if content matches:
+    python tools/graphrag/scrape_documents.py \
+        --bucket <raw-bucket-name> --force
 """
 
 import argparse
+import hashlib
 import json
 import re
 import time
 from datetime import date
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import boto3
+from botocore.exceptions import ClientError
 import requests
+import yaml
 
 s3 = boto3.client("s3")
 
+MANIFEST_PATH = Path(__file__).parent / "document_manifest.yaml"
 SITEMAP_URL = "https://www.revenue.wi.gov/sitemap.xml"
 
-DOCUMENT_SOURCES = {
-    "constitution": {
-        "framework_id": "FW-CONSTITUTION",
-        "authority_level": 1,
-        "doc_type": "constitution",
-        "urls": [
-            "https://docs.legis.wisconsin.gov/constitution/wi_unannotated",
-        ],
-    },
-    "statutes": {
-        "framework_id": "FW-STATUTES",
-        "authority_level": 2,
-        "doc_type": "statute",
-        "urls": [
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2017.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2019.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2033.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2038.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2059.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2060.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2061.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2062.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2066.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2069.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2070.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2073.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2074.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2075.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2076.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2077.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%2079.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%20120.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%20121.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%20165.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%20200.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%20706.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%20757.pdf",
-            "https://docs.legis.wisconsin.gov/document/statutes/ch.%20943.pdf",
-        ],
-    },
-    "admin_rules": {
-        "framework_id": "FW-ADMIN-RULES",
-        "authority_level": 4,
-        "doc_type": "admin_rule",
-        "urls": [
-            "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%206.pdf",
-            "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2012.pdf",
-            "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2015.pdf",
-            "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2016.pdf",
-            "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2018.pdf",
-            "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2019.pdf",
-            "https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2020.pdf",
-        ],
-    },
-    "wpam": {
-        "framework_id": "FW-WPAM",
-        "authority_level": 5,
-        "doc_type": "assessment_manual",
-        "urls": [
-            "https://www.revenue.wi.gov/documents/wpam25.pdf",
-        ],
-    },
-    "faq_pages": {
-        "framework_id": "FW-FAQ",
-        "authority_level": 6,
-        "doc_type": "faq_page",
-        "urls": [
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-agfores6.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-agfores2.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-agforest.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-agfores3.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-agfores5.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-agfores4.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-aar.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-bor5.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-bor.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-bor3.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-bor4.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-bor2.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-lottcr.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-fdolcred.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-ptrecred.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-slevytcr.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-useassmt.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-usevalue.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-chargebk.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-finrep.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-ead.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-excmptraid.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-levy.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-newconst.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/Act-12-Personal-Property-Aid.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-ppaid.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-wirmtxrpt.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-soa.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-sot.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-nmomittx.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-taxempt.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tiw.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-telco.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-setsh.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-waste.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-pp-exemption.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-allocation-amendments.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-annexations.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-audreport.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-basevalue.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-creation.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-devagree.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-extensions.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-general.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-jrboard.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-money.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-muniown.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-overlaps.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-parcels.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-projexp.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-projplan.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-pubnotif.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-taxincre.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-audterm.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-amends.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-tid-sect-6023.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-vallimit.aspx",
-            "https://www.revenue.wi.gov/Pages/FAQS/slf-tif-internal.aspx",
-        ],
-    },
-    "gov_publications": {
-        "framework_id": "FW-GOV-PUBS",
-        "authority_level": 7,
-        "doc_type": "guide",
-        "urls": [
-            "https://www.revenue.wi.gov/DOR%20Publications/prop066.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pb065.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pr115.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pb061.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/tax18.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pa502.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pb056.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/mobhme.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pb062.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/chargeback-steps.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/omitted-taxes-steps.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pb060.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pa600.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/tif-manual.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pb218.pdf",
-            "https://www.revenue.wi.gov/DOR%20Publications/pb238.pdf",
-            "https://www.revenue.wi.gov/DORForms/pm-201.pdf",
-            "https://www.revenue.wi.gov/DORForms/sl-101.pdf",
-            "https://www.revenue.wi.gov/DORForms/sl-103.pdf",
-        ],
-    },
-    "complex_inquiry_pages": {
-        "framework_id": "FW-GOV-PUBS",
-        "authority_level": 7,
-        "doc_type": "advisory",
-        "urls": [
-            "https://www.revenue.wi.gov/Pages/Manufacturing/home.aspx",
-            "https://www.revenue.wi.gov/Pages/RETr/Home.aspx",
-            "https://www.revenue.wi.gov/Pages/Training/assessor-certification.aspx",
-            "https://www.revenue.wi.gov/Pages/Training/assess-recert.aspx",
-            "https://www.revenue.wi.gov/Pages/Apps/assessor-inquiry.aspx",
-        ],
-    },
-    # `news_pages` is sitemap-driven: URLs are fetched at runtime, not hardcoded.
-    # Lives in DOCUMENT_SOURCES so it shows up in --category and the iteration loop.
-    "news_pages": {
-        "framework_id": "FW-GOV-PUBS",
-        "authority_level": 7,
-        "doc_type": "advisory",
-        "sitemap_filter": re.compile(r"/Pages/SLF/(?:COTVC-News|Assessor-News)/", re.I),
-        "urls": [],  # populated lazily by load_news_urls_from_sitemap()
-    },
-}
 
-
-# Date format variants observed in news URLs (sample from sitemap, 2026-05):
-#   YYYY-MM-DD                  e.g. 2025-06-02
-#   YYYY-M-D / YYYY-MM-D        e.g. 2025-2-3, 2023-08-4
-#   YYYYMMDD                    e.g. 20240117
-#   YYYY-M-D{a,b,c}             same-day disambiguator suffix
-#   YYYY-MM-DD-Slug-Words       title appended after date (rare, ~2 cases)
-#
-# We accept all of these and normalize to a real ISO date for the
-# effective_date metadata attribute. Letter suffixes are intentionally
-# discarded — they're sub-day ordering, not a calendar distinction.
-_NEWS_DATE_RE = re.compile(
-    r"/(?:COTVC-News|Assessor-News)/"
-    r"(?:"
-    r"(?P<y1>\d{4})-(?P<m1>\d{1,2})-(?P<d1>\d{1,2})[a-z]?"  # YYYY-M-D[suffix]
-    r"|(?P<y2>\d{4})(?P<m2>\d{2})(?P<d2>\d{2})"               # YYYYMMDD
-    r")",
-    re.I,
-)
-
-
-def extract_news_date(url: str) -> str | None:
-    """Return ISO date string (YYYY-MM-DD) from a news URL, or None if not parseable."""
-    m = _NEWS_DATE_RE.search(url)
-    if not m:
-        return None
-    if m.group("y1"):
-        y, mo, d = int(m.group("y1")), int(m.group("m1")), int(m.group("d1"))
-    else:
-        y, mo, d = int(m.group("y2")), int(m.group("m2")), int(m.group("d2"))
-    try:
-        return date(y, mo, d).isoformat()
-    except ValueError:
-        return None  # garbage like 20203-05-15
+def load_manifest(path: Path = MANIFEST_PATH) -> dict:
+    """Load the document manifest YAML."""
+    with open(path) as f:
+        return yaml.safe_load(f)
 
 
 def load_news_urls_from_sitemap(filter_re: re.Pattern) -> list[str]:
@@ -247,34 +58,110 @@ _GENERIC_STEMS = {"home", "index", "default", "main", "page"}
 _NEWS_PARENT_SEGMENTS = {"cotvc-news", "assessor-news"}
 
 
-def make_doc_id(category: str, url: str) -> str:
+_STATUTE_RE = re.compile(r"ch\.\s*(\d+)", re.I)
+_ADMIN_RULE_RE = re.compile(r"ch\.\s*Tax\s*(\d+)", re.I)
+
+_IAAO_TYPOS = {"responibilities": "responsibilities", "comunication": "communication"}
+
+
+def _split_camel_case(s: str) -> str:
+    """Insert hyphens at CamelCase boundaries: 'StandardValuation' -> 'standard-valuation'."""
+    s = re.sub(r"([a-z])([A-Z])", r"\1-\2", s)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", s)
+    return s.lower()
+
+
+def make_doc_id(category: str, url: str, explicit_id: str | None = None) -> str:
     """Generate a stable document ID from category and URL.
 
-    Default: `{category}-{filename-stem}`. Two disambiguation rules:
-
-    1. Generic stems (home.aspx, index.aspx) get the parent path prepended
-       so /Pages/Manufacturing/home.aspx ≠ /Pages/RETr/Home.aspx.
-    2. News URLs get the section (cotvc-news/assessor-news) prepended,
-       since both sections post on the same dates (~62 collisions in 2026-05
-       sitemap). Filename-only naming would silently overwrite half the corpus.
+    If explicit_id is provided (from the manifest), use it directly.
+    Special cases for statutes/admin_rules/wpam/iaao/uspap to produce
+    clean, consistent names. Otherwise: `{category}-{filename-stem}`.
     """
-    path = urlparse(url).path
-    parts = [p for p in path.split("/") if p]
-    filename = Path(path).stem
-    clean_stem = re.sub(r"[%\s.]+", "-", filename).strip("-").lower()
+    if explicit_id:
+        return explicit_id
+
+    decoded_path = unquote(urlparse(url).path)
+
+    # Statutes: extract chapter number to produce "statutes-70"
+    if category == "statutes":
+        m = _STATUTE_RE.search(decoded_path)
+        if m:
+            return f"statutes-{m.group(1)}"
+
+    # Admin rules: extract Tax chapter number to produce "admin_rules-tax-16"
+    if category == "admin_rules":
+        m = _ADMIN_RULE_RE.search(decoded_path)
+        if m:
+            return f"admin_rules-tax-{m.group(1)}"
+
+    # WPAM: extract year suffix to produce "wpam-wisconsin-property-assessment-manual-2026"
+    if category == "wpam":
+        m = re.search(r"wpam(\d{2})", decoded_path, re.I)
+        if m:
+            year = int(m.group(1))
+            full_year = 2000 + year if year < 50 else 1900 + year
+            return f"wpam-wisconsin-property-assessment-manual-{full_year}"
+
+    # IAAO: split CamelCase filenames and fix known typos in source URLs
+    if category == "iaao":
+        filename = Path(decoded_path).stem
+        stem = _split_camel_case(filename)
+        stem = re.sub(r"[^a-z0-9]+", "-", stem).strip("-")
+        for typo, fix in _IAAO_TYPOS.items():
+            stem = stem.replace(typo, fix)
+        return f"iaao-{stem}"
+
+    # USPAP: third-party URLs with useless filenames — derive from path keywords
+    if category == "uspap":
+        m = re.search(r"uspap", decoded_path, re.I)
+        if m:
+            year_match = re.search(r"20\d{2}", url)
+            year = year_match.group(0) if year_match else ""
+            suffix = f"-{year}" if year else ""
+            return f"uspap-standards{suffix}"
+
+    parts = [p for p in decoded_path.split("/") if p]
+    filename = Path(decoded_path).stem
+    clean_stem = re.sub(r"[^a-z0-9]+", "-", filename.lower()).strip("-")
 
     if clean_stem in _GENERIC_STEMS and len(parts) >= 2:
-        parent = re.sub(r"[%\s.]+", "-", parts[-2]).strip("-").lower()
+        parent = re.sub(r"[^a-z0-9]+", "-", parts[-2].lower()).strip("-")
         if parent:
             return f"{category}-{parent}-{clean_stem}"
 
-    # News-section discriminator (rule 2 above).
     if len(parts) >= 2:
-        parent = re.sub(r"[%\s.]+", "-", parts[-2]).strip("-").lower()
+        parent = re.sub(r"[^a-z0-9]+", "-", parts[-2].lower()).strip("-")
         if parent in _NEWS_PARENT_SEGMENTS:
             return f"{category}-{parent}-{clean_stem}"
 
     return f"{category}-{clean_stem}"
+
+
+# Date extraction for news pages
+_NEWS_DATE_RE = re.compile(
+    r"/(?:COTVC-News|Assessor-News)/"
+    r"(?:"
+    r"(?P<y1>\d{4})-(?P<m1>\d{1,2})-(?P<d1>\d{1,2})[a-z]?"
+    r"|(?P<y2>\d{4})(?P<m2>\d{2})(?P<d2>\d{2})"
+    r")",
+    re.I,
+)
+
+
+def extract_news_date(url: str) -> str | None:
+    """Return ISO date string (YYYY-MM-DD) from a news URL, or None."""
+    m = _NEWS_DATE_RE.search(url)
+    if not m:
+        return None
+    if m.group("y1"):
+        y, mo, d = int(m.group("y1")), int(m.group("m1")), int(m.group("d1"))
+    else:
+        y, mo, d = int(m.group("y2")), int(m.group("m2")), int(m.group("d2"))
+    try:
+        return date(y, mo, d).isoformat()
+    except ValueError:
+        return None
 
 
 def download_file(url: str, max_retries: int = 3) -> tuple[bytes, str]:
@@ -290,7 +177,7 @@ def download_file(url: str, max_retries: int = 3) -> tuple[bytes, str]:
             if attempt == max_retries - 1:
                 raise
             print(f"  Retry {attempt + 1}/{max_retries} for {url}: {e}")
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
     raise RuntimeError("unreachable")
 
 
@@ -314,7 +201,26 @@ def scrape_html_page(url: str) -> tuple[bytes, str]:
     return text.encode("utf-8"), "text/plain"
 
 
-def upload_to_s3(bucket: str, prefix: str, doc_id: str, data: bytes, content_type: str, metadata: dict):
+def content_changed(bucket: str, key: str, new_data: bytes) -> tuple[bool, bool]:
+    """Check if content differs from S3. Returns (changed: bool, is_new: bool)."""
+    new_hash = hashlib.md5(new_data).hexdigest()
+    try:
+        head = s3.head_object(Bucket=bucket, Key=key)
+        existing_etag = head["ETag"].strip('"')
+        # Multipart uploads have ETags like "abc123-2" — can't compare MD5
+        if "-" in existing_etag:
+            existing = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+            changed = hashlib.md5(existing).hexdigest() != new_hash
+        else:
+            changed = existing_etag != new_hash
+        return changed, False
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("404", "NoSuchKey"):
+            return True, True
+        raise
+
+
+def upload_to_s3(bucket: str, prefix: str, doc_id: str, data: bytes, content_type: str, metadata: dict) -> str:
     """Upload document + metadata JSON to S3."""
     ext = ".pdf" if "pdf" in content_type else ".txt"
     doc_key = f"{prefix}{doc_id}/{doc_id}{ext}"
@@ -327,52 +233,75 @@ def upload_to_s3(bucket: str, prefix: str, doc_id: str, data: bytes, content_typ
     return doc_key
 
 
+def get_s3_key(prefix: str, doc_id: str, is_pdf: bool) -> str:
+    """Compute the S3 key for a document."""
+    ext = ".pdf" if is_pdf else ".txt"
+    return f"{prefix}{doc_id}/{doc_id}{ext}"
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Scrape all WI DOR documents to S3")
+    parser = argparse.ArgumentParser(description="Scrape documents from manifest to S3 with change detection")
     parser.add_argument("--bucket", required=True, help="S3 raw bucket name")
     parser.add_argument("--prefix", default="raw/", help="S3 prefix (default: raw/)")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be scraped without downloading")
+    parser.add_argument("--force", action="store_true", help="Upload all documents regardless of hash match")
     parser.add_argument(
         "--category",
         action="append",
         default=None,
-        help="Only scrape this category (repeatable). Choices: "
-        + ", ".join(sorted(DOCUMENT_SOURCES.keys())),
+        help="Only scrape this category (repeatable)",
     )
     parser.add_argument(
         "--sleep",
         type=float,
         default=0.5,
-        help="Seconds to sleep between requests (default: 0.5, be kind to revenue.wi.gov)",
+        help="Seconds to sleep between requests (default: 0.5)",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=MANIFEST_PATH,
+        help="Path to document manifest YAML",
     )
     args = parser.parse_args()
 
+    manifest = load_manifest(args.manifest)
+    sources = manifest["categories"]
+
     if args.category:
-        unknown = set(args.category) - set(DOCUMENT_SOURCES.keys())
+        unknown = set(args.category) - set(sources.keys())
         if unknown:
             parser.error(f"Unknown --category values: {sorted(unknown)}")
-        sources = {k: v for k, v in DOCUMENT_SOURCES.items() if k in args.category}
-    else:
-        sources = DOCUMENT_SOURCES
+        sources = {k: v for k, v in sources.items() if k in args.category}
 
-    # Hydrate sitemap-driven categories now that we know which we'll scrape.
+    # Hydrate sitemap-driven categories
     for category, config in sources.items():
-        if "sitemap_filter" in config and not config["urls"]:
-            print(f"Loading {category} URLs from {SITEMAP_URL}...")
-            config["urls"] = load_news_urls_from_sitemap(config["sitemap_filter"])
+        if config.get("sitemap_filter") and not config["urls"]:
+            print(f"Loading {category} URLs from sitemap...")
+            filter_re = re.compile(config["sitemap_filter"], re.I)
+            config["urls"] = load_news_urls_from_sitemap(filter_re)
             print(f"  {len(config['urls'])} URLs from sitemap for {category}")
 
     total = sum(len(cat["urls"]) for cat in sources.values())
     print(f"Scraping {total} documents across {len(sources)} categories\n")
 
     processed = 0
+    stats = {"new": 0, "changed": 0, "unchanged": 0, "forced": 0, "failed": 0}
     failed = []
 
     for category, config in sources.items():
         print(f"\n=== {category} (authority level {config['authority_level']}) ===")
 
-        for url in config["urls"]:
-            doc_id = make_doc_id(category, url)
+        for entry in config["urls"]:
+            # Entries can be plain URL strings or {url, doc_id} dicts
+            if isinstance(entry, dict):
+                url = entry["url"]
+                explicit_id = entry.get("doc_id")
+            else:
+                url = entry
+                explicit_id = None
+
+            doc_id = make_doc_id(category, url, explicit_id)
             processed += 1
 
             if args.dry_run:
@@ -381,14 +310,24 @@ def main():
                 print(f"  [{processed}/{total}] Would scrape: {doc_id} <- {url}{date_part}")
                 continue
 
-            print(f"  [{processed}/{total}] {doc_id}")
-
             try:
-                is_html = not url.lower().endswith(".pdf")
-                if is_html:
-                    data, ct = scrape_html_page(url)
-                else:
+                is_pdf = url.lower().endswith(".pdf") or "pdf" in url.lower().split("?")[0]
+                if is_pdf:
                     data, ct = download_file(url)
+                else:
+                    data, ct = scrape_html_page(url)
+
+                # Check if content actually changed
+                s3_key = get_s3_key(args.prefix, doc_id, "pdf" in ct)
+                if not args.force:
+                    changed, is_new = content_changed(args.bucket, s3_key, data)
+                    if not changed:
+                        stats["unchanged"] += 1
+                        print(f"  [{processed}/{total}] {doc_id} — unchanged")
+                        continue
+                    status = "new" if is_new else "changed"
+                else:
+                    status = "forced"
 
                 metadata = {
                     "doc_id": doc_id,
@@ -399,27 +338,35 @@ def main():
                     "category": category,
                 }
 
-                # News pages get their publication date stamped so the loader
-                # can set Advisory.effective_date for date-based supersession.
                 eff_date = extract_news_date(url)
                 if eff_date:
                     metadata["effective_date"] = eff_date
 
                 doc_key = upload_to_s3(args.bucket, args.prefix, doc_id, data, ct, metadata)
-                print(f"    -> s3://{args.bucket}/{doc_key}")
+                stats[status] += 1
+                print(f"  [{processed}/{total}] {doc_id} — {status.upper()} -> s3://{args.bucket}/{doc_key}")
 
             except Exception as e:
-                print(f"    FAILED: {e}")
+                stats["failed"] += 1
+                print(f"  [{processed}/{total}] {doc_id} — FAILED: {e}")
                 failed.append({"doc_id": doc_id, "url": url, "error": str(e)})
 
             if args.sleep > 0 and processed < total:
                 time.sleep(args.sleep)
 
-    print(f"\n{'DRY RUN ' if args.dry_run else ''}Complete: {processed - len(failed)}/{processed} succeeded")
+    print(f"\n{'DRY RUN ' if args.dry_run else ''}Complete: {processed} processed")
+    print(f"  New: {stats['new']}, Changed: {stats['changed']}, "
+          f"Forced: {stats['forced']}, Unchanged: {stats['unchanged']}, "
+          f"Failed: {stats['failed']}")
+
     if failed:
         print(f"\nFailed ({len(failed)}):")
         for f in failed:
             print(f"  {f['doc_id']}: {f['error']}")
+
+    uploaded = stats["new"] + stats["changed"] + stats["forced"]
+    if uploaded > 0 and not args.dry_run:
+        print(f"\n{uploaded} documents uploaded — run extract with --force to re-process them.")
 
 
 if __name__ == "__main__":

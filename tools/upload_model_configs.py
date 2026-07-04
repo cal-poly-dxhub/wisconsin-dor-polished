@@ -28,7 +28,7 @@ from botocore.exceptions import ClientError
 
 script_dir = Path(__file__).parent
 repo_root = script_dir.parent
-bedrock_utils_dir = repo_root / "backend" / "lambdas" / "streaming"
+bedrock_utils_dir = repo_root / "tools"
 sys.path.insert(0, str(bedrock_utils_dir))
 
 step_function_types_dir = repo_root / "backend" / "layers"

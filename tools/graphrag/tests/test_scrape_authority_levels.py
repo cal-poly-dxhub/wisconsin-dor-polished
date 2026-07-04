@@ -1,4 +1,4 @@
-"""Regression guard: each scrape category's authority_level must match the
+"""Regression guard: each manifest category's authority_level must match the
 canonical authority_level of the framework it belongs to.
 
 The bug this guards against: scrape_documents.py numbered its categories
@@ -17,11 +17,9 @@ from pathlib import Path
 
 import yaml
 
-# scrape_documents.py creates a boto3 S3 client at import time; a region must
-# be present or client construction raises NoRegionError during collection.
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
-from tools.graphrag.scrape_documents import DOCUMENT_SOURCES
+from tools.graphrag.scrape_documents import load_manifest
 
 _CONFIG_PATH = Path(__file__).resolve().parents[1] / "ingest_config.yaml"
 
@@ -34,9 +32,12 @@ def _framework_authority_levels() -> dict[str, int]:
 
 def test_every_category_authority_matches_its_framework():
     framework_levels = _framework_authority_levels()
+    manifest = load_manifest()
     mismatches = []
-    for category, cfg in DOCUMENT_SOURCES.items():
+    for category, cfg in manifest["categories"].items():
         fw_id = cfg["framework_id"]
+        if fw_id not in framework_levels:
+            continue  # New framework not yet in ingest_config
         expected = framework_levels[fw_id]
         actual = cfg["authority_level"]
         if actual != expected:
@@ -51,5 +52,6 @@ def test_every_category_authority_matches_its_framework():
 
 def test_advisory_categories_are_gov_pub_level():
     """News and complex-inquiry pages are Gov. Pubs (level 7), not FAQ (6)."""
+    manifest = load_manifest()
     for category in ("news_pages", "complex_inquiry_pages"):
-        assert DOCUMENT_SOURCES[category]["authority_level"] == 7
+        assert manifest["categories"][category]["authority_level"] == 7

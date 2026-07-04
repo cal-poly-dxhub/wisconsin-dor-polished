@@ -89,7 +89,7 @@ frameworks:
 source_to_framework:
   "raw/constitution-":           FW-CONSTITUTION
   "raw/statutes-":               FW-STATUTES
-  "raw/case-law-":               FW-CASE-LAW
+  "raw/case-law/":               FW-CASE-LAW
   "raw/admin_rules-":            FW-ADMIN-RULES
   "raw/wpam-":                   FW-WPAM
   "raw/faq_pages-":              FW-FAQ

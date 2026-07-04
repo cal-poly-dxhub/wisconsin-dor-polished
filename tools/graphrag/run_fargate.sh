@@ -9,6 +9,7 @@
 # Options:
 #   --source-filter <prefix>  Only process docs matching this prefix
 #   --force                   Re-process all (ignore cache)
+#   --smart                   (extract only) Only re-extract docs with stale cache
 #   --start-phase <N>         (load only) Resume from sub-phase N
 #   --stop-after-phase <N>    (load only) Stop after sub-phase N
 #   --max-workers <N>         Override default worker count
@@ -34,6 +35,8 @@ shift
 # Parse optional arguments
 SOURCE_FILTER=""
 FORCE=""
+SMART=""
+RECLASSIFY=""
 START_PHASE=""
 STOP_AFTER_PHASE=""
 MAX_WORKERS=""
@@ -42,6 +45,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --source-filter) SOURCE_FILTER="$2"; shift 2 ;;
     --force) FORCE="true"; shift ;;
+    --smart) SMART="true"; shift ;;
+    --reclassify) RECLASSIFY="true"; shift ;;
     --start-phase) START_PHASE="$2"; shift 2 ;;
     --stop-after-phase) STOP_AFTER_PHASE="$2"; shift 2 ;;
     --max-workers) MAX_WORKERS="$2"; shift 2 ;;
@@ -101,6 +106,8 @@ for o in outputs:
 ENV_OVERRIDES='[{"name":"PHASE","value":"'"$PHASE"'"}'
 [[ -n "$SOURCE_FILTER" ]] && ENV_OVERRIDES+=',{"name":"SOURCE_FILTER","value":"'"$SOURCE_FILTER"'"}'
 [[ -n "$FORCE" ]] && ENV_OVERRIDES+=',{"name":"FORCE","value":"true"}'
+[[ -n "$SMART" ]] && ENV_OVERRIDES+=',{"name":"SMART","value":"true"}'
+[[ -n "$RECLASSIFY" ]] && ENV_OVERRIDES+=',{"name":"RECLASSIFY","value":"true"}'
 [[ -n "$START_PHASE" ]] && ENV_OVERRIDES+=',{"name":"START_PHASE","value":"'"$START_PHASE"'"}'
 [[ -n "$STOP_AFTER_PHASE" ]] && ENV_OVERRIDES+=',{"name":"STOP_AFTER_PHASE","value":"'"$STOP_AFTER_PHASE"'"}'
 [[ -n "$MAX_WORKERS" ]] && ENV_OVERRIDES+=',{"name":"MAX_WORKERS","value":"'"$MAX_WORKERS"'"}'
@@ -117,6 +124,8 @@ echo "  Cluster: $CLUSTER_ARN"
 echo "  Task Definition: $TASK_DEF_ARN"
 [[ -n "$SOURCE_FILTER" ]] && echo "  Source Filter: $SOURCE_FILTER"
 [[ -n "$FORCE" ]] && echo "  Force: true"
+[[ -n "$SMART" ]] && echo "  Smart: true"
+[[ -n "$RECLASSIFY" ]] && echo "  Reclassify: true"
 echo ""
 
 TASK_ARN=$(aws ecs run-task \

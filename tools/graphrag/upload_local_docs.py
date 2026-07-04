@@ -50,6 +50,32 @@ def make_doc_id(category: str, filename: str) -> str:
     return f"{category}-{clean}"
 
 
+_REPORTER_PATTERNS = [
+    ("f-supp-3d", re.compile(r"\d+-f-supp-3d-\d+")),
+    ("f-supp-2d", re.compile(r"\d+-f-supp-2d-\d+")),
+    ("f-supp", re.compile(r"\d+-f-supp-\d+")),
+    ("f-4th", re.compile(r"\d+-f-4th-\d+")),
+    ("f-3d", re.compile(r"\d+-f-3d-\d+")),
+    ("f-2d", re.compile(r"\d+-f-2d-\d+")),
+    ("l-ed-2d", re.compile(r"\d+-l-ed-2d-\d+")),
+    ("n-w-3d", re.compile(r"\d+-n-w-3d-\d+")),
+    ("n-w-2d", re.compile(r"\d+-n-w-2d-\d+")),
+    ("wis-2d", re.compile(r"\d+-wis-2d-\d+")),
+    ("wi-app", re.compile(r"\d+-wi-app-\d+")),
+    ("wi", re.compile(r"\d+-wi-\d+")),
+    ("s-ct", re.compile(r"\d+-s-ct-\d+")),
+    ("u-s", re.compile(r"\d+-u-s-\d+")),
+]
+
+
+def _case_law_reporter(slug: str) -> str:
+    """Determine reporter sub-group from a case law slug."""
+    for group, pattern in _REPORTER_PATTERNS:
+        if pattern.fullmatch(slug):
+            return group
+    return "misc"
+
+
 def upload_doc(s3, bucket, prefix, filepath, category, framework_id, authority_level, doc_type, dry_run):
     """Upload a single document + metadata JSON to S3."""
     filename = os.path.basename(filepath)
@@ -156,8 +182,10 @@ def main():
                 "citing_statutes": entry["sources"],
             }, indent=2).encode("utf-8")
 
-            doc_key = f"{args.prefix}{doc_id}/{doc_id}.json"
-            meta_key = f"{args.prefix}{doc_id}/{doc_id}.json.metadata.json"
+            slug = doc_id.removeprefix("case-law-")
+            reporter = _case_law_reporter(slug)
+            doc_key = f"{args.prefix}case-law/{reporter}/{slug}.json"
+            meta_key = f"{args.prefix}case-law/{reporter}/{slug}.metadata.json"
 
             metadata = {
                 "metadataAttributes": {

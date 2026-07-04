@@ -35,7 +35,7 @@ def _run(metadata: dict, doc: dict | None = None):
     )
     doc = doc or {
         "doc_id": "case-law-kollasch-v-adamany",
-        "key": "raw/case-law-kollasch-v-adamany/case-law-kollasch-v-adamany.txt",
+        "key": "raw/case-law/misc/kollasch-v-adamany.txt",
         "size": 9000,
     }
     config = {"bedrock_llm_model": "test-model"}
@@ -81,7 +81,7 @@ def test_title_falls_back_to_doc_id_when_nothing_else() -> None:
     metadata = {"citing_statutes": ""}
     doc = {
         "doc_id": "case-law-unknown-case",
-        "key": "raw/case-law-unknown-case/case-law-unknown-case.json",
+        "key": "raw/case-law/misc/unknown-case.json",
         "size": 0,
     }
     result, _ = _run(metadata, doc)

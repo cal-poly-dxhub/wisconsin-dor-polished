@@ -311,9 +311,21 @@ def _statute_file_to_chapter(filename: str) -> str:
     return ""
 
 
+def _metadata_key_for(key: str) -> str:
+    """Derive the metadata sidecar path for a content key.
+
+    Convention: {stem}.metadata.json (sibling of the content file).
+    e.g. raw/case-law/wis-2d/100-wis-2d-256.txt → ...100-wis-2d-256.metadata.json
+         raw/wpam-ch7/wpam-ch7.pdf              → ...wpam-ch7.pdf.metadata.json
+    """
+    if "/case-law/" in key:
+        return key.rsplit(".", 1)[0] + ".metadata.json"
+    return key + ".metadata.json"
+
+
 def get_metadata(bucket: str, key: str) -> dict:
     """Fetch metadata.json for a document."""
-    meta_key = key + ".metadata.json"
+    meta_key = _metadata_key_for(key)
     try:
         obj = s3.get_object(Bucket=bucket, Key=meta_key)
         data = json.loads(obj["Body"].read())
@@ -323,7 +335,12 @@ def get_metadata(bucket: str, key: str) -> dict:
 
 
 def list_documents(bucket: str, prefix: str) -> list[dict]:
-    """List all documents in the raw bucket, grouped by doc_id folder."""
+    """List all documents in the raw bucket, grouped by doc_id.
+
+    Layout:
+      - Folder-per-doc:  raw/{doc_id}/{doc_id}.ext  (statutes, wpam, etc.)
+      - Case law:        raw/case-law/{reporter}/{slug}.ext  → doc_id = "case-law-{slug}"
+    """
     docs = {}
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
@@ -332,14 +349,40 @@ def list_documents(bucket: str, prefix: str) -> list[dict]:
             if key.endswith(".metadata.json"):
                 continue
             parts = key.replace(prefix, "").split("/")
-            if len(parts) >= 2:
+            if len(parts) == 3 and parts[0] == "case-law":
+                slug = parts[2].rsplit(".", 1)[0]
+                doc_id = f"case-law-{slug}"
+            elif len(parts) >= 2:
                 doc_id = parts[0]
-                if doc_id not in docs:
-                    docs[doc_id] = {"doc_id": doc_id, "key": key, "size": obj["Size"]}
+            else:
+                continue
+            if doc_id not in docs:
+                docs[doc_id] = {"doc_id": doc_id, "key": key, "size": obj["Size"]}
     return list(docs.values())
 
 
-def process_document(doc: dict, raw_bucket: str, work_bucket: str, config: dict) -> dict | None:
+def _load_cached_classification(work_bucket: str, doc_id: str) -> dict | None:
+    """Load a previously-cached LLM classification from S3, or None if absent."""
+    try:
+        obj = s3.get_object(Bucket=work_bucket, Key=f"classified/{doc_id}.json")
+        return json.loads(obj["Body"].read())
+    except Exception:
+        return None
+
+
+def _save_classification(work_bucket: str, doc_id: str, classification: dict) -> None:
+    """Persist LLM classification separately so re-chunking doesn't require reclassification."""
+    s3.put_object(
+        Bucket=work_bucket,
+        Key=f"classified/{doc_id}.json",
+        Body=json.dumps(classification, default=str).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+
+def process_document(
+    doc: dict, raw_bucket: str, work_bucket: str, config: dict, *, reclassify: bool = False
+) -> dict | None:
     """Process a single document: extract text, classify, chunk."""
     doc_id = doc["doc_id"]
     key = doc["key"]
@@ -402,8 +445,17 @@ def process_document(doc: dict, raw_bucket: str, work_bucket: str, config: dict)
             chunk["metadata"]["statute_refs"] = citations["statute_refs"]
             chunk["metadata"]["admin_rule_refs"] = citations["admin_rule_refs"]
 
-        llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-20250514")
-        classification = classify_document(full_text, llm_model)
+        # Classification: reuse cached result unless --reclassify is set.
+        classification = None
+        if not reclassify:
+            classification = _load_cached_classification(work_bucket, doc_id)
+            if classification:
+                logger.info(f"  Reusing cached classification for {doc_id}")
+
+        if classification is None:
+            llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-20250514")
+            classification = classify_document(full_text, llm_model)
+            _save_classification(work_bucket, doc_id, classification)
 
         result = {
             "doc_id": doc_id,
@@ -473,6 +525,15 @@ def main():
     parser.add_argument("--max-workers", type=int, default=3)
     parser.add_argument("--force", action="store_true", help="Re-extract all documents, ignoring cache")
     parser.add_argument(
+        "--smart", action="store_true",
+        help="Only re-extract documents whose raw file is newer than their extraction cache.",
+    )
+    parser.add_argument(
+        "--reclassify", action="store_true",
+        help="Force LLM reclassification even if a cached classification exists. "
+             "Without this flag, only chunking + citation extraction re-runs on --force.",
+    )
+    parser.add_argument(
         "--source-filter",
         default="",
         help="Only process doc_ids matching this prefix (e.g., 'wpam-' to re-extract WPAM only).",
@@ -491,7 +552,25 @@ def main():
             f"Source filter '{args.source_filter}': {before} → {len(docs)} documents"
         )
 
-    if not args.force:
+    if args.force:
+        pass  # Re-extract everything
+    elif args.smart:
+        # Only re-extract docs whose raw file is newer than extraction cache
+        from botocore.exceptions import ClientError
+        stale = []
+        for doc in docs:
+            doc_id = doc["doc_id"]
+            ext_key = f"extracted/{doc_id}.json"
+            try:
+                raw_head = s3.head_object(Bucket=args.raw_bucket, Key=doc["s3_key"])
+                ext_head = s3.head_object(Bucket=args.work_bucket, Key=ext_key)
+                if raw_head["LastModified"] > ext_head["LastModified"]:
+                    stale.append(doc)
+            except ClientError:
+                stale.append(doc)  # No extraction cache yet — needs processing
+        logger.info(f"Smart mode: {len(stale)}/{len(docs)} documents have stale extractions")
+        docs = stale
+    else:
         already_done = list_already_extracted(args.work_bucket)
         before = len(docs)
         docs = [d for d in docs if d["doc_id"] not in already_done]
@@ -500,7 +579,10 @@ def main():
     results = []
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = {
-            executor.submit(process_document, doc, args.raw_bucket, args.work_bucket, config): doc
+            executor.submit(
+                process_document, doc, args.raw_bucket, args.work_bucket, config,
+                reclassify=args.reclassify,
+            ): doc
             for doc in docs
         }
         for future in as_completed(futures):

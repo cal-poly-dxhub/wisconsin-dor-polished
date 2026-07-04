@@ -12,7 +12,9 @@ case "$PHASE" in
       --config "$CONFIG" \
       --max-workers "${MAX_WORKERS:-3}" \
       ${SOURCE_FILTER:+--source-filter "$SOURCE_FILTER"} \
-      ${FORCE:+--force}
+      ${FORCE:+--force} \
+      ${SMART:+--smart} \
+      ${RECLASSIFY:+--reclassify}
     ;;
   embed)
     exec python -m tools.graphrag.embed \
@@ -40,7 +42,9 @@ case "$PHASE" in
       --config "$CONFIG" \
       --max-workers "${MAX_WORKERS:-3}" \
       ${SOURCE_FILTER:+--source-filter "$SOURCE_FILTER"} \
-      ${FORCE:+--force}
+      ${FORCE:+--force} \
+      ${SMART:+--smart} \
+      ${RECLASSIFY:+--reclassify}
 
     echo "--- Phase: embed ---"
     python -m tools.graphrag.embed \

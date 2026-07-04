@@ -1,0 +1,285 @@
+# Document Manifest — single source of truth for all documents in the system.
+#
+# Every document the chatbot should know about MUST have an entry here.
+# The scraper reads this file, downloads each URL, compares content hashes
+# against what's in S3, and only uploads/re-processes changed documents.
+#
+# To add new documents: append a URL to the appropriate category.
+# To refresh content: just re-run the scraper — it auto-detects changes.
+#
+# Categories map to graph frameworks (ingest_config.yaml) and authority levels.
+# News pages are sitemap-driven — listed here as a category with a filter pattern.
+
+categories:
+
+  constitution:
+    framework_id: FW-CONSTITUTION
+    authority_level: 1
+    doc_type: constitution
+    urls:
+      - https://docs.legis.wisconsin.gov/constitution/wi_unannotated
+
+  statutes:
+    framework_id: FW-STATUTES
+    authority_level: 2
+    doc_type: statute
+    urls:
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2017.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2019.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2033.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2038.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2059.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2060.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2061.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2062.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2066.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2069.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2070.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2073.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2074.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2075.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2076.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2077.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%2079.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%20120.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%20121.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%20165.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%20200.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%20706.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%20757.pdf
+      - https://docs.legis.wisconsin.gov/document/statutes/ch.%20943.pdf
+
+  admin_rules:
+    framework_id: FW-ADMIN-RULES
+    authority_level: 4
+    doc_type: admin_rule
+    urls:
+      - https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%206.pdf
+      - https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2012.pdf
+      - https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2015.pdf
+      - https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2016.pdf
+      - https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2018.pdf
+      - https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2019.pdf
+      - https://docs.legis.wisconsin.gov/document/administrativecode/ch.%20Tax%2020.pdf
+
+  wpam:
+    framework_id: FW-WPAM
+    authority_level: 5
+    doc_type: assessment_manual
+    urls:
+      - https://www.revenue.wi.gov/documents/wpam11.pdf
+      - https://www.revenue.wi.gov/documents/wpam12.pdf
+      - https://www.revenue.wi.gov/Documents/wpam13.pdf
+      - https://www.revenue.wi.gov/documents/wpam14.pdf
+      - https://www.revenue.wi.gov/documents/wpam15.pdf
+      - https://www.revenue.wi.gov/documents/wpam16.pdf
+      - https://www.revenue.wi.gov/documents/wpam17.pdf
+      - https://www.revenue.wi.gov/documents/wpam18.pdf
+      - https://www.revenue.wi.gov/documents/wpam19.pdf
+      - https://www.revenue.wi.gov/documents/wpam20.pdf
+      - https://www.revenue.wi.gov/documents/wpam21.pdf
+      - https://www.revenue.wi.gov/documents/wpam22.pdf
+      - https://www.revenue.wi.gov/documents/wpam23.pdf
+      - https://www.revenue.wi.gov/documents/wpam24.pdf
+      - https://www.revenue.wi.gov/documents/wpam25.pdf
+      - https://www.revenue.wi.gov/documents/wpam26.pdf
+
+  faq_pages:
+    framework_id: FW-FAQ
+    authority_level: 6
+    doc_type: faq_page
+    urls:
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-agfores6.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-agfores2.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-agforest.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-agfores3.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-agfores5.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-agfores4.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-aar.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-bor5.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-bor.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-bor3.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-bor4.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-bor2.aspx
+      - https://www.revenue.wi.gov/DORFAQ/dolcre.pdf
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-lottcr.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-fdolcred.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-ptrecred.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-slevytcr.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-useassmt.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-usevalue.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-chargebk.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-finrep.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-ead.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-excmptraid.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-levy.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-newconst.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/Act-12-Personal-Property-Aid.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-ppaid.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-wirmtxrpt.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-soa.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-sot.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-nmomittx.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-taxempt.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tiw.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-telco.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-setsh.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-waste.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-pp-exemption.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-allocation-amendments.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-annexations.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-audreport.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-basevalue.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-creation.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-devagree.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-extensions.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-general.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-jrboard.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-money.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-muniown.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-overlaps.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-parcels.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-projexp.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-projplan.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-pubnotif.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-taxincre.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-audterm.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-amends.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-tid-sect-6023.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-vallimit.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-internal.aspx
+
+  gov_publications:
+    framework_id: FW-GOV-PUBS
+    authority_level: 7
+    doc_type: guide
+    urls:
+      - https://www.revenue.wi.gov/DOR%20Publications/prop066.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/pb065.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/pr115.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/pb061.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/tax18.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/pa502.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/pb056.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/mobhme.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/pb062.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/chargeback-steps.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/omitted-taxes-steps.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/pb060.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/pa600.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/tif-manual.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/pb218.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/pb238.pdf
+      - https://www.revenue.wi.gov/DORForms/pm-201.pdf
+      - https://www.revenue.wi.gov/DORForms/sl-101.pdf
+      - https://www.revenue.wi.gov/DORForms/sl-103.pdf
+
+  form_instructions:
+    framework_id: FW-GOV-PUBS
+    authority_level: 7
+    doc_type: form_instruction
+    urls:
+      # Assessor
+      - https://www.revenue.wi.gov/DORForms/acd100-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/pc-722f.pdf
+      - https://www.revenue.wi.gov/DORForms/pc-724f.pdf
+      - https://www.revenue.wi.gov/DORForms/pm-100f.pdf
+      - https://www.revenue.wi.gov/DORForms/pm-101f.pdf
+      - https://www.revenue.wi.gov/DORForms/pm-112f.pdf
+      # TIF
+      - https://www.revenue.wi.gov/DORForms/pe-223f.pdf
+      - https://www.revenue.wi.gov/DORForms/pe-605f.pdf
+      - https://www.revenue.wi.gov/DORForms/pe-605af.pdf
+      - https://www.revenue.wi.gov/DORForms/pe-605bf.pdf
+      - https://www.revenue.wi.gov/DORForms/pe-605tf.pdf
+      # EQ
+      - https://www.revenue.wi.gov/DORForms/mar-inst.pdf
+      - https://www.revenue.wi.gov/Documents/PAD-registration-inst.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/padinstr.pdf
+      - https://www.revenue.wi.gov/Documents/paddesc.pdf
+      # LGS
+      - https://www.revenue.wi.gov/DORForms/ctyllinst.pdf
+      - https://www.revenue.wi.gov/DORForms/moe-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/ig-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/sot-ascent-tid.pdf
+      - https://www.revenue.wi.gov/DORForms/sot-ascent-notid.pdf
+      - https://www.revenue.wi.gov/DORForms/sot-gcs-tid.pdf
+      - https://www.revenue.wi.gov/DORForms/sot-gcs-notid.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/chargeback-steps.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/omitted-taxes-steps.pdf
+      - https://www.revenue.wi.gov/DORForms/munillinst.pdf
+      - https://www.revenue.wi.gov/DORForms/erp-inst.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/retr-filing.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/retr-overview.pdf
+      - https://www.revenue.wi.gov/Documents/LGC-Gen-Filing.pdf
+      - https://www.revenue.wi.gov/DORForms/sl104instr.pdf
+      - https://www.revenue.wi.gov/DORForms/ucar-inst.pdf
+      # MFG
+      - https://www.revenue.wi.gov/DORForms/eft-102M.pdf
+      - https://www.revenue.wi.gov/DORForms/pa-105f.pdf
+      - https://www.revenue.wi.gov/DORForms/pa-130f.pdf
+      - https://www.revenue.wi.gov/DORForms/pa-132m.pdf
+      - https://www.revenue.wi.gov/DORForms/pa-133f.pdf
+      - https://www.revenue.wi.gov/DORForms/pa-138f.pdf
+      - https://www.revenue.wi.gov/DORForms/PA-750R-inst.pdf
+      - https://www.revenue.wi.gov/Documents/MFG_MTA_AppealFilingInstructions.pdf
+      - https://www.revenue.wi.gov/Documents/Check-MTA-Filing-Status.pdf
+      - https://www.revenue.wi.gov/DORForms/extreq.pdf
+      # UTL
+      - https://www.revenue.wi.gov/DORForms/AC-001-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/MP-800-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/PI-001-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/PF-001-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/RA-001-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/LM-003-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/LP-003-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/RE-001-inst.pdf
+      - https://www.revenue.wi.gov/DORForms/PA-751R-inst.pdf
+
+  complex_inquiry_pages:
+    framework_id: FW-GOV-PUBS
+    authority_level: 7
+    doc_type: advisory
+    urls:
+      - https://www.revenue.wi.gov/Pages/Manufacturing/home.aspx
+      - https://www.revenue.wi.gov/Pages/RETr/Home.aspx
+      - https://www.revenue.wi.gov/Pages/Training/assessor-certification.aspx
+      - https://www.revenue.wi.gov/Pages/Training/assess-recert.aspx
+      - https://www.revenue.wi.gov/Pages/Apps/assessor-inquiry.aspx
+
+  news_pages:
+    framework_id: FW-GOV-PUBS
+    authority_level: 7
+    doc_type: advisory
+    # URLs populated at runtime from sitemap (see sitemap_filter).
+    sitemap_filter: "/Pages/SLF/(?:COTVC-News|Assessor-News)/"
+    urls: []
+
+  iaao:
+    framework_id: FW-IAAO
+    authority_level: 8
+    doc_type: iaao_standard
+    urls:
+      - https://www.iaao.org/wp-content/uploads/Manual_Cadastral_Maps_2016.pdf
+      - https://www.iaao.org/wp-content/uploads/Contamination_2016.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_on_Data_Quality.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_on_Property_Tax_Policy.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_Digital_Cadastral_Maps_2015.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_on_Automated_Valuation_Models.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_on_Contracting_for_Assessment_Services.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_on_Mass_Appraisal.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_on_Oversight_Agency_Responibilities.pdf
+      - https://www.iaao.org/wp-content/uploads/StandardValuationPersonalProperty.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_on_Verification_Adjustment_of_Sales.pdf
+      - https://www.iaao.org/wp-content/uploads/Assessment_Appeal_2016.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_Comunication_and_Outreach.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_on_Professional_Development.pdf
+      - https://www.iaao.org/wp-content/uploads/Standard_on_Ratio_Studies.pdf
+      - https://www.iaao.org/wp-content/uploads/Guide_to_Standards.pdf
+
+  uspap:
+    framework_id: FW-USPAP
+    authority_level: 9
+    doc_type: uspap_standard
+    urls:
+      - https://www3.lirealtor.com/docs/default-source/default-document-library/appraisal-resources/uniform-standards-of-professional-appraisal-practice-%28uspap%29.pdf?sfvrsn=5f6c1cde_245
