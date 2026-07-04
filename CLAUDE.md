@@ -59,7 +59,14 @@ cd ../tools/graphrag
 
 # Common options:
 ./tools/graphrag/run_fargate.sh extract --source-filter wpam- --force
+./tools/graphrag/run_fargate.sh extract --source-filter wpam- --force --reclassify
 ./tools/graphrag/run_fargate.sh load --start-phase 5 --stop-after-phase 8
+
+# Extraction caching:
+# --force re-chunks documents but reuses cached LLM classification (no Bedrock cost).
+# --reclassify forces LLM reclassification (summary, topics, doc_type) even if cached.
+# Classification cache: s3://{work-bucket}/classified/{doc_id}.json
+# Extraction cache:    s3://{work-bucket}/extracted/{doc_id}.json
 
 # Monitor logs:
 aws logs tail /ecs/wis-dor-ingestion --follow --profile widor --region us-east-1

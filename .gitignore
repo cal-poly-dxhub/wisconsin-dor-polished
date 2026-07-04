@@ -310,3 +310,4 @@ __marimo__/
 
 # superpowers brainstorm server artifacts
 .superpowers/
+tools/graphrag/.ingest-case-law-progress.json
