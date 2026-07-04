@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Wisconsin DOR Chatbot — a property tax Q&A assistant for the Wisconsin Department of Revenue. NextJS frontend + CDK-managed AWS backend with two retrieval paths: legacy OpenSearch RAG and new GraphRAG (Neptune Analytics).
+Wisconsin DOR Chatbot — a property tax Q&A assistant for the Wisconsin Department of Revenue. NextJS frontend + CDK-managed AWS backend with agentic retrieval via Neptune Analytics graph.
 
 ## Commands
 
@@ -41,7 +41,7 @@ cd frontend
 bun dev                        # local dev server (Next.js + Turbopack)
 ```
 
-### GraphRAG Ingestion Pipeline (Fargate — preferred)
+### Ingestion Pipeline (Fargate — preferred)
 ```bash
 # First-time: deploy infra + build/push Docker image
 cd infra
@@ -60,11 +60,13 @@ cd ../tools/graphrag
 # Common options:
 ./tools/graphrag/run_fargate.sh extract --source-filter wpam- --force
 ./tools/graphrag/run_fargate.sh extract --source-filter wpam- --force --reclassify
+./tools/graphrag/run_fargate.sh extract --smart              # only re-extract docs with stale cache
 ./tools/graphrag/run_fargate.sh load --start-phase 5 --stop-after-phase 8
 
 # Extraction caching:
 # --force re-chunks documents but reuses cached LLM classification (no Bedrock cost).
 # --reclassify forces LLM reclassification (summary, topics, doc_type) even if cached.
+# --smart only re-extracts docs whose raw S3 file is newer than their extraction cache.
 # Classification cache: s3://{work-bucket}/classified/{doc_id}.json
 # Extraction cache:    s3://{work-bucket}/extracted/{doc_id}.json
 
@@ -72,27 +74,51 @@ cd ../tools/graphrag
 aws logs tail /ecs/wis-dor-ingestion --follow --profile widor --region us-east-1
 ```
 
-### GraphRAG Ingestion Pipeline (local — alternative)
+### Scraping & Content Refresh
 ```bash
-# Requires venv with deps: uv venv .venv && uv pip install -r tools/graphrag/requirements.txt
-# Always set SSL certs (Python 3.14 on macOS needs this):
+# Document manifest (single source of truth): tools/graphrag/document_manifest.yaml
+# The scraper reads this manifest, downloads each URL, compares content hashes
+# against S3, and only uploads changed documents.
+
+# Dry run — see what changed without modifying anything:
+AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/graphrag/scrape_documents.py \
+  --bucket wis-raw-bucket-c8e69250 --dry-run
+
+# Scrape specific categories:
+AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/graphrag/scrape_documents.py \
+  --bucket wis-raw-bucket-c8e69250 --category statutes --category admin_rules
+
+# Force re-upload even if content matches:
+AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/graphrag/scrape_documents.py \
+  --bucket wis-raw-bucket-c8e69250 --force
+
+# Annual refresh workflow (scrape changed → extract stale → embed → load):
+uv run python tools/graphrag/scrape_documents.py --bucket wis-raw-bucket-c8e69250
+./tools/graphrag/run_fargate.sh extract --smart
+./tools/graphrag/run_fargate.sh embed
+./tools/graphrag/run_fargate.sh load
+
+# Case law (separate path — discovered from statute PDF hyperlinks, not manifest):
+AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/graphrag/ingest_case_law.py \
+  --bucket wis-raw-bucket-c8e69250 --from-s3 --resume
+```
+
+### Ingestion Pipeline (local — alternative)
+```bash
+# Always set SSL certs (Python 3.13+ on macOS needs this):
 export CERT=$(.venv/bin/python3 -c "import certifi; print(certifi.where())")
 
-# Phase 1: Upload local docs to S3
-AWS_REGION=us-east-1 AWS_PROFILE=widor .venv/bin/python3 tools/graphrag/upload_local_docs.py \
-  --bucket wis-raw-bucket-c8e69250 --profile widor --region us-east-1
-
-# Phase 2: Extract + classify (PyMuPDF first, Textract fallback, LLM classification)
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor .venv/bin/python3 tools/graphrag/extract.py \
+# Extract + classify (PyMuPDF first, Textract fallback, LLM classification)
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.graphrag.extract \
   --raw-bucket wis-raw-bucket-c8e69250 --work-bucket wis-work-bucket-c8e69250 \
   --config tools/graphrag/ingest_config.yaml --max-workers 3
 
-# Phase 3: Embed chunks with Titan Embed v2
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor .venv/bin/python3 tools/graphrag/embed.py \
+# Embed chunks with Titan Embed v2
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.graphrag.embed \
   --work-bucket wis-work-bucket-c8e69250 --config tools/graphrag/ingest_config.yaml
 
-# Phase 4: Load into Neptune graph (11 sub-phases)
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor .venv/bin/python3 tools/graphrag/load.py \
+# Load into Neptune graph (11 sub-phases)
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.graphrag.load \
   --work-bucket wis-work-bucket-c8e69250 --graph-id g-ndvl4j73v4 \
   --config tools/graphrag/ingest_config.yaml
 
@@ -106,36 +132,30 @@ AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor .venv/bin/python3 too
 
 Flat layout: `backend/` (lambdas + layers), `infra/` (CDK stacks), `frontend/` (Next.js app), `tools/` (ingestion scripts), `config/`. Python deps managed by uv (pyproject.toml at root). Lambda bundling is defined in `bundles.toml` — a Python script copies lambda source into `infra/bundle/` before CDK synth.
 
-### Two Retrieval Paths (Mutually Exclusive)
+### Retrieval Path
 
-Controlled by CDK context flag `useGraphRAG`. EventBridge rule `wisconsin-dor.chat-api:ChatMessageReceived` routes to one path:
-
-**Legacy path** (`useGraphRAG=false`): EventBridge → `MessagesStack` Step Function → Classifier Lambda (queries Bedrock FAQ KB, classifies as faq/rag) → branch to either FAQ response or RAG retrieval (OpenSearch) → Parallel(ResourceStreaming, ResponseStreaming)
-
-**GraphRAG path** (`useGraphRAG=true`): EventBridge → AgenticRetrieval Lambda directly (no Step Function). The Lambda runs the Claude tool loop (faq_search → Neptune vector_search/get_neighbors/get_authority_chain → answer), then streams documents, FAQs, and answer fragments over WebSocket itself. Single Lambda, single DynamoDB write.
-
-The legacy path still uses ResponseStreaming and ResourceStreaming Lambdas from `MessagesStack`.
+EventBridge rule `wisconsin-dor.chat-api:ChatMessageReceived` → AgenticRetrieval Lambda directly (no Step Function). The Lambda runs the Claude tool loop (faq_search → Neptune vector_search/get_neighbors/get_authority_chain → answer), then streams documents, FAQs, and answer fragments over WebSocket itself. Single Lambda, single DynamoDB write.
 
 ### Directory Responsibilities
 
 - **infra/** — CDK stacks (root stack `WisconsinBotStack` in `stacks/stack.ts`). Entry point: `infra/bin/wisconsin-app.ts`
   - `stacks/sessions-stack.ts` — Cognito auth, HTTP API, WebSocket API, DynamoDB sessions/chat history
-  - `stacks/messages-stack.ts` — Legacy retrieval: classifier, retrieval, streaming Lambdas + Step Function
   - `stacks/graphrag-stack.ts` — Neptune Analytics graph, Bedrock FAQ KB
   - `stacks/graphrag-messages-stack.ts` — Agentic retrieval Lambda + EventBridge trigger
   - `stacks/webapp-stack.ts` — Next.js frontend (deployed via CloudFront + `cdk-nextjs-standalone`)
   - `stacks/ingestion-stack.ts` — Fargate compute for ingestion (VPC, ECS cluster, task def, ECR)
   - `stacks/lambda-layers-stack.ts` — Shared Lambda layers
 - **backend/lambdas/** — Lambda source code (agentic_retrieval, chat_api, streaming, etc.)
-- **backend/layers/** — Lambda layers: `step_function_types` (Pydantic models) and `websocket_utils`
+- **backend/layers/** — Lambda layers: `websocket_utils` (connection management + message models)
 - **frontend/** — Next.js frontend app
-- **tools/graphrag/** — GraphRAG ingestion pipeline scripts
-- **tools/pdf_chunking/** — PDF extraction and chunking utilities
+- **tools/graphrag/** — Ingestion pipeline: scrape, extract, embed, load, case law, config, Docker, Fargate scripts
+  - `document_manifest.yaml` — single source of truth for all corpus document URLs
+  - `ingest_config.yaml` — framework definitions, doc types, chunking params, source-to-framework mappings
+  - `scrape_documents.py` — manifest-driven scraper with MD5/ETag change detection
+  - `extract.py` / `embed.py` / `load.py` — core pipeline phases
+  - `ingest_case_law.py` — case law discovery from statute hyperlinks + CourtListener enrichment
+- **tools/pdf_chunking/** — PDF extraction and chunking library (used by extract.py)
 - **config/** — Shared configuration (model configs, etc.)
-
-### Shared Types (Critical)
-
-`backend/layers/step_function_types/models.py` defines all inter-Lambda contracts: `UserQuery`, `ClassifierResult`, `RetrieveResult`, `GenerateResponseJob`, `StreamResourcesJob`, `FAQ`, `RAGDocument`. All Lambdas import from this layer. Changes here affect the entire pipeline.
 
 ### WebSocket Streaming
 
@@ -160,6 +180,8 @@ Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM 
 
 **Ingestion config:** `tools/graphrag/ingest_config.yaml` — defines frameworks, doc types, chunking params, source-to-framework mappings.
 
+**Document manifest:** `tools/graphrag/document_manifest.yaml` — single source of truth for all 198 corpus URLs across all categories. The scraper reads this file; all entries are plain URL strings (no overrides). `make_doc_id()` in `scrape_documents.py` derives stable S3 keys from category + URL with special handling for statutes (chapter number), admin rules (Tax chapter), WPAM (year), IAAO (CamelCase splitting + typo fix), and USPAP.
+
 ### PDF Processing Pipeline (`tools/pdf_chunking/`)
 
 PyMuPDF-first extraction with Textract fallback. `pdfChunker.py` routes by source type (`CHUNKER_BY_SOURCE` dict) to strategy-specific chunking (statute, wpam, general). Each chunk gets `start_page`/`end_page` metadata for citation linking. Quality gate in `pymupdf_extractor.py` (`extraction_looks_good()`) triggers Textract fallback.
@@ -173,11 +195,12 @@ Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeli
 - **Python Lambdas use Pydantic v2** for input validation and serialization. Models use `BaseModel` with `model_validate()` / `model_dump()`.
 - **CamelCase serialization** — `CamelCaseModel` base class in shared types converts snake_case Python to camelCase JSON via alias generator.
 - **Lambda bundling** — Python deps are installed during CDK synth via Docker bundling (pip install in bundling image). Each Lambda in `backend/lambdas/` has its own `requirements.txt`.
-- **CDK context flags** — `useGraphRAG`, `stackName`, `domainName`, `hostedZoneName`, `hostedZoneId` are passed via `-c` flag.
+- **CDK context flags** — `stackName`, `domainName`, `hostedZoneName`, `hostedZoneId` are passed via `-c` flag. `useGraphRAG=true` is always set (legacy path removed).
 - **Embedding model** — Titan Embed Text V2 (1024 dimensions) used throughout for both Bedrock KBs and Neptune vector search.
 - **Bedrock model IDs** — Inference profiles require the full format: `us.anthropic.claude-sonnet-4-6` (not bare model IDs or old `-v1:0` suffix forms). Check `aws bedrock list-inference-profiles` for valid IDs.
 - **Region in scripts** — `tools/graphrag/*.py` use `os.environ.get("AWS_REGION", "us-east-1")` for boto3 clients. Always set `AWS_REGION` explicitly when running locally.
 - **SSL certs on macOS** — Set `AWS_CA_BUNDLE` to the certifi cert path when running ingestion scripts. Without this, Python 3.13+/3.14 may fail with `SSLError: [Errno 2] No such file or directory` after ~200 S3 calls.
+- **Ingestion Docker image** — The Fargate task runs from a Docker image in ECR, NOT from the local filesystem. Any change to `tools/graphrag/`, `tools/pdf_chunking/`, or `requirements.txt` will NOT take effect on Fargate until you rebuild and push: `cd tools/graphrag && ./build_and_push.sh`. Forgetting this is the #1 cause of "my fix didn't work" on Fargate.
 
 ## WebSocket Contract
 

@@ -12,7 +12,8 @@
 | 27 | Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags | — |
 | 32 | Show trimmed section page index in answer synthesis trace card | — |
 | 35 | Eliminate WIS-STAT stubs — rewire CITES edges to full statute docs | — |
-| 36 | Full corpus refresh — scrape, ingest missing docs, reingest stale content | — |
+| 38 | Restructure tools/ directory — consolidate ingestion pipeline | — |
+| 39 | Discover and ingest 2026 news pages | — |
 
 ## Done
 
@@ -42,6 +43,7 @@
 | 29 | Enable prompt caching for agentic retrieval (switch to invoke_model) |
 | 30 | get_section chunk grid visualization — show cosine/z-score per chunk in trace UI |
 | 28 | WPAM 2019 heading loss — boilerplate stripper keeps TOC copy, strips real chapter start |
+| 36 | Full corpus refresh — scrape, ingest missing docs, reingest stale content |
 
 ---
 
@@ -361,4 +363,150 @@ python tools/graphrag/scrape_documents.py --manifest tools/graphrag/document_man
 - `tools/graphrag/scrape_documents.py` — hash-gated scraper
 - `tools/graphrag/ingest_config.yaml` — framework definitions (needs `form_instructions` added)
 - `tools/graphrag/run_fargate.sh` — pipeline execution with `--smart` support
+
+---
+
+### Task 38: Restructure tools/ directory — consolidate ingestion pipeline
+
+**Problem:** `tools/` is a grab bag of pipeline code, chunking library, one-shot ops scripts, dead text files, and dev utilities all mixed together. `pdf_chunking/` is a sibling of `graphrag/` but only ever imported by `graphrag/extract.py`. The name "graphrag" is misleading — it's the full ingestion pipeline. Dead files (`docs_missing_source_url.txt`, `all_ingested_documents.txt`, `required_documents_links_only.txt`) linger. One-shot maintenance scripts sit alongside core pipeline code. Chunk log output dirs (`pdf_chunking/chunk_logs/`) leak into the repo root.
+
+**Current state:**
+```
+tools/
+├── __init__.py
+├── bedrock_utils.py              # unclear if used
+├── bundle.py                     # used by `bun run bundle`
+├── upload_model_configs.py       # used regularly
+├── simulate_chunking.py          # dev tool
+├── pdf_chunking/                 # chunking library (only used by graphrag/extract.py)
+│   ├── pdfChunker.py
+│   ├── pymupdf_extractor.py
+│   ├── boilerplate.py
+│   ├── wpam_chunk_filter.py
+│   ├── toc_detector.py
+│   ├── table_tools.py
+│   ├── flowchart_tools.py
+│   └── aws_utils.py
+└── graphrag/                     # pipeline + config + docker + ops + tests + dead files
+    ├── extract.py, embed.py, load.py      # core pipeline
+    ├── scrape_documents.py                # scraper
+    ├── ingest_case_law.py                 # case law discovery
+    ├── ingest_config.yaml, document_manifest.yaml  # config
+    ├── Dockerfile, entrypoint.sh, build_and_push.sh, requirements.txt  # docker
+    ├── run_fargate.sh, run_full_ingest.sh, sync_faq_bucket.sh  # shell scripts
+    ├── case_annotations.py, faq_url_map.py, wpam_year.py  # shared helpers
+    ├── clean_stale_extracts.py, cleanup_orphan_chunks.py, purge_orphan_chunks.py  # one-shot ops
+    ├── add_case_law.py, seed_faq_url_table.py, extract_faq_qa_pairs.py, upload_local_docs.py  # one-shot / superseded
+    ├── test_diversity.py                  # misplaced test
+    ├── docs_missing_source_url.txt        # DEAD (superseded by manifest)
+    ├── all_ingested_documents.txt         # DEAD (scratch output)
+    ├── required_documents_links_only.txt  # DEAD (scratch output)
+    └── tests/                             # test suite
+```
+
+**Proposed structure:**
+```
+tools/
+├── bundle.py                        # keep (bun run bundle)
+├── upload_model_configs.py          # keep (prompt iteration)
+├── simulate_chunking.py            # keep (dev tool)
+│
+├── ingestion/                       # rename from graphrag/
+│   ├── __init__.py
+│   ├── scrape_documents.py          # manifest-driven scraper
+│   ├── ingest_case_law.py           # case law discovery + upload
+│   ├── extract.py                   # extract + classify
+│   ├── embed.py                     # embed chunks
+│   ├── load.py                      # load into Neptune
+│   │
+│   ├── chunking/                    # move pdf_chunking/ in as subpackage
+│   │   ├── __init__.py
+│   │   ├── chunker.py              # rename pdfChunker.py
+│   │   ├── pymupdf_extractor.py
+│   │   ├── boilerplate.py
+│   │   ├── wpam_chunk_filter.py
+│   │   ├── toc_detector.py
+│   │   ├── table_tools.py
+│   │   ├── flowchart_tools.py
+│   │   └── aws_utils.py
+│   │
+│   ├── config/
+│   │   ├── ingest_config.yaml
+│   │   └── document_manifest.yaml
+│   │
+│   ├── lib/                         # shared helpers
+│   │   ├── case_annotations.py
+│   │   ├── faq_url_map.py
+│   │   └── wpam_year.py
+│   │
+│   ├── ops/                         # one-shot / maintenance scripts
+│   │   ├── clean_stale_extracts.py
+│   │   ├── cleanup_orphan_chunks.py
+│   │   └── purge_orphan_chunks.py
+│   │
+│   ├── docker/
+│   │   ├── Dockerfile
+│   │   ├── .dockerignore
+│   │   ├── entrypoint.sh
+│   │   ├── build_and_push.sh
+│   │   └── requirements.txt
+│   │
+│   ├── scripts/                     # shell wrappers
+│   │   ├── run_fargate.sh
+│   │   ├── run_full_ingest.sh
+│   │   └── sync_faq_bucket.sh
+│   │
+│   └── tests/
+│       └── ... (existing tests)
+│
+└── (delete)
+    ├── bedrock_utils.py                          # verify unused, then delete
+    ├── graphrag/docs_missing_source_url.txt      # superseded by manifest
+    ├── graphrag/all_ingested_documents.txt       # scratch output
+    ├── graphrag/required_documents_links_only.txt # scratch output
+    ├── graphrag/test_diversity.py                # move to tests/ or delete
+    ├── graphrag/add_case_law.py                  # superseded by ingest_case_law.py
+    ├── graphrag/seed_faq_url_table.py            # one-shot, FAQ KB seeded
+    ├── graphrag/extract_faq_qa_pairs.py          # one-shot, FAQ KB populated
+    └── graphrag/upload_local_docs.py             # superseded by scrape_documents.py
+```
+
+**Key changes:**
+1. **Rename `graphrag/` → `ingestion/`** — it's the ingestion pipeline, not GraphRAG-specific
+2. **Move `pdf_chunking/` inside** as `ingestion/chunking/` — only consumer is `extract.py`
+3. **Separate ops scripts** from core pipeline into `ops/` subdir
+4. **Group config, docker, shell scripts** into their own subdirs
+5. **Delete dead files** — superseded txt files, one-shot scripts that already ran
+6. **Rename `pdfChunker.py` → `chunker.py`** — follow Python naming conventions
+
+**Import path changes required:**
+- `from pdf_chunking.pdfChunker import ...` → `from tools.ingestion.chunking.chunker import ...`
+- `from tools.graphrag.extract import ...` → `from tools.ingestion.extract import ...`
+- `from tools.graphrag.wpam_year import ...` → `from tools.ingestion.lib.wpam_year import ...`
+- Dockerfile COPY paths, CLAUDE.md references, shell script paths
+
+**Risk:** Docker build references, Fargate entrypoint, and `python -m tools.graphrag.extract` module invocation all need updating. Test in Docker build before merging.
+
+**Effort:** Medium — mostly mechanical find-and-replace on import paths, but needs careful Docker build verification.
+
+---
+
+### Task 39: Discover and ingest 2026 news pages
+
+**Problem:** The DOR sitemap doesn't include 2026 news URLs. The assessor and COTVC landing pages (`assessor-messages-home.aspx`, `cotvc-messages-home.aspx` without `?PubYear` param) are SharePoint pages that render content dynamically via JS — static scraping returns zero links.
+
+**Options:**
+
+1. **Headless browser (Playwright)** — Use Playwright to render the landing pages, wait for JS to populate the link list, then extract individual news page URLs. Pros: works regardless of the underlying CMS implementation. Cons: adds a heavyweight dependency (Chromium binary), fragile to DOM structure changes, slower.
+
+2. **SharePoint REST API** — Hit the SharePoint list API directly to enumerate news items. The pages likely back onto a SharePoint list with columns for title, publish date, and URL. Pros: reliable, fast, returns structured data. Cons: requires discovering the correct list GUID and API endpoint, may need auth tokens.
+
+3. **Ask DOR to update their sitemap** — Request that DOR include 2026 news pages in their XML sitemap or provide a machine-readable feed (RSS/Atom). Pros: zero maintenance on our side, canonical source. Cons: depends on DOR staff action and timeline.
+
+**Once URLs are discovered:** Add them to `tools/graphrag/document_manifest.yaml` under the `news_pages` category and run the normal scrape pipeline (`scrape_documents.py` → extract → embed → load).
+
+**Key files:**
+- `tools/graphrag/document_manifest.yaml` — add discovered URLs here
+- `tools/graphrag/scrape_documents.py` — existing scrape pipeline handles the rest
+- `tools/graphrag/ingest_config.yaml` — `news_pages` framework already defined
 
