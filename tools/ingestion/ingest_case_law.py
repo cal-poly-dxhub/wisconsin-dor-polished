@@ -185,7 +185,7 @@ def extract_from_local(state_laws_dir: Path) -> list[dict]:
     for pdf_path in pdf_files:
         entries = extract_citations_from_pdf(str(pdf_path), pdf_path.name)
         if entries:
-            unique = len(set(e["citation"] for e in entries))
+            unique = len({e["citation"] for e in entries})
             logger.info(f"  {pdf_path.name}: {unique} unique citations")
         all_entries.extend(entries)
     return all_entries
@@ -210,7 +210,7 @@ def extract_from_s3(bucket: str, s3_client) -> list[dict]:
             chapter_label = _key_to_chapter_label(key)
             entries = extract_citations_from_pdf(local_path, chapter_label)
             if entries:
-                unique = len(set(e["citation"] for e in entries))
+                unique = len({e["citation"] for e in entries})
                 logger.info(f"  {chapter_label}: {unique} unique citations")
             all_entries.extend(entries)
     return all_entries
@@ -446,7 +446,7 @@ def deduplicate_by_cluster(enriched: list[dict]) -> list[dict]:
     kept = []
     total_dupes = 0
 
-    for cluster_id, group in by_cluster.items():
+    for _cluster_id, group in by_cluster.items():
         group.sort(key=lambda e: _reporter_priority(e["slug"]))
         winner = group[0]
 
@@ -743,7 +743,7 @@ def main():
     uploaded = 0
     skipped = 0
 
-    for i, entry in enumerate(deduped):
+    for _i, entry in enumerate(deduped):
         doc_id = f"case-law-{entry['slug']}"
 
         if args.resume and doc_id in progress["completed"]:

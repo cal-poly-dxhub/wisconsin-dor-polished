@@ -46,7 +46,7 @@ def _is_garbled(body: str) -> bool:
     - Many short lines or lines with truncated word fragments
     - Pipes appearing mid-word (e.g., "boa | rd" instead of "board")
     """
-    lines = [l.strip() for l in body.split("\n") if l.strip()]
+    lines = [line.strip() for line in body.split("\n") if line.strip()]
     if not lines or len(lines) < 3:
         return False
 
@@ -56,7 +56,7 @@ def _is_garbled(body: str) -> bool:
     # High pipe density: >1 pipe per 30 chars of text, with at least 8 pipes
     if pipe_count >= 8 and total_chars / max(pipe_count, 1) < 30:
         # Also check for short/fragmented lines (< 40 chars)
-        short_lines = sum(1 for l in lines if len(l) < 40)
+        short_lines = sum(1 for line in lines if len(line) < 40)
         if short_lines > len(lines) * 0.4:
             return True
 
@@ -72,21 +72,21 @@ def _is_table_cells(body: str) -> bool:
     Bullet points and math operators on their own line are NOT counted as
     table cells — they appear in legitimate bulleted lists and formulas.
     """
-    lines = [l.strip() for l in body.split("\n") if l.strip()]
+    lines = [line.strip() for line in body.split("\n") if line.strip()]
     if len(lines) < 3:
         return False
 
     # Count truly meaningless single-char lines (letters, numbers) but
     # exclude common bullet/symbol characters that appear in real content
     single_char_lines = sum(
-        1 for l in lines if len(l) <= 2 and l not in _BULLET_CHARS
+        1 for line in lines if len(line) <= 2 and line not in _BULLET_CHARS
     )
     if single_char_lines > len(lines) * 0.3:
         return True
 
     # Count very short lines, excluding bullets
     very_short_lines = sum(
-        1 for l in lines if len(l) < 10 and l not in _BULLET_CHARS
+        1 for line in lines if len(line) < 10 and line not in _BULLET_CHARS
     )
     if very_short_lines > len(lines) * 0.7 and len(lines) > 5:
         return True

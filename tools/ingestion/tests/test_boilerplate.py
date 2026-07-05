@@ -162,7 +162,7 @@ class TestWpamRunningHeaders:
             lpm.append(("Chapter 14 Agricultural Valuation", page))
             lpm.append(("Content about land use.", page))
         result = strip_boilerplate(lpm, strategy="wpam")
-        ch14 = [l for l, _ in result if "Chapter 14" in l]
+        ch14 = [line for line, _ in result if "Chapter 14" in line]
         assert len(ch14) == 1
 
     def test_first_occurrence_preserved(self):
@@ -172,7 +172,7 @@ class TestWpamRunningHeaders:
             lpm.append(("Chapter 9 Real Property Valuation", page))
             lpm.append((f"Content page {page}.", page))
         result = strip_boilerplate(lpm, strategy="wpam")
-        ch9_entries = [(l, p) for l, p in result if "Chapter 9" in l]
+        ch9_entries = [(line, p) for line, p in result if "Chapter 9" in line]
         assert len(ch9_entries) == 1
         assert ch9_entries[0][1] == 196
 
@@ -187,7 +187,7 @@ class TestWpamRunningHeaders:
             ("Content.", 615),
         ]
         result = strip_boilerplate(lpm, strategy="wpam")
-        ch16 = [l for l, _ in result if "Chapter 16" in l]
+        ch16 = [line for line, _ in result if "Chapter 16" in line]
         assert len(ch16) == 3
 
     def test_multiple_chapters_independent(self):
@@ -200,8 +200,8 @@ class TestWpamRunningHeaders:
         for page in range(310, 314):
             lpm.append(("Chapter 12 Residential Property Valuation", page))
         result = strip_boilerplate(lpm, strategy="wpam")
-        ch1 = [(l, p) for l, p in result if "Chapter 1 " in l]
-        ch12 = [(l, p) for l, p in result if "Chapter 12" in l]
+        ch1 = [(line, p) for line, p in result if "Chapter 1 " in line]
+        ch12 = [(line, p) for line, p in result if "Chapter 12" in line]
         assert len(ch1) == 1
         assert ch1[0][1] == 11
         assert len(ch12) == 1
@@ -218,7 +218,7 @@ class TestWpamRunningHeaders:
             ("Chapter 14 Agricultural Valuation", 5),
         ]
         result = strip_boilerplate(lpm, strategy="general")
-        ch14 = [l for l, _ in result if "Chapter 14" in l]
+        ch14 = [line for line, _ in result if "Chapter 14" in line]
         assert len(ch14) == 5
 
     def test_lowercase_after_number_not_matched(self):
@@ -231,7 +231,7 @@ class TestWpamRunningHeaders:
             ("Chapter 14 agricultural notes and references", 5),
         ]
         result = strip_boilerplate(lpm, strategy="wpam")
-        assert len([l for l, _ in result if "agricultural" in l]) == 5
+        assert len([line for line, _ in result if "agricultural" in line]) == 5
 
     def test_content_lines_never_removed(self):
         """Non-header content lines are never affected by the stripping."""
@@ -246,7 +246,7 @@ class TestWpamRunningHeaders:
             ("Wisconsin Stat. 70.47 governs the process.", 720),
         ]
         result = strip_boilerplate(lpm, strategy="wpam")
-        content = [l for l, _ in result if "Chapter 20" not in l]
+        content = [line for line, _ in result if "Chapter 20" not in line]
         assert len(content) == 4
 
     def test_toc_occurrence_skipped_for_real_chapter_start(self):
@@ -272,7 +272,7 @@ class TestWpamRunningHeaders:
             lpm.append(("More content.", page))
 
         result = strip_boilerplate(lpm, strategy="wpam")
-        ch7 = [(l, p) for l, p in result if "Chapter 7" in l]
+        ch7 = [(line, p) for line, p in result if "Chapter 7" in line]
         assert len(ch7) == 1
         assert ch7[0][1] == 139  # kept the real chapter start, not the TOC one
 
@@ -291,7 +291,7 @@ class TestWpamRunningHeaders:
             ("Dotted .................................................", 7),
         ]
         result = strip_boilerplate(lpm, strategy="wpam")
-        ch99 = [(l, p) for l, p in result if "Chapter 99" in l]
+        ch99 = [(line, p) for line, p in result if "Chapter 99" in line]
         assert len(ch99) == 1
         assert ch99[0][1] == 4
 

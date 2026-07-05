@@ -605,7 +605,7 @@ def _rank_chunks_by_relevance(
     import math
 
     def _cosine(a: list[float], b: list[float]) -> float:
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         norm_a = math.sqrt(sum(x * x for x in a))
         norm_b = math.sqrt(sum(x * x for x in b))
         if norm_a == 0 or norm_b == 0:
@@ -668,7 +668,7 @@ def _rank_chunks_by_relevance(
 
     results = []
     all_chunk_scores = []
-    for i, (z, score, chunk) in enumerate(ranked):
+    for _i, (z, score, chunk) in enumerate(ranked):
         included = (len(results) < top_k) and (z >= _Z_THRESHOLD or len(results) == 0)
         if included:
             chunk["relevance_score"] = round(score, 4)

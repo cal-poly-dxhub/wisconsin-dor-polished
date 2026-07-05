@@ -35,7 +35,7 @@ def extract_flowcharts_from_document(
             else []
         )
 
-        for i, fig in enumerate(figures):
+        for _i, fig in enumerate(figures):
             bbox = fig.bbox
             img = page.image
             w, h = img.width, img.height
@@ -51,12 +51,12 @@ def extract_flowcharts_from_document(
             cropped = img.crop((left, top, right, bottom))
             image_b64 = encode_image_to_base64(cropped)
 
-            prompt = """You are given an image.  
+            prompt = """You are given an image.
 
             1. Read all text from the flowchart, including decision diamonds, process steps, and stop points.
-            2. Convert the flowchart into a step-by-step text description of the process. 
-            3. Use the format: 
-            - Start 
+            2. Convert the flowchart into a step-by-step text description of the process.
+            3. Use the format:
+            - Start
             - Step X → Next Step [condition if any]
             - Stop / Exemptions
             4. Preserve statutory references (e.g., sec. 70.111(19)(a), Wis. Stats.) exactly as written.

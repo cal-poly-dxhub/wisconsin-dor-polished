@@ -142,7 +142,7 @@ def delete_orphans(graph_id: str, orphan_ids: list[str]) -> int:
             "MATCH (c:Chunk {id: cid}) "
             "DETACH DELETE c"
         )
-        resp = neptune.execute_query(
+        neptune.execute_query(
             graphIdentifier=graph_id,
             queryString=cypher,
             parameters={"ids": batch},

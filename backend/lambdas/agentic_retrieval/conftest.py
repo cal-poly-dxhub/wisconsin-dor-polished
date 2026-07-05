@@ -68,8 +68,8 @@ else:
 
 if _sft_real:
     import step_function_types  # noqa: F401
-    import step_function_types.models  # noqa: F401
     import step_function_types.errors  # noqa: F401
+    import step_function_types.models  # noqa: F401
 else:
     for mod_name in [
         "step_function_types", "step_function_types.errors",

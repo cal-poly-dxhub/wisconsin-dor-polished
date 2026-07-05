@@ -230,9 +230,9 @@ def print_summary(all_baselines: list[SearchResult], all_capped: list[SearchResu
     print(f"  {'Avg max chunks from one doc':<35} {avg_baseline_conc:>10.1f} {avg_capped_conc:>10.1f} {avg_capped_conc - avg_baseline_conc:>+10.1f}")
 
     # Queries where the cap actually made a difference
-    improved = sum(1 for b, c in zip(all_baselines, all_capped) if c.unique_docs > b.unique_docs)
-    same = sum(1 for b, c in zip(all_baselines, all_capped) if c.unique_docs == b.unique_docs)
-    worse = sum(1 for b, c in zip(all_baselines, all_capped) if c.unique_docs < b.unique_docs)
+    improved = sum(1 for b, c in zip(all_baselines, all_capped, strict=False) if c.unique_docs > b.unique_docs)
+    same = sum(1 for b, c in zip(all_baselines, all_capped, strict=False) if c.unique_docs == b.unique_docs)
+    worse = sum(1 for b, c in zip(all_baselines, all_capped, strict=False) if c.unique_docs < b.unique_docs)
     print(f"\n  Queries with MORE docs surfaced:  {improved}")
     print(f"  Queries with SAME doc count:      {same}")
     print(f"  Queries with FEWER docs surfaced: {worse}")

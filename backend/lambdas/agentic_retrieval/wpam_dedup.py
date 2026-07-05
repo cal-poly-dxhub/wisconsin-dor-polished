@@ -99,7 +99,7 @@ def dedupe_wpam_chunks(
     # Pick survivors per group.
     survivors_by_id: dict[str, dict] = {}
     drops = 0
-    for key, group in groups.items():
+    for _key, group in groups.items():
         if len(group) == 1:
             # Singleton — passes through unchanged.
             chunk = group[0]

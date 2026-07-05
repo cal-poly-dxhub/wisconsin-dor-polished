@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 import os
 import re
@@ -11,14 +13,17 @@ from botocore.config import Config
 from PIL import Image
 from textractor.data.text_linearization_config import TextLinearizationConfig
 
-from tools.ingestion.chunking.aws_utils import *
+from tools.ingestion.chunking.aws_utils import (
+    delete_s3_prefix,
+    download_pdf_from_s3,
+    extract_textract_data,
+)
 from tools.ingestion.chunking.boilerplate import strip_boilerplate
 from tools.ingestion.chunking.pymupdf_extractor import (
     extract_raw_text_with_pymupdf,
     extract_with_pymupdf,
     extraction_looks_good,
 )
-from tools.ingestion.chunking.table_tools import *
 from tools.ingestion.chunking.toc_detector import is_toc_chunk
 from tools.ingestion.chunking.wpam_chunk_filter import (
     filter_wpam_chunks,
@@ -26,7 +31,7 @@ from tools.ingestion.chunking.wpam_chunk_filter import (
     repair_wpam_subheadings,
 )
 
-config = Config(read_timeout=600, retries=dict(max_attempts=5))
+config = Config(read_timeout=600, retries={"max_attempts": 5})
 
 MEDIA_BUCKET_NAME = os.environ.get("TEXTRACT_STAGING_BUCKET", "textract-chunk-result-dhgoel")
 
@@ -143,7 +148,6 @@ def split_list_items_(items: str) -> list[str]:
             output.extend(p.split("\n"))
     return output
 
-import os
 
 
 def process_document(document, local_pdf_path: str):
@@ -758,7 +762,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         lines = text.splitlines()
         if len(lines) < 2:
             return False
-        page_refs = sum(1 for l in lines if re.search(r"\b\d+-\d+\b", l))
+        page_refs = sum(1 for line in lines if re.search(r"\b\d+-\d+\b", line))
         if page_refs / max(1, len(lines)) > 0.3:
             return True
         if re.match(r"^Chapter\s+\d+", text) and re.search(r"\b\d+-\d+\b", text):
@@ -906,16 +910,16 @@ def extract_clean_plaintext(doc_chunks, doc_id=None, is_statute=False):
         chunk_text = chunk["text"]
 
         # normalize lines
-        lines = [clean_line(l) for l in chunk_text.split("\n") if clean_line(l)]
-        lines = [l for l in lines if isinstance(l, str)]
+        lines = [clean_line(line) for line in chunk_text.split("\n") if clean_line(line)]
+        lines = [line for line in lines if isinstance(line, str)]
         if not lines:
             removed_chunks.append({"text": chunk_text, "reason": "Empty"})
             continue
         text = "\n\n".join(lines)
 
         # stats
-        word_count = sum(len(l.split()) for l in lines)
-        sentence_count = sum(1 for l in lines if l.endswith((".", "?", "!")))
+        word_count = sum(len(line.split()) for line in lines)
+        sentence_count = sum(1 for line in lines if line.endswith((".", "?", "!")))
 
         if not is_statute and looks_like_index(text):
             removed_chunks.append({"text": text, "reason": "index/title"})
