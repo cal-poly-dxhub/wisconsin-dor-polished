@@ -59,8 +59,10 @@ class TestGetChatHistory:
         mock_resource = MagicMock()
         mock_resource.Table.return_value = mock_table
 
-        with patch.object(chat_history, "dynamodb_resource", mock_resource), \
-             patch.object(chat_history, "CHAT_HISTORY_TABLE", "SomeTable"):
+        with (
+            patch.object(chat_history, "dynamodb_resource", mock_resource),
+            patch.object(chat_history, "CHAT_HISTORY_TABLE", "SomeTable"),
+        ):
             history = chat_history.get_chat_history("sess-1")
 
         assert len(history) == 2
@@ -80,9 +82,11 @@ class TestGetChatHistory:
         mock_resource = MagicMock()
         mock_resource.Table.return_value = mock_table
 
-        with patch.object(chat_history, "dynamodb_resource", mock_resource), \
-             patch.object(chat_history, "CHAT_HISTORY_TABLE", "SomeTable"), \
-             patch.object(chat_history, "MAX_HISTORY_TURNS", 3):
+        with (
+            patch.object(chat_history, "dynamodb_resource", mock_resource),
+            patch.object(chat_history, "CHAT_HISTORY_TABLE", "SomeTable"),
+            patch.object(chat_history, "MAX_HISTORY_TURNS", 3),
+        ):
             history = chat_history.get_chat_history("sess-1")
 
         assert len(history) == 3
@@ -104,14 +108,26 @@ class TestSaveChatHistory:
         mock_resource = MagicMock()
         mock_resource.Table.return_value = FakeTable()
 
-        faq_resource = FakeFAQResource(faqs=[
-            FakeFAQ(faq_id="faq_1", question="Q?", answer="A.", source_url="https://revenue.wi.gov/x"),
-        ])
+        faq_resource = FakeFAQResource(
+            faqs=[
+                FakeFAQ(
+                    faq_id="faq_1",
+                    question="Q?",
+                    answer="A.",
+                    source_url="https://revenue.wi.gov/x",
+                ),
+            ]
+        )
 
-        with patch.object(chat_history, "dynamodb_resource", mock_resource), \
-             patch.object(chat_history, "CHAT_HISTORY_TABLE", "ChatHistory"):
+        with (
+            patch.object(chat_history, "dynamodb_resource", mock_resource),
+            patch.object(chat_history, "CHAT_HISTORY_TABLE", "ChatHistory"),
+        ):
             chat_history.save_chat_history(
-                "s1", "q1", "the query", "the answer",
+                "s1",
+                "q1",
+                "the query",
+                "the answer",
                 faq_resource=faq_resource,
             )
 
@@ -136,10 +152,15 @@ class TestSaveChatHistory:
             authority_level=3,
         )
 
-        with patch.object(chat_history, "dynamodb_resource", mock_resource), \
-             patch.object(chat_history, "CHAT_HISTORY_TABLE", "ChatHistory"):
+        with (
+            patch.object(chat_history, "dynamodb_resource", mock_resource),
+            patch.object(chat_history, "CHAT_HISTORY_TABLE", "ChatHistory"),
+        ):
             chat_history.save_chat_history(
-                "s1", "q1", "the query", "the answer",
+                "s1",
+                "q1",
+                "the query",
+                "the answer",
                 rag_documents=[doc],
             )
 

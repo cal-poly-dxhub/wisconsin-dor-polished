@@ -29,15 +29,19 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def embed_text(text: str, model_id: str, dimension: int = 1024, max_retries: int = 6) -> list[float]:
+def embed_text(
+    text: str, model_id: str, dimension: int = 1024, max_retries: int = 6
+) -> list[float]:
     """Embed text using Titan Embed v2 with exponential backoff."""
     truncated = text[:8000]
 
-    body = json.dumps({
-        "inputText": truncated,
-        "dimensions": dimension,
-        "normalize": True,
-    })
+    body = json.dumps(
+        {
+            "inputText": truncated,
+            "dimensions": dimension,
+            "normalize": True,
+        }
+    )
 
     for attempt in range(max_retries):
         try:
@@ -52,7 +56,7 @@ def embed_text(text: str, model_id: str, dimension: int = 1024, max_retries: int
         except Exception as e:
             if attempt == max_retries - 1:
                 raise
-            wait = min(30, 2 ** attempt)
+            wait = min(30, 2**attempt)
             logger.warning(f"Embed retry {attempt + 1}/{max_retries}: {e}, waiting {wait}s")
             time.sleep(wait)
 
@@ -128,8 +132,14 @@ def main():
     parser.add_argument("--work-bucket", required=True)
     parser.add_argument("--config", default="tools/ingestion/config/ingest_config.yaml")
     parser.add_argument("--max-workers", type=int, default=5)
-    parser.add_argument("--force", action="store_true", help="Re-embed all documents, ignoring cache")
-    parser.add_argument("--smart", action="store_true", help="Only re-embed docs whose extraction is newer than embedding cache")
+    parser.add_argument(
+        "--force", action="store_true", help="Re-embed all documents, ignoring cache"
+    )
+    parser.add_argument(
+        "--smart",
+        action="store_true",
+        help="Only re-embed docs whose extraction is newer than embedding cache",
+    )
     parser.add_argument(
         "--source-filter",
         default="",
@@ -147,14 +157,13 @@ def main():
     if args.source_filter:
         before = len(docs)
         docs = [d for d in docs if d["doc_id"].startswith(args.source_filter)]
-        logger.info(
-            f"Source filter '{args.source_filter}': {before} → {len(docs)} documents"
-        )
+        logger.info(f"Source filter '{args.source_filter}': {before} → {len(docs)} documents")
 
     if args.force:
         pass
     elif args.smart:
         from botocore.exceptions import ClientError
+
         stale = []
         for doc in docs:
             doc_id = doc["doc_id"]
@@ -173,7 +182,9 @@ def main():
         already_done = list_already_embedded(args.work_bucket)
         before = len(docs)
         docs = [d for d in docs if d["doc_id"] not in already_done]
-        logger.info(f"Skipping {before - len(docs)} already-embedded documents, {len(docs)} remaining")
+        logger.info(
+            f"Skipping {before - len(docs)} already-embedded documents, {len(docs)} remaining"
+        )
 
     total_chunks = sum(len(d.get("chunks", [])) for d in docs)
     logger.info(f"Total chunks to embed: {total_chunks}")
@@ -181,8 +192,7 @@ def main():
     embedded_count = 0
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = {
-            executor.submit(embed_chunks, doc, model_id, dimension): doc["doc_id"]
-            for doc in docs
+            executor.submit(embed_chunks, doc, model_id, dimension): doc["doc_id"] for doc in docs
         }
         for future in as_completed(futures):
             doc_id = futures[future]
@@ -198,7 +208,9 @@ def main():
                     Body=json.dumps(result, default=str).encode("utf-8"),
                     ContentType="application/json",
                 )
-                logger.info(f"Embedded {doc_id}: {n_chunks} chunks ({embedded_count}/{total_chunks} total)")
+                logger.info(
+                    f"Embedded {doc_id}: {n_chunks} chunks ({embedded_count}/{total_chunks} total)"
+                )
 
             except Exception as e:
                 logger.error(f"FAILED embedding {doc_id}: {e}", exc_info=True)

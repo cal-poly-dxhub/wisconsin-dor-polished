@@ -35,7 +35,9 @@ s3 = boto3.client("s3")
 
 
 def get_neptune_client(graph_id: str):
-    return boto3.client("neptune-graph", region_name=os.environ.get("AWS_REGION", "us-east-1")), graph_id
+    return boto3.client(
+        "neptune-graph", region_name=os.environ.get("AWS_REGION", "us-east-1")
+    ), graph_id
 
 
 def execute_query(client, graph_id: str, query: str, parameters: dict | None = None) -> dict:
@@ -58,12 +60,10 @@ def execute_query(client, graph_id: str, query: str, parameters: dict | None = N
             name = type(e).__name__
             msg = str(e)
             is_throttle = (
-                "Throttling" in name
-                or "Unprocessable" in name
-                or "resubmit" in msg.lower()
+                "Throttling" in name or "Unprocessable" in name or "resubmit" in msg.lower()
             )
             if is_throttle and attempt < 7:
-                wait = min(2 ** attempt, 30)
+                wait = min(2**attempt, 30)
                 logger.warning(f"  Throttled ({name}), retrying in {wait}s...")
                 time.sleep(wait)
                 continue
@@ -108,9 +108,10 @@ def get_expected_chunk_counts(work_bucket: str, source_filter: str | None = None
 def get_actual_chunk_counts(client, graph_id: str) -> dict[str, int]:
     """Query Neptune for actual chunk count per document."""
     logger.info("Querying Neptune for actual chunk counts per document...")
-    result = execute_query(client, graph_id,
-        "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d) "
-        "RETURN d.id AS doc_id, count(c) AS chunk_count"
+    result = execute_query(
+        client,
+        graph_id,
+        "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d) RETURN d.id AS doc_id, count(c) AS chunk_count",
     )
     counts = {}
     for row in result.get("results", []):
@@ -131,19 +132,21 @@ def delete_orphan_chunks(
     orphan_ids = [f"{doc_id}_chunk_{i:04d}" for i in range(expected_count, actual_count)]
 
     if dry_run:
-        logger.info(f"  [DRY RUN] Would delete {orphan_count} orphan chunks for {doc_id} "
-                    f"(IDs _chunk_{expected_count:04d} through _chunk_{actual_count-1:04d})")
+        logger.info(
+            f"  [DRY RUN] Would delete {orphan_count} orphan chunks for {doc_id} "
+            f"(IDs _chunk_{expected_count:04d} through _chunk_{actual_count - 1:04d})"
+        )
         return orphan_count
 
     # Delete in batches of 100
     batch_size = 100
     deleted = 0
     for i in range(0, len(orphan_ids), batch_size):
-        batch = orphan_ids[i:i + batch_size]
-        execute_query(client, graph_id,
-            "UNWIND $ids AS cid "
-            "MATCH (c:Chunk {id: cid}) "
-            "DETACH DELETE c",
+        batch = orphan_ids[i : i + batch_size]
+        execute_query(
+            client,
+            graph_id,
+            "UNWIND $ids AS cid MATCH (c:Chunk {id: cid}) DETACH DELETE c",
             {"ids": batch},
         )
         deleted += len(batch)
@@ -157,7 +160,9 @@ def main():
     parser = argparse.ArgumentParser(description="Delete orphan chunks from Neptune")
     parser.add_argument("--work-bucket", required=True)
     parser.add_argument("--graph-id", required=True)
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be deleted without deleting")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be deleted without deleting"
+    )
     parser.add_argument("--source-filter", help="Only process doc_ids matching this prefix")
     args = parser.parse_args()
 
@@ -180,26 +185,36 @@ def main():
         return
 
     total_orphans = sum(actual - exp for _, exp, actual in orphan_docs)
-    logger.info(f"\nFound {len(orphan_docs)} documents with orphan chunks ({total_orphans} total orphans):")
+    logger.info(
+        f"\nFound {len(orphan_docs)} documents with orphan chunks ({total_orphans} total orphans):"
+    )
     for doc_id, exp, act in orphan_docs:
         logger.info(f"  {doc_id}: expected={exp}, actual={act}, orphans={act - exp}")
 
     if args.dry_run:
-        logger.info(f"\n[DRY RUN] Would delete {total_orphans} orphan chunks across {len(orphan_docs)} documents.")
+        logger.info(
+            f"\n[DRY RUN] Would delete {total_orphans} orphan chunks across {len(orphan_docs)} documents."
+        )
     else:
         logger.info(f"\nDeleting {total_orphans} orphan chunks...")
 
     total_deleted = 0
     for doc_id, expected_count, actual_count in orphan_docs:
-        deleted = delete_orphan_chunks(client, graph_id, doc_id, expected_count, actual_count, args.dry_run)
+        deleted = delete_orphan_chunks(
+            client, graph_id, doc_id, expected_count, actual_count, args.dry_run
+        )
         total_deleted += deleted
 
-    logger.info(f"\n{'[DRY RUN] ' if args.dry_run else ''}Done. Deleted {total_deleted} orphan chunks.")
+    logger.info(
+        f"\n{'[DRY RUN] ' if args.dry_run else ''}Done. Deleted {total_deleted} orphan chunks."
+    )
 
     if not args.dry_run:
         logger.info("\nNext steps:")
         logger.info("  1. Re-run load from Phase 9 (vectors) to re-embed the updated chunks:")
-        logger.info(f"     ./tools/ingestion/scripts/run_fargate.sh load --start-phase 9 --stop-after-phase 9")
+        logger.info(
+            "     ./tools/ingestion/scripts/run_fargate.sh load --start-phase 9 --stop-after-phase 9"
+        )
         logger.info("  2. Optionally re-run Phase 11 (semantic edges) if desired.")
 
 

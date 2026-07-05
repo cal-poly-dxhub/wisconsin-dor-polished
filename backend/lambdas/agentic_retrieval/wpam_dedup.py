@@ -99,7 +99,7 @@ def dedupe_wpam_chunks(
     # Pick survivors per group.
     survivors_by_id: dict[str, dict] = {}
     drops = 0
-    for key, group in groups.items():
+    for _key, group in groups.items():
         if len(group) == 1:
             # Singleton — passes through unchanged.
             chunk = group[0]
@@ -148,7 +148,8 @@ def dedupe_wpam_chunks(
     if allowed_years:
         pre_filter = len(result)
         result = [
-            c for c in result
+            c
+            for c in result
             if not _is_wpam(c)
             or c.get("edition_year") is None
             or c.get("edition_year") in allowed_years
@@ -156,8 +157,7 @@ def dedupe_wpam_chunks(
         edition_drops = pre_filter - len(result)
         if edition_drops:
             logger.info(
-                "wpam_dedup: edition filter dropped %d chunks "
-                "(allowed_years=%s)",
+                "wpam_dedup: edition filter dropped %d chunks (allowed_years=%s)",
                 edition_drops,
                 sorted(allowed_years),
             )

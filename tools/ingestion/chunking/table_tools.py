@@ -1,12 +1,11 @@
-import pdfplumber
-import io
 import base64
+import io
 import re
 
+import pdfplumber
 
-def get_table_base64_from_pdf(
-    local_pdf_path, page_number, bounding_box, resolution=300
-):
+
+def get_table_base64_from_pdf(local_pdf_path, page_number, bounding_box, resolution=300):
     with pdfplumber.open(local_pdf_path) as pdf:
         # Get the specific page
         page = pdf.pages[page_number - 1]
@@ -54,8 +53,6 @@ def extract_table_content(passage_chunk):
         else:
             table_context = table_content.strip()
 
-        passage_chunk = re.sub(
-            r"<table>.*?</table>", "", passage_chunk, flags=re.DOTALL
-        )
+        passage_chunk = re.sub(r"<table>.*?</table>", "", passage_chunk, flags=re.DOTALL)
 
     return passage_chunk, table_base64, table_context

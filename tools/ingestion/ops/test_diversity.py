@@ -28,7 +28,9 @@ from dataclasses import dataclass, field
 
 import boto3
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../backend/lambdas/agentic_retrieval"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "../../../backend/lambdas/agentic_retrieval")
+)
 from neptune_client import NeptuneClient
 from wpam_dedup import dedupe_wpam_chunks
 
@@ -68,11 +70,13 @@ class SearchResult:
 
 def embed_query(query: str) -> list[float]:
     bedrock = boto3.client("bedrock-runtime", region_name=REGION)
-    body = json.dumps({
-        "inputText": query[:8000],
-        "dimensions": 1024,
-        "normalize": True,
-    })
+    body = json.dumps(
+        {
+            "inputText": query[:8000],
+            "dimensions": 1024,
+            "normalize": True,
+        }
+    )
     response = bedrock.invoke_model(
         modelId="amazon.titan-embed-text-v2:0",
         body=body,
@@ -110,12 +114,12 @@ def analyze_chunks(query: str, chunks: list[dict]) -> SearchResult:
 
 
 def print_comparison(query: str, baseline: SearchResult, capped: SearchResult, max_per_doc: int):
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"QUERY: {query}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
-    print(f"\n{'BASELINE (no cap)':<40} | {'CAPPED (max {0}/doc)'.format(max_per_doc):<40}")
-    print(f"{'-'*40}-+-{'-'*40}")
+    print(f"\n{'BASELINE (no cap)':<40} | {f'CAPPED (max {max_per_doc}/doc)':<40}")
+    print(f"{'-' * 40}-+-{'-' * 40}")
     print(f"{'Chunks returned:':<40} | {'Chunks returned:':<40}")
     print(f"  {len(baseline.chunks):<38} |   {len(capped.chunks):<38}")
     print(f"{'Unique documents:':<40} | {'Unique documents:':<40}")
@@ -123,18 +127,23 @@ def print_comparison(query: str, baseline: SearchResult, capped: SearchResult, m
     print(f"{'Unique frameworks:':<40} | {'Unique frameworks:':<40}")
     print(f"  {baseline.unique_frameworks:<38} |   {capped.unique_frameworks:<38}")
 
-    print(f"\n--- Document distribution (baseline) ---")
+    print("\n--- Document distribution (baseline) ---")
     for doc_id, count in baseline.doc_distribution.most_common():
         marker = " <<<" if count > max_per_doc else ""
         print(f"  {count:>2}x  {doc_id[:60]}{marker}")
 
-    print(f"\n--- Document distribution (capped) ---")
+    print("\n--- Document distribution (capped) ---")
     for doc_id, count in capped.doc_distribution.most_common():
         print(f"  {count:>2}x  {doc_id[:60]}")
 
-    print(f"\n--- Framework distribution ---")
+    print("\n--- Framework distribution ---")
     print(f"  {'Framework':<20} {'Baseline':>8} {'Capped':>8} {'Delta':>8}")
-    all_frameworks = sorted(set(list(baseline.framework_distribution.keys()) + list(capped.framework_distribution.keys())))
+    all_frameworks = sorted(
+        set(
+            list(baseline.framework_distribution.keys())
+            + list(capped.framework_distribution.keys())
+        )
+    )
     for fw in all_frameworks:
         b = baseline.framework_distribution.get(fw, 0)
         c = capped.framework_distribution.get(fw, 0)
@@ -145,15 +154,18 @@ def print_comparison(query: str, baseline: SearchResult, capped: SearchResult, m
     # Show what was GAINED (docs in capped but not in baseline)
     gained_docs = set(capped.doc_distribution.keys()) - set(baseline.doc_distribution.keys())
     if gained_docs:
-        print(f"\n--- NEW docs surfaced by diversity cap ---")
+        print("\n--- NEW docs surfaced by diversity cap ---")
         for doc_id in sorted(gained_docs):
-            fw = next((c.get("framework_id", "?") for c in capped.chunks if c.get("doc_id") == doc_id), "?")
+            fw = next(
+                (c.get("framework_id", "?") for c in capped.chunks if c.get("doc_id") == doc_id),
+                "?",
+            )
             print(f"  + {doc_id[:60]} ({fw})")
 
     # Show what was LOST (docs in baseline whose chunks were ALL removed)
     lost_docs = set(baseline.doc_distribution.keys()) - set(capped.doc_distribution.keys())
     if lost_docs:
-        print(f"\n--- Docs LOST (all chunks removed) ---")
+        print("\n--- Docs LOST (all chunks removed) ---")
         for doc_id in sorted(lost_docs):
             count = baseline.doc_distribution[doc_id]
             print(f"  - {doc_id[:60]} (had {count} chunks)")
@@ -171,11 +183,13 @@ def print_comparison(query: str, baseline: SearchResult, capped: SearchResult, m
 
     baseline_parents = top_3_parents(baseline.chunks)
     capped_parents = top_3_parents(capped.chunks)
-    print(f"\n--- Auto-enrichment targets (top 3 parent docs) ---")
+    print("\n--- Auto-enrichment targets (top 3 parent docs) ---")
     print(f"  Baseline: {baseline_parents}")
     print(f"  Capped:   {capped_parents}")
     if len(set(baseline_parents)) < 3 and len(set(capped_parents)) >= 3:
-        print(f"  >>> Capped version enriches {len(set(capped_parents))} distinct docs vs {len(set(baseline_parents))} <<<")
+        print(
+            f"  >>> Capped version enriches {len(set(capped_parents))} distinct docs vs {len(set(baseline_parents))} <<<"
+        )
 
 
 def run_query(neptune: NeptuneClient, query: str, top_k: int, max_per_doc: int):
@@ -207,10 +221,12 @@ def run_query(neptune: NeptuneClient, query: str, top_k: int, max_per_doc: int):
     return baseline, capped
 
 
-def print_summary(all_baselines: list[SearchResult], all_capped: list[SearchResult], max_per_doc: int):
-    print(f"\n\n{'#'*80}")
+def print_summary(
+    all_baselines: list[SearchResult], all_capped: list[SearchResult], max_per_doc: int
+):
+    print(f"\n\n{'#' * 80}")
     print(f"AGGREGATE SUMMARY ({len(all_baselines)} queries)")
-    print(f"{'#'*80}")
+    print(f"{'#' * 80}")
 
     avg_baseline_docs = sum(r.unique_docs for r in all_baselines) / len(all_baselines)
     avg_capped_docs = sum(r.unique_docs for r in all_capped) / len(all_capped)
@@ -218,21 +234,33 @@ def print_summary(all_baselines: list[SearchResult], all_capped: list[SearchResu
     avg_capped_fw = sum(r.unique_frameworks for r in all_capped) / len(all_capped)
 
     print(f"\n  {'Metric':<35} {'Baseline':>10} {'Capped':>10} {'Delta':>10}")
-    print(f"  {'-'*35} {'-'*10} {'-'*10} {'-'*10}")
-    print(f"  {'Avg unique docs per query':<35} {avg_baseline_docs:>10.1f} {avg_capped_docs:>10.1f} {avg_capped_docs - avg_baseline_docs:>+10.1f}")
-    print(f"  {'Avg unique frameworks per query':<35} {avg_baseline_fw:>10.1f} {avg_capped_fw:>10.1f} {avg_capped_fw - avg_baseline_fw:>+10.1f}")
+    print(f"  {'-' * 35} {'-' * 10} {'-' * 10} {'-' * 10}")
+    print(
+        f"  {'Avg unique docs per query':<35} {avg_baseline_docs:>10.1f} {avg_capped_docs:>10.1f} {avg_capped_docs - avg_baseline_docs:>+10.1f}"
+    )
+    print(
+        f"  {'Avg unique frameworks per query':<35} {avg_baseline_fw:>10.1f} {avg_capped_fw:>10.1f} {avg_capped_fw - avg_baseline_fw:>+10.1f}"
+    )
 
     # Max concentration: worst-case chunks from a single doc
     baseline_max_conc = [max(r.doc_distribution.values()) for r in all_baselines]
     capped_max_conc = [max(r.doc_distribution.values()) for r in all_capped]
     avg_baseline_conc = sum(baseline_max_conc) / len(baseline_max_conc)
     avg_capped_conc = sum(capped_max_conc) / len(capped_max_conc)
-    print(f"  {'Avg max chunks from one doc':<35} {avg_baseline_conc:>10.1f} {avg_capped_conc:>10.1f} {avg_capped_conc - avg_baseline_conc:>+10.1f}")
+    print(
+        f"  {'Avg max chunks from one doc':<35} {avg_baseline_conc:>10.1f} {avg_capped_conc:>10.1f} {avg_capped_conc - avg_baseline_conc:>+10.1f}"
+    )
 
     # Queries where the cap actually made a difference
-    improved = sum(1 for b, c in zip(all_baselines, all_capped) if c.unique_docs > b.unique_docs)
-    same = sum(1 for b, c in zip(all_baselines, all_capped) if c.unique_docs == b.unique_docs)
-    worse = sum(1 for b, c in zip(all_baselines, all_capped) if c.unique_docs < b.unique_docs)
+    improved = sum(
+        1 for b, c in zip(all_baselines, all_capped, strict=False) if c.unique_docs > b.unique_docs
+    )
+    same = sum(
+        1 for b, c in zip(all_baselines, all_capped, strict=False) if c.unique_docs == b.unique_docs
+    )
+    worse = sum(
+        1 for b, c in zip(all_baselines, all_capped, strict=False) if c.unique_docs < b.unique_docs
+    )
     print(f"\n  Queries with MORE docs surfaced:  {improved}")
     print(f"  Queries with SAME doc count:      {same}")
     print(f"  Queries with FEWER docs surfaced: {worse}")
@@ -241,10 +269,18 @@ def print_summary(all_baselines: list[SearchResult], all_capped: list[SearchResu
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Test vector search diversity caps against live Neptune graph")
-    parser.add_argument("--query", type=str, help="Run a single query instead of the full test suite")
-    parser.add_argument("--max-per-doc", type=int, default=3, help="Max chunks per document (default: 3)")
-    parser.add_argument("--top-k", type=int, default=10, help="Final number of chunks to return (default: 10)")
+    parser = argparse.ArgumentParser(
+        description="Test vector search diversity caps against live Neptune graph"
+    )
+    parser.add_argument(
+        "--query", type=str, help="Run a single query instead of the full test suite"
+    )
+    parser.add_argument(
+        "--max-per-doc", type=int, default=3, help="Max chunks per document (default: 3)"
+    )
+    parser.add_argument(
+        "--top-k", type=int, default=10, help="Final number of chunks to return (default: 10)"
+    )
     parser.add_argument("--graph-id", type=str, default=GRAPH_ID, help="Neptune graph ID")
     args = parser.parse_args()
 

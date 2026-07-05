@@ -1,8 +1,8 @@
-from typing import List
 import os
+
 import boto3
-from textractor.textractor import Textractor
 from textractor.data.constants import TextractFeatures
+from textractor.textractor import Textractor
 
 # Lazy-initialized to avoid AWS calls at import time
 _session = None
@@ -23,7 +23,8 @@ def _get_s3_client():
         _s3_client = boto3.client("s3", region_name=_get_region())
     return _s3_client
 
-def get_emb(embeddings_client, passage: str) -> List[float]:
+
+def get_emb(embeddings_client, passage: str) -> list[float]:
     """Get embedding for a given passage using titan embeddings."""
 
     # Invoke the model
@@ -96,9 +97,7 @@ def delete_s3_prefix(s3, bucket_name, prefix):
         objects_to_delete = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
         delete_keys = {"Objects": []}
         if "Contents" in objects_to_delete:
-            delete_keys["Objects"] = [
-                {"Key": obj["Key"]} for obj in objects_to_delete["Contents"]
-            ]
+            delete_keys["Objects"] = [{"Key": obj["Key"]} for obj in objects_to_delete["Contents"]]
             if delete_keys["Objects"]:
                 s3.delete_objects(Bucket=bucket_name, Delete=delete_keys)
                 print(

@@ -38,7 +38,6 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
-
 # Page-header boilerplate that appears on every Wisconsin Statutes page.
 # Removing it before scanning lets annotations span page breaks cleanly.
 _PAGE_HEADER_RE = re.compile(
@@ -69,9 +68,7 @@ _HISTORY_END_LOOSE_RE = re.compile(r"\.\s+(?=[A-Z])")
 
 # Section heading mid-page: "70.32 Real estate, how assessed. ..." — mixed-case
 # title terminated by `.`. Distinct from all-caps page-top headers (see below).
-_SECTION_HEADING_RE = re.compile(
-    r"\b\d{2,3}\.\d{2,4}\s+[A-Z][^.]{3,60}\.\s+"
-)
+_SECTION_HEADING_RE = re.compile(r"\b\d{2,3}\.\d{2,4}\s+[A-Z][^.]{3,60}\.\s+")
 
 # All-caps page-top header: "77.52 SALES AND USE TAXES; MANAGED FOREST LANDS;"
 # These appear at the top of each PDF page and leak into page-spanning
@@ -190,7 +187,7 @@ def _strip_leading_breadcrumb(annotation: str) -> str:
         prev = current
         match = _ALLCAPS_PAGE_HEADER_RE.match(current)
         if match:
-            current = current[match.end():]
+            current = current[match.end() :]
         current = _LEADING_BREADCRUMB_RE.sub("", current, count=1)
         current = _LEADING_SIGNAL_RE.sub("", current, count=1)
     return current.strip()
@@ -234,7 +231,7 @@ def extract_case_name(annotation_with_citation: str, citation: str) -> str | Non
     # Walk backward from v_match.start() to find where the case name begins.
     # Boundary: a sentence-ending punctuation (possibly followed by a closing
     # quote/bracket), or start of segment.
-    before_v = segment[:v_match.start()]
+    before_v = segment[: v_match.start()]
     sentence_ends = list(_SENTENCE_END_RE.finditer(before_v))
     if sentence_ends:
         name_start = sentence_ends[-1].end()
@@ -272,7 +269,7 @@ def extract_annotation_from_text(
     window_start = max(0, idx - max_chars)
     search_region = norm[window_start:idx]
     relative_start = _find_annotation_start(search_region)
-    annotation = norm[window_start + relative_start:idx].strip()
+    annotation = norm[window_start + relative_start : idx].strip()
     return _strip_leading_breadcrumb(annotation) or None
 
 
@@ -407,10 +404,12 @@ def gather_case_annotations(
         ann = extract_annotation_from_pdf(pdf_path, citation, pages, max_chars_per)
         if not ann:
             continue
-        out.append({
-            "text": ann,
-            "source_file": src["file"],
-            "pages": pages,
-            "case_name": extract_case_name(ann + " " + citation, citation),
-        })
+        out.append(
+            {
+                "text": ann,
+                "source_file": src["file"],
+                "pages": pages,
+                "case_name": extract_case_name(ann + " " + citation, citation),
+            }
+        )
     return out

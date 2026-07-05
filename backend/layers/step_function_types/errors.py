@@ -3,7 +3,7 @@ import os
 from abc import abstractmethod
 from typing import Any
 
-from websocket_utils.models import ErrorMessage, ErrorContent
+from websocket_utils.models import ErrorContent, ErrorMessage
 from websocket_utils.utils import WebSocketServer, get_ws_connection_from_session
 
 logger = logging.getLogger()

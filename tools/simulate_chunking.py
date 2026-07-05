@@ -106,7 +106,7 @@ def print_quality_report(chunks: list[dict], doc_id: str):
     if short:
         print(f"    {len(short)} short (<100 chars):")
         for c in short[:5]:
-            print(f"      {c['chunk_id']}: ({len(c['text'])} chars) \"{c['text'][:60]}\"")
+            print(f'      {c["chunk_id"]}: ({len(c["text"])} chars) "{c["text"][:60]}"')
         if len(short) > 5:
             print(f"      ... and {len(short) - 5} more")
     if oversized:
@@ -122,27 +122,34 @@ def main():
         epilog=__doc__,
     )
     parser.add_argument(
-        "doc_ids", nargs="*",
+        "doc_ids",
+        nargs="*",
         help="Document IDs to process (e.g. statutes-70, wpam-7)",
     )
     parser.add_argument(
-        "--filter", dest="prefix_filter", default="",
+        "--filter",
+        dest="prefix_filter",
+        default="",
         help="Process all docs matching this prefix (e.g. statutes-, wpam-)",
     )
     parser.add_argument(
-        "--all", action="store_true",
+        "--all",
+        action="store_true",
         help="Process all documents in the raw bucket",
     )
     parser.add_argument(
-        "--output-dir", default="pdf_chunking/chunk_logs",
+        "--output-dir",
+        default="pdf_chunking/chunk_logs",
         help="Output directory for chunk logs (default: pdf_chunking/chunk_logs)",
     )
     parser.add_argument(
-        "--report-only", action="store_true",
+        "--report-only",
+        action="store_true",
         help="Print quality report without writing chunk files",
     )
     parser.add_argument(
-        "--bucket", default=RAW_BUCKET,
+        "--bucket",
+        default=RAW_BUCKET,
         help=f"S3 bucket (default: {RAW_BUCKET})",
     )
     args = parser.parse_args()
@@ -197,7 +204,8 @@ def main():
                 source_url = "n/a"
 
             chunks = process_pdf_from_s3(
-                args.bucket, doc["key"],
+                args.bucket,
+                doc["key"],
                 document_url=source_url,
                 source_id=source_id,
             )
@@ -206,7 +214,9 @@ def main():
         except Exception as e:
             elapsed = time.time() - t0
             print(f"  ERROR processing {doc['doc_id']}: {e} ({elapsed:.1f}s)")
-            results.append({"doc_id": doc["doc_id"], "chunks": [], "elapsed": elapsed, "error": str(e)})
+            results.append(
+                {"doc_id": doc["doc_id"], "chunks": [], "elapsed": elapsed, "error": str(e)}
+            )
 
     # Quality report
     print("\n" + "=" * 60)
@@ -220,7 +230,9 @@ def main():
             total_chunks += len(r["chunks"])
             total_short += sum(1 for c in r["chunks"] if len(c["text"]) < 100)
 
-    print(f"\n  TOTAL: {total_chunks} chunks across {len(results)} docs, {total_short} short (<100 chars)")
+    print(
+        f"\n  TOTAL: {total_chunks} chunks across {len(results)} docs, {total_short} short (<100 chars)"
+    )
 
     if not args.report_only:
         final_dir = Path(args.output_dir) / "final_chunks"

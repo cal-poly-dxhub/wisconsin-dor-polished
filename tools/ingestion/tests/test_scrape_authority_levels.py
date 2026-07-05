@@ -45,9 +45,7 @@ def test_every_category_authority_matches_its_framework():
                 f"{category}: framework {fw_id} is level {expected}, "
                 f"but category sets authority_level={actual}"
             )
-    assert not mismatches, "Authority-level/framework mismatches:\n" + "\n".join(
-        mismatches
-    )
+    assert not mismatches, "Authority-level/framework mismatches:\n" + "\n".join(mismatches)
 
 
 def test_advisory_categories_are_gov_pub_level():

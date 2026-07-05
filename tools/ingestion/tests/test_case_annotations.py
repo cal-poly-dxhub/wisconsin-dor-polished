@@ -21,7 +21,6 @@ from tools.ingestion.lib.case_annotations import (
     gather_case_annotations,
 )
 
-
 # ---------------------------------------------------------------------------
 # Text-only parsing tests (no PDFs required)
 # ---------------------------------------------------------------------------
@@ -52,9 +51,7 @@ holding. Nestle USA, Inc. v. DOR, 2009 WI App 159, 322 Wis. 2d 156.
 
 
 def test_extract_uses_year_paren_boundary() -> None:
-    ann = extract_annotation_from_text(
-        ANNOTATION_WITH_YEAR_PAREN_BOUNDARY, "2009 WI App 159"
-    )
+    ann = extract_annotation_from_text(ANNOTATION_WITH_YEAR_PAREN_BOUNDARY, "2009 WI App 159")
     assert ann is not None
     assert ann.startswith("The current annotation begins here")
     assert "Earlier Case" not in ann
@@ -83,10 +80,7 @@ def test_citation_not_present_returns_none() -> None:
 
 
 def test_extract_case_name_simple() -> None:
-    text = (
-        "The holding was important. State v. Smith, 127 Wis. 2d 155, "
-        "378 N.W.2d 883 (1985)."
-    )
+    text = "The holding was important. State v. Smith, 127 Wis. 2d 155, 378 N.W.2d 883 (1985)."
     assert extract_case_name(text, "127 Wis. 2d 155") == "State v. Smith"
 
 
@@ -192,14 +186,22 @@ def test_extract_case_name_strips_signal_phrases() -> None:
     """Annotations beginning with 'But see', 'See also', 'Cf.' etc. should
     have the signal phrase stripped from the extracted case name."""
     cases = [
-        ("Affirmed on other grounds. But see Miller v. Zoning Board of Appeals, 2023 WI 46.",
-         "2023 WI 46", "Miller v. Zoning Board of Appeals"),
-        ("Facts differ. See also Smith v. Jones, 100 Wis. 2d 1.",
-         "100 Wis. 2d 1", "Smith v. Jones"),
-        ("Held. Cf. Doe v. Roe, 200 Wis. 2d 2.",
-         "200 Wis. 2d 2", "Doe v. Roe"),
-        ("Background. See, e.g., State v. Brown, 300 Wis. 2d 3.",
-         "300 Wis. 2d 3", "State v. Brown"),
+        (
+            "Affirmed on other grounds. But see Miller v. Zoning Board of Appeals, 2023 WI 46.",
+            "2023 WI 46",
+            "Miller v. Zoning Board of Appeals",
+        ),
+        (
+            "Facts differ. See also Smith v. Jones, 100 Wis. 2d 1.",
+            "100 Wis. 2d 1",
+            "Smith v. Jones",
+        ),
+        ("Held. Cf. Doe v. Roe, 200 Wis. 2d 2.", "200 Wis. 2d 2", "Doe v. Roe"),
+        (
+            "Background. See, e.g., State v. Brown, 300 Wis. 2d 3.",
+            "300 Wis. 2d 3",
+            "State v. Brown",
+        ),
     ]
     for text, citation, expected in cases:
         got = extract_case_name(text, citation)
@@ -220,9 +222,7 @@ def _has_real_pdfs() -> bool:
 @pytest.mark.skipif(not _has_real_pdfs(), reason="statute PDFs not available")
 def test_real_pdf_nestle_v_dor() -> None:
     """Known good case: Nestle USA, Inc. v. DOR in 70.pdf page 25."""
-    ann = extract_annotation_from_pdf(
-        STATE_LAWS_DIR / "70.pdf", "2009 WI App 159", [25]
-    )
+    ann = extract_annotation_from_pdf(STATE_LAWS_DIR / "70.pdf", "2009 WI App 159", [25])
     assert ann is not None
     assert len(ann) > 200
     assert "Nestle" in ann
@@ -248,9 +248,7 @@ def test_real_pdf_page_break_case() -> None:
 @pytest.mark.skipif(not _has_real_pdfs(), reason="statute PDFs not available")
 def test_gather_case_annotations_real_pdf() -> None:
     citing_statutes = [{"file": "70.pdf", "pages": [25]}]
-    results = gather_case_annotations(
-        "2009 WI App 159", citing_statutes, STATE_LAWS_DIR
-    )
+    results = gather_case_annotations("2009 WI App 159", citing_statutes, STATE_LAWS_DIR)
     assert len(results) == 1
     result = results[0]
     assert result["source_file"] == "70.pdf"
@@ -265,9 +263,7 @@ def test_gather_case_annotations_missing_pdf_silently_skipped() -> None:
         {"file": "70.pdf", "pages": [25]},
         {"file": "nonexistent.pdf", "pages": [1]},
     ]
-    results = gather_case_annotations(
-        "2009 WI App 159", citing_statutes, STATE_LAWS_DIR
-    )
+    results = gather_case_annotations("2009 WI App 159", citing_statutes, STATE_LAWS_DIR)
     assert len(results) == 1
     assert results[0]["source_file"] == "70.pdf"
 
@@ -275,6 +271,7 @@ def test_gather_case_annotations_missing_pdf_silently_skipped() -> None:
 # ---------------------------------------------------------------------------
 # Default constant sanity checks
 # ---------------------------------------------------------------------------
+
 
 def test_default_max_chars_reasonable() -> None:
     assert DEFAULT_MAX_CHARS > 500

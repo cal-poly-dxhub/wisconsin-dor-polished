@@ -137,12 +137,8 @@ def delete_orphans(graph_id: str, orphan_ids: list[str]) -> int:
     for i in range(0, len(orphan_ids), DELETE_BATCH_SIZE):
         batch = orphan_ids[i : i + DELETE_BATCH_SIZE]
         # UNWIND + MATCH + DETACH DELETE — idempotent, handles missing ids.
-        cypher = (
-            "UNWIND $ids AS cid "
-            "MATCH (c:Chunk {id: cid}) "
-            "DETACH DELETE c"
-        )
-        resp = neptune.execute_query(
+        cypher = "UNWIND $ids AS cid MATCH (c:Chunk {id: cid}) DETACH DELETE c"
+        neptune.execute_query(
             graphIdentifier=graph_id,
             queryString=cypher,
             parameters={"ids": batch},
@@ -175,7 +171,7 @@ def main() -> None:
     neptune_chunks = chunks_per_doc_in_neptune(args.graph_id)
 
     orphans = compute_orphans(neptune_chunks, embedded_counts)
-    logger.info(f"\n=== ORPHAN AUDIT ===")
+    logger.info("\n=== ORPHAN AUDIT ===")
     logger.info(f"Orphan chunks to delete: {len(orphans)}")
 
     # Per-doc breakdown for the top offenders

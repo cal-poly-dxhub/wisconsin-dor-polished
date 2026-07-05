@@ -77,19 +77,21 @@ def process_converse_stream(stream_response: dict[str, Any]) -> StreamResult:
                 content_blocks.append({"text": current_text})
             elif current_block_type == "toolUse":
                 try:
-                    parsed_input = json.loads(current_tool_input_json) if current_tool_input_json else {}
-                except json.JSONDecodeError:
-                    logger.warning(
-                        f"Failed to parse tool input JSON for {current_tool_name}"
+                    parsed_input = (
+                        json.loads(current_tool_input_json) if current_tool_input_json else {}
                     )
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse tool input JSON for {current_tool_name}")
                     parsed_input = {}
-                content_blocks.append({
-                    "toolUse": {
-                        "toolUseId": current_tool_use_id,
-                        "name": current_tool_name,
-                        "input": parsed_input,
+                content_blocks.append(
+                    {
+                        "toolUse": {
+                            "toolUseId": current_tool_use_id,
+                            "name": current_tool_name,
+                            "input": parsed_input,
+                        }
                     }
-                })
+                )
 
             current_block_type = None
 

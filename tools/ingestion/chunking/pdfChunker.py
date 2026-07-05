@@ -1,32 +1,37 @@
+import base64
+import io
+import json
 import os
 import re
-import json
-import boto3
 from collections import OrderedDict
 from datetime import datetime
+from typing import Any
+
+import boto3
 import botocore
 from botocore.config import Config
-from typing import List, Dict, Tuple, Any
+from PIL import Image
 from textractor.data.text_linearization_config import TextLinearizationConfig
-from tools.ingestion.chunking.aws_utils import *
-from tools.ingestion.chunking.table_tools import *
-from tools.ingestion.chunking.pymupdf_extractor import (
-    extract_with_pymupdf,
-    extract_raw_text_with_pymupdf,
-    extraction_looks_good,
+
+from tools.ingestion.chunking.aws_utils import (
+    delete_s3_prefix,
+    download_pdf_from_s3,
+    extract_textract_data,
 )
 from tools.ingestion.chunking.boilerplate import strip_boilerplate
+from tools.ingestion.chunking.pymupdf_extractor import (
+    extract_raw_text_with_pymupdf,
+    extract_with_pymupdf,
+    extraction_looks_good,
+)
+from tools.ingestion.chunking.toc_detector import is_toc_chunk
 from tools.ingestion.chunking.wpam_chunk_filter import (
     filter_wpam_chunks,
     merge_short_chunks,
     repair_wpam_subheadings,
 )
-from pdf2image import convert_from_path
-from PIL import Image
-from tools.ingestion.chunking.flowchart_tools import extract_flowcharts_from_document
-from tools.ingestion.chunking.toc_detector import is_toc_chunk
 
-config = Config(read_timeout=600, retries=dict(max_attempts=5))
+config = Config(read_timeout=600, retries={"max_attempts": 5})
 
 MEDIA_BUCKET_NAME = os.environ.get("TEXTRACT_STAGING_BUCKET", "textract-chunk-result-dhgoel")
 
@@ -59,17 +64,16 @@ def _ensure_bucket_exists(s3_client, bucket_name: str):
     except botocore.exceptions.ClientError:
         print(f"Bucket '{bucket_name}' does not exist. Creating it...")
         s3_client.create_bucket(
-            Bucket=bucket_name,
-            CreateBucketConfiguration={
-                "LocationConstraint": _region_name
-            }
+            Bucket=bucket_name, CreateBucketConfiguration={"LocationConstraint": _region_name}
         )
+
 
 CHUNKER_BY_SOURCE = {
     "state-laws": "statute",
     "admin-rules": "admin_rule",
     "assessment-manual": "wpam",
 }
+
 
 def get_chunking_strategy(source_id: str) -> str:
     if source_id.startswith("wpam-"):
@@ -79,6 +83,7 @@ def get_chunking_strategy(source_id: str) -> str:
     if source_id.startswith("statutes-"):
         return "statute"
     return CHUNKER_BY_SOURCE.get(source_id, "general")
+
 
 def encode_image_to_base64(img: Image.Image) -> str:
     buf = io.BytesIO()
@@ -101,18 +106,14 @@ def strip_newline(cell: Any) -> str:
     return str(cell).strip()
 
 
-def sub_header_content_splitter(string: str) -> List[str]:
+def sub_header_content_splitter(string: str) -> list[str]:
     """Split content by XML tags and return relevant segments."""
     pattern = re.compile(r"<<[^>]+>>")
     segments = re.split(pattern, string)
     result = []
     for segment in segments:
         if segment.strip():
-            if (
-                "<header>" not in segment
-                and "<list>" not in segment
-                and "<table>" not in segment
-            ):
+            if "<header>" not in segment and "<list>" not in segment and "<table>" not in segment:
                 segment = [x.strip() for x in segment.split("\n") if x.strip()]
                 result.extend(segment)
             else:
@@ -120,7 +121,7 @@ def sub_header_content_splitter(string: str) -> List[str]:
     return result
 
 
-def split_list_items_(items: str) -> List[str]:
+def split_list_items_(items: str) -> list[str]:
     """Split a string into a list of items, handling nested lists."""
     parts = re.split("(<<list>><list>|</list><</list>>)", items)
     output = []
@@ -143,8 +144,6 @@ def split_list_items_(items: str) -> List[str]:
             output.extend(p.split("\n"))
     return output
 
-import os
-import re
 
 def process_document(document, local_pdf_path: str):
     """
@@ -161,7 +160,7 @@ def process_document(document, local_pdf_path: str):
             hide_table_layout=False,
             hide_header_layout=False,
             hide_footer_layout=False,
-            hide_page_num_layout=False
+            hide_page_num_layout=False,
         )
     else:
         config = TextLinearizationConfig(
@@ -180,8 +179,8 @@ def process_document(document, local_pdf_path: str):
             hide_page_num_layout=True,
         )
 
-    structured_text_lines = []           # all structured lines (for chunking)
-    line_page_mapping = []               # flat list of (text, page_num) for exact mapping
+    structured_text_lines = []  # all structured lines (for chunking)
+    line_page_mapping = []  # flat list of (text, page_num) for exact mapping
 
     for page in document.pages:
         page_text = page.get_text(config=config)
@@ -200,13 +199,14 @@ def process_document(document, local_pdf_path: str):
     else:
         header_split = result.split("<titles>")
 
-    '''flowchart_chunks = extract_flowcharts_from_document(
+    """flowchart_chunks = extract_flowcharts_from_document(
         document, bedrock_runtime, os.path.basename(local_pdf_path)
-    )'''
+    )"""
 
     flowchart_chunks = []
 
     return header_split, line_page_mapping, flowchart_chunks
+
 
 # Dot-leader sequence used by TOC entries. Any line containing five or more
 # consecutive dots (each optionally followed by whitespace) is a TOC entry —
@@ -278,16 +278,18 @@ def chunk_document(header_split, file, BUCKET, line_page_mapping):
         chunk_text = f"{prefix}\n{body}" if prefix else body
         pages = {page for _, page in buffer}
         start_page, end_page = (min(pages), max(pages)) if pages else (1, 1)
-        chunks.append({
-            "text": chunk_text.strip(),
-            "metadata": {
-                "doc_id": doc_id,
-                "heading": heading,
-                "subheading": subheading,
-                "start_page": start_page,
-                "end_page": end_page,
-            },
-        })
+        chunks.append(
+            {
+                "text": chunk_text.strip(),
+                "metadata": {
+                    "doc_id": doc_id,
+                    "heading": heading,
+                    "subheading": subheading,
+                    "start_page": start_page,
+                    "end_page": end_page,
+                },
+            }
+        )
 
     roman_heading = ""
     sub_heading = ""
@@ -328,10 +330,7 @@ def chunk_document(header_split, file, BUCKET, line_page_mapping):
 
             buffer.append((line, page))
 
-            if (
-                count_words(buffer) > max_words
-                or _count_chars_in_buffer(buffer) > CHUNK_MAX_CHARS
-            ):
+            if count_words(buffer) > max_words or _count_chars_in_buffer(buffer) > CHUNK_MAX_CHARS:
                 flush_chunk(buffer, roman_heading, sub_heading)
                 buffer = []
 
@@ -494,15 +493,17 @@ def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
             pages = {p for _, p in buffer}
             start_page, end_page = min(pages), max(pages)
             chunk_text = f"{heading}\n" + "\n".join(txt for txt, _ in buffer).strip()
-            chunks.append({
-                "text": chunk_text,
-                "metadata": {
-                    "doc_id": doc_id,
-                    "heading": heading,
-                    "start_page": start_page,
-                    "end_page": end_page
+            chunks.append(
+                {
+                    "text": chunk_text,
+                    "metadata": {
+                        "doc_id": doc_id,
+                        "heading": heading,
+                        "start_page": start_page,
+                        "end_page": end_page,
+                    },
                 }
-            })
+            )
 
     # Walk through line–page mapping directly
     for line, page_num in line_page_mapping:
@@ -530,28 +531,32 @@ def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
             last_end = ep
         else:
             if last_heading:
-                merged_chunks.append({
-                    "text": f"{last_heading}\n{'\n'.join(last_lines).strip()}",
-                    "metadata": {
-                        "doc_id": doc_id,
-                        "heading": last_heading,
-                        "start_page": last_start,
-                        "end_page": last_end
+                merged_chunks.append(
+                    {
+                        "text": f"{last_heading}\n{'\n'.join(last_lines).strip()}",
+                        "metadata": {
+                            "doc_id": doc_id,
+                            "heading": last_heading,
+                            "start_page": last_start,
+                            "end_page": last_end,
+                        },
                     }
-                })
+                )
             last_heading, last_start, last_end = h, sp, ep
             last_lines = [ch["text"].split("\n", 1)[1]]
 
     if last_heading:
-        merged_chunks.append({
-            "text": f"{last_heading}\n{'\n'.join(last_lines).strip()}",
-            "metadata": {
-                "doc_id": doc_id,
-                "heading": last_heading,
-                "start_page": last_start,
-                "end_page": last_end
+        merged_chunks.append(
+            {
+                "text": f"{last_heading}\n{'\n'.join(last_lines).strip()}",
+                "metadata": {
+                    "doc_id": doc_id,
+                    "heading": last_heading,
+                    "start_page": last_start,
+                    "end_page": last_end,
+                },
             }
-        })
+        )
 
     # Split oversized sections at subsection/sentence boundaries
     cap = get_chunk_cap("statute")
@@ -595,7 +600,7 @@ def chunk_document_admin_rule(header_split, file, BUCKET, line_page_mapping):
             if current_id is not None:
                 raw_sections.append((current_id, local_buffer))
             current_id = m.group(1)
-            remainder = clean[m.end():].strip()
+            remainder = clean[m.end() :].strip()
             local_buffer = [(remainder, page_num)] if remainder else []
         else:
             local_buffer.append((clean, page_num))
@@ -622,29 +627,34 @@ def chunk_document_admin_rule(header_split, file, BUCKET, line_page_mapping):
         chunk_text = f"{rule_id}\n{body_text}"
 
         if len(chunk_text) <= cap:
-            final_chunks.append({
-                "text": chunk_text,
-                "metadata": {
-                    "doc_id": doc_id,
-                    "heading": rule_id,
-                    "start_page": start_page,
-                    "end_page": end_page,
-                }
-            })
-        else:
-            parts = _split_statute_section(chunk_text, cap=cap)
-            for part in parts:
-                final_chunks.append({
-                    "text": part,
+            final_chunks.append(
+                {
+                    "text": chunk_text,
                     "metadata": {
                         "doc_id": doc_id,
                         "heading": rule_id,
                         "start_page": start_page,
                         "end_page": end_page,
+                    },
+                }
+            )
+        else:
+            parts = _split_statute_section(chunk_text, cap=cap)
+            for part in parts:
+                final_chunks.append(
+                    {
+                        "text": part,
+                        "metadata": {
+                            "doc_id": doc_id,
+                            "heading": rule_id,
+                            "start_page": start_page,
+                            "end_page": end_page,
+                        },
                     }
-                })
+                )
 
     return final_chunks
+
 
 def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
     """
@@ -681,7 +691,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         if not m:
             return False
         suffix = m.group(2)
-        remainder = line[m.end():].strip()
+        remainder = line[m.end() :].strip()
         if suffix and not re.match(r"^[–—.:]*[A-D]?$", suffix):
             return False
         if suffix == ".":
@@ -709,9 +719,9 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
     # heading prefix across 10+ adjacent retrieved chunks.
     section_header_patterns = [
         re.compile(r"^[A-Z]{2,}(?:\s+[A-Z]{2,}){0,5}\s*$"),  # ALL-CAPS up to 6 tokens
-        re.compile(r"^[A-Z]\.\s+[A-Z][A-Za-z]"),             # "A. Title" / "B. Notes"
-        re.compile(r"^\d+\.\s+[A-Z][A-Za-z]"),               # "1. Methodology"
-        re.compile(r"^[IVX]+\.\s+[A-Z][A-Za-z]"),            # "IV. Methodology"
+        re.compile(r"^[A-Z]\.\s+[A-Z][A-Za-z]"),  # "A. Title" / "B. Notes"
+        re.compile(r"^\d+\.\s+[A-Z][A-Za-z]"),  # "1. Methodology"
+        re.compile(r"^[IVX]+\.\s+[A-Z][A-Za-z]"),  # "IV. Methodology"
     ]
 
     def _looks_like_section_header(line: str) -> bool:
@@ -725,8 +735,8 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         return any(p.match(line) for p in section_header_patterns)
 
     max_words = 1200
-    min_merge_words = 80     # merge chunks smaller than this
-    max_merge_total = 500    # only merge if result < this many words
+    min_merge_words = 80  # merge chunks smaller than this
+    max_merge_total = 500  # only merge if result < this many words
 
     # --- Helpers ---
 
@@ -739,10 +749,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         if isinstance(entries, str):
             return len(re.findall(r"\w+", entries))
         # Support both list[str] and list[tuple[str, int]]
-        return sum(
-            len(re.findall(r"\w+", e[0] if isinstance(e, tuple) else e))
-            for e in entries
-        )
+        return sum(len(re.findall(r"\w+", e[0] if isinstance(e, tuple) else e)) for e in entries)
 
     def count_chars(buffer: list[tuple[str, int]]) -> int:
         """Approximate char count of buffer contents joined by newlines."""
@@ -758,7 +765,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         lines = text.splitlines()
         if len(lines) < 2:
             return False
-        page_refs = sum(1 for l in lines if re.search(r"\b\d+-\d+\b", l))
+        page_refs = sum(1 for line in lines if re.search(r"\b\d+-\d+\b", line))
         if page_refs / max(1, len(lines)) > 0.3:
             return True
         if re.match(r"^Chapter\s+\d+", text) and re.search(r"\b\d+-\d+\b", text):
@@ -780,16 +787,18 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
 
         pages = {page for _, page in buffer}
         sp, ep = (min(pages), max(pages)) if pages else (1, 1)
-        chunks.append({
-            "text": text,
-            "metadata": {
-                "doc_id": doc_id,
-                "heading": chapter or "Untitled",
-                "subheading": section or None,
-                "start_page": sp,
-                "end_page": ep
+        chunks.append(
+            {
+                "text": text,
+                "metadata": {
+                    "doc_id": doc_id,
+                    "heading": chapter or "Untitled",
+                    "subheading": section or None,
+                    "start_page": sp,
+                    "end_page": ep,
+                },
             }
-        })
+        )
 
     # --- Main Chunk Loop ---
     # Walk line_page_mapping directly so each buffered line keeps its source
@@ -842,22 +851,24 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         # try merging with next if both share same chapter
         if word_count < min_merge_words and i + 1 < len(chunks):
             next_chunk = chunks[i + 1]
-            same_heading = (
-                chunk["metadata"]["heading"] == next_chunk["metadata"]["heading"]
-            )
+            same_heading = chunk["metadata"]["heading"] == next_chunk["metadata"]["heading"]
             combined = text.strip() + "\n\n" + next_chunk["text"].strip()
             if (
                 same_heading
                 and count_words(combined) <= max_merge_total
                 and len(combined) <= CHUNK_MAX_CHARS
             ):
-                merged_chunks.append({
-                    "text": combined,
-                    "metadata": {
-                        **chunk["metadata"],
-                        "end_page": next_chunk["metadata"].get("end_page", chunk["metadata"]["end_page"])
+                merged_chunks.append(
+                    {
+                        "text": combined,
+                        "metadata": {
+                            **chunk["metadata"],
+                            "end_page": next_chunk["metadata"].get(
+                                "end_page", chunk["metadata"]["end_page"]
+                            ),
+                        },
                     }
-                })
+                )
                 i += 2
                 continue
 
@@ -865,6 +876,7 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         i += 1
 
     return _enforce_chunk_cap(merged_chunks)
+
 
 def parse_s3_uri(s3_uri):
     # Ensure the URI starts with "s3://"
@@ -880,6 +892,7 @@ def parse_s3_uri(s3_uri):
 
     return bucket_name, file_key
 
+
 def extract_clean_plaintext(doc_chunks, doc_id=None, is_statute=False):
     all_cleaned_content = []
     removed_chunks = []
@@ -891,7 +904,7 @@ def extract_clean_plaintext(doc_chunks, doc_id=None, is_statute=False):
             if line is None:
                 return ""
             return re.sub(r"<[^>]+>", "", str(line)).strip()
-        except Exception as e:
+        except Exception:
             print("⚠️ clean_line failed on line:", repr(line))
             return ""
 
@@ -906,16 +919,16 @@ def extract_clean_plaintext(doc_chunks, doc_id=None, is_statute=False):
         chunk_text = chunk["text"]
 
         # normalize lines
-        lines = [clean_line(l) for l in chunk_text.split("\n") if clean_line(l)]
-        lines = [l for l in lines if isinstance(l, str)]
+        lines = [clean_line(line) for line in chunk_text.split("\n") if clean_line(line)]
+        lines = [line for line in lines if isinstance(line, str)]
         if not lines:
             removed_chunks.append({"text": chunk_text, "reason": "Empty"})
             continue
         text = "\n\n".join(lines)
 
         # stats
-        word_count = sum(len(l.split()) for l in lines)
-        sentence_count = sum(1 for l in lines if l.endswith((".", "?", "!")))
+        word_count = sum(len(line.split()) for line in lines)
+        sentence_count = sum(1 for line in lines if line.endswith((".", "?", "!")))
 
         if not is_statute and looks_like_index(text):
             removed_chunks.append({"text": text, "reason": "index/title"})
@@ -928,11 +941,17 @@ def extract_clean_plaintext(doc_chunks, doc_id=None, is_statute=False):
 
         # === Adaptive thresholds ===
         if word_count < 50 and sentence_count == 1:
-            removed_chunks.append({"text": text, "reason": f"Too short ({word_count} words, {sentence_count} sentences)"})
+            removed_chunks.append(
+                {
+                    "text": text,
+                    "reason": f"Too short ({word_count} words, {sentence_count} sentences)",
+                }
+            )
             continue
 
         all_cleaned_content.append((idx, text))
     return all_cleaned_content, removed_chunks
+
 
 def extract_raw_text_from_document(document) -> str:
     """
@@ -990,7 +1009,9 @@ def extract_raw_text_from_pdf_s3(bucket_name: str, s3_file_path: str) -> str:
     try:
         raw_text = extract_raw_text_with_pymupdf(local_pdf_path)
         if raw_text and len(raw_text.split()) >= 10:
-            print(f"Extracted raw text with PyMuPDF from {os.path.basename(s3_file_path)} successfully.")
+            print(
+                f"Extracted raw text with PyMuPDF from {os.path.basename(s3_file_path)} successfully."
+            )
             return raw_text
         print("PyMuPDF raw text insufficient, falling back to Textract...")
     except Exception as e:
@@ -1068,7 +1089,9 @@ def process_pdf_from_s3(
             document, local_pdf_path, textract_output_path = extract_textract_data(
                 _get_s3(), s3_uri, bucket_name, MEDIA_BUCKET_NAME
             )
-            header_split, line_page_mapping, flowchart_chunks = process_document(document, local_pdf_path)
+            header_split, line_page_mapping, flowchart_chunks = process_document(
+                document, local_pdf_path
+            )
             used_textract = True
             print(f"Using Textract fallback for {doc_id}")
         except Exception:
@@ -1088,11 +1111,17 @@ def process_pdf_from_s3(
     try:
         # --- Run chunking ---
         if strategy == "admin_rule":
-            raw_chunks = chunk_document_admin_rule(header_split, s3_file_path, bucket_name, line_page_mapping)
+            raw_chunks = chunk_document_admin_rule(
+                header_split, s3_file_path, bucket_name, line_page_mapping
+            )
         elif strategy == "statute":
-            raw_chunks = chunk_document_statute(header_split, s3_file_path, bucket_name, line_page_mapping)
+            raw_chunks = chunk_document_statute(
+                header_split, s3_file_path, bucket_name, line_page_mapping
+            )
         elif strategy == "wpam":
-            raw_chunks = chunk_document_wpam(header_split, s3_file_path, bucket_name, line_page_mapping)
+            raw_chunks = chunk_document_wpam(
+                header_split, s3_file_path, bucket_name, line_page_mapping
+            )
         else:
             raw_chunks = chunk_document(header_split, s3_file_path, bucket_name, line_page_mapping)
 
@@ -1100,9 +1129,7 @@ def process_pdf_from_s3(
         if chunk_logs_dir:
             raw_chunks_dir = os.path.join(chunk_logs_dir, "raw_chunks")
             os.makedirs(raw_chunks_dir, exist_ok=True)
-            raw_chunks_path = os.path.join(
-                raw_chunks_dir, f"{doc_id}_{logging_timestamp}.jsonl"
-            )
+            raw_chunks_path = os.path.join(raw_chunks_dir, f"{doc_id}_{logging_timestamp}.jsonl")
 
             with open(raw_chunks_path, "w") as f:
                 for idx, chunk in enumerate(raw_chunks):
@@ -1122,13 +1149,15 @@ def process_pdf_from_s3(
         for idx, chunk in enumerate(raw_chunks):
             metadata = chunk.get("metadata", {})
             if is_toc_chunk(chunk.get("text", ""), metadata.get("heading")):
-                toc_removed.append({
-                    "reason": "toc_chunk",
-                    "chunk_index": idx,
-                    "heading": metadata.get("heading"),
-                    "subheading": metadata.get("subheading"),
-                    "text": chunk.get("text", ""),
-                })
+                toc_removed.append(
+                    {
+                        "reason": "toc_chunk",
+                        "chunk_index": idx,
+                        "heading": metadata.get("heading"),
+                        "subheading": metadata.get("subheading"),
+                        "text": chunk.get("text", ""),
+                    }
+                )
                 continue
             filtered_raw_chunks.append(chunk)
         if toc_removed:
@@ -1144,7 +1173,9 @@ def process_pdf_from_s3(
                 for i, r in enumerate(wpam_removed)
             ]
             if wpam_quality_removed:
-                print(f"🧹 Dropped {len(wpam_quality_removed)} low-quality WPAM chunks for {doc_id}")
+                print(
+                    f"🧹 Dropped {len(wpam_quality_removed)} low-quality WPAM chunks for {doc_id}"
+                )
             raw_chunks = repair_wpam_subheadings(raw_chunks)
 
         # --- Clean text chunks ---
@@ -1173,35 +1204,42 @@ def process_pdf_from_s3(
             start_page = raw_meta.get("start_page", 1)
             end_page = raw_meta.get("end_page", start_page)
 
-            all_chunks.append({
-                "chunk_id": f"{doc_id}_final_{out_idx}",
-                "text": chunk,
-                "metadata": {
-                    "doc_id": doc_id,
-                    "source": s3_file_path,
-                    "source_url": f"{document_url}#page={start_page}" if (document_url and start_page) else document_url,
-                    "chunk_index": out_idx,
-                    "total_chunks": total_chunks,
-                    "source_id": source_id,
-                    "start_page": start_page,
-                    "end_page": end_page,
-                    "heading": raw_meta.get("heading", ""),
-                    "subheading": raw_meta.get("subheading", ""),
-                },
-            })
+            all_chunks.append(
+                {
+                    "chunk_id": f"{doc_id}_final_{out_idx}",
+                    "text": chunk,
+                    "metadata": {
+                        "doc_id": doc_id,
+                        "source": s3_file_path,
+                        "source_url": f"{document_url}#page={start_page}"
+                        if (document_url and start_page)
+                        else document_url,
+                        "chunk_index": out_idx,
+                        "total_chunks": total_chunks,
+                        "source_id": source_id,
+                        "start_page": start_page,
+                        "end_page": end_page,
+                        "heading": raw_meta.get("heading", ""),
+                        "subheading": raw_meta.get("subheading", ""),
+                    },
+                }
+            )
 
         for idx, fc in enumerate(flowchart_chunks, start=len(cleaned_text_chunks)):
-            all_chunks.append({
-                "chunk_id": f"{doc_id}_flowchart_{idx}",
-                "text": fc["text"],
-                "metadata": fc["metadata"] | {
-                    "source": s3_file_path,
-                    "source_url": document_url,
-                    "chunk_index": idx,
-                    "total_chunks": total_chunks,
-                    "source_id": source_id
-                },
-            })
+            all_chunks.append(
+                {
+                    "chunk_id": f"{doc_id}_flowchart_{idx}",
+                    "text": fc["text"],
+                    "metadata": fc["metadata"]
+                    | {
+                        "source": s3_file_path,
+                        "source_url": document_url,
+                        "chunk_index": idx,
+                        "total_chunks": total_chunks,
+                        "source_id": source_id,
+                    },
+                }
+            )
 
         # Final cap enforcement: extract_clean_plaintext rejoins lines with
         # double newlines which can push a chunk past the cap that was
@@ -1224,7 +1262,9 @@ def process_pdf_from_s3(
             with open(final_chunks_path, "w") as f:
                 for chunk in all_chunks:
                     f.write(json.dumps(chunk, indent=2) + "\n")
-            print(f"✅ Saved {len(all_chunks)} final chunks (including flowcharts) to {final_chunks_path}")
+            print(
+                f"✅ Saved {len(all_chunks)} final chunks (including flowcharts) to {final_chunks_path}"
+            )
 
         return all_chunks
 

@@ -15,12 +15,21 @@ import pytest
 
 from tools.ingestion.chunking.pymupdf_extractor import looks_like_real_table
 
-
 # --- Positive: real tables (should stay tables) ---
 
 WISCONSIN_COUNTY_GRID = [
     ["Wisconsin Counties - Alphabetical List", "", "", "", "", "", "", "", ""],
-    ["", "County", "District\nOffice", "", "County", "District\nOffice", "", "County", "District\nOffice"],
+    [
+        "",
+        "County",
+        "District\nOffice",
+        "",
+        "County",
+        "District\nOffice",
+        "",
+        "County",
+        "District\nOffice",
+    ],
     ["Code", "Name", "", "Code", "Name", "", "Code", "Name", ""],
     ["01", "Adams", "80", "25", "Iowa", "76", "48", "Polk", "79"],
     ["02", "Ashland", "80", "26", "Iron", "80", "49", "Portage", "80"],
@@ -52,7 +61,7 @@ POG_P41_FAKE_TABLE = [
         "Contact Information\nEau Claire District Office (79)\n221 W. Madison "
         "St., Suite 203\nEau Claire, WI 54703\neqleau@wisconsin.gov\nPh: "
         "715-836-2866 Fax: 715-836-6690\nGreen Bay District Office (81)\n200 N. "
-        "Jefferson St, Ste. 126\nGreen Bay, WI 54301-5100\neqlgrb@wisconsin.gov"
+        "Jefferson St, Ste. 126\nGreen Bay, WI 54301-5100\neqlgrb@wisconsin.gov",
     ],
     ["", ""],
 ]
@@ -64,7 +73,7 @@ TWO_COL_PROSE_LAYOUT = [
         "statutes. The review shall consider the highest and best use.",
         "If the property owner disagrees with the classification, the "
         "owner may file an objection with the Board of Review within "
-        "the statutory window established by sec. 70.47."
+        "the statutory window established by sec. 70.47.",
     ]
 ]
 
@@ -113,7 +122,7 @@ def test_few_rows_with_long_prose_cell_rejected() -> None:
             "This is a long paragraph of prose that runs on for many "
             "characters and contains sentence punctuation. It is clearly "
             "narrative text rather than a data cell and should disqualify "
-            "the whole block from being treated as a table."
+            "the whole block from being treated as a table.",
         ],
     ]
     assert looks_like_real_table(rows) is False

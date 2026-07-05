@@ -1,7 +1,5 @@
 """Unit tests for WPAM cross-edition chunk deduplication."""
 
-import pytest
-
 from wpam_dedup import dedupe_wpam_chunks
 
 
@@ -124,12 +122,22 @@ def test_target_year_allows_only_target_and_current():
 
 def test_non_wpam_chunks_pass_through_unchanged():
     chunks = [
-        {"chunk_id": "stat-1", "framework_id": "FW-STATUTES", "heading": "70.32",
-         "doc_id": "statutes-70-32", "text": "statute text"},
+        {
+            "chunk_id": "stat-1",
+            "framework_id": "FW-STATUTES",
+            "heading": "70.32",
+            "doc_id": "statutes-70-32",
+            "text": "statute text",
+        },
         _wpam_chunk(2018, "WPAM section"),
         _wpam_chunk(2025, "WPAM section"),
-        {"chunk_id": "stat-2", "framework_id": "FW-STATUTES", "heading": "70.33",
-         "doc_id": "statutes-70-33", "text": "another statute"},
+        {
+            "chunk_id": "stat-2",
+            "framework_id": "FW-STATUTES",
+            "heading": "70.33",
+            "doc_id": "statutes-70-33",
+            "text": "another statute",
+        },
     ]
     result = dedupe_wpam_chunks(chunks, target_year=None)
     assert len(result) == 3
@@ -142,8 +150,13 @@ def test_wpam_chunk_missing_edition_year_passes_through():
     """An old WPAM chunk loaded before this feature has no edition_year.
     It must NOT be deduped against newer chunks (we can't tell which is newer)."""
     chunks = [
-        {"chunk_id": "old", "doc_id": "wpam-...", "framework_id": "FW-WPAM",
-         "heading": "Manufactured Homes", "text": "old text"},
+        {
+            "chunk_id": "old",
+            "doc_id": "wpam-...",
+            "framework_id": "FW-WPAM",
+            "heading": "Manufactured Homes",
+            "text": "old text",
+        },
         _wpam_chunk(2025, "Manufactured Homes"),
     ]
     result = dedupe_wpam_chunks(chunks, target_year=None)
@@ -158,10 +171,22 @@ def test_empty_input_returns_empty():
 def test_normalizes_heading_whitespace_and_case():
     """Same section, slightly different heading whitespace/case across editions."""
     chunks = [
-        {"chunk_id": "c1", "doc_id": "wpam-2018", "framework_id": "FW-WPAM",
-         "edition_year": 2018, "heading": "Manufactured  Homes", "text": "..."},
-        {"chunk_id": "c2", "doc_id": "wpam-2025", "framework_id": "FW-WPAM",
-         "edition_year": 2025, "heading": "manufactured homes", "text": "..."},
+        {
+            "chunk_id": "c1",
+            "doc_id": "wpam-2018",
+            "framework_id": "FW-WPAM",
+            "edition_year": 2018,
+            "heading": "Manufactured  Homes",
+            "text": "...",
+        },
+        {
+            "chunk_id": "c2",
+            "doc_id": "wpam-2025",
+            "framework_id": "FW-WPAM",
+            "edition_year": 2025,
+            "heading": "manufactured homes",
+            "text": "...",
+        },
     ]
     result = dedupe_wpam_chunks(chunks, target_year=None)
     assert len(result) == 1

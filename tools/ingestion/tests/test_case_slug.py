@@ -6,11 +6,17 @@ This mapping must match the slugification used by the upload script
 so 92%+ of stubs resolve to real files.
 """
 
+import os
+import sys
+
 import pytest
 
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "backend", "lambdas", "agentic_retrieval"))
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "backend", "lambdas", "agentic_retrieval"
+    ),
+)
 from case_opinion import citation_to_raw_key
 
 

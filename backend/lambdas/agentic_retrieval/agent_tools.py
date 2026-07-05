@@ -39,6 +39,7 @@ def extract_citations(text: str) -> list[str]:
         normalized.add(norm)
     return sorted(normalized)
 
+
 logger = logging.getLogger(__name__)
 LOG_TOOL_TRACE = os.environ.get("LOG_TOOL_TRACE", "true").lower() == "true"
 LOG_QUERY_TEXT = os.environ.get("LOG_QUERY_TEXT", "true").lower() == "true"
@@ -50,9 +51,7 @@ bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=REGION
 
 FAQ_KNOWLEDGE_BASE_ID = os.environ.get("FAQ_KNOWLEDGE_BASE_ID", "")
 RAW_BUCKET = os.environ.get("RAW_BUCKET", "")
-REFINEMENT_MODEL_ID = os.environ.get(
-    "AGENTIC_MODEL_ID", "us.anthropic.claude-sonnet-4-6"
-)
+REFINEMENT_MODEL_ID = os.environ.get("AGENTIC_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 
 
 def _truncate_text(value: str, max_chars: int = LOG_MAX_TEXT_CHARS) -> str:
@@ -153,9 +152,7 @@ TOOL_DEFINITIONS = [
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": (
-                                "The original user question to refine."
-                            ),
+                            "description": ("The original user question to refine."),
                         }
                     },
                     "required": ["query"],
@@ -216,8 +213,7 @@ TOOL_DEFINITIONS = [
                         "doc_id": {
                             "type": "string",
                             "description": (
-                                "The document ID to search within"
-                                " (from a previous tool result)"
+                                "The document ID to search within (from a previous tool result)"
                             ),
                         },
                         "query": {
@@ -261,8 +257,7 @@ TOOL_DEFINITIONS = [
                         "doc_id": {
                             "type": "string",
                             "description": (
-                                "The document ID to list sections for "
-                                "(from a previous tool result)"
+                                "The document ID to list sections for (from a previous tool result)"
                             ),
                         },
                     },
@@ -290,9 +285,7 @@ TOOL_DEFINITIONS = [
                     "properties": {
                         "doc_id": {
                             "type": "string",
-                            "description": (
-                                "The document ID containing the section"
-                            ),
+                            "description": ("The document ID containing the section"),
                         },
                         "heading": {
                             "type": "string",
@@ -560,15 +553,19 @@ TOOL_DEFINITIONS = [
 def embed_query(query: str, model_id: str = "amazon.titan-embed-text-v2:0") -> list[float]:
     """Embed a query string for vector search."""
     started = time.perf_counter()
-    body = json.dumps({
-        "inputText": query[:8000],
-        "dimensions": 1024,
-        "normalize": True,
-    })
+    body = json.dumps(
+        {
+            "inputText": query[:8000],
+            "dimensions": 1024,
+            "normalize": True,
+        }
+    )
     try:
         response = bedrock.invoke_model(
-            modelId=model_id, body=body,
-            contentType="application/json", accept="application/json",
+            modelId=model_id,
+            body=body,
+            contentType="application/json",
+            accept="application/json",
         )
         embedding = json.loads(response["body"].read())["embedding"]
     except Exception as exc:
@@ -605,7 +602,7 @@ def _rank_chunks_by_relevance(
     import math
 
     def _cosine(a: list[float], b: list[float]) -> float:
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         norm_a = math.sqrt(sum(x * x for x in a))
         norm_b = math.sqrt(sum(x * x for x in b))
         if norm_a == 0 or norm_b == 0:
@@ -668,21 +665,23 @@ def _rank_chunks_by_relevance(
 
     results = []
     all_chunk_scores = []
-    for i, (z, score, chunk) in enumerate(ranked):
+    for _i, (z, score, chunk) in enumerate(ranked):
         included = (len(results) < top_k) and (z >= _Z_THRESHOLD or len(results) == 0)
         if included:
             chunk["relevance_score"] = round(score, 4)
             results.append(chunk)
-        all_chunk_scores.append({
-            "chunkId": chunk.get("id", ""),
-            "cosine": round(score, 4),
-            "zScore": round(z, 2),
-            "heading": chunk.get("heading", ""),
-            "subheading": chunk.get("subheading", ""),
-            "startPage": chunk.get("start_page"),
-            "endPage": chunk.get("end_page"),
-            "included": included,
-        })
+        all_chunk_scores.append(
+            {
+                "chunkId": chunk.get("id", ""),
+                "cosine": round(score, 4),
+                "zScore": round(z, 2),
+                "heading": chunk.get("heading", ""),
+                "subheading": chunk.get("subheading", ""),
+                "startPage": chunk.get("start_page"),
+                "endPage": chunk.get("end_page"),
+                "included": included,
+            }
+        )
 
     return {
         "chunks": results,
@@ -734,9 +733,7 @@ def execute_tool(
         for result in response.get("retrievalResults", []):
             text = result.get("content", {}).get("text", "")
             score = result.get("score", 0.0)
-            source_uri = (
-                result.get("location", {}).get("s3Location", {}).get("uri", "")
-            )
+            source_uri = result.get("location", {}).get("s3Location", {}).get("uri", "")
             faqs.append({"text": text, "score": score, "source_uri": source_uri})
         _log_tool_event(
             "faq_search_complete",
@@ -823,7 +820,8 @@ def execute_tool(
         chunks = neptune.vector_search(embedding, top_k=fetch_k)
         pre_dedup_count = len(chunks)
         chunks = dedupe_wpam_chunks(
-            chunks, target_year=target_year,
+            chunks,
+            target_year=target_year,
             current_wpam_year=neptune.current_wpam_year,
         )
         max_per_doc = int(os.environ.get("DIVERSITY_CAP_PER_DOC", "5"))
@@ -875,9 +873,17 @@ def execute_tool(
 
         _ENRICH_CAP = int(os.environ.get("ENRICH_CAP_PER_DOC", "20"))
         _ENRICH_CAP_PER_TYPE = int(os.environ.get("ENRICH_CAP_PER_TYPE", "4"))
-        _EDGE_PRIORITY = {"CITES": 0, "IMPLEMENTS": 0, "DERIVED_FROM": 1,
-                          "BELONGS_TO": 2, "COVERS_TOPIC": 3, "RELATED_TO": 4,
-                          "SUPPLEMENTS": 4, "SUPERSEDES": 4, "CONFLICTS_WITH": 4}
+        _EDGE_PRIORITY = {
+            "CITES": 0,
+            "IMPLEMENTS": 0,
+            "DERIVED_FROM": 1,
+            "BELONGS_TO": 2,
+            "COVERS_TOPIC": 3,
+            "RELATED_TO": 4,
+            "SUPPLEMENTS": 4,
+            "SUPERSEDES": 4,
+            "CONFLICTS_WITH": 4,
+        }
 
         def _rank_neighbors(neighbors: list[dict]) -> list[dict]:
             """Rank by edge priority then authority, diversity-cap per doc_type."""
@@ -961,9 +967,7 @@ def execute_tool(
                         subsection_ids.add(f"WIS-STAT-{m.group(1).strip()}")
             if subsection_ids:
                 existing_ids = {c.get("id") for c in related_case_law}
-                graph_cases = neptune.get_cases_for_subsections(
-                    list(subsection_ids), limit=100
-                )
+                graph_cases = neptune.get_cases_for_subsections(list(subsection_ids), limit=100)
                 # Sort by year from node ID (modern citations: case-law-YYYY-wi-*)
                 _yr_re = re.compile(r"^case-law-(\d{4})-wi")
 
@@ -972,10 +976,7 @@ def execute_tool(
                     return int(m.group(1)) if m else 0
 
                 graph_cases.sort(key=_case_year, reverse=True)
-                new_cases = [
-                    c for c in graph_cases[:15]
-                    if c.get("id") not in existing_ids
-                ]
+                new_cases = [c for c in graph_cases[:15] if c.get("id") not in existing_ids]
                 if new_cases:
                     related_case_law.extend(new_cases)
                     _log_tool_event(
@@ -995,17 +996,19 @@ def execute_tool(
         # surfaces cases like Peter Ogden (2019 WI 23) that are mentioned in
         # neighbor doc text but not in the directly-retrieved chunks.
         try:
-            neighbor_doc_ids = sorted({
-                n.get("id")
-                for neighbors in graph_context.values()
-                for n in neighbors
-                if n.get("id")
-                and n.get("framework_id") != "FW-WPAM"
-                and not any(
-                    lbl in (n.get("labels") or [])
-                    for lbl in ("CaseLaw", "Statute", "Framework", "Topic", "Chunk")
-                )
-            })
+            neighbor_doc_ids = sorted(
+                {
+                    n.get("id")
+                    for neighbors in graph_context.values()
+                    for n in neighbors
+                    if n.get("id")
+                    and n.get("framework_id") != "FW-WPAM"
+                    and not any(
+                        lbl in (n.get("labels") or [])
+                        for lbl in ("CaseLaw", "Statute", "Framework", "Topic", "Chunk")
+                    )
+                }
+            )
             if neighbor_doc_ids:
                 chunk_ids = [c.get("chunk_id", "") for c in chunks if c.get("chunk_id")]
                 chunk_statute_ids = neptune.get_chunk_statute_ids(chunk_ids)
@@ -1020,16 +1023,12 @@ def execute_tool(
                         if neighbor_citations:
                             existing_citations = set(citations) if citations else set()
                             new_citations = [
-                                c for c in neighbor_citations
-                                if c not in existing_citations
+                                c for c in neighbor_citations if c not in existing_citations
                             ]
                             if new_citations:
                                 existing_ids = {c.get("id") for c in related_case_law}
                                 resolved = neptune.resolve_case_citations(new_citations)
-                                resolved = [
-                                    c for c in resolved
-                                    if c.get("id") not in existing_ids
-                                ]
+                                resolved = [c for c in resolved if c.get("id") not in existing_ids]
                                 if resolved:
                                     related_case_law.extend(resolved)
                                     _log_tool_event(
@@ -1117,8 +1116,7 @@ def execute_tool(
                 return {
                     "error": f"No chunks found for document '{target_doc_id}' matching this query",
                     "suggestion": (
-                        "Try a different sub-query or use"
-                        " vector_search with broader terms"
+                        "Try a different sub-query or use vector_search with broader terms"
                     ),
                 }
         return {"chunks": matched, "doc_id": target_doc_id, "keyword_fallback": keyword_fallback}
@@ -1202,9 +1200,7 @@ def execute_tool(
         # and format mismatches (e.g., user capitalization differences).
         try:
             matches = (
-                neptune.vector_search(embed_query(requested_id), top_k=5)
-                if requested_id
-                else []
+                neptune.vector_search(embed_query(requested_id), top_k=5) if requested_id else []
             )
         except Exception:  # noqa: BLE001
             matches = []
@@ -1230,7 +1226,8 @@ def execute_tool(
         )
         target_year = tool_input.get("target_wpam_year")
         neighbors = dedupe_wpam_chunks(
-            neighbors, target_year=target_year,
+            neighbors,
+            target_year=target_year,
             current_wpam_year=neptune.current_wpam_year,
         )
         pre_filter_count = len(neighbors)
@@ -1244,9 +1241,9 @@ def execute_tool(
             target_wpam_year=target_year,
             neighbor_count=len(neighbors),
             filtered_chunk_count=pre_filter_count - len(neighbors),
-            relationships=sorted({
-                n.get("relationship", "") for n in neighbors if n.get("relationship")
-            }),
+            relationships=sorted(
+                {n.get("relationship", "") for n in neighbors if n.get("relationship")}
+            ),
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
         return {"neighbors": neighbors}
@@ -1284,9 +1281,7 @@ def execute_tool(
             cases = neptune.resolve_case_citations(citations)
         # Fall back to title substring search
         if not cases and search_text:
-            cases = neptune.find_case_law(
-                search_text, statute_id=statute_id, limit=10
-            )
+            cases = neptune.find_case_law(search_text, statute_id=statute_id, limit=10)
         _log_tool_event(
             "find_case_law_complete",
             tool_name=tool_name,

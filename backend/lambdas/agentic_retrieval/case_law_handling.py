@@ -20,9 +20,7 @@ DISCOVERY_TAG_PRIORITY = [
     "unknown",
 ]
 
-_CASE_NAME_SUFFIX_RE = re.compile(
-    r"\s*(?:[–—:]|-\s)|,\s*(?=\d+\b)"
-)
+_CASE_NAME_SUFFIX_RE = re.compile(r"\s*(?:[–—:]|-\s)|,\s*(?=\d+\b)")
 
 _YEAR_RE = re.compile(r"\b(\d{4})\b")
 
@@ -62,9 +60,7 @@ def collapse_case_law_by_title(
             continue
         name_key = extract_case_name(rag_doc.title)
         year_key = extract_year(rag_doc.title)
-        by_name.setdefault(name_key, {}).setdefault(year_key, []).append(
-            (doc_id, rag_doc)
-        )
+        by_name.setdefault(name_key, {}).setdefault(year_key, []).append((doc_id, rag_doc))
 
     groups: list[list[tuple[str, RAGDocument]]] = []
     for year_buckets in by_name.values():

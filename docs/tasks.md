@@ -11,7 +11,7 @@
 | 26 | Admin ingestion page — ingest documents via URL from the UI | — |
 | 27 | Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags | — |
 | 32 | Show trimmed section page index in answer synthesis trace card | — |
-| 35 | Eliminate WIS-STAT stubs — rewire CITES edges to full statute docs | — |
+| 35 | Graph wiring overhaul — stubs as routing nodes, not dead ends | — |
 | 39 | Discover and ingest 2026 news pages | — |
 
 ## Done
@@ -281,40 +281,71 @@ statutes-70:
 
 ---
 
-### Task 35: Eliminate WIS-STAT stubs — rewire CITES edges to full statute docs
+### Task 35: Graph wiring overhaul — stubs as routing nodes, not dead ends
 
-**Problem:** The graph has ~hundreds of `WIS-STAT-{chapter}.{section}` stub nodes (label: `Statute`) with no chunks, no s3_key, no source_url. They exist as CITES targets — e.g., ag guide → CITES → `WIS-STAT-73.03`. But the agent can't do anything useful with them: can't `search_document` (no chunks), can't link to them (no URL), can't get_section. They eat neighbor slots and create dead-end traversals.
+**Problem:** The load phase has three structural issues that compound into noisy, imprecise traversals:
 
-Meanwhile, full statute docs (`statutes-70`, `statutes-73`, etc.) have chunks with page numbers, source_urls, and section headings — everything needed for citation. But there's no edge connecting stubs to their parent full doc.
+1. **Phase 3 (doc-level CITES)** creates edges from entire documents to statute stubs based on LLM classification (first 4K chars only). This is redundant with the deterministic chunk-level CITES from Phase 8, unreliable (LLM misses refs past page 2), and the primary cause of hub bloat — statute stubs like `WIS-STAT-70.32` accumulate dozens of incoming edges from whole documents, making `get_neighbors` return huge lists of document-level pointers with no indication of which passage is relevant.
 
-**Current graph structure:**
+2. **Phase 5 (topic merging)** burns an LLM call every ingestion to cluster topics into canonical names and wire `COVERS_TOPIC` edges. The retrieval agent never traverses these edges — confirmed zero references in `main.py`. Dead graph weight + wasted Bedrock cost.
+
+3. **Phase 9 (stub resolution)** tries to collapse section stubs (`WIS-STAT-70.32`) into chapter documents (`statutes-wi-statute-ch70`). This loses section-level granularity — everything becomes "cites chapter 70." Meanwhile the stub stays as a dangling node anyway.
+
+**Current traversal (broken):**
 ```
-ag_guide --CITES--> WIS-STAT-73.03 --PART_OF--> WIS-STAT-73 --BELONGS_TO--> FW-STATUTES
-statutes-73 --BELONGS_TO--> FW-STATUTES  (disconnected from stubs)
+wpam_chunk -[CITES]→ WIS-STAT-70.32 (dead end, no content)
+wpam_doc   -[CITES]→ WIS-STAT-70.32 (redundant, bloats hub)
+                      WIS-STAT-70.32 -[PART_OF]→ CH-70
+statutes-wi-statute-ch70_chunk_0042 (has the § 70.32 text, disconnected from stub)
 ```
 
-**Desired outcome:** When the agent traverses from a guide/publication via CITES, it arrives at a node it can actually search/cite — the full statute chapter doc.
+**Desired traversal:**
+```
+wpam_chunk -[CITES]→ WIS-STAT-70.32 -[DEFINED_BY]→ statutes-wi-statute-ch70_chunk_0042
+```
 
-**Options (pick one):**
+Stubs become bidirectional routing nodes:
+- **Inbound CITES** (chunk-level only) = "which passages cite this section"
+- **Outbound DEFINED_BY** = "what does this section actually say" (the statute chunk with matching heading)
 
-1. **Rewire CITES edges to chapter docs** — For every `CITES` edge pointing at a `WIS-STAT-{ch}.{sec}` stub where `statutes-{ch}` exists, redirect it to `statutes-{ch}`. Optionally preserve the section number as an edge property (`section: "73.03"`) so the agent knows which section was cited. Then delete orphaned stubs. Simple, loses section-level granularity in the graph.
+**Changes to load.py:**
 
-2. **Add HAS_SECTION edges from chapter docs to stubs** — Keep stubs as lightweight "section pointers" but wire them to the parent doc: `statutes-73 --HAS_SECTION--> WIS-STAT-73.03`. Agent can then traverse stub → parent doc → search_document. Preserves section granularity but adds traversal hops.
+| Phase | Action |
+|-------|--------|
+| Phase 3 | **Remove entirely.** Doc-level CITES/IMPLEMENTS edges are redundant with chunk-level (Phase 8) and cause hub bloat. The `statute_refs`/`implements_refs` fields from LLM classification are no longer consumed. |
+| Phase 5 | **Remove entirely.** Topic nodes and `COVERS_TOPIC` edges are never queried at retrieval time. |
+| Phase 9 | **Rewrite.** Instead of re-pointing edges to chapter docs, wire `(stub)-[DEFINED_BY]->(chunk)` by matching stub ID `WIS-STAT-{section}` to statute chunks whose `heading` starts with `{section}`. Multiple chunks can define one section (long sections get split). |
 
-3. **Merge stub metadata into chunk properties** — Delete stubs entirely. The section information they represent is already encoded in chunk headings (`c.heading = "73.03 Department of Revenue..."`) within the full doc. The agent already uses `list_sections` + `get_section` to navigate within a doc. Stubs add nothing that chunks don't already provide.
+**Changes to retrieval (get_neighbors):**
 
-**Recommendation:** Option 3 (delete stubs, they're redundant). The section→page index and chunk headings already give the agent fine-grained section navigation within statute docs. Stubs are a legacy artifact from before full statute PDFs were ingested.
+Add transparent stub traversal: when `get_neighbors` encounters a stub with a `DEFINED_BY` edge, auto-follow it and return the target chunk instead of the stub. One extra deterministic hop, invisible to the agent. Cypher:
+```cypher
+MATCH (n {id: $id})-[r]-(neighbor)
+OPTIONAL MATCH (neighbor)-[:DEFINED_BY]->(resolved)
+  WHERE neighbor.stub = true
+RETURN CASE WHEN resolved IS NOT NULL THEN resolved ELSE neighbor END
+```
 
-**For stubs with NO corresponding full doc:** These are statute chapters we haven't ingested yet (e.g., `WIS-STAT-341.45`). They should either be ingested (download from legislature, add to S3) or the stubs should get a `source_url` property pointing to `https://docs.legis.wisconsin.gov/statutes/statutes/{chapter}.pdf` so at minimum the frontend can resolve links.
+**Phase 9 matching logic:**
 
-**Temp fix in place:** `_build_answer_context()` in `main.py` now scans cited chunk text for statute chapter references not in `cited_doc_ids`, queries Neptune for their section→page index, and appends it to the answer context. This lets the model emit `doc:statutes-{N}#page=X` links even when the agent didn't fetch the statute directly. Remove once CITES edges point to real statute docs and the agent naturally cites them.
+Statute chunks already have `heading` metadata like `"70.32 Real estate, how valued."` from `chunk_document_statute()`. For each stub `WIS-STAT-{section}`:
+1. Extract section number from stub ID (e.g., `70.32`)
+2. Derive chapter number (e.g., `70`)
+3. Find chunks from `statutes-wi-statute-ch{chapter}` where `heading` starts with `{section}`
+4. Wire `(stub)-[DEFINED_BY]->(chunk)` for each match
 
-**Scope estimate:** ~1 hour. Neptune queries to identify stubs with matching full docs, batch delete, verify no broken traversals. Separate pass for orphan stubs (no full doc) to add source_url or ingest the chapter.
+**For stubs with NO matching chunks:** These reference statute sections we haven't ingested or sections that didn't get their own chunk (rare subsections like `70.32(2)(a)6`). Leave as stubs — they still serve as citation join points even without content. Optionally add `source_url` pointing to the legislature PDF.
+
+**Side effects / cleanup:**
+- `doc.statute_refs` and `doc.implements_refs` from LLM classification are no longer consumed by load. They remain in the extracted JSON (cached classification) but create no edges.
+- `doc.topics` from LLM classification is no longer consumed. Topic nodes and edges stop being created.
+- The `_build_answer_context()` temp fix in `main.py` (scanning for statute chapter refs) can be removed once stubs route to real content via `DEFINED_BY`.
+- Classification caching (already implemented) means the now-unused LLM fields don't cost anything on re-runs — they're just ignored.
 
 **Key files:**
-- `tools/graphrag/load.py` — phases 6-7 create CITES/IMPLEMENTS edges and stub nodes
-- `backend/lambdas/agentic_retrieval/neptune_client.py` — `get_neighbors`, `find_stub_promotion`
-- `backend/lambdas/agentic_retrieval/rag_documents.py` — `build_rag_documents` stub promotion logic (lines 122-158)
+- `tools/graphrag/load.py` — remove Phase 3, remove Phase 5, rewrite Phase 9
+- `backend/lambdas/agentic_retrieval/neptune_client.py` — update `get_neighbors` Cypher for transparent stub traversal
+- `backend/lambdas/agentic_retrieval/main.py` — remove `_build_answer_context()` statute ref scanning (after verification)
 
 ---
 

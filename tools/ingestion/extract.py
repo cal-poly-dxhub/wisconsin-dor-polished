@@ -49,9 +49,7 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def resolve_authority_level(
-    metadata: dict, framework_id: str, config: dict
-) -> int | None:
+def resolve_authority_level(metadata: dict, framework_id: str, config: dict) -> int | None:
     """Resolve a document's authority level without defaulting to FAQ.
 
     Precedence:
@@ -66,9 +64,7 @@ def resolve_authority_level(
     if explicit is not None:
         return int(explicit)
 
-    framework_levels = {
-        fw["id"]: fw["authority_level"] for fw in config.get("frameworks", [])
-    }
+    framework_levels = {fw["id"]: fw["authority_level"] for fw in config.get("frameworks", [])}
     return framework_levels.get(framework_id)
 
 
@@ -168,9 +164,7 @@ def _parse_citing_statutes(metadata: dict) -> list[dict]:
     ]
 
 
-def _derive_case_statute_refs(
-    citing_statutes: list[dict], state_laws_dir: Path
-) -> list[str]:
+def _derive_case_statute_refs(citing_statutes: list[dict], state_laws_dir: Path) -> list[str]:
     """Build the case-law document's statute_refs list.
 
     Returns the union of:
@@ -200,9 +194,7 @@ def _derive_case_statute_refs(
             continue
         for page in src.get("pages", []) or []:
             try:
-                section = extract_section_for_page(
-                    pdf_path, int(page), expected_chapter=chapter
-                )
+                section = extract_section_for_page(pdf_path, int(page), expected_chapter=chapter)
             except (ValueError, TypeError):
                 continue
             if section:
@@ -256,9 +248,7 @@ def process_case_law_document(
     # so the agent can find this case from either granularity. Section is
     # derived from the page header in the local statute PDF; falls back to
     # chapter-only when the mirror is unavailable.
-    state_laws_dir = Path(
-        config.get("state_laws_dir") or DEFAULT_STATE_LAWS_DIR
-    )
+    state_laws_dir = Path(config.get("state_laws_dir") or DEFAULT_STATE_LAWS_DIR)
     statute_refs = _derive_case_statute_refs(citing_statutes, state_laws_dir)
 
     result = {
@@ -410,7 +400,8 @@ def process_document(
             source_url = metadata.get("source_url", "n/a")
             source_id = metadata.get("doc_id", doc_id)
             chunks = process_pdf_from_s3(
-                raw_bucket, key,
+                raw_bucket,
+                key,
                 document_url=source_url,
                 source_id=source_id,
             )
@@ -425,17 +416,19 @@ def process_document(
                 chunk_text = full_text[i : i + chunk_size]
                 if len(chunk_text.strip()) < 50:
                     continue
-                chunks.append({
-                    "text": chunk_text,
-                    "metadata": {
-                        "doc_id": doc_id,
-                        "source": key,
-                        "source_url": metadata.get("source_url", "n/a"),
-                        "chunk_index": len(chunks),
-                        "start_page": None,
-                        "end_page": None,
-                    },
-                })
+                chunks.append(
+                    {
+                        "text": chunk_text,
+                        "metadata": {
+                            "doc_id": doc_id,
+                            "source": key,
+                            "source_url": metadata.get("source_url", "n/a"),
+                            "chunk_index": len(chunks),
+                            "start_page": None,
+                            "end_page": None,
+                        },
+                    }
+                )
 
         for chunk in chunks:
             citations = extract_chunk_citations(chunk["text"])
@@ -520,15 +513,19 @@ def main():
     parser.add_argument("--work-bucket", required=True, help="S3 bucket for intermediate cache")
     parser.add_argument("--config", default="tools/ingestion/config/ingest_config.yaml")
     parser.add_argument("--max-workers", type=int, default=3)
-    parser.add_argument("--force", action="store_true", help="Re-extract all documents, ignoring cache")
     parser.add_argument(
-        "--smart", action="store_true",
+        "--force", action="store_true", help="Re-extract all documents, ignoring cache"
+    )
+    parser.add_argument(
+        "--smart",
+        action="store_true",
         help="Only re-extract documents whose raw file is newer than their extraction cache.",
     )
     parser.add_argument(
-        "--reclassify", action="store_true",
+        "--reclassify",
+        action="store_true",
         help="Force LLM reclassification even if a cached classification exists. "
-             "Without this flag, only chunking + citation extraction re-runs on --force.",
+        "Without this flag, only chunking + citation extraction re-runs on --force.",
     )
     parser.add_argument(
         "--source-filter",
@@ -545,15 +542,14 @@ def main():
     if args.source_filter:
         before = len(docs)
         docs = [d for d in docs if d["doc_id"].startswith(args.source_filter)]
-        logger.info(
-            f"Source filter '{args.source_filter}': {before} → {len(docs)} documents"
-        )
+        logger.info(f"Source filter '{args.source_filter}': {before} → {len(docs)} documents")
 
     if args.force:
         pass  # Re-extract everything
     elif args.smart:
         # Only re-extract docs whose raw file is newer than extraction cache
         from botocore.exceptions import ClientError
+
         stale = []
         for doc in docs:
             doc_id = doc["doc_id"]
@@ -571,13 +567,19 @@ def main():
         already_done = list_already_extracted(args.work_bucket)
         before = len(docs)
         docs = [d for d in docs if d["doc_id"] not in already_done]
-        logger.info(f"Skipping {before - len(docs)} already-extracted documents, {len(docs)} remaining")
+        logger.info(
+            f"Skipping {before - len(docs)} already-extracted documents, {len(docs)} remaining"
+        )
 
     results = []
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = {
             executor.submit(
-                process_document, doc, args.raw_bucket, args.work_bucket, config,
+                process_document,
+                doc,
+                args.raw_bucket,
+                args.work_bucket,
+                config,
                 reclassify=args.reclassify,
             ): doc
             for doc in docs
@@ -591,8 +593,7 @@ def main():
     logger.info(f"Extraction complete: {len(results)} documents after dedup")
 
     manifest = [
-        {k: v for k, v in doc.items() if k not in ("full_text", "chunks")}
-        for doc in results
+        {k: v for k, v in doc.items() if k not in ("full_text", "chunks")} for doc in results
     ]
     manifest_key = "extracted/manifest.json"
     s3.put_object(

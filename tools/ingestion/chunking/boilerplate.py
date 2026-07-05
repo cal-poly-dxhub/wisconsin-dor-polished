@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import List, Tuple
 
 # --- General patterns (all doc types) ---
 GENERAL_PATTERNS = [
@@ -66,9 +65,9 @@ _LEADER_DOT_RE = re.compile(r"\.{5,}")
 
 
 def strip_boilerplate(
-    line_page_mapping: List[Tuple[str, int]],
+    line_page_mapping: list[tuple[str, int]],
     strategy: str = "general",
-) -> List[Tuple[str, int]]:
+) -> list[tuple[str, int]]:
     """Remove boilerplate lines from line-page mapping.
 
     Applies GENERAL_PATTERNS (always) plus strategy-specific patterns.
@@ -87,7 +86,7 @@ def strip_boilerplate(
     ]
 
 
-def _in_toc_context(index: int, line_page_mapping: List[Tuple[str, int]], window: int = 5) -> bool:
+def _in_toc_context(index: int, line_page_mapping: list[tuple[str, int]], window: int = 5) -> bool:
     """Return True when the line at `index` is surrounded by leader-dot lines (TOC)."""
     start = max(0, index - window)
     end = min(len(line_page_mapping), index + window + 1)
@@ -101,9 +100,9 @@ def _in_toc_context(index: int, line_page_mapping: List[Tuple[str, int]], window
 
 
 def _strip_wpam_running_headers(
-    line_page_mapping: List[Tuple[str, int]],
+    line_page_mapping: list[tuple[str, int]],
     threshold: int = 3,
-) -> List[Tuple[str, int]]:
+) -> list[tuple[str, int]]:
     """Strip repeated 'Chapter N Title' running headers, keeping first non-TOC occurrence.
 
     Lines matching the chapter-title pattern that appear more than `threshold`
@@ -138,7 +137,7 @@ def _strip_wpam_running_headers(
             kept_index[stripped] = i
 
     # Second pass: emit only the kept occurrence, drop all other duplicates
-    result: List[Tuple[str, int]] = []
+    result: list[tuple[str, int]] = []
     for i, (line, pnum) in enumerate(line_page_mapping):
         stripped = line.strip()
         if stripped in running_headers:

@@ -3,32 +3,37 @@
 from unittest.mock import MagicMock
 
 import pytest
-
 from trace_summaries import (
     build_tool_call_summary,
     build_tool_result_summary,
     discovery_summary,
     summarize_assistant_message,
     summarize_bedrock_response,
-    summarize_tool_result,
 )
 
 
 class TestBuildToolCallSummary:
     def test_vector_search(self):
-        assert build_tool_call_summary("vector_search", {"query": "ag use value"}) == '"ag use value"'
+        assert (
+            build_tool_call_summary("vector_search", {"query": "ag use value"}) == '"ag use value"'
+        )
 
     def test_faq_search(self):
         assert build_tool_call_summary("faq_search", {"query": "what is TID"}) == '"what is TID"'
 
     def test_get_neighbors(self):
-        assert build_tool_call_summary("get_neighbors", {"doc_id": "stat-70-32"}, None) == "stat-70-32"
+        assert (
+            build_tool_call_summary("get_neighbors", {"doc_id": "stat-70-32"}, None) == "stat-70-32"
+        )
 
     def test_get_document(self):
         assert build_tool_call_summary("get_document", {"doc_id": "doc-1"}) == "doc-1"
 
     def test_prepare_answer(self):
-        assert build_tool_call_summary("prepare_answer", {"cited_doc_ids": ["a", "b", "c"]}, None) == "with 3 cited sources"
+        assert (
+            build_tool_call_summary("prepare_answer", {"cited_doc_ids": ["a", "b", "c"]}, None)
+            == "with 3 cited sources"
+        )
 
     def test_unknown_tool(self):
         assert build_tool_call_summary("mystery_tool", {"foo": "bar"}) == ""
@@ -39,7 +44,10 @@ class TestBuildToolCallSummary:
         assert build_tool_call_summary("get_neighbors", {"doc_id": ""}, None) == ""
         assert build_tool_call_summary("get_authority_chain", {}, None) == ""
         assert build_tool_call_summary("prepare_answer", {}, None) == "with 0 cited sources"
-        assert build_tool_call_summary("prepare_answer", {"cited_doc_ids": None}, None) == "with 0 cited sources"
+        assert (
+            build_tool_call_summary("prepare_answer", {"cited_doc_ids": None}, None)
+            == "with 0 cited sources"
+        )
 
 
 class TestBuildToolResultSummary:
@@ -67,32 +75,50 @@ class TestBuildToolResultSummary:
         assert s["metadata"]["topScore"] == pytest.approx(0.91)
 
     def test_get_neighbors(self):
-        result = {"neighbors": [{"id": "d1", "relationship": "CITES"}, {"id": "d2", "relationship": "IMPLEMENTS"}]}
+        result = {
+            "neighbors": [
+                {"id": "d1", "relationship": "CITES"},
+                {"id": "d2", "relationship": "IMPLEMENTS"},
+            ]
+        }
         s = build_tool_result_summary("get_neighbors", result, self._mock_neptune())
         assert s["status"] == "ok"
         assert "2 related" in s["summary_text"]
         assert set(s["doc_ids"]) == {"d1", "d2"}
 
     def test_faq_search_with_scores(self):
-        result = {"faqs": [{"text": "Q: x\nA: y", "score": 0.84}, {"text": "Q: p\nA: q", "score": 0.71}], "count": 2}
+        result = {
+            "faqs": [{"text": "Q: x\nA: y", "score": 0.84}, {"text": "Q: p\nA: q", "score": 0.71}],
+            "count": 2,
+        }
         s = build_tool_result_summary("faq_search", result, self._mock_neptune())
         assert s["status"] == "ok"
         assert "0.84" in s["summary_text"]
         assert s["metadata"]["faqCount"] == 2
 
     def test_error_result(self):
-        s = build_tool_result_summary("get_document", {"error": "not found", "fallback_matches": []}, self._mock_neptune())
+        s = build_tool_result_summary(
+            "get_document", {"error": "not found", "fallback_matches": []}, self._mock_neptune()
+        )
         assert s["status"] == "error"
         assert "not found" in s["summary_text"]
 
     def test_prepare_answer_terminal(self):
-        s = build_tool_result_summary("prepare_answer", {"cited_doc_ids": ["a", "b"], "answer_plan": "plan"}, self._mock_neptune())
+        s = build_tool_result_summary(
+            "prepare_answer",
+            {"cited_doc_ids": ["a", "b"], "answer_plan": "plan"},
+            self._mock_neptune(),
+        )
         assert s["status"] == "terminal"
         assert "2 sources" in s["summary_text"]
         assert s["doc_ids"] == ["a", "b"]
 
     def test_fetch_opinion_miss(self):
-        s = build_tool_result_summary("fetch_case_opinion", {"found": False, "citation": "123 Wis. 2d 45"}, self._mock_neptune())
+        s = build_tool_result_summary(
+            "fetch_case_opinion",
+            {"found": False, "citation": "123 Wis. 2d 45"},
+            self._mock_neptune(),
+        )
         assert s["status"] == "miss"
         assert "123 Wis. 2d 45" in s["summary_text"]
 

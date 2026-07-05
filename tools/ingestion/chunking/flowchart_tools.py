@@ -1,7 +1,7 @@
-import io
 import base64
+import io
 import json
-from typing import List, Dict
+
 from PIL import Image
 from textractor.entities.document import Document
 
@@ -14,7 +14,7 @@ def encode_image_to_base64(img: Image.Image) -> str:
 
 def extract_flowcharts_from_document(
     document: Document, bedrock_runtime, doc_id: str
-) -> List[Dict]:
+) -> list[dict]:
     """
     Extract and describe flowcharts (LAYOUT_FIGURE) using Claude via Bedrock.
     Requires Textractor document to be loaded with save_image=True.
@@ -24,18 +24,12 @@ def extract_flowcharts_from_document(
 
     for page_idx, page in enumerate(document.pages):
         if not hasattr(page, "image") or page.image is None:
-            print(
-                f"⚠️  No image found for page {page_idx + 1}, skipping flowchart detection."
-            )
+            print(f"⚠️  No image found for page {page_idx + 1}, skipping flowchart detection.")
             continue
 
-        figures = (
-            page.page_layout.figures
-            if page.page_layout and page.page_layout.figures
-            else []
-        )
+        figures = page.page_layout.figures if page.page_layout and page.page_layout.figures else []
 
-        for i, fig in enumerate(figures):
+        for _i, fig in enumerate(figures):
             bbox = fig.bbox
             img = page.image
             w, h = img.width, img.height
@@ -51,12 +45,12 @@ def extract_flowcharts_from_document(
             cropped = img.crop((left, top, right, bottom))
             image_b64 = encode_image_to_base64(cropped)
 
-            prompt = """You are given an image.  
+            prompt = """You are given an image.
 
             1. Read all text from the flowchart, including decision diamonds, process steps, and stop points.
-            2. Convert the flowchart into a step-by-step text description of the process. 
-            3. Use the format: 
-            - Start 
+            2. Convert the flowchart into a step-by-step text description of the process.
+            3. Use the format:
+            - Start
             - Step X → Next Step [condition if any]
             - Stop / Exemptions
             4. Preserve statutory references (e.g., sec. 70.111(19)(a), Wis. Stats.) exactly as written.

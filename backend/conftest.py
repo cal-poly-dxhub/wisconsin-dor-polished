@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 
 root = os.path.dirname(__file__)
 # Only add shared layers to sys.path. Individual Lambda directories are

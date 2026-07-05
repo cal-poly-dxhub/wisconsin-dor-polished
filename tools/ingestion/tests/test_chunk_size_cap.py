@@ -57,9 +57,7 @@ def _soft_cap(mapping: list[tuple[str, int]]) -> int:
 def test_no_chunk_exceeds_cap_for_long_paragraphs() -> None:
     """Dense paragraphs that would produce a 15KB chunk get split correctly."""
     # 30 paragraphs of 500 chars each under one chapter+section = 15KB total.
-    paragraphs = [
-        f"Paragraph {i}. " + ("Lorem ipsum dolor sit amet. " * 17) for i in range(30)
-    ]
+    paragraphs = [f"Paragraph {i}. " + ("Lorem ipsum dolor sit amet. " * 17) for i in range(30)]
     mapping = [("Chapter 1", 1), ("Assessment Methods", 1)]
     for i, p in enumerate(paragraphs):
         mapping.append((p, 1 + i // 3))

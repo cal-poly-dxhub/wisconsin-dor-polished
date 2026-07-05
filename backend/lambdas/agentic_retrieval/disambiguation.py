@@ -10,7 +10,6 @@ On the user's follow-up reply, chat history contains the clarification
 exchange and the agent proceeds with targeted retrieval.
 """
 
-import json
 import logging
 import os
 
@@ -76,15 +75,34 @@ def should_disambiguate(query: str, chat_history: list[dict]) -> bool:
 
     q = query.lower()
     type_keywords = [
-        "manufacturing", "agricultural", "agriculture", "farmland",
-        "farm land", "residential", "commercial", "personal property",
-        "forest land", "undeveloped",
+        "manufacturing",
+        "agricultural",
+        "agriculture",
+        "farmland",
+        "farm land",
+        "residential",
+        "commercial",
+        "personal property",
+        "forest land",
+        "undeveloped",
     ]
     ownership_keywords = [
-        "native american", "tribal", "indian", "reservation",
-        "trust land", "church", "religious", "nonprofit", "non-profit",
-        "government", "municipal", "county-owned", "state-owned",
-        "federal", "exempt organization", "veteran",
+        "native american",
+        "tribal",
+        "indian",
+        "reservation",
+        "trust land",
+        "church",
+        "religious",
+        "nonprofit",
+        "non-profit",
+        "government",
+        "municipal",
+        "county-owned",
+        "state-owned",
+        "federal",
+        "exempt organization",
+        "veteran",
     ]
     if any(kw in q for kw in type_keywords):
         return False

@@ -8,11 +8,7 @@ from tracing import truncate_text
 def summarize_assistant_message(message: dict, max_chars: int) -> dict[str, Any]:
     content = message.get("content") or []
     text_blocks = [block.get("text", "") for block in content if "text" in block]
-    tool_names = [
-        block["toolUse"].get("name", "")
-        for block in content
-        if "toolUse" in block
-    ]
+    tool_names = [block["toolUse"].get("name", "") for block in content if "toolUse" in block]
     return {
         "content_blocks": len(content),
         "text_block_count": len(text_blocks),
@@ -79,9 +75,9 @@ def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
             "tool_name": tool_name,
             "status": "ok",
             "neighbor_count": len(neighbors),
-            "relationships": sorted({
-                n.get("relationship", "") for n in neighbors if n.get("relationship")
-            }),
+            "relationships": sorted(
+                {n.get("relationship", "") for n in neighbors if n.get("relationship")}
+            ),
             "neighbor_ids": [n.get("id") for n in neighbors[:10]],
         }
 
@@ -341,11 +337,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         if faqs:
             raw_text = faqs[0].get("text", "")
             top_faq_text = raw_text[:120]
-        summary_text = (
-            f"FAQ semantic match score {top:.2f}"
-            if faqs
-            else "No FAQ matches"
-        )
+        summary_text = f"FAQ semantic match score {top:.2f}" if faqs else "No FAQ matches"
         metadata = {
             "faqCount": len(faqs),
             "topScore": round(float(top), 4),
@@ -423,7 +415,10 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             if nb.get("title") or nb.get("id")
         ]
         neighbor_edges = [
-            {"title": nb.get("title") or nb.get("id", ""), "relationship": nb.get("relationship", "")}
+            {
+                "title": nb.get("title") or nb.get("id", ""),
+                "relationship": nb.get("relationship", ""),
+            }
             for nb in neighbors[:8]
             if nb.get("title") or nb.get("id")
         ]

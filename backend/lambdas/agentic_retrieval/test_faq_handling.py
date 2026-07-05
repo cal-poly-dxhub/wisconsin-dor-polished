@@ -1,7 +1,7 @@
 """Tests for the faq_handling module."""
 
-import sys
 import os
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -82,7 +82,9 @@ class TestNormalizeFaqQuestion:
             "MiXeD CaSe Question???",
         ]
         for text in cases:
-            assert normalize_faq_question(text) == mod.normalize_question(text), f"drift on {text!r}"
+            assert normalize_faq_question(text) == mod.normalize_question(text), (
+                f"drift on {text!r}"
+            )
 
 
 class TestParseFaqText:
@@ -141,8 +143,7 @@ class TestBuildFaqResource:
 
     def test_caps_at_max_faqs(self):
         results = [
-            {"text": f"Q: Q{i}?\nA: A{i}.", "source_uri": f"s3://b/faq_{i}.txt"}
-            for i in range(10)
+            {"text": f"Q: Q{i}?\nA: A{i}.", "source_uri": f"s3://b/faq_{i}.txt"} for i in range(10)
         ]
         with patch("faq_handling.lookup_faq_url", return_value=None):
             resource = build_faq_resource(results)
@@ -172,15 +173,19 @@ class TestLookupFaqUrl:
         fake_table.get_item.return_value = {
             "Item": {"normalized_question": "what is x", "source_url": "https://example.com"}
         }
-        with patch("faq_handling.FAQ_URL_TABLE", "FaqTable"), \
-             patch("faq_handling._faq_url_table", return_value=fake_table):
+        with (
+            patch("faq_handling.FAQ_URL_TABLE", "FaqTable"),
+            patch("faq_handling._faq_url_table", return_value=fake_table),
+        ):
             assert lookup_faq_url("What is X?") == "https://example.com"
 
     def test_returns_none_on_miss(self):
         fake_table = MagicMock()
         fake_table.get_item.return_value = {}
-        with patch("faq_handling.FAQ_URL_TABLE", "FaqTable"), \
-             patch("faq_handling._faq_url_table", return_value=fake_table):
+        with (
+            patch("faq_handling.FAQ_URL_TABLE", "FaqTable"),
+            patch("faq_handling._faq_url_table", return_value=fake_table),
+        ):
             assert lookup_faq_url("Unknown?") is None
 
 

@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from tools.ingestion.chunking.pdfChunker import (
     CHUNK_MAX_CHARS,
+    _split_statute_section,
     chunk_document_admin_rule,
     chunk_document_statute,
     get_chunk_cap,
-    _split_statute_section,
 )
 
 
@@ -58,7 +58,9 @@ class TestSplitStatuteSection:
         assert parts[0] == text
 
     def test_falls_back_to_sentence_split_when_no_subsections(self):
-        sentences = [f"Sentence {i} describes a tax assessment rule in detail.  " for i in range(80)]
+        sentences = [
+            f"Sentence {i} describes a tax assessment rule in detail.  " for i in range(80)
+        ]
         text = "70.32 Long section no subsections\n" + "".join(sentences)
         assert len(text) > CHUNK_MAX_CHARS
 
@@ -107,10 +109,12 @@ class TestChunkDocumentStatute:
     def test_no_chunk_exceeds_cap(self):
         """Statute sections that exceed the cap get split correctly."""
         lines = [(f"Rule detail sentence {i}. " * 3, 1 + i // 10) for i in range(100)]
-        mapping = _statute_mapping([
-            ("70.05 Valuation of property", lines[:50]),
-            ("70.07 Board of assessors", lines[50:]),
-        ])
+        mapping = _statute_mapping(
+            [
+                ("70.05 Valuation of property", lines[:50]),
+                ("70.07 Board of assessors", lines[50:]),
+            ]
+        )
 
         chunks = chunk_document_statute(None, "statutes-70.pdf", "bucket", mapping)
 
@@ -123,9 +127,11 @@ class TestChunkDocumentStatute:
     def test_no_duplicate_ids_after_split(self):
         """Each chunk in the output has unique position (no ID collisions)."""
         lines = [(f"Content line {i}.", 1) for i in range(80)]
-        mapping = _statute_mapping([
-            ("70.11 Exemptions", lines),
-        ])
+        mapping = _statute_mapping(
+            [
+                ("70.11 Exemptions", lines),
+            ]
+        )
 
         chunks = chunk_document_statute(None, "statutes-70.pdf", "bucket", mapping)
 
@@ -145,15 +151,19 @@ class TestChunkDocumentStatute:
         chunks = chunk_document_statute(None, "statutes-70.pdf", "bucket", mapping)
 
         tiny = [c for c in chunks if len(c["text"]) < 100]
-        assert len(tiny) == 0, f"Found {len(tiny)} tiny orphan fragments: {[c['text'][:50] for c in tiny]}"
+        assert len(tiny) == 0, (
+            f"Found {len(tiny)} tiny orphan fragments: {[c['text'][:50] for c in tiny]}"
+        )
 
     def test_preserves_all_content(self):
         """No text is lost during splitting."""
         markers = [f"MARKER_{i:03d}" for i in range(50)]
         lines = [(f"{m} rule content here.", 1 + i // 5) for i, m in enumerate(markers)]
-        mapping = _statute_mapping([
-            ("70.32 Section with markers", lines),
-        ])
+        mapping = _statute_mapping(
+            [
+                ("70.32 Section with markers", lines),
+            ]
+        )
 
         chunks = chunk_document_statute(None, "statutes-70.pdf", "bucket", mapping)
 
@@ -185,10 +195,12 @@ class TestChunkDocumentStatute:
     def test_admin_rule_pattern(self):
         """Administrative code (Tax XX.XX) now routes to chunk_document_admin_rule."""
         lines = [(f"Rule detail {i}. " * 4, 1) for i in range(60)]
-        mapping = _statute_mapping([
-            ("Tax 16.01 Scope", lines[:30]),
-            ("Tax 16.02 Definitions", lines[30:]),
-        ])
+        mapping = _statute_mapping(
+            [
+                ("Tax 16.01 Scope", lines[:30]),
+                ("Tax 16.02 Definitions", lines[30:]),
+            ]
+        )
 
         chunks = chunk_document_admin_rule(None, "admin-rules-tax-16.pdf", "bucket", mapping)
 
@@ -199,9 +211,12 @@ class TestChunkDocumentStatute:
     def test_merges_multi_page_duplicates(self):
         """Same heading appearing on multiple pages gets merged."""
         mapping = [
-            ("70.11", 5), ("First page content.", 5),
-            ("70.11", 6), ("Second page content.", 6),
-            ("70.12", 7), ("Next section.", 7),
+            ("70.11", 5),
+            ("First page content.", 5),
+            ("70.11", 6),
+            ("Second page content.", 6),
+            ("70.12", 7),
+            ("Next section.", 7),
         ]
 
         chunks = chunk_document_statute(None, "statutes-70.pdf", "bucket", mapping)
@@ -230,7 +245,9 @@ class TestChunkDocumentStatute:
         # Cross-reference should NOT be its own heading
         assert all("292.31" not in h for h in headings)
         # The cross-reference text should be part of the 70.01 chunk
-        chunk_70_01 = next(c for c in chunks if c["metadata"]["heading"] == "70.01 General property taxes")
+        chunk_70_01 = next(
+            c for c in chunks if c["metadata"]["heading"] == "70.01 General property taxes"
+        )
         assert "292.31" in chunk_70_01["text"]
 
     def test_decimal_numbers_not_treated_as_headings(self):
@@ -255,9 +272,12 @@ class TestChunkDocumentAdminRule:
     def test_toc_stubs_dropped(self):
         """TOC entries with no real body are dropped."""
         mapping = [
-            ("Tax 12.05", 1), ("Temporary assessor certification.", 1),
-            ("Tax 12.06", 1), ("Duties of assessors.", 1),
-            ("Tax 12.07", 1), ("Assessment districts.", 1),
+            ("Tax 12.05", 1),
+            ("Temporary assessor certification.", 1),
+            ("Tax 12.06", 1),
+            ("Duties of assessors.", 1),
+            ("Tax 12.07", 1),
+            ("Assessment districts.", 1),
         ]
         chunks = chunk_document_admin_rule(None, "admin_rules-document-12.pdf", "bucket", mapping)
         assert len(chunks) == 0
@@ -267,9 +287,11 @@ class TestChunkDocumentAdminRule:
         body_text = "APPROVAL.  Temporary assessor certification shall be " + "x" * 100
         mapping = [
             # TOC entry
-            ("Tax 12.05", 1), ("Temporary assessor certification.", 1),
+            ("Tax 12.05", 1),
+            ("Temporary assessor certification.", 1),
             # Other TOC entries in between
-            ("Tax 12.06", 1), ("Duties of assessors.", 1),
+            ("Tax 12.06", 1),
+            ("Duties of assessors.", 1),
             # Real body for 12.05 later in the document
             ("Tax 12.05 Temporary assessor certification.  (1)", 2),
             (body_text, 2),
