@@ -46,22 +46,22 @@ bun dev                        # local dev server (Next.js + Turbopack)
 # First-time: deploy infra + build/push Docker image
 cd infra
 AWS_PROFILE=widor AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
-cd ../tools/graphrag
+cd ../tools/ingestion/docker
 ./build_and_push.sh              # builds container image and pushes to ECR
 
 # Run full pipeline (extract → embed → load) on Fargate:
-./tools/graphrag/run_full_ingest.sh
+./tools/ingestion/scripts/run_full_ingest.sh
 
 # Run a single phase:
-./tools/graphrag/run_fargate.sh extract
-./tools/graphrag/run_fargate.sh embed
-./tools/graphrag/run_fargate.sh load
+./tools/ingestion/scripts/run_fargate.sh extract
+./tools/ingestion/scripts/run_fargate.sh embed
+./tools/ingestion/scripts/run_fargate.sh load
 
 # Common options:
-./tools/graphrag/run_fargate.sh extract --source-filter wpam- --force
-./tools/graphrag/run_fargate.sh extract --source-filter wpam- --force --reclassify
-./tools/graphrag/run_fargate.sh extract --smart              # only re-extract docs with stale cache
-./tools/graphrag/run_fargate.sh load --start-phase 5 --stop-after-phase 8
+./tools/ingestion/scripts/run_fargate.sh extract --source-filter wpam- --force
+./tools/ingestion/scripts/run_fargate.sh extract --source-filter wpam- --force --reclassify
+./tools/ingestion/scripts/run_fargate.sh extract --smart              # only re-extract docs with stale cache
+./tools/ingestion/scripts/run_fargate.sh load --start-phase 5 --stop-after-phase 8
 
 # Extraction caching:
 # --force re-chunks documents but reuses cached LLM classification (no Bedrock cost).
@@ -76,30 +76,30 @@ aws logs tail /ecs/wis-dor-ingestion --follow --profile widor --region us-east-1
 
 ### Scraping & Content Refresh
 ```bash
-# Document manifest (single source of truth): tools/graphrag/document_manifest.yaml
+# Document manifest (single source of truth): tools/ingestion/config/document_manifest.yaml
 # The scraper reads this manifest, downloads each URL, compares content hashes
 # against S3, and only uploads changed documents.
 
 # Dry run — see what changed without modifying anything:
-AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/graphrag/scrape_documents.py \
+AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/ingestion/scrape_documents.py \
   --bucket wis-raw-bucket-c8e69250 --dry-run
 
 # Scrape specific categories:
-AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/graphrag/scrape_documents.py \
+AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/ingestion/scrape_documents.py \
   --bucket wis-raw-bucket-c8e69250 --category statutes --category admin_rules
 
 # Force re-upload even if content matches:
-AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/graphrag/scrape_documents.py \
+AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/ingestion/scrape_documents.py \
   --bucket wis-raw-bucket-c8e69250 --force
 
 # Annual refresh workflow (scrape changed → extract stale → embed → load):
-uv run python tools/graphrag/scrape_documents.py --bucket wis-raw-bucket-c8e69250
-./tools/graphrag/run_fargate.sh extract --smart
-./tools/graphrag/run_fargate.sh embed
-./tools/graphrag/run_fargate.sh load
+uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e69250
+./tools/ingestion/scripts/run_fargate.sh extract --smart
+./tools/ingestion/scripts/run_fargate.sh embed
+./tools/ingestion/scripts/run_fargate.sh load
 
 # Case law (separate path — discovered from statute PDF hyperlinks, not manifest):
-AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/graphrag/ingest_case_law.py \
+AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/ingestion/ingest_case_law.py \
   --bucket wis-raw-bucket-c8e69250 --from-s3 --resume
 ```
 
@@ -109,21 +109,21 @@ AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/graphrag/ingest_case_
 export CERT=$(.venv/bin/python3 -c "import certifi; print(certifi.where())")
 
 # Extract + classify (PyMuPDF first, Textract fallback, LLM classification)
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.graphrag.extract \
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.ingestion.extract \
   --raw-bucket wis-raw-bucket-c8e69250 --work-bucket wis-work-bucket-c8e69250 \
-  --config tools/graphrag/ingest_config.yaml --max-workers 3
+  --config tools/ingestion/config/ingest_config.yaml --max-workers 3
 
 # Embed chunks with Titan Embed v2
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.graphrag.embed \
-  --work-bucket wis-work-bucket-c8e69250 --config tools/graphrag/ingest_config.yaml
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.ingestion.embed \
+  --work-bucket wis-work-bucket-c8e69250 --config tools/ingestion/config/ingest_config.yaml
 
 # Load into Neptune graph (11 sub-phases)
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.graphrag.load \
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.ingestion.load \
   --work-bucket wis-work-bucket-c8e69250 --graph-id g-ndvl4j73v4 \
-  --config tools/graphrag/ingest_config.yaml
+  --config tools/ingestion/config/ingest_config.yaml
 
 # FAQ sync
-./tools/graphrag/sync_faq_bucket.sh  # sync FAQ files + trigger KB ingestion
+./tools/ingestion/scripts/sync_faq_bucket.sh  # sync FAQ files + trigger KB ingestion
 ```
 
 ## Architecture
@@ -148,13 +148,16 @@ EventBridge rule `wisconsin-dor.chat-api:ChatMessageReceived` → AgenticRetriev
 - **backend/lambdas/** — Lambda source code (agentic_retrieval, chat_api, streaming, etc.)
 - **backend/layers/** — Lambda layers: `websocket_utils` (connection management + message models)
 - **frontend/** — Next.js frontend app
-- **tools/graphrag/** — Ingestion pipeline: scrape, extract, embed, load, case law, config, Docker, Fargate scripts
-  - `document_manifest.yaml` — single source of truth for all corpus document URLs
-  - `ingest_config.yaml` — framework definitions, doc types, chunking params, source-to-framework mappings
-  - `scrape_documents.py` — manifest-driven scraper with MD5/ETag change detection
+- **tools/ingestion/** — Ingestion pipeline (renamed from `graphrag/`): scrape, extract, embed, load, case law
   - `extract.py` / `embed.py` / `load.py` — core pipeline phases
+  - `scrape_documents.py` — manifest-driven scraper with MD5/ETag change detection
   - `ingest_case_law.py` — case law discovery from statute hyperlinks + CourtListener enrichment
-- **tools/pdf_chunking/** — PDF extraction and chunking library (used by extract.py)
+  - `chunking/` — PDF extraction and chunking library (`pdfChunker.py`; used by `extract.py`)
+  - `config/` — `ingest_config.yaml` (framework/doc-type/chunking params) + `document_manifest.yaml` (all corpus URLs)
+  - `lib/` — shared helpers (`case_annotations.py`, `faq_url_map.py`, `wpam_year.py`)
+  - `ops/` — one-shot / maintenance scripts (orphan-chunk cleanup, stale-extract cleanup, FAQ KB seeding)
+  - `docker/` — `Dockerfile`, `entrypoint.sh`, `build_and_push.sh`, `requirements.txt`
+  - `scripts/` — Fargate shell wrappers (`run_fargate.sh`, `run_full_ingest.sh`, `sync_faq_bucket.sh`)
 - **config/** — Shared configuration (model configs, etc.)
 
 ### WebSocket Streaming
@@ -178,11 +181,11 @@ Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM 
 
 **S3 bucket structure:** `raw/{category}-{clean-name}/{category}-{clean-name}.pdf` + `.metadata.json`
 
-**Ingestion config:** `tools/graphrag/ingest_config.yaml` — defines frameworks, doc types, chunking params, source-to-framework mappings.
+**Ingestion config:** `tools/ingestion/config/ingest_config.yaml` — defines frameworks, doc types, chunking params, source-to-framework mappings.
 
-**Document manifest:** `tools/graphrag/document_manifest.yaml` — single source of truth for all 198 corpus URLs across all categories. The scraper reads this file; all entries are plain URL strings (no overrides). `make_doc_id()` in `scrape_documents.py` derives stable S3 keys from category + URL with special handling for statutes (chapter number), admin rules (Tax chapter), WPAM (year), IAAO (CamelCase splitting + typo fix), and USPAP.
+**Document manifest:** `tools/ingestion/config/document_manifest.yaml` — single source of truth for all 198 corpus URLs across all categories. The scraper reads this file; all entries are plain URL strings (no overrides). `make_doc_id()` in `scrape_documents.py` derives stable S3 keys from category + URL with special handling for statutes (chapter number), admin rules (Tax chapter), WPAM (year), IAAO (CamelCase splitting + typo fix), and USPAP.
 
-### PDF Processing Pipeline (`tools/pdf_chunking/`)
+### PDF Processing Pipeline (`tools/ingestion/chunking/`)
 
 PyMuPDF-first extraction with Textract fallback. `pdfChunker.py` routes by source type (`CHUNKER_BY_SOURCE` dict) to strategy-specific chunking (statute, wpam, general). Each chunk gets `start_page`/`end_page` metadata for citation linking. Quality gate in `pymupdf_extractor.py` (`extraction_looks_good()`) triggers Textract fallback.
 
@@ -198,9 +201,9 @@ Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeli
 - **CDK context flags** — `stackName`, `domainName`, `hostedZoneName`, `hostedZoneId` are passed via `-c` flag. `useGraphRAG=true` is always set (legacy path removed).
 - **Embedding model** — Titan Embed Text V2 (1024 dimensions) used throughout for both Bedrock KBs and Neptune vector search.
 - **Bedrock model IDs** — Inference profiles require the full format: `us.anthropic.claude-sonnet-4-6` (not bare model IDs or old `-v1:0` suffix forms). Check `aws bedrock list-inference-profiles` for valid IDs.
-- **Region in scripts** — `tools/graphrag/*.py` use `os.environ.get("AWS_REGION", "us-east-1")` for boto3 clients. Always set `AWS_REGION` explicitly when running locally.
+- **Region in scripts** — `tools/ingestion/*.py` use `os.environ.get("AWS_REGION", "us-east-1")` for boto3 clients. Always set `AWS_REGION` explicitly when running locally.
 - **SSL certs on macOS** — Set `AWS_CA_BUNDLE` to the certifi cert path when running ingestion scripts. Without this, Python 3.13+/3.14 may fail with `SSLError: [Errno 2] No such file or directory` after ~200 S3 calls.
-- **Ingestion Docker image** — The Fargate task runs from a Docker image in ECR, NOT from the local filesystem. Any change to `tools/graphrag/`, `tools/pdf_chunking/`, or `requirements.txt` will NOT take effect on Fargate until you rebuild and push: `cd tools/graphrag && ./build_and_push.sh`. Forgetting this is the #1 cause of "my fix didn't work" on Fargate.
+- **Ingestion Docker image** — The Fargate task runs from a Docker image in ECR, NOT from the local filesystem. Any change to `tools/ingestion/` (including `chunking/`) or `tools/ingestion/docker/requirements.txt` will NOT take effect on Fargate until you rebuild and push: `cd tools/ingestion/docker && ./build_and_push.sh`. Forgetting this is the #1 cause of "my fix didn't work" on Fargate.
 
 ## WebSocket Contract
 

@@ -198,7 +198,7 @@ Batch writes (`UNWIND $rows`) must cap by cumulative text bytes (`PHASE_8_MAX_BY
 
 ## 7. PDF Extraction and Chunking
 
-`tools/pdf_chunking/` turns PDFs into page-tracked chunks. Entry point: `process_pdf_from_s3()` in `pdfChunker.py`, invoked from `extract.py`.
+`tools/ingestion/chunking/` turns PDFs into page-tracked chunks. Entry point: `process_pdf_from_s3()` in `pdfChunker.py`, invoked from `extract.py`.
 
 ### Extraction
 
@@ -475,9 +475,9 @@ load.py → Neptune graph (11 CLI phases of batched Cypher)
 ### Running on Fargate
 
 ```bash
-./tools/graphrag/run_full_ingest.sh          # full pipeline
-./tools/graphrag/run_fargate.sh extract      # single phase
-./tools/graphrag/run_fargate.sh load --start-phase 5 --stop-after-phase 8
+./tools/ingestion/scripts/run_full_ingest.sh          # full pipeline
+./tools/ingestion/scripts/run_fargate.sh extract      # single phase
+./tools/ingestion/scripts/run_fargate.sh load --start-phase 5 --stop-after-phase 8
 ```
 
 Docker image must be `--platform linux/amd64` (Fargate requirement on Apple Silicon builds).

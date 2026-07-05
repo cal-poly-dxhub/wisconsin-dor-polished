@@ -6,7 +6,7 @@ This doc describes the WPAM-specific controls applied during extraction.
 
 ## Pipeline Position
 
-All WPAM quality controls run inside `process_pdf_from_s3()` in `tools/pdf_chunking/pdfChunker.py`, after chunking but before the final chunk list is emitted:
+All WPAM quality controls run inside `process_pdf_from_s3()` in `tools/ingestion/chunking/pdfChunker.py`, after chunking but before the final chunk list is emitted:
 
 ```
 PyMuPDF extraction → boilerplate stripping → chunk_document_wpam()
@@ -16,7 +16,7 @@ PyMuPDF extraction → boilerplate stripping → chunk_document_wpam()
 
 ## 1. Boilerplate Stripping (pre-chunking)
 
-**File:** `tools/pdf_chunking/boilerplate.py`
+**File:** `tools/ingestion/chunking/boilerplate.py`
 
 Applied to the raw `(line, page_num)` mapping before any chunking logic runs.
 
@@ -31,7 +31,7 @@ Applied to the raw `(line, page_num)` mapping before any chunking logic runs.
 
 ## 2. Chunking Strategy (`chunk_document_wpam`)
 
-**File:** `tools/pdf_chunking/pdfChunker.py:444-662`
+**File:** `tools/ingestion/chunking/pdfChunker.py:444-662`
 
 Walks `line_page_mapping` directly (each line carries its source page from extraction). Splits on:
 
@@ -54,7 +54,7 @@ Walks `line_page_mapping` directly (each line carries its source page from extra
 
 ## 3. TOC Chunk Detection
 
-**File:** `tools/pdf_chunking/toc_detector.py`
+**File:** `tools/ingestion/chunking/toc_detector.py`
 
 Runs on all raw chunks immediately after chunking, before WPAM-specific filters.
 
@@ -68,7 +68,7 @@ Runs on all raw chunks immediately after chunking, before WPAM-specific filters.
 
 ## 4. WPAM Quality Filters
 
-**File:** `tools/pdf_chunking/wpam_chunk_filter.py`
+**File:** `tools/ingestion/chunking/wpam_chunk_filter.py`
 
 ### `filter_wpam_chunks()`
 
@@ -88,7 +88,7 @@ Operates on the chunk body (text minus heading/subheading lines). Returns `(kept
 
 ## 5. Clean-Plaintext Filter
 
-**File:** `tools/pdf_chunking/pdfChunker.py:678-730`
+**File:** `tools/ingestion/chunking/pdfChunker.py:678-730`
 
 Runs on all doc types after WPAM-specific filters. For WPAM it catches:
 
@@ -98,7 +98,7 @@ Runs on all doc types after WPAM-specific filters. For WPAM it catches:
 
 ## 6. Hard Cap Enforcement (`_enforce_chunk_cap`)
 
-**File:** `tools/pdf_chunking/pdfChunker.py:323-356`
+**File:** `tools/ingestion/chunking/pdfChunker.py:323-356`
 
 The in-loop word/char triggers only fire at line boundaries. A chunk with one very long line, or whose heading + body sum pushes past 2500 chars, can escape the primary flush. This pass hard-splits any over-cap chunk at:
 
@@ -110,7 +110,7 @@ Each split piece becomes its own chunk with the same metadata. The tail content 
 
 ## 7. Short-Chunk Merge (`merge_short_chunks`)
 
-**File:** `tools/pdf_chunking/wpam_chunk_filter.py:126-170`
+**File:** `tools/ingestion/chunking/wpam_chunk_filter.py:126-170`
 
 Runs AFTER `_enforce_chunk_cap` to catch fragments it produced. Merges backward:
 

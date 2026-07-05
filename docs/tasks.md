@@ -12,7 +12,6 @@
 | 27 | Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags | — |
 | 32 | Show trimmed section page index in answer synthesis trace card | — |
 | 35 | Eliminate WIS-STAT stubs — rewire CITES edges to full statute docs | — |
-| 38 | Restructure tools/ directory — consolidate ingestion pipeline | — |
 | 39 | Discover and ingest 2026 news pages | — |
 
 ## Done
@@ -44,6 +43,7 @@
 | 30 | get_section chunk grid visualization — show cosine/z-score per chunk in trace UI |
 | 28 | WPAM 2019 heading loss — boilerplate stripper keeps TOC copy, strips real chapter start |
 | 36 | Full corpus refresh — scrape, ingest missing docs, reingest stale content |
+| 38 | Restructure tools/ directory — consolidate ingestion pipeline |
 
 ---
 
@@ -217,9 +217,9 @@ for raw_line, page in line_page_mapping:
 **Effort:** Low — ~15 lines of code change in the main loop. No new dependencies, no infra changes. Requires reingestion of WPAM documents afterward.
 
 **Key files:**
-- `tools/pdf_chunking/pdfChunker.py` — `chunk_document_wpam()` main loop (~line 696)
-- `tools/pdf_chunking/pymupdf_extractor.py` — `_classify_line()` (the font-based classifier, already working)
-- `tools/pdf_chunking/wpam_chunk_filter.py` — `repair_wpam_subheadings()` (safety net, keep as-is)
+- `tools/ingestion/chunking/pdfChunker.py` — `chunk_document_wpam()` main loop (~line 696)
+- `tools/ingestion/chunking/pymupdf_extractor.py` — `_classify_line()` (the font-based classifier, already working)
+- `tools/ingestion/chunking/wpam_chunk_filter.py` — `repair_wpam_subheadings()` (safety net, keep as-is)
 
 ### Task 28: WPAM 2019 heading loss — boilerplate stripper keeps TOC copy, strips real chapter start
 
@@ -243,8 +243,8 @@ for raw_line, page in line_page_mapping:
 **Caution:** The "keep first" logic was intentional — changing it could reintroduce running headers into chunks for other editions if not carefully scoped.
 
 **Key files:**
-- `tools/pdf_chunking/boilerplate.py` — `_strip_wpam_running_headers()` (lines 76-107)
-- `tools/pdf_chunking/pdfChunker.py` — `chunk_document_wpam()` heading detection loop
+- `tools/ingestion/chunking/boilerplate.py` — `_strip_wpam_running_headers()` (lines 76-107)
+- `tools/ingestion/chunking/pdfChunker.py` — `chunk_document_wpam()` heading detection loop
 
 ---
 
