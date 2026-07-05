@@ -15,7 +15,9 @@ def test_fetch_case_opinion_success():
 
     mock_s3 = MagicMock()
     mock_s3.get_object.return_value = {
-        "Body": MagicMock(read=lambda: b"109 Wis.2d 290 (1982) CORROON v. HOSCH. Full opinion text here..."),
+        "Body": MagicMock(
+            read=lambda: b"109 Wis.2d 290 (1982) CORROON v. HOSCH. Full opinion text here..."
+        ),
         "ContentLength": 65,
     }
 

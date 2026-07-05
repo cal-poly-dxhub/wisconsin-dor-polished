@@ -12,6 +12,7 @@ class FakeAgentEventMessage:
 
 class FakeCamelModel:
     """Minimal stub that supports model_dump(by_alias=True)."""
+
     def __init__(self, **fields):
         self.__dict__.update(fields)
 
@@ -57,8 +58,10 @@ if _ws_real:
     import websocket_utils.utils  # noqa: F401
 else:
     for mod_name in [
-        "websocket_utils", "websocket_utils.batching",
-        "websocket_utils.models", "websocket_utils.utils",
+        "websocket_utils",
+        "websocket_utils.batching",
+        "websocket_utils.models",
+        "websocket_utils.utils",
     ]:
         sys.modules.setdefault(mod_name, MagicMock())
     sys.modules["websocket_utils.models"].AgentEventMessage = FakeAgentEventMessage
@@ -72,7 +75,8 @@ if _sft_real:
     import step_function_types.models  # noqa: F401
 else:
     for mod_name in [
-        "step_function_types", "step_function_types.errors",
+        "step_function_types",
+        "step_function_types.errors",
         "step_function_types.models",
     ]:
         sys.modules.setdefault(mod_name, MagicMock())

@@ -97,8 +97,10 @@ def test_execute_tool_fetch_case_opinion_success():
 
     mock_neptune = MagicMock()
 
-    with patch("agent_tools.fetch_case_opinion") as mock_fetch, \
-         patch("agent_tools.RAW_BUCKET", "test-bucket"):
+    with (
+        patch("agent_tools.fetch_case_opinion") as mock_fetch,
+        patch("agent_tools.RAW_BUCKET", "test-bucket"),
+    ):
         mock_fetch.return_value = {
             "found": True,
             "citation": "109 Wis. 2d 290",
@@ -148,9 +150,7 @@ def test_get_document_falls_back_to_vector_search_on_not_found():
     ]
 
     with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
-        result = execute_tool(
-            "get_document", {"doc_id": "typo-or-format-mismatch"}, mock_neptune
-        )
+        result = execute_tool("get_document", {"doc_id": "typo-or-format-mismatch"}, mock_neptune)
 
     # Fallback kicked in; returns a suggestion result, not a bare error
     assert "fallback_matches" in result
@@ -168,9 +168,7 @@ def test_get_document_no_fallback_matches_returns_error():
     mock_neptune.vector_search.return_value = []
 
     with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
-        result = execute_tool(
-            "get_document", {"doc_id": "nonsense"}, mock_neptune
-        )
+        result = execute_tool("get_document", {"doc_id": "nonsense"}, mock_neptune)
 
     assert "error" in result
     assert result.get("fallback_matches", []) == []
@@ -190,11 +188,7 @@ def test_refine_query_uses_history_when_present():
 
     fake_response = {
         "output": {
-            "message": {
-                "content": [
-                    {"text": "agricultural land classification requirements"}
-                ]
-            }
+            "message": {"content": [{"text": "agricultural land classification requirements"}]}
         }
     }
     mock_bedrock = MagicMock()
@@ -244,7 +238,11 @@ def test_refine_query_extracts_target_wpam_year():
     mock_response = {
         "output": {
             "message": {
-                "content": [{"text": '{"refined_query": "WPAM agricultural land 2018", "target_wpam_year": 2018}'}]
+                "content": [
+                    {
+                        "text": '{"refined_query": "WPAM agricultural land 2018", "target_wpam_year": 2018}'
+                    }
+                ]
             }
         }
     }
@@ -268,7 +266,11 @@ def test_refine_query_no_target_year_when_no_year_mentioned():
     mock_response = {
         "output": {
             "message": {
-                "content": [{"text": '{"refined_query": "WPAM agricultural land", "target_wpam_year": null}'}]
+                "content": [
+                    {
+                        "text": '{"refined_query": "WPAM agricultural land", "target_wpam_year": null}'
+                    }
+                ]
             }
         }
     }
@@ -290,13 +292,7 @@ def test_refine_query_falls_back_on_invalid_json():
     from agent_tools import execute_tool
 
     mock_neptune = MagicMock()
-    mock_response = {
-        "output": {
-            "message": {
-                "content": [{"text": "WPAM agricultural land"}]
-            }
-        }
-    }
+    mock_response = {"output": {"message": {"content": [{"text": "WPAM agricultural land"}]}}}
     with patch("agent_tools.bedrock") as mock_bedrock:
         mock_bedrock.converse.return_value = mock_response
         result = execute_tool(
@@ -334,12 +330,22 @@ def test_vector_search_applies_wpam_dedup():
     mock_neptune = MagicMock()
     mock_neptune.current_wpam_year = 2025
     mock_neptune.vector_search.return_value = [
-        {"chunk_id": "wpam-2018-c1", "doc_id": "wpam-...-2018",
-         "framework_id": "FW-WPAM", "edition_year": 2018,
-         "heading": "Manufactured Homes", "text": "old"},
-        {"chunk_id": "wpam-2025-c1", "doc_id": "wpam-...-2025",
-         "framework_id": "FW-WPAM", "edition_year": 2025,
-         "heading": "Manufactured Homes", "text": "new"},
+        {
+            "chunk_id": "wpam-2018-c1",
+            "doc_id": "wpam-...-2018",
+            "framework_id": "FW-WPAM",
+            "edition_year": 2018,
+            "heading": "Manufactured Homes",
+            "text": "old",
+        },
+        {
+            "chunk_id": "wpam-2025-c1",
+            "doc_id": "wpam-...-2025",
+            "framework_id": "FW-WPAM",
+            "edition_year": 2025,
+            "heading": "Manufactured Homes",
+            "text": "new",
+        },
     ]
     mock_neptune.get_neighbors.return_value = []
 
@@ -359,12 +365,22 @@ def test_vector_search_target_year_overrides_max():
 
     mock_neptune = MagicMock()
     mock_neptune.vector_search.return_value = [
-        {"chunk_id": "wpam-2018-c1", "doc_id": "wpam-...-2018",
-         "framework_id": "FW-WPAM", "edition_year": 2018,
-         "heading": "Manufactured Homes", "text": "..."},
-        {"chunk_id": "wpam-2025-c1", "doc_id": "wpam-...-2025",
-         "framework_id": "FW-WPAM", "edition_year": 2025,
-         "heading": "Manufactured Homes", "text": "..."},
+        {
+            "chunk_id": "wpam-2018-c1",
+            "doc_id": "wpam-...-2018",
+            "framework_id": "FW-WPAM",
+            "edition_year": 2018,
+            "heading": "Manufactured Homes",
+            "text": "...",
+        },
+        {
+            "chunk_id": "wpam-2025-c1",
+            "doc_id": "wpam-...-2025",
+            "framework_id": "FW-WPAM",
+            "edition_year": 2025,
+            "heading": "Manufactured Homes",
+            "text": "...",
+        },
     ]
     mock_neptune.get_neighbors.return_value = []
 
@@ -385,12 +401,26 @@ def test_get_neighbors_applies_wpam_dedup():
     mock_neptune = MagicMock()
     mock_neptune.current_wpam_year = 2025
     mock_neptune.get_neighbors.return_value = [
-        {"id": "wpam-2018-c1", "framework_id": "FW-WPAM", "edition_year": 2018,
-         "heading": "Manufactured Homes", "relationship": "CITES"},
-        {"id": "wpam-2025-c1", "framework_id": "FW-WPAM", "edition_year": 2025,
-         "heading": "Manufactured Homes", "relationship": "CITES"},
-        {"id": "stat-70-32", "framework_id": "FW-STATUTES",
-         "heading": "70.32", "relationship": "CITES"},
+        {
+            "id": "wpam-2018-c1",
+            "framework_id": "FW-WPAM",
+            "edition_year": 2018,
+            "heading": "Manufactured Homes",
+            "relationship": "CITES",
+        },
+        {
+            "id": "wpam-2025-c1",
+            "framework_id": "FW-WPAM",
+            "edition_year": 2025,
+            "heading": "Manufactured Homes",
+            "relationship": "CITES",
+        },
+        {
+            "id": "stat-70-32",
+            "framework_id": "FW-STATUTES",
+            "heading": "70.32",
+            "relationship": "CITES",
+        },
     ]
 
     result = execute_tool(
@@ -412,14 +442,15 @@ def test_get_neighbors_filters_out_chunk_labels():
 
     mock_neptune = MagicMock()
     mock_neptune.get_neighbors.return_value = [
-        {"id": "doc-1", "title": "Real Doc", "labels": ["Document"],
-         "relationship": "CITES"},
-        {"id": "chunk-1", "title": None, "labels": ["Chunk"],
-         "relationship": "EXTRACTED_FROM"},
-        {"id": "chunk-2", "title": None, "labels": ["Chunk"],
-         "relationship": "CITES"},
-        {"id": "stat-1", "title": "Statute 70.32", "labels": ["Document", "Statute"],
-         "relationship": "IMPLEMENTS"},
+        {"id": "doc-1", "title": "Real Doc", "labels": ["Document"], "relationship": "CITES"},
+        {"id": "chunk-1", "title": None, "labels": ["Chunk"], "relationship": "EXTRACTED_FROM"},
+        {"id": "chunk-2", "title": None, "labels": ["Chunk"], "relationship": "CITES"},
+        {
+            "id": "stat-1",
+            "title": "Statute 70.32",
+            "labels": ["Document", "Statute"],
+            "relationship": "IMPLEMENTS",
+        },
     ]
 
     result = execute_tool(
@@ -446,10 +477,8 @@ def test_vector_search_auto_enrichment_filters_chunks():
         {"chunk_id": "c1", "text": "test", "score": 0.9, "doc_id": "doc-1"},
     ]
     mock_neptune.get_neighbors.return_value = [
-        {"id": "related-doc", "title": "Related", "labels": ["Document"],
-         "relationship": "CITES"},
-        {"id": "chunk-99", "title": None, "labels": ["Chunk"],
-         "relationship": "EXTRACTED_FROM"},
+        {"id": "related-doc", "title": "Related", "labels": ["Document"], "relationship": "CITES"},
+        {"id": "chunk-99", "title": None, "labels": ["Chunk"], "relationship": "EXTRACTED_FROM"},
     ]
     mock_neptune.resolve_case_citations.return_value = []
 
@@ -469,14 +498,21 @@ def test_vector_search_extracts_citations_and_resolves_case_law():
 
     mock_neptune = MagicMock()
     mock_neptune.vector_search.return_value = [
-        {"chunk_id": "c1", "doc_id": "wpam-2025", "score": 0.9,
-         "text": "See Markarian v City of Cudahy, 45 Wis.2d 683 (1970)."},
+        {
+            "chunk_id": "c1",
+            "doc_id": "wpam-2025",
+            "score": 0.9,
+            "text": "See Markarian v City of Cudahy, 45 Wis.2d 683 (1970).",
+        },
     ]
     mock_neptune.get_neighbors.return_value = []
     mock_neptune.resolve_case_citations.return_value = [
-        {"id": "case-law-45-wis-2d-683",
-         "title": "State Ex Rel. Markarian v. City of Cudahy, 45 Wis. 2d 683",
-         "citation": "45 Wis. 2d 683", "labels": ["CaseLaw"]},
+        {
+            "id": "case-law-45-wis-2d-683",
+            "title": "State Ex Rel. Markarian v. City of Cudahy, 45 Wis. 2d 683",
+            "citation": "45 Wis. 2d 683",
+            "labels": ["CaseLaw"],
+        },
     ]
 
     with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
@@ -498,8 +534,12 @@ def test_vector_search_no_related_case_law_when_no_citations():
 
     mock_neptune = MagicMock()
     mock_neptune.vector_search.return_value = [
-        {"chunk_id": "c1", "doc_id": "wpam-2025", "score": 0.9,
-         "text": "The assessor shall consider all relevant factors."},
+        {
+            "chunk_id": "c1",
+            "doc_id": "wpam-2025",
+            "score": 0.9,
+            "text": "The assessor shall consider all relevant factors.",
+        },
     ]
     mock_neptune.get_neighbors.return_value = []
     mock_neptune.resolve_case_citations.return_value = []
@@ -539,22 +579,40 @@ def test_vector_search_neighbor_citation_discovery():
 
     mock_neptune = MagicMock()
     mock_neptune.vector_search.return_value = [
-        {"chunk_id": "c1", "doc_id": "wpam-2025-ag", "score": 0.9,
-         "text": "Agricultural land classification under sec. 70.32."},
-        {"chunk_id": "c2", "doc_id": "wpam-2025-ag", "score": 0.85,
-         "text": "Land devoted primarily to agricultural use."},
+        {
+            "chunk_id": "c1",
+            "doc_id": "wpam-2025-ag",
+            "score": 0.9,
+            "text": "Agricultural land classification under sec. 70.32.",
+        },
+        {
+            "chunk_id": "c2",
+            "doc_id": "wpam-2025-ag",
+            "score": 0.85,
+            "text": "Land devoted primarily to agricultural use.",
+        },
     ]
     mock_neptune.get_neighbors.return_value = [
-        {"id": "gov_publications-ag-guide", "title": "Ag Assessment Guide",
-         "labels": ["Document"], "framework_id": "FW-GOV-PUBS",
-         "relationship": "SUPPLEMENTS"},
+        {
+            "id": "gov_publications-ag-guide",
+            "title": "Ag Assessment Guide",
+            "labels": ["Document"],
+            "framework_id": "FW-GOV-PUBS",
+            "relationship": "SUPPLEMENTS",
+        },
     ]
     # No citations in query chunk text, so resolve_case_citations is only
     # called once — for the neighbor doc citations.
     mock_neptune.resolve_case_citations.return_value = [
-        {"id": "case-law-2019-wi-23", "title": "Peter Ogden v. DOR",
-         "citation": "2019 WI 23", "doc_type": "case_law",
-         "authority_level": 3, "source_url": None, "labels": ["CaseLaw"]},
+        {
+            "id": "case-law-2019-wi-23",
+            "title": "Peter Ogden v. DOR",
+            "citation": "2019 WI 23",
+            "doc_type": "case_law",
+            "authority_level": 3,
+            "source_url": None,
+            "labels": ["CaseLaw"],
+        },
     ]
     mock_neptune.get_chunk_statute_ids.return_value = ["WIS-STAT-70.32"]
     mock_neptune.rank_neighbors_by_shared_statutes.return_value = [
@@ -574,9 +632,7 @@ def test_vector_search_neighbor_citation_discovery():
     mock_neptune.rank_neighbors_by_shared_statutes.assert_called_once_with(
         ["gov_publications-ag-guide"], ["WIS-STAT-70.32"], limit=3
     )
-    mock_neptune.get_chunks_text_for_docs.assert_called_once_with(
-        ["gov_publications-ag-guide"]
-    )
+    mock_neptune.get_chunks_text_for_docs.assert_called_once_with(["gov_publications-ag-guide"])
 
 
 def test_vector_search_neighbor_citation_deduplicates():
@@ -586,22 +642,47 @@ def test_vector_search_neighbor_citation_deduplicates():
 
     mock_neptune = MagicMock()
     mock_neptune.vector_search.return_value = [
-        {"chunk_id": "c1", "doc_id": "wpam-2025", "score": 0.9,
-         "text": "See Markarian, 45 Wis. 2d 683."},
+        {
+            "chunk_id": "c1",
+            "doc_id": "wpam-2025",
+            "score": 0.9,
+            "text": "See Markarian, 45 Wis. 2d 683.",
+        },
     ]
     mock_neptune.get_neighbors.return_value = [
-        {"id": "gov-pub-1", "title": "Guide", "labels": ["Document"],
-         "framework_id": "FW-GOV-PUBS", "relationship": "RELATED_TO"},
+        {
+            "id": "gov-pub-1",
+            "title": "Guide",
+            "labels": ["Document"],
+            "framework_id": "FW-GOV-PUBS",
+            "relationship": "RELATED_TO",
+        },
     ]
     # Direct citation resolution finds Markarian from query chunk text
     # Second resolve call returns both Markarian (dupe) and Peter Ogden (new)
     mock_neptune.resolve_case_citations.side_effect = [
-        [{"id": "case-law-45-wis-2d-683", "title": "Markarian",
-          "citation": "45 Wis. 2d 683", "labels": ["CaseLaw"]}],
-        [{"id": "case-law-45-wis-2d-683", "title": "Markarian",
-          "citation": "45 Wis. 2d 683", "labels": ["CaseLaw"]},
-         {"id": "case-law-2019-wi-23", "title": "Peter Ogden v. DOR",
-          "citation": "2019 WI 23", "labels": ["CaseLaw"]}],
+        [
+            {
+                "id": "case-law-45-wis-2d-683",
+                "title": "Markarian",
+                "citation": "45 Wis. 2d 683",
+                "labels": ["CaseLaw"],
+            }
+        ],
+        [
+            {
+                "id": "case-law-45-wis-2d-683",
+                "title": "Markarian",
+                "citation": "45 Wis. 2d 683",
+                "labels": ["CaseLaw"],
+            },
+            {
+                "id": "case-law-2019-wi-23",
+                "title": "Peter Ogden v. DOR",
+                "citation": "2019 WI 23",
+                "labels": ["CaseLaw"],
+            },
+        ],
     ]
     mock_neptune.get_chunk_statute_ids.return_value = ["WIS-STAT-70.32"]
     mock_neptune.rank_neighbors_by_shared_statutes.return_value = ["gov-pub-1"]
@@ -624,8 +705,12 @@ def test_find_case_law_tool_by_citation():
 
     mock_neptune = MagicMock()
     mock_neptune.resolve_case_citations.return_value = [
-        {"id": "case-law-45-wis-2d-683", "title": "Markarian",
-         "citation": "45 Wis. 2d 683", "labels": ["CaseLaw"]},
+        {
+            "id": "case-law-45-wis-2d-683",
+            "title": "Markarian",
+            "citation": "45 Wis. 2d 683",
+            "labels": ["CaseLaw"],
+        },
     ]
 
     result = execute_tool(
@@ -648,8 +733,12 @@ def test_find_case_law_tool_falls_back_to_title_search():
     mock_neptune = MagicMock()
     mock_neptune.resolve_case_citations.return_value = []
     mock_neptune.find_case_law.return_value = [
-        {"id": "case-law-45-wis-2d-683", "title": "Markarian v. City of Cudahy",
-         "citation": "45 Wis. 2d 683", "labels": ["CaseLaw"]},
+        {
+            "id": "case-law-45-wis-2d-683",
+            "title": "Markarian v. City of Cudahy",
+            "citation": "45 Wis. 2d 683",
+            "labels": ["CaseLaw"],
+        },
     ]
 
     result = execute_tool(

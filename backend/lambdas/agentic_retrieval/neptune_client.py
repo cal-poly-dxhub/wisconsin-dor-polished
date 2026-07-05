@@ -34,8 +34,7 @@ def _compact_cypher(cypher: str) -> str:
     if len(compact) <= LOG_MAX_QUERY_CHARS:
         return compact
     return (
-        compact[:LOG_MAX_QUERY_CHARS]
-        + f"...[truncated {len(compact) - LOG_MAX_QUERY_CHARS} chars]"
+        compact[:LOG_MAX_QUERY_CHARS] + f"...[truncated {len(compact) - LOG_MAX_QUERY_CHARS} chars]"
     )
 
 
@@ -166,7 +165,7 @@ class NeptuneClient:
                 return results
             except Exception as e:
                 if attempt < max_retries - 1 and "Throttling" in str(e):
-                    wait = min(30, 2 ** attempt)
+                    wait = min(30, 2**attempt)
                     _log_neptune_event(
                         "neptune_query_throttled",
                         logging.WARNING,
@@ -502,9 +501,7 @@ class NeptuneClient:
         )
         return [r["text"] for r in results if r.get("text")]
 
-    def get_cases_for_subsections(
-        self, subsection_ids: list[str], limit: int = 15
-    ) -> list[dict]:
+    def get_cases_for_subsections(self, subsection_ids: list[str], limit: int = 15) -> list[dict]:
         """Find CaseLaw nodes connected to statute subsections via CITES edges.
 
         Returns cases ordered so that modern-format citations (YYYY WI ...)
@@ -556,8 +553,7 @@ class NeptuneClient:
         terms = [
             w.lower().rstrip(".,;:")
             for w in search_text.split()
-            if len(w) > 2
-            and w.lower().rstrip(".,;:") not in self._CASE_SEARCH_STOP_WORDS
+            if len(w) > 2 and w.lower().rstrip(".,;:") not in self._CASE_SEARCH_STOP_WORDS
         ]
         if not terms:
             terms = [search_text.lower()]

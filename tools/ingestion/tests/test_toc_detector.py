@@ -74,8 +74,8 @@ BULLET_LIST = (
     "•\tReport findings to the BOR."
 )
 ELLIPSIS_QUOTE = (
-    "The court held that the statute \"shall not, under any circumstance... "
-    "operate to impose an affirmative duty\" on the assessor. The opinion "
+    'The court held that the statute "shall not, under any circumstance... '
+    'operate to impose an affirmative duty" on the assessor. The opinion '
     "distinguishes this from earlier precedent."
 )
 
@@ -130,5 +130,5 @@ def test_leader_with_non_roman_heading() -> None:
 
 def test_single_ellipsis_not_toc() -> None:
     # A quoted passage with "..." three dots should never match.
-    text = "The court wrote that \"the duty... shall not... exceed.\" This is dicta."
+    text = 'The court wrote that "the duty... shall not... exceed." This is dicta.'
     assert is_toc_chunk(text) is False

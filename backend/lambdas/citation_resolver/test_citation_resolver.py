@@ -12,7 +12,9 @@ def test_redirects_with_page_fragment():
 
     with patch("citation_resolver.main.s3") as mock_s3:
         mock_s3.head_object.return_value = {}
-        mock_s3.generate_presigned_url.return_value = "https://test-bucket.s3.amazonaws.com/raw/wpam/wpam.pdf?signature=abc"
+        mock_s3.generate_presigned_url.return_value = (
+            "https://test-bucket.s3.amazonaws.com/raw/wpam/wpam.pdf?signature=abc"
+        )
 
         event = {"queryStringParameters": {"s3Key": "raw/wpam/wpam.pdf", "page": "12"}}
         response = handler(event, MagicMock())
@@ -30,7 +32,9 @@ def test_redirects_without_page_fragment():
 
     with patch("citation_resolver.main.s3") as mock_s3:
         mock_s3.head_object.return_value = {}
-        mock_s3.generate_presigned_url.return_value = "https://test-bucket.s3.amazonaws.com/raw/case/x.txt?sig=z"
+        mock_s3.generate_presigned_url.return_value = (
+            "https://test-bucket.s3.amazonaws.com/raw/case/x.txt?sig=z"
+        )
 
         event = {"queryStringParameters": {"s3Key": "raw/case/x.txt"}}
         response = handler(event, MagicMock())
@@ -124,9 +128,7 @@ def test_uses_current_env_var_per_invocation():
         response = handler(event, MagicMock())
 
     assert response["statusCode"] == 302
-    mock_s3.head_object.assert_called_once_with(
-        Bucket="different-bucket", Key="raw/x.pdf"
-    )
+    mock_s3.head_object.assert_called_once_with(Bucket="different-bucket", Key="raw/x.pdf")
 
 
 @patch.dict(os.environ, {"RAW_BUCKET": ""})

@@ -21,11 +21,13 @@ def _convert_tool_definitions(
     tools = []
     for item in converse_tools:
         spec = item["toolSpec"]
-        tools.append({
-            "name": spec["name"],
-            "description": spec["description"],
-            "input_schema": spec["inputSchema"]["json"],
-        })
+        tools.append(
+            {
+                "name": spec["name"],
+                "description": spec["description"],
+                "input_schema": spec["inputSchema"]["json"],
+            }
+        )
     return tools
 
 
@@ -39,28 +41,34 @@ def _convert_content_to_messages(
             blocks.append({"type": "text", "text": block["text"]})
         elif "toolUse" in block:
             tu = block["toolUse"]
-            blocks.append({
-                "type": "tool_use",
-                "id": tu["toolUseId"],
-                "name": tu["name"],
-                "input": tu["input"],
-            })
+            blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": tu["toolUseId"],
+                    "name": tu["name"],
+                    "input": tu["input"],
+                }
+            )
         elif "toolResult" in block:
             tr = block["toolResult"]
             content_parts = []
             for c in tr.get("content", []):
                 if "json" in c:
-                    content_parts.append({
-                        "type": "text",
-                        "text": json.dumps(c["json"], separators=(",", ":")),
-                    })
+                    content_parts.append(
+                        {
+                            "type": "text",
+                            "text": json.dumps(c["json"], separators=(",", ":")),
+                        }
+                    )
                 elif "text" in c:
                     content_parts.append({"type": "text", "text": c["text"]})
-            blocks.append({
-                "type": "tool_result",
-                "tool_use_id": tr["toolUseId"],
-                "content": content_parts,
-            })
+            blocks.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tr["toolUseId"],
+                    "content": content_parts,
+                }
+            )
     return blocks
 
 
@@ -70,10 +78,12 @@ def _convert_messages(
     """Convert full message list from Converse to Anthropic Messages format."""
     messages = []
     for msg in converse_messages:
-        messages.append({
-            "role": msg["role"],
-            "content": _convert_content_to_messages(msg["content"]),
-        })
+        messages.append(
+            {
+                "role": msg["role"],
+                "content": _convert_content_to_messages(msg["content"]),
+            }
+        )
     return messages
 
 
@@ -86,13 +96,15 @@ def _convert_response_content(
         if block["type"] == "text":
             blocks.append({"text": block["text"]})
         elif block["type"] == "tool_use":
-            blocks.append({
-                "toolUse": {
-                    "toolUseId": block["id"],
-                    "name": block["name"],
-                    "input": block["input"],
+            blocks.append(
+                {
+                    "toolUse": {
+                        "toolUseId": block["id"],
+                        "name": block["name"],
+                        "input": block["input"],
+                    }
                 }
-            })
+            )
     return blocks
 
 
@@ -102,8 +114,7 @@ def _convert_usage(anthropic_usage: dict[str, Any]) -> dict[str, Any]:
         "inputTokens": anthropic_usage.get("input_tokens", 0),
         "outputTokens": anthropic_usage.get("output_tokens", 0),
         "totalTokens": (
-            anthropic_usage.get("input_tokens", 0)
-            + anthropic_usage.get("output_tokens", 0)
+            anthropic_usage.get("input_tokens", 0) + anthropic_usage.get("output_tokens", 0)
         ),
         "cacheReadInputTokens": anthropic_usage.get("cache_read_input_tokens", 0),
         "cacheWriteInputTokens": anthropic_usage.get("cache_creation_input_tokens", 0),
@@ -255,9 +266,7 @@ def converse_stream_with_cache(
             if event_type == "message_start":
                 msg_usage = chunk.get("message", {}).get("usage", {})
                 usage["input_tokens"] = msg_usage.get("input_tokens", 0)
-                usage["cache_read_input_tokens"] = msg_usage.get(
-                    "cache_read_input_tokens", 0
-                )
+                usage["cache_read_input_tokens"] = msg_usage.get("cache_read_input_tokens", 0)
                 usage["cache_creation_input_tokens"] = msg_usage.get(
                     "cache_creation_input_tokens", 0
                 )

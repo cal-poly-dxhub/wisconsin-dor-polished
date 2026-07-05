@@ -48,13 +48,15 @@ class TestFilterMetadata:
         # `query` is intentionally in ALLOWED_METADATA_KEYS — the refined query
         # is surfaced in the retrieval trace modal for debugging. Keys not in
         # the allowlist (e.g. rawUserText) are dropped.
-        out = filter_metadata({
-            "chunkCount": 3,
-            "topScore": 0.9,
-            "latencyMs": 120,
-            "query": "shown in trace",
-            "rawUserText": "dropped — not allowlisted",
-        })
+        out = filter_metadata(
+            {
+                "chunkCount": 3,
+                "topScore": 0.9,
+                "latencyMs": 120,
+                "query": "shown in trace",
+                "rawUserText": "dropped — not allowlisted",
+            }
+        )
         assert out == {
             "chunkCount": 3,
             "topScore": 0.9,
@@ -91,6 +93,7 @@ class TestEmitTrace:
 
     def test_swallows_exceptions(self):
         from unittest.mock import patch
+
         mock_ws = MagicMock()
         with patch("tracing.asyncio.run", side_effect=RuntimeError("boom")):
             emit_trace(mock_ws, lambda: 1, emit_enabled=True, query_id="q", kind="test")

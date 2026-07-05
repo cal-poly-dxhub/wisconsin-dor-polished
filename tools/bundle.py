@@ -8,21 +8,24 @@ from pathlib import Path
 # Global configuration
 BUNDLE_CONFIG_FILE = "bundles.toml"
 
+
 # ANSI color codes for colored output
 class Colors:
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    MAGENTA = '\033[95m'
-    CYAN = '\033[96m'
-    WHITE = '\033[97m'
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN = "\033[96m"
+    WHITE = "\033[97m"
+
 
 def colored_print(text: str, color: str = Colors.RESET) -> None:
     """Print text with color."""
     print(f"{color}{text}{Colors.RESET}")
+
 
 # Patterns to ignore during bundling
 IGNORE_PATTERNS = [
@@ -91,7 +94,7 @@ def main():
     total_files = 0
 
     for i, bundle in enumerate(bundles, 1):
-        dest = os.path.join(target_dir, bundle['dest'])
+        dest = os.path.join(target_dir, bundle["dest"])
 
         # Create target directory if it doesn't exist
         os.makedirs(dest, exist_ok=True)
@@ -129,7 +132,9 @@ def main():
                 else:
                     # Copy single file
                     if should_ignore(source_path):
-                        colored_print(f"  Skipped (ignored): {os.path.basename(source_path)}", Colors.YELLOW)
+                        colored_print(
+                            f"  Skipped (ignored): {os.path.basename(source_path)}", Colors.YELLOW
+                        )
                         continue
 
                     filename = os.path.basename(source_path)
@@ -145,7 +150,9 @@ def main():
 
         colored_print(f"  Total files in {dest}: {file_count}\n", Colors.CYAN)
 
-    colored_print(f"Bundling complete! Total files bundled: {total_files}", Colors.BOLD + Colors.GREEN)
+    colored_print(
+        f"Bundling complete! Total files bundled: {total_files}", Colors.BOLD + Colors.GREEN
+    )
     return 0
 
 

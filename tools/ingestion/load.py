@@ -56,7 +56,9 @@ def load_config(config_path: str) -> dict:
 
 
 def get_neptune_client(graph_id: str):
-    return boto3.client("neptune-graph", region_name=os.environ.get("AWS_REGION", "us-east-1")), graph_id
+    return boto3.client(
+        "neptune-graph", region_name=os.environ.get("AWS_REGION", "us-east-1")
+    ), graph_id
 
 
 def execute_query(client, graph_id: str, query: str, parameters: dict | None = None) -> dict:
@@ -95,7 +97,7 @@ def execute_query(client, graph_id: str, query: str, parameters: dict | None = N
                 or "retry is suppressed" in msg.lower()
             )
             if is_throttle and attempt < 7:
-                wait = min(60, 2 ** attempt)
+                wait = min(60, 2**attempt)
                 logger.warning(f"Neptune throttled ({name}), retrying in {wait}s...")
                 time.sleep(wait)
             else:
@@ -129,31 +131,41 @@ def phase_1_scaffold(client, graph_id: str, config: dict):
 
     frameworks = config.get("frameworks", [])
     for fw in frameworks:
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "MERGE (f:Framework {id: $id}) SET f.title = $title, f.authority_level = $level",
             {"id": fw["id"], "title": fw["title"], "level": fw.get("authority_level", 99)},
         )
 
     for fw in frameworks:
         if "parent" in fw:
-            execute_query(client, graph_id,
+            execute_query(
+                client,
+                graph_id,
                 "MATCH (child:Framework {id: $child_id}), (parent:Framework {id: $parent_id}) "
                 "MERGE (child)-[:DERIVED_FROM]->(parent)",
                 {"child_id": fw["id"], "parent_id": fw["parent"]},
             )
 
     for family in config.get("statute_families", []):
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "MERGE (s:Statute {id: $id}) SET s.title = $title",
             {"id": family["code"], "title": family["title"]},
         )
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "MATCH (s:Statute {id: $id}), (f:Framework {id: 'FW-STATUTES'}) "
             "MERGE (s)-[:BELONGS_TO]->(f)",
             {"id": family["code"]},
         )
 
-    logger.info(f"  Created {len(frameworks)} frameworks, {len(config.get('statute_families', []))} statute families")
+    logger.info(
+        f"  Created {len(frameworks)} frameworks, {len(config.get('statute_families', []))} statute families"
+    )
 
 
 def resolve_authority_level(doc: dict, config: dict) -> int | None:
@@ -172,9 +184,7 @@ def resolve_authority_level(doc: dict, config: dict) -> int | None:
     if explicit is not None:
         return int(explicit)
 
-    framework_levels = {
-        fw["id"]: fw["authority_level"] for fw in config.get("frameworks", [])
-    }
+    framework_levels = {fw["id"]: fw["authority_level"] for fw in config.get("frameworks", [])}
     return framework_levels.get(doc.get("framework_id"))
 
 
@@ -201,7 +211,9 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
                     "loading without the property"
                 )
 
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             f"MERGE (d:{label} {{id: $id}}) "
             f"SET d.title = $title, d.source_key = $source_key, "
             f"d.summary = $summary, d.source_url = $source_url, "
@@ -223,7 +235,9 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
         )
 
         fw_id = doc.get("framework_id", "FW-GOV-PUBS")
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             f"MATCH (d:{label} {{id: $doc_id}}), (f:Framework {{id: $fw_id}}) "
             "MERGE (d)-[:BELONGS_TO]->(f)",
             {"doc_id": doc["doc_id"], "fw_id": fw_id},
@@ -233,9 +247,7 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
             logger.info(f"  Phase 2 progress: {count}/{len(documents)} document nodes")
 
     if wpam_year_misses:
-        logger.warning(
-            f"Phase 2: {wpam_year_misses} WPAM docs loaded without edition_year"
-        )
+        logger.warning(f"Phase 2: {wpam_year_misses} WPAM docs loaded without edition_year")
     logger.info(f"  Created {count} document nodes")
 
 
@@ -263,13 +275,13 @@ def _flush_phase_3_batch(client, graph_id: str, batch: list[dict]) -> tuple[int,
     stubs = 0
 
     # 1. Statute stubs used by either CITES or IMPLEMENTS.
-    statute_refs = sorted({
-        ref
-        for b in batch
-        for ref in list(b["statute_refs"]) + list(b["implements_refs"])
-    })
+    statute_refs = sorted(
+        {ref for b in batch for ref in list(b["statute_refs"]) + list(b["implements_refs"])}
+    )
     if statute_refs:
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MERGE (s:Statute {id: row.id}) "
             "ON CREATE SET s.title = row.title, s.stub = true",
@@ -280,10 +292,13 @@ def _flush_phase_3_batch(client, graph_id: str, batch: list[dict]) -> tuple[int,
     # 2. doc -CITES-> Statute
     cite_statute_pairs = [
         {"doc_id": b["doc_id"], "stub_id": f"WIS-STAT-{ref}"}
-        for b in batch for ref in b["statute_refs"]
+        for b in batch
+        for ref in b["statute_refs"]
     ]
     if cite_statute_pairs:
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MATCH (d {id: row.doc_id}), (s:Statute {id: row.stub_id}) "
             "MERGE (d)-[:CITES]->(s)",
@@ -301,7 +316,9 @@ def _flush_phase_3_batch(client, graph_id: str, batch: list[dict]) -> tuple[int,
             row for row in cite_statute_pairs if row["doc_id"].startswith("case-law-")
         ]
         if case_law_pairs:
-            execute_query(client, graph_id,
+            execute_query(
+                client,
+                graph_id,
                 "UNWIND $rows AS row "
                 "MATCH (s:Statute {id: row.stub_id}), (c:CaseLaw {id: row.doc_id}) "
                 "MERGE (s)-[:CITES]->(c)",
@@ -312,10 +329,13 @@ def _flush_phase_3_batch(client, graph_id: str, batch: list[dict]) -> tuple[int,
     # 3. doc -IMPLEMENTS-> Statute
     impl_pairs = [
         {"doc_id": b["doc_id"], "stub_id": f"WIS-STAT-{ref}"}
-        for b in batch for ref in b["implements_refs"]
+        for b in batch
+        for ref in b["implements_refs"]
     ]
     if impl_pairs:
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MATCH (d {id: row.doc_id}), (s:Statute {id: row.stub_id}) "
             "MERGE (d)-[:IMPLEMENTS]->(s)",
@@ -326,7 +346,9 @@ def _flush_phase_3_batch(client, graph_id: str, batch: list[dict]) -> tuple[int,
     # 4. AdminRule stubs + doc -CITES-> AdminRule
     admin_refs = sorted({ref for b in batch for ref in b["admin_rule_refs"]})
     if admin_refs:
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MERGE (r:AdminRule {id: row.id}) "
             "ON CREATE SET r.title = row.title, r.stub = true",
@@ -336,9 +358,12 @@ def _flush_phase_3_batch(client, graph_id: str, batch: list[dict]) -> tuple[int,
 
         cite_admin_pairs = [
             {"doc_id": b["doc_id"], "stub_id": f"ADMIN-{ref.replace(' ', '-')}"}
-            for b in batch for ref in b["admin_rule_refs"]
+            for b in batch
+            for ref in b["admin_rule_refs"]
         ]
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MATCH (d {id: row.doc_id}), (r:AdminRule {id: row.stub_id}) "
             "MERGE (d)-[:CITES]->(r)",
@@ -371,7 +396,9 @@ def phase_3_cross_references(client, graph_id: str, documents: list[dict]):
         pairs = _pair_count(entry)
 
         # Flush before adding if this doc alone would blow the pair cap.
-        if batch and (len(batch) >= PHASE_3_BATCH_SIZE or batch_pairs + pairs > PHASE_3_MAX_PAIRS_PER_FLUSH):
+        if batch and (
+            len(batch) >= PHASE_3_BATCH_SIZE or batch_pairs + pairs > PHASE_3_MAX_PAIRS_PER_FLUSH
+        ):
             e, s = _flush_phase_3_batch(client, graph_id, batch)
             edges_created += e
             stubs_created += s
@@ -412,9 +439,7 @@ def phase_4_statute_hierarchy(client, graph_id: str):
     """
     logger.info("Phase 4: Building statute hierarchy (PART_OF)...")
 
-    result = execute_query(client, graph_id,
-        "MATCH (s:Statute) RETURN s.id AS id"
-    )
+    result = execute_query(client, graph_id, "MATCH (s:Statute) RETURN s.id AS id")
     statutes = result.get("results", [])
 
     section_to_chapter: list[dict] = []
@@ -446,13 +471,15 @@ def phase_4_statute_hierarchy(client, graph_id: str):
     # exist before wiring the edge — same pattern as the subsection path.
     for start in range(0, len(section_to_chapter), flush_cap):
         chunk = section_to_chapter[start : start + flush_cap]
-        execute_query(client, graph_id,
-            "UNWIND $rows AS row "
-            "MERGE (p:Statute {id: row.parent_id}) "
-            "ON CREATE SET p.stub = true",
+        execute_query(
+            client,
+            graph_id,
+            "UNWIND $rows AS row MERGE (p:Statute {id: row.parent_id}) ON CREATE SET p.stub = true",
             {"rows": chunk},
         )
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MATCH (child:Statute {id: row.child_id}), (parent:Statute {id: row.parent_id}) "
             "MERGE (child)-[:PART_OF]->(parent)",
@@ -464,13 +491,15 @@ def phase_4_statute_hierarchy(client, graph_id: str):
         # Two-step: ensure parent stub exists, then wire the edge. We can't
         # combine into one UNWIND cleanly because the MERGE-of-parent must
         # commit before the section MATCH can pick it up.
-        execute_query(client, graph_id,
-            "UNWIND $rows AS row "
-            "MERGE (p:Statute {id: row.parent_id}) "
-            "ON CREATE SET p.stub = true",
+        execute_query(
+            client,
+            graph_id,
+            "UNWIND $rows AS row MERGE (p:Statute {id: row.parent_id}) ON CREATE SET p.stub = true",
             {"rows": chunk},
         )
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MATCH (child:Statute {id: row.child_id}), (parent:Statute {id: row.parent_id}) "
             "MERGE (child)-[:PART_OF]->(parent)",
@@ -535,13 +564,16 @@ def phase_5_topic_merging(client, graph_id: str, documents: list[dict], config: 
 
     # Batch-MERGE all Topic nodes in one UNWIND.
     if canonical_topics:
-        execute_query(client, graph_id,
-            "UNWIND $rows AS row "
-            "MERGE (t:Topic {id: row.id}) SET t.title = row.title",
-            {"rows": [
-                {"id": topic.lower().replace(" ", "-"), "title": topic}
-                for topic in sorted(canonical_topics)
-            ]},
+        execute_query(
+            client,
+            graph_id,
+            "UNWIND $rows AS row MERGE (t:Topic {id: row.id}) SET t.title = row.title",
+            {
+                "rows": [
+                    {"id": topic.lower().replace(" ", "-"), "title": topic}
+                    for topic in sorted(canonical_topics)
+                ]
+            },
         )
     logger.info(f"  Merged {len(canonical_topics)} Topic nodes")
 
@@ -566,7 +598,9 @@ def phase_5_topic_merging(client, graph_id: str, documents: list[dict], config: 
     written = 0
     for start in range(0, len(pairs), flush_cap):
         chunk = pairs[start : start + flush_cap]
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MATCH (d {id: row.doc_id}), (t:Topic {id: row.topic_id}) "
             "MERGE (d)-[:COVERS_TOPIC]->(t)",
@@ -575,7 +609,9 @@ def phase_5_topic_merging(client, graph_id: str, documents: list[dict], config: 
         written += len(chunk)
         logger.info(f"  Phase 5 edges: {written}/{len(pairs)}")
 
-    logger.info(f"  Created {len(canonical_topics)} canonical topics from {len(all_topics)} raw topics")
+    logger.info(
+        f"  Created {len(canonical_topics)} canonical topics from {len(all_topics)} raw topics"
+    )
 
 
 def phase_6_7_hierarchy(client, graph_id: str, documents: list[dict]):
@@ -591,22 +627,28 @@ def phase_6_7_hierarchy(client, graph_id: str, documents: list[dict]):
     flush_cap = 400
     for start in range(0, len(pairs), flush_cap):
         chunk = pairs[start : start + flush_cap]
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MATCH (parent {id: row.parent_id}), (child {id: row.child_id}) "
             "MERGE (parent)-[:HAS_SUBSECTION]->(child)",
             {"rows": chunk},
         )
 
-    execute_query(client, graph_id,
+    execute_query(
+        client,
+        graph_id,
         "MATCH (s:Statute) WHERE s.stub = true AND NOT (s)-[:BELONGS_TO]->() "
         "MATCH (f:Framework {id: 'FW-STATUTES'}) "
-        "MERGE (s)-[:BELONGS_TO]->(f)"
+        "MERGE (s)-[:BELONGS_TO]->(f)",
     )
-    execute_query(client, graph_id,
+    execute_query(
+        client,
+        graph_id,
         "MATCH (r:AdminRule) WHERE r.stub = true AND NOT (r)-[:BELONGS_TO]->() "
         "MATCH (f:Framework {id: 'FW-ADMIN-RULES'}) "
-        "MERGE (r)-[:BELONGS_TO]->(f)"
+        "MERGE (r)-[:BELONGS_TO]->(f)",
     )
 
     logger.info("  Hierarchy links complete")
@@ -639,7 +681,9 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
         return 0
 
     # 1. Chunk nodes (single UNWIND MERGE, sets all scalar props).
-    execute_query(client, graph_id,
+    execute_query(
+        client,
+        graph_id,
         "UNWIND $rows AS row "
         "MERGE (c:Chunk {id: row.id}) "
         "SET c.text = row.text, c.doc_id = row.doc_id, "
@@ -647,25 +691,30 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
         "c.s3_key = row.s3_key, c.start_page = row.start_page, "
         "c.end_page = row.end_page, c.heading = row.heading, "
         "c.subheading = row.subheading, c.edition_year = row.edition_year",
-        {"rows": [
-            {
-                "id": b["chunk_id"],
-                "text": b["text"],
-                "doc_id": b["doc_id"],
-                "source_url": b["source_url"],
-                "idx": b["idx"],
-                "s3_key": b["s3_key"],
-                "start_page": b["start_page"],
-                "end_page": b["end_page"],
-                "heading": b["heading"],
-                "subheading": b["subheading"],
-                "edition_year": b.get("edition_year"),
-            } for b in batch
-        ]},
+        {
+            "rows": [
+                {
+                    "id": b["chunk_id"],
+                    "text": b["text"],
+                    "doc_id": b["doc_id"],
+                    "source_url": b["source_url"],
+                    "idx": b["idx"],
+                    "s3_key": b["s3_key"],
+                    "start_page": b["start_page"],
+                    "end_page": b["end_page"],
+                    "heading": b["heading"],
+                    "subheading": b["subheading"],
+                    "edition_year": b.get("edition_year"),
+                }
+                for b in batch
+            ]
+        },
     )
 
     # 2. EXTRACTED_FROM edges (batch MATCH+MERGE).
-    execute_query(client, graph_id,
+    execute_query(
+        client,
+        graph_id,
         "UNWIND $rows AS row "
         "MATCH (c:Chunk {id: row.chunk_id}), (d {id: row.doc_id}) "
         "MERGE (c)-[:EXTRACTED_FROM]->(d)",
@@ -677,7 +726,9 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
     # 3. Statute stubs + chunk CITES Statute (two UNWINDs).
     statute_refs = sorted({ref for b in batch for ref in b["statute_refs"]})
     if statute_refs:
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MERGE (s:Statute {id: row.id}) "
             "ON CREATE SET s.title = row.title, s.stub = true",
@@ -685,9 +736,12 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
         )
         cite_pairs = [
             {"chunk_id": b["chunk_id"], "stub_id": f"WIS-STAT-{ref}"}
-            for b in batch for ref in b["statute_refs"]
+            for b in batch
+            for ref in b["statute_refs"]
         ]
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MATCH (c:Chunk {id: row.chunk_id}), (s:Statute {id: row.stub_id}) "
             "MERGE (c)-[:CITES]->(s)",
@@ -698,7 +752,9 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
     # 4. AdminRule stubs + chunk CITES AdminRule.
     admin_refs = sorted({ref for b in batch for ref in b["admin_rule_refs"]})
     if admin_refs:
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MERGE (r:AdminRule {id: row.id}) "
             "ON CREATE SET r.title = row.title, r.stub = true",
@@ -706,9 +762,12 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
         )
         cite_pairs = [
             {"chunk_id": b["chunk_id"], "stub_id": f"ADMIN-{ref.replace(' ', '-')}"}
-            for b in batch for ref in b["admin_rule_refs"]
+            for b in batch
+            for ref in b["admin_rule_refs"]
         ]
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MATCH (c:Chunk {id: row.chunk_id}), (r:AdminRule {id: row.stub_id}) "
             "MERGE (c)-[:CITES]->(r)",
@@ -798,7 +857,9 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
                 batch_pairs = 0
                 batch_bytes = 0
                 if total_chunks % 1000 == 0:
-                    logger.info(f"  Phase 8 progress: {total_chunks} chunks, {cite_edges} CITES edges")
+                    logger.info(
+                        f"  Phase 8 progress: {total_chunks} chunks, {cite_edges} CITES edges"
+                    )
 
             batch.append(entry)
             batch_pairs += pairs
@@ -814,8 +875,8 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
 def phase_9_stub_resolution(client, graph_id: str):
     logger.info("Phase 9: Resolving stub nodes...")
 
-    result = execute_query(client, graph_id,
-        "MATCH (s) WHERE s.stub = true RETURN s.id AS id, labels(s) AS labels"
+    result = execute_query(
+        client, graph_id, "MATCH (s) WHERE s.stub = true RETURN s.id AS id, labels(s) AS labels"
     )
     stubs = result.get("results", [])
     logger.info(f"  {len(stubs)} stubs to consider")
@@ -826,7 +887,9 @@ def phase_9_stub_resolution(client, graph_id: str):
         stub_id = stub["id"]
         m = re.match(r"WIS-STAT-(\d+)", stub_id)
         if m:
-            candidates.append({"stub_id": stub_id, "real_id": f"statutes-wi-statute-ch{m.group(1)}"})
+            candidates.append(
+                {"stub_id": stub_id, "real_id": f"statutes-wi-statute-ch{m.group(1)}"}
+            )
 
     if not candidates:
         logger.info("  No resolvable candidates")
@@ -840,7 +903,9 @@ def phase_9_stub_resolution(client, graph_id: str):
     for edge_type in ("CITES", "IMPLEMENTS"):
         for start in range(0, len(candidates), flush_cap):
             chunk = candidates[start : start + flush_cap]
-            execute_query(client, graph_id,
+            execute_query(
+                client,
+                graph_id,
                 "UNWIND $rows AS row "
                 "MATCH (real {id: row.real_id}) WHERE real.stub IS NULL "
                 "MATCH (s {id: row.stub_id})<-[:" + edge_type + "]-(citing) "
@@ -849,7 +914,9 @@ def phase_9_stub_resolution(client, graph_id: str):
             )
         logger.info(f"  Phase 9 {edge_type}: re-pointed {len(candidates)} candidate stubs")
 
-    logger.info(f"  Processed {len(candidates)}/{len(stubs)} candidate stubs (no-op if real nodes absent)")
+    logger.info(
+        f"  Processed {len(candidates)}/{len(stubs)} candidate stubs (no-op if real nodes absent)"
+    )
 
 
 PHASE_10_WORKERS = 8
@@ -859,7 +926,9 @@ def _upsert_vector(client, graph_id: str, chunk_id: str, embedding: list[float])
     # Neptune's vector upsert is a CALL procedure — cannot UNWIND a batch.
     # Inline the embedding literal to avoid parameterized-CALL limits.
     embedding_literal = "[" + ",".join(str(v) for v in embedding) + "]"
-    execute_query(client, graph_id,
+    execute_query(
+        client,
+        graph_id,
         f"MATCH (c:Chunk {{id: $id}}) "
         f"CALL neptune.algo.vectors.upsert(c, {embedding_literal}) "
         f"RETURN c.id",
@@ -883,10 +952,7 @@ def phase_10_vectors(client, graph_id: str, documents: list[dict]):
 
     total = 0
     with ThreadPoolExecutor(max_workers=PHASE_10_WORKERS) as pool:
-        futures = [
-            pool.submit(_upsert_vector, client, graph_id, cid, emb)
-            for cid, emb in jobs
-        ]
+        futures = [pool.submit(_upsert_vector, client, graph_id, cid, emb) for cid, emb in jobs]
         for fut in as_completed(futures):
             fut.result()
             total += 1
@@ -940,23 +1006,25 @@ def _llm_classify_semantic_batch(
       - "related": false is still a valid output — many cosine-similar
         pairs are coincidental (shared boilerplate, same chapter banner).
     """
-    pairs_text = "\n".join([
-        (
-            f"Pair {k+1}:\n"
-            f"  Doc A: '{a['title']}' (type={a['doc_type']})\n"
-            f"    Summary: {(a.get('summary') or '')[:400]}\n"
-            f"  Doc B: '{b['title']}' (type={b['doc_type']})\n"
-            f"    Summary: {(b.get('summary') or '')[:400]}\n"
-            f"  Cosine similarity: {sim:.3f}"
-        )
-        for k, (a, b, sim) in enumerate(batch)
-    ])
+    pairs_text = "\n".join(
+        [
+            (
+                f"Pair {k + 1}:\n"
+                f"  Doc A: '{a['title']}' (type={a['doc_type']})\n"
+                f"    Summary: {(a.get('summary') or '')[:400]}\n"
+                f"  Doc B: '{b['title']}' (type={b['doc_type']})\n"
+                f"    Summary: {(b.get('summary') or '')[:400]}\n"
+                f"  Cosine similarity: {sim:.3f}"
+            )
+            for k, (a, b, sim) in enumerate(batch)
+        ]
+    )
     prompt = (
         "Classify each pair of Wisconsin DOR property tax documents. "
         "Return one JSON array, no prose, no markdown.\n\n"
-        "Each result: {\"pair\": N, \"related\": true|false, "
-        "\"type\": \"RELATED_TO\"|\"SUPPLEMENTS\"|\"SUPERSEDES\"|\"CONFLICTS_WITH\", "
-        "\"reason\": \"<one sentence>\"}\n\n"
+        'Each result: {"pair": N, "related": true|false, '
+        '"type": "RELATED_TO"|"SUPPLEMENTS"|"SUPERSEDES"|"CONFLICTS_WITH", '
+        '"reason": "<one sentence>"}\n\n'
         "EDGE TYPE DEFINITIONS\n\n"
         "RELATED_TO — same topic, mutually consistent, neither extends nor "
         "replaces the other. Default for compatible docs that just cover "
@@ -1012,13 +1080,15 @@ def _llm_classify_semantic_batch(
         edge_type = item.get("type", "RELATED_TO")
         if edge_type not in PHASE_11_ALLOWED_TYPES:
             edge_type = "RELATED_TO"
-        edges.append({
-            "a_id": doc_a["doc_id"],
-            "b_id": doc_b["doc_id"],
-            "type": edge_type,
-            "sim": sim,
-            "reason": item.get("reason", ""),
-        })
+        edges.append(
+            {
+                "a_id": doc_a["doc_id"],
+                "b_id": doc_b["doc_id"],
+                "type": edge_type,
+                "sim": sim,
+                "reason": item.get("reason", ""),
+            }
+        )
     return edges
 
 
@@ -1028,17 +1098,21 @@ def _flush_semantic_edges(client, graph_id: str, edges: list[dict]) -> int:
         return 0
     by_type: dict[str, list[dict]] = {}
     for e in edges:
-        by_type.setdefault(e["type"], []).append({
-            "a_id": e["a_id"],
-            "b_id": e["b_id"],
-            "sim": e["sim"],
-            "reason": e["reason"],
-        })
+        by_type.setdefault(e["type"], []).append(
+            {
+                "a_id": e["a_id"],
+                "b_id": e["b_id"],
+                "sim": e["sim"],
+                "reason": e["reason"],
+            }
+        )
     written = 0
     for edge_type, rows in by_type.items():
         # Edge type is injected as a label (can't be parameterized in Cypher)
         # but rows are validated against PHASE_11_ALLOWED_TYPES above.
-        execute_query(client, graph_id,
+        execute_query(
+            client,
+            graph_id,
             "UNWIND $rows AS row "
             "MATCH (a {id: row.a_id}), (b {id: row.b_id}) "
             f"MERGE (a)-[r:{edge_type}]->(b) "
@@ -1148,23 +1222,27 @@ def phase_12_cleanup(client, graph_id: str):
     """
     logger.info("Phase 12: Cleaning up orphan stubs and topics...")
 
-    stub_orphans = execute_query(client, graph_id,
+    stub_orphans = execute_query(
+        client,
+        graph_id,
         "MATCH (s:Statute) "
         "WHERE s.stub = true "
         "  AND NOT (s)-[]-() "
         "WITH s LIMIT 5000 "
         "DETACH DELETE s "
-        "RETURN count(s) AS deleted"
+        "RETURN count(s) AS deleted",
     )
     deleted_stubs = stub_orphans.get("results", [{}])[0].get("deleted", 0)
     logger.info(f"  Deleted {deleted_stubs} orphan Statute stubs (no incoming/outgoing edges)")
 
-    topic_orphans = execute_query(client, graph_id,
+    topic_orphans = execute_query(
+        client,
+        graph_id,
         "MATCH (t:Topic) "
         "WHERE NOT (t)<-[:COVERS_TOPIC]-() "
         "WITH t LIMIT 5000 "
         "DETACH DELETE t "
-        "RETURN count(t) AS deleted"
+        "RETURN count(t) AS deleted",
     )
     deleted_topics = topic_orphans.get("results", [{}])[0].get("deleted", 0)
     logger.info(f"  Deleted {deleted_topics} orphan Topic nodes (no incoming COVERS_TOPIC)")
@@ -1176,7 +1254,9 @@ def main():
     parser.add_argument("--graph-id", required=True, help="Neptune Analytics graph identifier")
     parser.add_argument("--config", default="tools/ingestion/config/ingest_config.yaml")
     parser.add_argument("--start-phase", type=int, default=1, help="Resume from specific phase")
-    parser.add_argument("--stop-after-phase", type=int, default=None, help="Exit cleanly after this phase completes")
+    parser.add_argument(
+        "--stop-after-phase", type=int, default=None, help="Exit cleanly after this phase completes"
+    )
     parser.add_argument(
         "--source-filter",
         default="",
@@ -1196,14 +1276,18 @@ def main():
     if args.source_filter:
         before = len(documents)
         documents = [d for d in documents if d.get("doc_id", "").startswith(args.source_filter)]
-        logger.info(
-            f"Source filter '{args.source_filter}': {before} → {len(documents)} documents"
-        )
+        logger.info(f"Source filter '{args.source_filter}': {before} → {len(documents)} documents")
 
     # When reloading a subset, purge stale chunks first to prevent orphans
     # (chunk IDs are positional, so filtering/renumbering leaves old tail chunks behind).
     if args.source_filter:
-        purge_phase = [(6.5, "Purge Stale Chunks", lambda: phase_purge_stale_chunks(client, graph_id, documents))]
+        purge_phase = [
+            (
+                6.5,
+                "Purge Stale Chunks",
+                lambda: phase_purge_stale_chunks(client, graph_id, documents),
+            )
+        ]
     else:
         purge_phase = []
 
@@ -1218,7 +1302,11 @@ def main():
         (7, "Chunk Nodes", lambda: phase_8_chunks(client, graph_id, documents)),
         (8, "Stub Resolution", lambda: phase_9_stub_resolution(client, graph_id)),
         (9, "Vector Upserts", lambda: phase_10_vectors(client, graph_id, documents)),
-        (10, "Semantic Edges", lambda: phase_11_semantic_edges(client, graph_id, documents, config)),
+        (
+            10,
+            "Semantic Edges",
+            lambda: phase_11_semantic_edges(client, graph_id, documents, config),
+        ),
         (11, "Orphan Cleanup", lambda: phase_12_cleanup(client, graph_id)),
     ]
 
@@ -1226,7 +1314,7 @@ def main():
         if phase_num < args.start_phase:
             logger.info(f"Skipping Phase {phase_num}: {name}")
             continue
-        logger.info(f"\n{'='*60}\nPhase {phase_num}: {name}\n{'='*60}")
+        logger.info(f"\n{'=' * 60}\nPhase {phase_num}: {name}\n{'=' * 60}")
         fn()
         if args.stop_after_phase is not None and phase_num >= args.stop_after_phase:
             logger.info(f"Stopping after Phase {phase_num} per --stop-after-phase.")

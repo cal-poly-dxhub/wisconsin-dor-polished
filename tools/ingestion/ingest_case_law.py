@@ -95,14 +95,27 @@ _REPORTER_PATTERNS = [
 ]
 
 REPORTER_PRIORITY = [
-    "wis-2d", "wi-app", "wi", "n-w-2d", "n-w-3d",
-    "s-ct", "u-s", "f-supp-3d", "f-supp-2d", "f-supp", "f-4th", "f-3d", "f-2d", "l-ed-2d",
+    "wis-2d",
+    "wi-app",
+    "wi",
+    "n-w-2d",
+    "n-w-3d",
+    "s-ct",
+    "u-s",
+    "f-supp-3d",
+    "f-supp-2d",
+    "f-supp",
+    "f-4th",
+    "f-3d",
+    "f-2d",
+    "l-ed-2d",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Slug / reporter helpers
 # ---------------------------------------------------------------------------
+
 
 def _citation_to_slug(citation: str) -> str:
     lowered = citation.lower()
@@ -134,6 +147,7 @@ def _scholar_url(citation: str) -> str:
 # Phase 1: Extract citations from statute PDFs
 # ---------------------------------------------------------------------------
 
+
 def _normalize_citation(raw: str) -> str:
     citation = raw.strip().rstrip("/")
     if not citation or len(citation) < 3:
@@ -164,12 +178,14 @@ def extract_citations_from_pdf(pdf_path: str, chapter_label: str) -> list[dict]:
             citation = _normalize_citation(raw_citation)
             if not citation:
                 continue
-            results.append({
-                "citation": citation,
-                "legis_url": uri,
-                "page": page_num + 1,
-                "chapter_file": chapter_label,
-            })
+            results.append(
+                {
+                    "citation": citation,
+                    "legis_url": uri,
+                    "page": page_num + 1,
+                    "chapter_file": chapter_label,
+                }
+            )
     doc.close()
     return results
 
@@ -233,18 +249,21 @@ def consolidate_citations(raw_entries: list[dict]) -> list[dict]:
             {"file": chapter, "pages": sorted(pages)}
             for chapter, pages in sorted(record["sources"].items())
         ]
-        results.append({
-            "citation": citation,
-            "legis_url": record["legis_url"],
-            "scholar_url": _scholar_url(citation),
-            "sources": sources,
-        })
+        results.append(
+            {
+                "citation": citation,
+                "legis_url": record["legis_url"],
+                "scholar_url": _scholar_url(citation),
+                "sources": sources,
+            }
+        )
     return results
 
 
 # ---------------------------------------------------------------------------
 # Phase 2: CourtListener enrichment
 # ---------------------------------------------------------------------------
+
 
 def search_courtlistener(citation: str, session: requests.Session) -> dict | None:
     """Search CourtListener for a citation. Returns enrichment dict or None."""
@@ -264,7 +283,7 @@ def search_courtlistener(citation: str, session: requests.Session) -> dict | Non
             if attempt == 3:
                 logger.warning(f"CL search failed for '{citation}': {e}")
                 return None
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
     else:
         return None
 
@@ -320,7 +339,14 @@ def fetch_opinion_text(opinion_id: int, session: requests.Session) -> str | None
         logger.warning(f"Failed to fetch opinion {opinion_id}: {e}")
         return None
 
-    for field in ("plain_text", "html_with_citations", "html", "html_lawbox", "html_columbia", "xml_harvard"):
+    for field in (
+        "plain_text",
+        "html_with_citations",
+        "html",
+        "html_lawbox",
+        "html_columbia",
+        "xml_harvard",
+    ):
         text = data.get(field, "")
         if text and text.strip():
             if field.startswith("html") or field.startswith("xml"):
@@ -349,7 +375,9 @@ def fetch_scholar_opinion(scholar_url: str, delay: float) -> tuple[str, str] | N
             return None
 
         time.sleep(delay * 0.5 + random.uniform(0, 3))
-        case_url = f"https://scholar.google.com{case_link}" if case_link.startswith("/") else case_link
+        case_url = (
+            f"https://scholar.google.com{case_link}" if case_link.startswith("/") else case_link
+        )
         resp2 = requests.get(case_url, headers=SCHOLAR_HEADERS, timeout=30)
         if resp2.status_code == 429 or "captcha" in resp2.text.lower():
             return None
@@ -372,6 +400,7 @@ def fetch_scholar_opinion(scholar_url: str, delay: float) -> tuple[str, str] | N
 # S3 cache: reuse enrichment from existing extracted/ records
 # ---------------------------------------------------------------------------
 
+
 def load_extracted_cache(work_bucket: str, s3_client) -> dict:
     """Load existing extracted/case-law-*.json records, indexed by doc_id AND citation.
 
@@ -392,7 +421,9 @@ def load_extracted_cache(work_bucket: str, s3_client) -> dict:
     if not keys:
         return cache
 
-    logger.info(f"Loading {len(keys)} cached extracted records from s3://{work_bucket}/extracted/...")
+    logger.info(
+        f"Loading {len(keys)} cached extracted records from s3://{work_bucket}/extracted/..."
+    )
 
     def fetch(key):
         obj = s3_client.get_object(Bucket=work_bucket, Key=key)
@@ -425,6 +456,7 @@ def load_extracted_cache(work_bucket: str, s3_client) -> dict:
 # ---------------------------------------------------------------------------
 # Phase 3: Deduplication
 # ---------------------------------------------------------------------------
+
 
 def deduplicate_by_cluster(enriched: list[dict]) -> list[dict]:
     """Group citations by CourtListener cluster_id OR source_url, keep highest-priority reporter.
@@ -460,8 +492,7 @@ def deduplicate_by_cluster(enriched: list[dict]) -> list[dict]:
                 alternate_citations.append(entry["citation"])
 
         winner["sources"] = [
-            {"file": f, "pages": sorted(pages)}
-            for f, pages in sorted(all_sources.items())
+            {"file": f, "pages": sorted(pages)} for f, pages in sorted(all_sources.items())
         ]
         if alternate_citations:
             winner["alternate_citations"] = alternate_citations
@@ -479,8 +510,15 @@ def deduplicate_by_cluster(enriched: list[dict]) -> list[dict]:
 # Phase 4: Upload to S3
 # ---------------------------------------------------------------------------
 
-def upload_case(entry: dict, bucket: str, s3_client, stubs_only: bool,
-                cl_session: requests.Session | None, scholar_delay: float) -> dict:
+
+def upload_case(
+    entry: dict,
+    bucket: str,
+    s3_client,
+    stubs_only: bool,
+    cl_session: requests.Session | None,
+    scholar_delay: float,
+) -> dict:
     """Upload a single case to S3 with complete metadata.
 
     Returns a status dict for progress tracking.
@@ -514,12 +552,15 @@ def upload_case(entry: dict, bucket: str, s3_client, stubs_only: bool,
         content_type = "text/plain"
         ext = ".txt"
     else:
-        content = json.dumps({
-            "citation": citation,
-            "case_name": entry.get("case_name") or citation,
-            "note": "Full opinion text not available. See source_url or scholar_url.",
-            "scholar_url": entry["scholar_url"],
-        }, indent=2).encode("utf-8")
+        content = json.dumps(
+            {
+                "citation": citation,
+                "case_name": entry.get("case_name") or citation,
+                "note": "Full opinion text not available. See source_url or scholar_url.",
+                "scholar_url": entry["scholar_url"],
+            },
+            indent=2,
+        ).encode("utf-8")
         content_type = "application/json"
         ext = ".json"
 
@@ -544,10 +585,13 @@ def upload_case(entry: dict, bucket: str, s3_client, stubs_only: bool,
         }
     }
     if entry.get("alternate_citations"):
-        metadata["metadataAttributes"]["alternate_citations"] = json.dumps(entry["alternate_citations"])
+        metadata["metadataAttributes"]["alternate_citations"] = json.dumps(
+            entry["alternate_citations"]
+        )
 
     s3_client.put_object(
-        Bucket=bucket, Key=meta_key,
+        Bucket=bucket,
+        Key=meta_key,
         Body=json.dumps(metadata, indent=2).encode("utf-8"),
         ContentType="application/json",
     )
@@ -563,6 +607,7 @@ def upload_case(entry: dict, bucket: str, s3_client, stubs_only: bool,
 # ---------------------------------------------------------------------------
 # Progress management
 # ---------------------------------------------------------------------------
+
 
 def load_progress(path: Path) -> dict:
     if path.exists():
@@ -580,6 +625,7 @@ def save_progress(progress: dict, path: Path):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Single-pass case law ingestion: extract → enrich → dedup → upload"
@@ -587,15 +633,33 @@ def main():
     parser.add_argument("--bucket", required=True, help="S3 raw bucket")
     parser.add_argument("--from-s3", action="store_true", help="Read statute PDFs from S3")
     parser.add_argument("--state-laws-dir", type=Path, default=STATE_LAWS_DIR)
-    parser.add_argument("--stubs-only", action="store_true", help="Upload metadata stubs only, skip text download")
-    parser.add_argument("--scholar-fallback", action="store_true", help="Enable Google Scholar as fallback for CL misses")
-    parser.add_argument("--scholar-delay", type=float, default=30, help="Delay between Scholar requests")
-    parser.add_argument("--dry-run", action="store_true", help="Extract + enrich only, no S3 writes")
+    parser.add_argument(
+        "--stubs-only", action="store_true", help="Upload metadata stubs only, skip text download"
+    )
+    parser.add_argument(
+        "--scholar-fallback",
+        action="store_true",
+        help="Enable Google Scholar as fallback for CL misses",
+    )
+    parser.add_argument(
+        "--scholar-delay", type=float, default=30, help="Delay between Scholar requests"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Extract + enrich only, no S3 writes"
+    )
     parser.add_argument("--resume", action="store_true", help="Skip already-completed cases")
     parser.add_argument("--limit", type=int, default=0, help="Process at most N cases (0=all)")
-    parser.add_argument("--concurrency", type=int, default=3, help="Parallel CL requests (default: 3)")
-    parser.add_argument("--work-bucket", default="wis-work-bucket-c8e69250", help="Work bucket with extracted/ cache")
-    parser.add_argument("--no-cache", action="store_true", help="Skip S3 cache, force CL lookup for all")
+    parser.add_argument(
+        "--concurrency", type=int, default=3, help="Parallel CL requests (default: 3)"
+    )
+    parser.add_argument(
+        "--work-bucket",
+        default="wis-work-bucket-c8e69250",
+        help="Work bucket with extracted/ cache",
+    )
+    parser.add_argument(
+        "--no-cache", action="store_true", help="Skip S3 cache, force CL lookup for all"
+    )
     parser.add_argument("--profile", default="widor")
     parser.add_argument("--region", default="us-east-1")
     args = parser.parse_args()
@@ -616,9 +680,11 @@ def main():
         cl_session.headers["Authorization"] = f"Token {token}"
     cl_session.headers["User-Agent"] = "wisconsin-dor-case-law-ingest/2.0"
 
-    progress = load_progress(PROGRESS_FILE) if args.resume else {
-        "completed": {}, "stats": {"courtlistener": 0, "scholar": 0, "stub": 0}
-    }
+    progress = (
+        load_progress(PROGRESS_FILE)
+        if args.resume
+        else {"completed": {}, "stats": {"courtlistener": 0, "scholar": 0, "stub": 0}}
+    )
 
     # --- Phase 1: Extract citations from statute PDFs ---
     logger.info("=" * 60)
@@ -681,7 +747,9 @@ def main():
     logger.info(f"  Cache hits: {cache_hits}, need CL lookup: {len(need_cl)}")
 
     if need_cl:
-        logger.info(f"  Querying CourtListener for {len(need_cl)} citations ({args.concurrency} workers)...")
+        logger.info(
+            f"  Querying CourtListener for {len(need_cl)} citations ({args.concurrency} workers)..."
+        )
 
         def enrich_one(pair):
             enriched_entry, _ = pair
@@ -704,9 +772,13 @@ def main():
                     cl_misses += 1
                     logger.warning(f"  No CL link for: {result['citation']}")
                 if i % 50 == 0:
-                    logger.info(f"    CL progress: {i}/{len(need_cl)} (hits: {cl_hits}, misses: {cl_misses})")
+                    logger.info(
+                        f"    CL progress: {i}/{len(need_cl)} (hits: {cl_hits}, misses: {cl_misses})"
+                    )
 
-    logger.info(f"Enrichment complete: {cache_hits} cached, {cl_hits} CL hits, {cl_misses} CL misses")
+    logger.info(
+        f"Enrichment complete: {cache_hits} cached, {cl_hits} CL hits, {cl_misses} CL misses"
+    )
 
     # --- Phase 3: Deduplicate parallel reporters ---
     logger.info("")
@@ -721,7 +793,9 @@ def main():
     if args.dry_run:
         logger.info("")
         logger.info("=" * 60)
-        logger.info("[DRY RUN] Would upload %d cases to s3://%s/raw/case-law/", len(deduped), args.bucket)
+        logger.info(
+            "[DRY RUN] Would upload %d cases to s3://%s/raw/case-law/", len(deduped), args.bucket
+        )
         logger.info("=" * 60)
 
         by_reporter = defaultdict(int)
@@ -784,8 +858,12 @@ def main():
     logger.info(f"Progress saved to {PROGRESS_FILE}")
     logger.info("")
     logger.info("Next steps:")
-    logger.info("  1. Run extraction:  ./tools/ingestion/scripts/run_fargate.sh extract --source-filter case-law --force")
-    logger.info("  2. Run load:        ./tools/ingestion/scripts/run_fargate.sh load --start-phase 1 --stop-after-phase 2")
+    logger.info(
+        "  1. Run extraction:  ./tools/ingestion/scripts/run_fargate.sh extract --source-filter case-law --force"
+    )
+    logger.info(
+        "  2. Run load:        ./tools/ingestion/scripts/run_fargate.sh load --start-phase 1 --stop-after-phase 2"
+    )
 
 
 if __name__ == "__main__":

@@ -6,7 +6,6 @@ it pollutes vector search. These tests verify that known boilerplate is
 stripped while actual content is preserved.
 """
 
-
 from tools.ingestion.chunking.boilerplate import strip_boilerplate
 
 # --- General patterns (stripped from all doc types) ---

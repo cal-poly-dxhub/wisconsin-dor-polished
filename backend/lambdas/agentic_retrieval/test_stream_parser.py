@@ -19,7 +19,7 @@ class TestAnswerToolStreamParser:
 
     def test_chunked_response(self):
         parser = AnswerToolStreamParser()
-        chunks = ['{"respon', 'se": "He', 'llo wor', 'ld", "cited', '_doc_ids": []}']
+        chunks = ['{"respon', 'se": "He', "llo wor", 'ld", "cited', '_doc_ids": []}']
         all_fragments = []
         for chunk in chunks:
             all_fragments.extend(parser.feed(chunk))
@@ -36,7 +36,9 @@ class TestAnswerToolStreamParser:
 
     def test_response_with_markdown(self):
         parser = AnswerToolStreamParser()
-        json_str = '{"response": "## Title\\n\\nSome **bold** text with `code`", "cited_doc_ids": ["a"]}'
+        json_str = (
+            '{"response": "## Title\\n\\nSome **bold** text with `code`", "cited_doc_ids": ["a"]}'
+        )
         fragments = parser.feed(json_str)
         text = "".join(fragments)
         assert "## Title" in text

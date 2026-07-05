@@ -512,9 +512,7 @@ def activity_handler() -> dict[str, Any]:
         if filter_expression:
             query_kwargs["FilterExpression"] = filter_expression
         if cursor:
-            query_kwargs["ExclusiveStartKey"] = json.loads(
-                base64.b64decode(cursor).decode()
-            )
+            query_kwargs["ExclusiveStartKey"] = json.loads(base64.b64decode(cursor).decode())
 
         response = dynamodb.query(**query_kwargs)
 
@@ -535,16 +533,18 @@ def activity_handler() -> dict[str, Any]:
             sid = deserialized.get("sessionId", "")
             if sid:
                 session_ids.add(sid)
-            results.append({
-                "queryId": deserialized.get("queryId", ""),
-                "sessionId": sid,
-                "query": deserialized.get("query", ""),
-                "answer": deserialized.get("answer", ""),
-                "timestamp": deserialized.get("timestamp", ""),
-                "thumbUp": deserialized.get("thumbUp"),
-                "feedback": deserialized.get("feedback"),
-                "trace": trace,
-            })
+            results.append(
+                {
+                    "queryId": deserialized.get("queryId", ""),
+                    "sessionId": sid,
+                    "query": deserialized.get("query", ""),
+                    "answer": deserialized.get("answer", ""),
+                    "timestamp": deserialized.get("timestamp", ""),
+                    "thumbUp": deserialized.get("thumbUp"),
+                    "feedback": deserialized.get("feedback"),
+                    "trace": trace,
+                }
+            )
 
         email_by_session = _resolve_session_emails(session_ids)
         for result in results:
@@ -556,11 +556,14 @@ def activity_handler() -> dict[str, Any]:
                 json.dumps(response["LastEvaluatedKey"]).encode()
             ).decode()
 
-        return create_api_response(200, {
-            "items": results,
-            "count": len(results),
-            "nextCursor": next_cursor,
-        })
+        return create_api_response(
+            200,
+            {
+                "items": results,
+                "count": len(results),
+                "nextCursor": next_cursor,
+            },
+        )
 
     except ChatAPIError as e:
         return create_api_response(e.status_code, e.to_response())
@@ -636,11 +639,13 @@ def chunks_documents_handler() -> dict[str, Any]:
                 key = obj["Key"]
                 if key.endswith(".json"):
                     doc_id = key.removeprefix("extracted/").removesuffix(".json")
-                    documents.append({
-                        "doc_id": doc_id,
-                        "last_modified": obj["LastModified"].isoformat(),
-                        "size_bytes": obj["Size"],
-                    })
+                    documents.append(
+                        {
+                            "doc_id": doc_id,
+                            "last_modified": obj["LastModified"].isoformat(),
+                            "size_bytes": obj["Size"],
+                        }
+                    )
 
         documents.sort(key=lambda d: d["doc_id"])
         return create_api_response(200, {"documents": documents, "count": len(documents)})
@@ -679,20 +684,22 @@ def chunks_detail_handler(docId: str) -> dict[str, Any]:
         result_chunks = []
         for i, chunk in enumerate(chunks):
             meta = chunk.get("metadata", {})
-            result_chunks.append({
-                "chunk_id": chunk.get("chunk_id", f"{docId}_chunk_{i:04d}"),
-                "text": chunk.get("text", ""),
-                "char_count": len(chunk.get("text", "")),
-                "idx": meta.get("chunk_index", i),
-                "heading": meta.get("heading") or None,
-                "subheading": meta.get("subheading") or None,
-                "start_page": meta.get("start_page"),
-                "end_page": meta.get("end_page"),
-                "s3_key": meta.get("source"),
-                "statute_refs": meta.get("statute_refs", []),
-                "admin_rule_refs": meta.get("admin_rule_refs", []),
-                "edition_year": meta.get("edition_year"),
-            })
+            result_chunks.append(
+                {
+                    "chunk_id": chunk.get("chunk_id", f"{docId}_chunk_{i:04d}"),
+                    "text": chunk.get("text", ""),
+                    "char_count": len(chunk.get("text", "")),
+                    "idx": meta.get("chunk_index", i),
+                    "heading": meta.get("heading") or None,
+                    "subheading": meta.get("subheading") or None,
+                    "start_page": meta.get("start_page"),
+                    "end_page": meta.get("end_page"),
+                    "s3_key": meta.get("source"),
+                    "statute_refs": meta.get("statute_refs", []),
+                    "admin_rule_refs": meta.get("admin_rule_refs", []),
+                    "edition_year": meta.get("edition_year"),
+                }
+            )
 
         doc_meta = {
             "doc_id": docId,
@@ -718,14 +725,22 @@ def chunks_detail_handler(docId: str) -> dict[str, Any]:
 
 
 INGEST_CATEGORIES = {
-    "constitution": {"framework_id": "FW-WI-CONST", "authority_level": 1, "doc_type": "constitution"},
+    "constitution": {
+        "framework_id": "FW-WI-CONST",
+        "authority_level": 1,
+        "doc_type": "constitution",
+    },
     "statutes": {"framework_id": "FW-WI-STAT", "authority_level": 2, "doc_type": "statute"},
     "admin_rules": {"framework_id": "FW-WI-ADMIN", "authority_level": 4, "doc_type": "admin_rule"},
     "wpam": {"framework_id": "FW-WPAM", "authority_level": 5, "doc_type": "manual"},
     "faq_pages": {"framework_id": "FW-WI-DOR", "authority_level": 6, "doc_type": "faq"},
     "gov_publications": {"framework_id": "FW-WI-DOR", "authority_level": 7, "doc_type": "guide"},
     "news_pages": {"framework_id": "FW-WI-DOR", "authority_level": 7, "doc_type": "advisory"},
-    "complex_inquiry_pages": {"framework_id": "FW-WI-DOR", "authority_level": 7, "doc_type": "advisory"},
+    "complex_inquiry_pages": {
+        "framework_id": "FW-WI-DOR",
+        "authority_level": 7,
+        "doc_type": "advisory",
+    },
 }
 
 
@@ -791,20 +806,27 @@ def ingest_handler() -> dict[str, Any]:
                     metadata["title"] = title_override
 
                 s3.put_object(
-                    Bucket=raw_bucket, Key=doc_key,
-                    Body=content_bytes, ContentType=content_type,
+                    Bucket=raw_bucket,
+                    Key=doc_key,
+                    Body=content_bytes,
+                    ContentType=content_type,
                 )
                 s3.put_object(
-                    Bucket=raw_bucket, Key=meta_key,
+                    Bucket=raw_bucket,
+                    Key=meta_key,
                     Body=json.dumps({"metadataAttributes": metadata}),
                     ContentType="application/json",
                 )
 
                 uploaded_doc_ids.append(doc_id)
-                results.append({
-                    "status": "success", "url": url, "doc_id": doc_id,
-                    "size_bytes": len(content_bytes),
-                })
+                results.append(
+                    {
+                        "status": "success",
+                        "url": url,
+                        "doc_id": doc_id,
+                        "size_bytes": len(content_bytes),
+                    }
+                )
                 logger.info(f"Uploaded to S3: {doc_key} ({len(content_bytes)} bytes)")
 
             except Exception as e:
@@ -815,10 +837,13 @@ def ingest_handler() -> dict[str, Any]:
         if uploaded_doc_ids:
             task_arn = _launch_ingestion_task(uploaded_doc_ids)
 
-        return create_api_response(200, {
-            "results": results,
-            "task_arn": task_arn,
-        })
+        return create_api_response(
+            200,
+            {
+                "results": results,
+                "task_arn": task_arn,
+            },
+        )
 
     except ChatAPIError as e:
         return create_api_response(e.status_code, e.to_response())
@@ -876,10 +901,12 @@ def _launch_ingestion_task(doc_ids: list[str]) -> str | None:
                 }
             },
             overrides={
-                "containerOverrides": [{
-                    "name": "ingestion",
-                    "environment": env_overrides,
-                }]
+                "containerOverrides": [
+                    {
+                        "name": "ingestion",
+                        "environment": env_overrides,
+                    }
+                ]
             },
         )
         task_arn = response["tasks"][0]["taskArn"] if response.get("tasks") else None

@@ -57,10 +57,7 @@ def list_raw_source_keys(s3, bucket: str) -> dict[str, str]:
             parts = key.replace("raw/", "", 1).split("/")
             if len(parts) >= 2 and parts[0]:
                 keys_by_doc_id.setdefault(parts[0], []).append(key)
-    return {
-        doc_id: sorted(keys, key=source_key_rank)[0]
-        for doc_id, keys in keys_by_doc_id.items()
-    }
+    return {doc_id: sorted(keys, key=source_key_rank)[0] for doc_id, keys in keys_by_doc_id.items()}
 
 
 def list_raw_doc_ids(s3, bucket: str) -> set[str]:
@@ -143,8 +140,7 @@ def delete_artifacts(s3, bucket: str, prefix: str, stale_ids: set[str]) -> None:
             Delete={"Objects": [{"Key": k} for k in batch], "Quiet": True},
         )
         logger.info(
-            f"Deleted {len(batch)} stale {prefix} artifacts "
-            f"(batch {i // S3_DELETE_BATCH + 1})"
+            f"Deleted {len(batch)} stale {prefix} artifacts (batch {i // S3_DELETE_BATCH + 1})"
         )
 
 
@@ -180,10 +176,7 @@ def main() -> int:
     for prefix, stale in stale_by_prefix.items():
         if not stale:
             continue
-        sample = [
-            {"doc_id": doc_id, "reason": stale[doc_id]}
-            for doc_id in sorted(stale)[:10]
-        ]
+        sample = [{"doc_id": doc_id, "reason": stale[doc_id]} for doc_id in sorted(stale)[:10]]
         logger.info(f"Sample stale {prefix} artifacts: {sample}")
 
     if args.dry_run:

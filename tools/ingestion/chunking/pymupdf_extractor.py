@@ -62,9 +62,7 @@ def _classify_line(spans: list, body_size: float) -> str:
         return "title"
     if weighted_size >= body_size * 1.15 and all_bold:
         return "title"
-    if weighted_size >= body_size * 1.1 or (
-        all_bold and weighted_size >= body_size * 1.05
-    ):
+    if weighted_size >= body_size * 1.1 or (all_bold and weighted_size >= body_size * 1.05):
         return "header"
 
     return "body"

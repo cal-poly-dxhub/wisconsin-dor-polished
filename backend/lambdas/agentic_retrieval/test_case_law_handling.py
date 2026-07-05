@@ -63,9 +63,7 @@ class TestExtractCaseName:
         assert name == "thoma v. village of slinger"
 
     def test_cuts_at_comma_volume_number(self):
-        name = extract_case_name(
-            "Lowe's Home Centers, LLC v. City of Delavan, 379 Wis. 2d 141"
-        )
+        name = extract_case_name("Lowe's Home Centers, LLC v. City of Delavan, 379 Wis. 2d 141")
         assert name == "lowe's home centers, llc v. city of delavan"
 
     def test_no_separator(self):

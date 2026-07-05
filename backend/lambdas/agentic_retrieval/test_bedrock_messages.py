@@ -44,8 +44,20 @@ class TestConvertToolDefinitions:
 
     def test_multiple_tools(self):
         converse_tools = [
-            {"toolSpec": {"name": "tool_a", "description": "A", "inputSchema": {"json": {"type": "object"}}}},
-            {"toolSpec": {"name": "tool_b", "description": "B", "inputSchema": {"json": {"type": "object"}}}},
+            {
+                "toolSpec": {
+                    "name": "tool_a",
+                    "description": "A",
+                    "inputSchema": {"json": {"type": "object"}},
+                }
+            },
+            {
+                "toolSpec": {
+                    "name": "tool_b",
+                    "description": "B",
+                    "inputSchema": {"json": {"type": "object"}},
+                }
+            },
         ]
         result = _convert_tool_definitions(converse_tools)
         assert len(result) == 2
@@ -60,16 +72,20 @@ class TestConvertMessages:
         assert result == [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
 
     def test_tool_use_message(self):
-        messages = [{
-            "role": "assistant",
-            "content": [{
-                "toolUse": {
-                    "toolUseId": "t1",
-                    "name": "vector_search",
-                    "input": {"query": "test"},
-                }
-            }],
-        }]
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": "t1",
+                            "name": "vector_search",
+                            "input": {"query": "test"},
+                        }
+                    }
+                ],
+            }
+        ]
         result = _convert_messages(messages)
         assert result[0]["content"][0] == {
             "type": "tool_use",
@@ -79,15 +95,19 @@ class TestConvertMessages:
         }
 
     def test_tool_result_message(self):
-        messages = [{
-            "role": "user",
-            "content": [{
-                "toolResult": {
-                    "toolUseId": "t1",
-                    "content": [{"json": {"chunks": [{"text": "hello"}]}}],
-                }
-            }],
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "t1",
+                            "content": [{"json": {"chunks": [{"text": "hello"}]}}],
+                        }
+                    }
+                ],
+            }
+        ]
         result = _convert_messages(messages)
         block = result[0]["content"][0]
         assert block["type"] == "tool_result"
@@ -104,20 +124,24 @@ class TestConvertResponseContent:
         assert result == [{"text": "I'll search"}]
 
     def test_tool_use_block(self):
-        content = [{
-            "type": "tool_use",
-            "id": "t1",
-            "name": "vector_search",
-            "input": {"query": "test"},
-        }]
-        result = _convert_response_content(content)
-        assert result == [{
-            "toolUse": {
-                "toolUseId": "t1",
+        content = [
+            {
+                "type": "tool_use",
+                "id": "t1",
                 "name": "vector_search",
                 "input": {"query": "test"},
             }
-        }]
+        ]
+        result = _convert_response_content(content)
+        assert result == [
+            {
+                "toolUse": {
+                    "toolUseId": "t1",
+                    "name": "vector_search",
+                    "input": {"query": "test"},
+                }
+            }
+        ]
 
     def test_mixed_content(self):
         content = [
@@ -162,7 +186,12 @@ class TestConverseWithCache:
             "role": "assistant",
             "content": [
                 {"type": "text", "text": "Let me search."},
-                {"type": "tool_use", "id": "t1", "name": "vector_search", "input": {"query": "test"}},
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "vector_search",
+                    "input": {"query": "test"},
+                },
             ],
             "stop_reason": "tool_use",
             "usage": {
@@ -181,9 +210,17 @@ class TestConverseWithCache:
             model_id="us.anthropic.claude-sonnet-4-6",
             messages=[{"role": "user", "content": [{"text": "test"}]}],
             system=[{"text": "You are helpful."}],
-            tool_config={"tools": [
-                {"toolSpec": {"name": "vector_search", "description": "Search", "inputSchema": {"json": {"type": "object"}}}}
-            ]},
+            tool_config={
+                "tools": [
+                    {
+                        "toolSpec": {
+                            "name": "vector_search",
+                            "description": "Search",
+                            "inputSchema": {"json": {"type": "object"}},
+                        }
+                    }
+                ]
+            },
             inference_config={"maxTokens": 4096, "temperature": 0.0},
         )
 
@@ -209,29 +246,53 @@ class TestConverseStreamWithCache:
         mock_client = MagicMock()
 
         sse_events = [
-            {"chunk": {"bytes": json.dumps({
-                "type": "message_start",
-                "message": {"usage": {"input_tokens": 500, "cache_read_input_tokens": 400}},
-            }).encode()}},
-            {"chunk": {"bytes": json.dumps({
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": "Hello"},
-            }).encode()}},
-            {"chunk": {"bytes": json.dumps({
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": " world"},
-            }).encode()}},
-            {"chunk": {"bytes": json.dumps({
-                "type": "message_delta",
-                "usage": {"output_tokens": 10},
-            }).encode()}},
+            {
+                "chunk": {
+                    "bytes": json.dumps(
+                        {
+                            "type": "message_start",
+                            "message": {
+                                "usage": {"input_tokens": 500, "cache_read_input_tokens": 400}
+                            },
+                        }
+                    ).encode()
+                }
+            },
+            {
+                "chunk": {
+                    "bytes": json.dumps(
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": "Hello"},
+                        }
+                    ).encode()
+                }
+            },
+            {
+                "chunk": {
+                    "bytes": json.dumps(
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": " world"},
+                        }
+                    ).encode()
+                }
+            },
+            {
+                "chunk": {
+                    "bytes": json.dumps(
+                        {
+                            "type": "message_delta",
+                            "usage": {"output_tokens": 10},
+                        }
+                    ).encode()
+                }
+            },
             {"chunk": {"bytes": json.dumps({"type": "message_stop"}).encode()}},
         ]
-        mock_client.invoke_model_with_response_stream.return_value = {
-            "body": iter(sse_events)
-        }
+        mock_client.invoke_model_with_response_stream.return_value = {"body": iter(sse_events)}
 
         result = converse_stream_with_cache(
             mock_client,
@@ -243,9 +304,7 @@ class TestConverseStreamWithCache:
 
         events = list(result["stream"])
         text_deltas = [
-            e["contentBlockDelta"]["delta"]["text"]
-            for e in events
-            if "contentBlockDelta" in e
+            e["contentBlockDelta"]["delta"]["text"] for e in events if "contentBlockDelta" in e
         ]
         assert text_deltas == ["Hello", " world"]
 

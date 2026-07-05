@@ -137,11 +137,7 @@ def delete_orphans(graph_id: str, orphan_ids: list[str]) -> int:
     for i in range(0, len(orphan_ids), DELETE_BATCH_SIZE):
         batch = orphan_ids[i : i + DELETE_BATCH_SIZE]
         # UNWIND + MATCH + DETACH DELETE — idempotent, handles missing ids.
-        cypher = (
-            "UNWIND $ids AS cid "
-            "MATCH (c:Chunk {id: cid}) "
-            "DETACH DELETE c"
-        )
+        cypher = "UNWIND $ids AS cid MATCH (c:Chunk {id: cid}) DETACH DELETE c"
         neptune.execute_query(
             graphIdentifier=graph_id,
             queryString=cypher,

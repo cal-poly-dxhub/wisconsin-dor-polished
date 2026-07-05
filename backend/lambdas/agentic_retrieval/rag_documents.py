@@ -53,10 +53,12 @@ def build_rag_documents(
         if page is not None and chunk_text:
             snippets = snippets_by_doc.setdefault(doc_id, [])
             if not any(s.page == page for s in snippets):
-                snippets.append(ChunkSnippet(
-                    page=page,
-                    text=chunk_text[:_SNIPPET_MAX_CHARS],
-                ))
+                snippets.append(
+                    ChunkSnippet(
+                        page=page,
+                        text=chunk_text[:_SNIPPET_MAX_CHARS],
+                    )
+                )
 
         if doc_id not in docs_by_id:
             doc_info = neptune_client.get_document(doc_id)
@@ -95,7 +97,9 @@ def build_rag_documents(
                 if chunk_start is not None and existing_start is not None:
                     merged_start_page = min(existing_start, chunk_start)
                 else:
-                    merged_start_page = existing_start if existing_start is not None else chunk_start
+                    merged_start_page = (
+                        existing_start if existing_start is not None else chunk_start
+                    )
                 if chunk_end is not None and existing_end is not None:
                     merged_end_page = max(existing_end, chunk_end)
                 else:

@@ -18,14 +18,23 @@ def test_build_url_map_exact_match():
 
 def test_lookup_recovers_by_answer_then_prefix():
     records = [
-        {"Q": "What is the exact original question?", "A": "Unique answer body.",
-         "source_url": "https://example.gov/a"},
-        {"Q": "A very long question that differs only after fifty characters of text here",
-         "A": "Other.", "source_url": "https://example.gov/b"},
+        {
+            "Q": "What is the exact original question?",
+            "A": "Unique answer body.",
+            "source_url": "https://example.gov/a",
+        },
+        {
+            "Q": "A very long question that differs only after fifty characters of text here",
+            "A": "Other.",
+            "source_url": "https://example.gov/b",
+        },
     ]
     url_map = build_url_map(records)
     # Answer match: question text drifted but answer is identical.
-    assert lookup_url("totally different wording", "Unique answer body.", url_map) == "https://example.gov/a"
+    assert (
+        lookup_url("totally different wording", "Unique answer body.", url_map)
+        == "https://example.gov/a"
+    )
     # Prefix match: first 50 normalized chars line up, tail differs.
     drifted = "A very long question that differs only after fifty CHARACTERS differ now"
     assert lookup_url(drifted, "nope", url_map) == "https://example.gov/b"

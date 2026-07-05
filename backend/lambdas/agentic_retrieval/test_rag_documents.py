@@ -44,7 +44,10 @@ class TestGenerateSourceLabel:
     def test_returns_gov_url_when_present(self):
         chunk = {"source_url": "https://www.revenue.wi.gov/dor-publications/wpam.pdf"}
         doc_info = {"title": "Wisconsin Property Assessment Manual"}
-        assert _generate_source_label(chunk, doc_info) == "https://www.revenue.wi.gov/dor-publications/wpam.pdf"
+        assert (
+            _generate_source_label(chunk, doc_info)
+            == "https://www.revenue.wi.gov/dor-publications/wpam.pdf"
+        )
 
     def test_falls_back_to_title(self):
         assert _generate_source_label({"s3_key": "raw/x/x.pdf"}, {"title": "WPAM"}) == "WPAM"
@@ -64,8 +67,22 @@ class TestBuildRagDocuments:
     def test_basic_chunk_assembly(self):
         neptune = self._mock_neptune()
         chunks = [
-            {"doc_id": "doc-1", "text": "chunk 1", "source_url": "http://example.com", "s3_key": "raw/doc-1/doc-1.pdf", "start_page": 12, "end_page": 14},
-            {"doc_id": "doc-1", "text": "chunk 2", "source_url": "http://example.com", "s3_key": "raw/doc-1/doc-1.pdf", "start_page": 20, "end_page": 22},
+            {
+                "doc_id": "doc-1",
+                "text": "chunk 1",
+                "source_url": "http://example.com",
+                "s3_key": "raw/doc-1/doc-1.pdf",
+                "start_page": 12,
+                "end_page": 14,
+            },
+            {
+                "doc_id": "doc-1",
+                "text": "chunk 2",
+                "source_url": "http://example.com",
+                "s3_key": "raw/doc-1/doc-1.pdf",
+                "start_page": 20,
+                "end_page": 22,
+            },
         ]
         docs = build_rag_documents(chunks, {"doc-1"}, {}, neptune_client=neptune)
         assert len(docs) == 1
@@ -78,7 +95,9 @@ class TestBuildRagDocuments:
     def test_discovery_tag_vector_search(self):
         neptune = self._mock_neptune()
         chunks = [{"doc_id": "doc-A", "text": "text"}]
-        docs = build_rag_documents(chunks, {"doc-A"}, {"doc-A": "vector-search"}, neptune_client=neptune)
+        docs = build_rag_documents(
+            chunks, {"doc-A"}, {"doc-A": "vector-search"}, neptune_client=neptune
+        )
         assert docs[0].discovery_tag == "vector-search"
 
     def test_discovery_tag_defaults_to_unknown(self):
@@ -179,7 +198,13 @@ class TestBuildRagDocuments:
         }
         mock.find_stub_promotion.return_value = None
 
-        chunks = [{"doc_id": "case-law-200-wis-2d-1", "text": "stub summary", "s3_key": "raw/case-law/wis-2d/200-wis-2d-1.txt"}]
+        chunks = [
+            {
+                "doc_id": "case-law-200-wis-2d-1",
+                "text": "stub summary",
+                "s3_key": "raw/case-law/wis-2d/200-wis-2d-1.txt",
+            }
+        ]
         docs = build_rag_documents(chunks, {"case-law-200-wis-2d-1"}, {}, neptune_client=mock)
         card = docs[0]
         assert card.s3_key is None
@@ -220,7 +245,10 @@ class TestBuildRagDocuments:
             }
         }
         docs = build_rag_documents(
-            [], {"case-law-100-wis-2d-1"}, {}, fetched_opinions,
+            [],
+            {"case-law-100-wis-2d-1"},
+            {},
+            fetched_opinions,
             neptune_client=mock,
         )
         assert len(docs) == 1

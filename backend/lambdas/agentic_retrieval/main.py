@@ -96,14 +96,30 @@ def _is_document_neighbor(neighbor: dict) -> bool:
     return not any(label in _NON_DOCUMENT_LABELS for label in labels)
 
 
-_CHUNK_FIELDS_FOR_MODEL = frozenset({
-    "chunk_id", "text", "doc_id", "heading", "subheading",
-    "start_page", "end_page", "authority_level", "doc_title",
-})
+_CHUNK_FIELDS_FOR_MODEL = frozenset(
+    {
+        "chunk_id",
+        "text",
+        "doc_id",
+        "heading",
+        "subheading",
+        "start_page",
+        "end_page",
+        "authority_level",
+        "doc_title",
+    }
+)
 
-_NEIGHBOR_FIELDS_FOR_MODEL = frozenset({
-    "id", "title", "relationship", "labels", "authority_level", "framework_id",
-})
+_NEIGHBOR_FIELDS_FOR_MODEL = frozenset(
+    {
+        "id",
+        "title",
+        "relationship",
+        "labels",
+        "authority_level",
+        "framework_id",
+    }
+)
 
 
 def _compact_for_model(result: dict, tool_name: str) -> dict:
@@ -122,15 +138,17 @@ def _compact_for_model(result: dict, tool_name: str) -> dict:
             continue
         if key == "chunks":
             compacted["chunks"] = [
-                {k: v for k, v in chunk.items()
-                 if k in _CHUNK_FIELDS_FOR_MODEL and v is not None}
+                {k: v for k, v in chunk.items() if k in _CHUNK_FIELDS_FOR_MODEL and v is not None}
                 for chunk in value
             ]
         elif key == "graph_context":
             compacted["graph_context"] = {
                 doc_id: [
-                    {k: v for k, v in n.items()
-                     if k in _NEIGHBOR_FIELDS_FOR_MODEL and v is not None}
+                    {
+                        k: v
+                        for k, v in n.items()
+                        if k in _NEIGHBOR_FIELDS_FOR_MODEL and v is not None
+                    }
                     for n in neighbors
                 ]
                 for doc_id, neighbors in value.items()
@@ -147,23 +165,38 @@ def _compact_for_model(result: dict, tool_name: str) -> dict:
 # agent is nudged to call the clarify tool.
 _PROPERTY_TYPE_KEYWORDS: dict[str, list[str]] = {
     "manufacturing": [
-        "manufacturing property", "manufacturing assessment",
-        "manufacturing classification", "manufacturer",
+        "manufacturing property",
+        "manufacturing assessment",
+        "manufacturing classification",
+        "manufacturer",
     ],
     "agricultural": [
-        "agricultural property", "agricultural land", "agricultural assessment",
-        "use-value", "use value assessment", "farmland", "agricultural classification",
+        "agricultural property",
+        "agricultural land",
+        "agricultural assessment",
+        "use-value",
+        "use value assessment",
+        "farmland",
+        "agricultural classification",
     ],
     "residential": [
-        "residential property", "residential assessment", "residential classification",
-        "single-family", "single family home",
+        "residential property",
+        "residential assessment",
+        "residential classification",
+        "single-family",
+        "single family home",
     ],
     "commercial": [
-        "commercial property", "commercial assessment", "commercial classification",
-        "income approach", "commercial valuation",
+        "commercial property",
+        "commercial assessment",
+        "commercial classification",
+        "income approach",
+        "commercial valuation",
     ],
     "personal property": [
-        "personal property", "business personal property", "statement of personal property",
+        "personal property",
+        "business personal property",
+        "statement of personal property",
     ],
 }
 
@@ -185,8 +218,15 @@ def _query_specifies_property_type(query: str) -> bool:
     """True if the user's query already names a specific property type."""
     q = query.lower()
     type_keywords = [
-        "manufacturing", "agricultural", "agriculture", "farmland", "farm land",
-        "residential", "commercial", "personal property", "exempt",
+        "manufacturing",
+        "agricultural",
+        "agriculture",
+        "farmland",
+        "farm land",
+        "residential",
+        "commercial",
+        "personal property",
+        "exempt",
     ]
     return any(kw in q for kw in type_keywords)
 
@@ -212,6 +252,7 @@ EMIT_AGENT_TRACE = os.environ.get("EMIT_AGENT_TRACE", "true").lower() == "true"
 @dataclass
 class AgentLoopResult:
     """Result from Phase A (research loop)."""
+
     cited_doc_ids: list[str]
     all_chunks: list[dict]
     all_doc_ids: set[str]
@@ -231,8 +272,11 @@ class AgentLoopResult:
 
 # --- Convenience wrappers that bind module-level config to extracted functions ---
 
+
 def _log(event: str, level: int = logging.INFO, **fields: Any) -> None:
-    log_agent_event(event, level, log_enabled=LOG_AGENT_TRACE, max_chars=LOG_MAX_TEXT_CHARS, **fields)
+    log_agent_event(
+        event, level, log_enabled=LOG_AGENT_TRACE, max_chars=LOG_MAX_TEXT_CHARS, **fields
+    )
 
 
 def _query_fields(query: str) -> dict[str, Any]:
@@ -240,7 +284,9 @@ def _query_fields(query: str) -> dict[str, Any]:
 
 
 def _emit(ws_server, trace_seq, **kwargs) -> None:
-    emit_trace(ws_server, trace_seq, emit_enabled=EMIT_AGENT_TRACE, max_chars=LOG_MAX_TEXT_CHARS, **kwargs)
+    emit_trace(
+        ws_server, trace_seq, emit_enabled=EMIT_AGENT_TRACE, max_chars=LOG_MAX_TEXT_CHARS, **kwargs
+    )
 
 
 def _tool_result_summary(tool_name: str, result: dict) -> dict:
@@ -321,13 +367,12 @@ def run_agentic_loop(
         )
         refined = refine_result.get("refined_query") or query
         if refined and refined != query:
-            logger.info(
-                f"Turn-0 refine: '{query[:80]}' -> '{refined[:80]}'"
-            )
+            logger.info(f"Turn-0 refine: '{query[:80]}' -> '{refined[:80]}'")
             search_query = refined
         refine_summary = _tool_result_summary("refine_query", refine_result)
         _record_trace(
-            "tool_result", turn=0,
+            "tool_result",
+            turn=0,
             toolName="refine_query",
             status=refine_summary["status"],
             summary=refine_summary["summary_text"],
@@ -393,7 +438,8 @@ def run_agentic_loop(
     )
     faq_summary = _tool_result_summary("faq_search", faq_result)
     _record_trace(
-        "tool_result", turn=0,
+        "tool_result",
+        turn=0,
         toolName="faq_search",
         status=faq_summary["status"],
         summary=faq_summary["summary_text"],
@@ -468,59 +514,63 @@ def run_agentic_loop(
     messages: list[dict] = []
     for turn in chat_history:
         messages.append({"role": "user", "content": [{"text": turn["query"]}]})
-        messages.append(
-            {"role": "assistant", "content": [{"text": turn["answer"]}]}
-        )
+        messages.append({"role": "assistant", "content": [{"text": turn["answer"]}]})
 
     # Seed the conversation with the FAQ result as if Claude had called it.
     seed_tool_use_id = "faq_search_turn0"
-    messages.extend([
-        {"role": "user", "content": [{"text": query}]},
-        {
-            "role": "assistant",
-            "content": [
-                {
-                    "toolUse": {
-                        "toolUseId": seed_tool_use_id,
-                        "name": "faq_search",
-                        "input": {"query": search_query},
+    messages.extend(
+        [
+            {"role": "user", "content": [{"text": query}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": seed_tool_use_id,
+                            "name": "faq_search",
+                            "input": {"query": search_query},
+                        }
                     }
-                }
-            ],
-        },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "toolResult": {
-                        "toolUseId": seed_tool_use_id,
-                        "content": [{"json": faq_result}],
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": seed_tool_use_id,
+                            "content": [{"json": faq_result}],
+                        }
                     }
-                }
-            ],
-        },
-    ])
+                ],
+            },
+        ]
+    )
 
     if high_confidence_faq:
         faq_ids = [faq.faq_id for faq in high_confidence_faq.faqs]
-        messages.append({
-            "role": "user",
-            "content": [{
-                "text": (
-                    f"The seeded faq_search returned a high-confidence match "
-                    f"(top score {top_score:.2f} ≥ {FAQ_SCORE_THRESHOLD:.2f}, "
-                    f"FAQ id(s): {', '.join(faq_ids)}). Treat the FAQ Q/A as "
-                    "the PRIMARY source of truth for your answer. Still run "
-                    "vector_search and graph traversal to find authoritative "
-                    "documents (statutes, admin rules, WPAM) that support, "
-                    "ground, or add useful detail to what the FAQ says — but "
-                    "do NOT contradict the FAQ. Use graph results to "
-                    "supplement and cite, not to replace. Include the FAQ "
-                    "id(s) above in your final cited_doc_ids alongside any "
-                    "supporting docs you retrieve."
-                )
-            }],
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": (
+                            f"The seeded faq_search returned a high-confidence match "
+                            f"(top score {top_score:.2f} ≥ {FAQ_SCORE_THRESHOLD:.2f}, "
+                            f"FAQ id(s): {', '.join(faq_ids)}). Treat the FAQ Q/A as "
+                            "the PRIMARY source of truth for your answer. Still run "
+                            "vector_search and graph traversal to find authoritative "
+                            "documents (statutes, admin rules, WPAM) that support, "
+                            "ground, or add useful detail to what the FAQ says — but "
+                            "do NOT contradict the FAQ. Use graph results to "
+                            "supplement and cite, not to replace. Include the FAQ "
+                            "id(s) above in your final cited_doc_ids alongside any "
+                            "supporting docs you retrieve."
+                        )
+                    }
+                ],
+            }
+        )
 
     tool_config = {"tools": TOOL_DEFINITIONS}
 
@@ -542,10 +592,12 @@ def run_agentic_loop(
                 "You are running low on turns. Call prepare_answer NOW with the "
                 "documents gathered so far — list cited_doc_ids and a brief answer_plan."
             )
-            messages.append({
-                "role": "user",
-                "content": [{"text": warning}],
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [{"text": warning}],
+                }
+            )
             _log(
                 "agent_turn_budget_warning_injected",
                 **trace_context,
@@ -557,7 +609,7 @@ def run_agentic_loop(
         heartbeat_stop = threading.Event()
 
         def _heartbeat_loop():
-            while not heartbeat_stop.wait(_WS_HEARTBEAT_INTERVAL):
+            while not heartbeat_stop.wait(_WS_HEARTBEAT_INTERVAL):  # noqa: B023
                 if not ws_server or not ws_connection_alive[0]:
                     break
                 try:
@@ -622,15 +674,11 @@ def run_agentic_loop(
                 payload={"text": asst_summary["text_preview"]},
             )
 
-        tool_uses = [
-            block for block in assistant_message["content"]
-            if "toolUse" in block
-        ]
+        tool_uses = [block for block in assistant_message["content"] if "toolUse" in block]
 
         if not tool_uses:
             text_blocks = [
-                block["text"] for block in assistant_message["content"]
-                if "text" in block
+                block["text"] for block in assistant_message["content"] if "text" in block
             ]
             fallback_answer = "\n".join(text_blocks)
             if stop_reason == "max_tokens" and fallback_answer:
@@ -724,9 +772,7 @@ def run_agentic_loop(
 
             tool_started = time.perf_counter()
             try:
-                result = execute_tool(
-                    tool_name, tool_input, neptune, chat_history=chat_history
-                )
+                result = execute_tool(tool_name, tool_input, neptune, chat_history=chat_history)
             except Exception as exc:
                 _log(
                     "agent_tool_error",
@@ -739,9 +785,7 @@ def run_agentic_loop(
                     error_type=type(exc).__name__,
                     error=str(exc),
                 )
-                result = {
-                    "error": f"{tool_name} failed: {type(exc).__name__}: {exc}"
-                }
+                result = {"error": f"{tool_name} failed: {type(exc).__name__}: {exc}"}
             tool_latency_ms = round((time.perf_counter() - tool_started) * 1000)
 
             if tool_name == "vector_search" and "chunks" in result:
@@ -799,7 +843,8 @@ def run_agentic_loop(
 
             tool_result_summary = _tool_result_summary(tool_name, result)
             _record_trace(
-                "tool_result", turn=turn_number,
+                "tool_result",
+                turn=turn_number,
                 toolName=tool_name,
                 status=tool_result_summary["status"],
                 summary=tool_result_summary["summary_text"],
@@ -856,13 +901,16 @@ def run_agentic_loop(
                     discovered_doc_count=len(all_doc_ids),
                 )
                 _record_trace(
-                    "loop_complete", turn=turn_number,
+                    "loop_complete",
+                    turn=turn_number,
                     terminalReason="clarify_tool",
                     turnsUsed=turn_number,
                     elapsedMs=round((time.perf_counter() - loop_started) * 1000),
                 )
                 _emit_safe(
-                    ws_server, trace_seq, query_id=query_id,
+                    ws_server,
+                    trace_seq,
+                    query_id=query_id,
                     kind="loop_complete",
                     payload={
                         "terminalReason": "clarify_tool",
@@ -902,7 +950,8 @@ def run_agentic_loop(
                     discovery=discovery_summary(discovery),
                 )
                 _record_trace(
-                    "loop_complete", turn=turn_number,
+                    "loop_complete",
+                    turn=turn_number,
                     terminalReason="prepare_answer",
                     turnsUsed=turn_number,
                     elapsedMs=round((time.perf_counter() - loop_started) * 1000),
@@ -945,12 +994,14 @@ def run_agentic_loop(
                     faq_entries=faq_entries,
                 )
 
-            tool_results.append({
-                "toolResult": {
-                    "toolUseId": tool_use_id,
-                    "content": [{"json": _compact_for_model(result, tool_name)}],
+            tool_results.append(
+                {
+                    "toolResult": {
+                        "toolUseId": tool_use_id,
+                        "content": [{"json": _compact_for_model(result, tool_name)}],
+                    }
                 }
-            })
+            )
 
         messages.append({"role": "user", "content": tool_results})
     else:
@@ -1088,9 +1139,7 @@ def _send_resources_and_finalize(
     data = json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)})
     ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
 
-    frag_msg = FragmentMessage(
-        query_id=query_id, content=FragmentContent(fragment=answer)
-    )
+    frag_msg = FragmentMessage(query_id=query_id, content=FragmentContent(fragment=answer))
     frag_data = json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)})
     ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=frag_data)
 
@@ -1164,7 +1213,11 @@ def _build_answer_context(
             for heading, h_chunks in chunks_by_heading.items():
                 if heading:
                     pages = sorted({c.get("start_page") for c in h_chunks if c.get("start_page")})
-                    page_range = f" (pages {pages[0]}-{pages[-1]})" if len(pages) > 1 else (f" (page {pages[0]})" if pages else "")
+                    page_range = (
+                        f" (pages {pages[0]}-{pages[-1]})"
+                        if len(pages) > 1
+                        else (f" (page {pages[0]})" if pages else "")
+                    )
                     parts.append(f"\n#### {heading}{page_range}")
                 for chunk in h_chunks:
                     page = chunk.get("start_page")
@@ -1181,7 +1234,9 @@ def _build_answer_context(
                 if sections:
                     # Extract numeric chapter (e.g. "70" from "statutes-70")
                     chapter_match = re.match(r"statutes-(\d+)", doc_id)
-                    chapter = chapter_match.group(1) if chapter_match else doc_id.replace("statutes-", "")
+                    chapter = (
+                        chapter_match.group(1) if chapter_match else doc_id.replace("statutes-", "")
+                    )
                     # Same pattern the statute chunker uses to identify
                     # canonical section headings (rejects cross-references
                     # like "70.32 (2) (a) 6..." that appear inside other
@@ -1216,9 +1271,7 @@ def _build_answer_context(
                     # not just chunks from this statute. Other documents (guides,
                     # WPAM, admin rules) frequently reference statute sections,
                     # and the model needs page numbers for those references.
-                    all_text_blob = " ".join(
-                        c.get("text", "") for c in cited_chunks
-                    )
+                    all_text_blob = " ".join(c.get("text", "") for c in cited_chunks)
                     referenced = set(
                         re.findall(rf"{re.escape(chapter)}\.\d+[A-Za-z\-]*", all_text_blob)
                     )
@@ -1226,7 +1279,9 @@ def _build_answer_context(
                         if sec_num in referenced:
                             index_lines.append(f"- § {sec_num} → page {page}")
                     if index_lines:
-                        parts.append("\n**Section Page Index** (use these page numbers for `#page=N` citations; subsections like 70.32(2)(c)1g use the parent section's page, e.g. § 70.32 → page 23 means all 70.32(...) subsections start at page 23):")
+                        parts.append(
+                            "\n**Section Page Index** (use these page numbers for `#page=N` citations; subsections like 70.32(2)(c)1g use the parent section's page, e.g. § 70.32 → page 23 means all 70.32(...) subsections start at page 23):"
+                        )
                         parts.extend(index_lines)
             except Exception:
                 pass
@@ -1294,13 +1349,19 @@ def _build_answer_context(
                         index_lines.append(f"- § {sec_num} → page {page}")
                 if index_lines:
                     parts.append(f"### Statute Chapter {chapter} — Section Page Index")
-                    parts.append("(Link directly with `doc:statutes-" + chapter + "#page=N`; subsections use the parent section's page)")
+                    parts.append(
+                        "(Link directly with `doc:statutes-"
+                        + chapter
+                        + "#page=N`; subsections use the parent section's page)"
+                    )
                     parts.extend(index_lines)
                     parts.append("")
             except Exception:
                 pass
 
-    parts.append(f"\n## Documents to Cite\nYou MUST cite these document IDs: {sorted(cited_doc_ids)}")
+    parts.append(
+        f"\n## Documents to Cite\nYou MUST cite these document IDs: {sorted(cited_doc_ids)}"
+    )
 
     return "\n".join(parts)
 
@@ -1317,7 +1378,8 @@ def _stream_answer(
     Returns the full accumulated answer text.
     """
     _emit(
-        ws_server, trace_seq,
+        ws_server,
+        trace_seq,
         query_id=query_id,
         kind="phase",
         payload={"phase": "answer_streaming"},
@@ -1394,7 +1456,12 @@ def _stream_answer(
                             try:
                                 ws_server.client.post_to_connection(
                                     ConnectionId=ws_server.connection_id,
-                                    Data=json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)}),
+                                    Data=json.dumps(
+                                        {
+                                            "streamId": "answer",
+                                            "body": frag_msg.model_dump(by_alias=True),
+                                        }
+                                    ),
                                 )
                             except Exception:
                                 ws_connection_alive[0] = False
@@ -1542,8 +1609,12 @@ def handler(event: dict, context) -> dict[str, Any]:
                         query_id=user_query.query_id,
                         content=ChoicesContent(choices=PROPERTY_TYPE_CHOICES),
                     )
-                    data = json.dumps({"streamId": "choices", "body": choices_msg.model_dump(by_alias=True)})
-                    ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
+                    data = json.dumps(
+                        {"streamId": "choices", "body": choices_msg.model_dump(by_alias=True)}
+                    )
+                    ws_server.client.post_to_connection(
+                        ConnectionId=ws_server.connection_id, Data=data
+                    )
                 save_chat_history(
                     session_id,
                     user_query.query_id,
@@ -1568,12 +1639,14 @@ def handler(event: dict, context) -> dict[str, Any]:
             # with text instead of calling prepare_answer. No Phase B needed.
             answer = result.fallback_answer
             rag_documents = build_rag_documents(
-                result.all_chunks, result.all_doc_ids, result.discovery,
-                result.fetched_opinions, neptune_client=neptune,
+                result.all_chunks,
+                result.all_doc_ids,
+                result.discovery,
+                result.fetched_opinions,
+                neptune_client=neptune,
             )
-            faq_resource = (
-                result.high_confidence_faq
-                or build_cited_faq_resource(result.faq_entries, result.all_doc_ids)
+            faq_resource = result.high_confidence_faq or build_cited_faq_resource(
+                result.faq_entries, result.all_doc_ids
             )
 
             _log(
@@ -1604,23 +1677,16 @@ def handler(event: dict, context) -> dict[str, Any]:
             # === Normal path: Phase B streaming ===
             # 1. Build resources from cited_doc_ids
             cited = set(result.cited_doc_ids)
-            cited_chunks = [
-                c for c in result.all_chunks if c.get("doc_id") in cited
-            ]
-            cited_discovery = {
-                k: v for k, v in result.discovery.items() if k in cited
-            }
+            cited_chunks = [c for c in result.all_chunks if c.get("doc_id") in cited]
+            cited_discovery = {k: v for k, v in result.discovery.items() if k in cited}
             for cid in cited:
                 cited_discovery.setdefault(cid, "fetched")
 
             # Opinion backfill for case law stubs not already fetched
-            cited_opinions = {
-                k: v for k, v in result.fetched_opinions.items() if k in cited
-            }
+            cited_opinions = {k: v for k, v in result.fetched_opinions.items() if k in cited}
             _OPINION_BACKFILL_CAP = 3
             unfetched_stubs = [
-                cid for cid in cited
-                if is_case_law_stub(cid) and cid not in cited_opinions
+                cid for cid in cited if is_case_law_stub(cid) and cid not in cited_opinions
             ]
             for stub_id in unfetched_stubs[:_OPINION_BACKFILL_CAP]:
                 try:
@@ -1648,12 +1714,14 @@ def handler(event: dict, context) -> dict[str, Any]:
                     )
 
             rag_documents = build_rag_documents(
-                cited_chunks, cited, cited_discovery, cited_opinions,
+                cited_chunks,
+                cited,
+                cited_discovery,
+                cited_opinions,
                 neptune_client=neptune,
             )
-            faq_resource = (
-                result.high_confidence_faq
-                or build_cited_faq_resource(result.faq_entries, cited)
+            faq_resource = result.high_confidence_faq or build_cited_faq_resource(
+                result.faq_entries, cited
             )
 
             _log(
@@ -1695,7 +1763,9 @@ def handler(event: dict, context) -> dict[str, Any]:
                 except Exception as phase_b_exc:
                     logger.error(
                         "Phase B failed | exc_type=%s exc=%s",
-                        type(phase_b_exc).__name__, phase_b_exc, exc_info=True,
+                        type(phase_b_exc).__name__,
+                        phase_b_exc,
+                        exc_info=True,
                     )
                     if not answer:
                         try:
@@ -1722,7 +1792,9 @@ def handler(event: dict, context) -> dict[str, Any]:
                                 if "text" in block
                             ]
                             answer = "\n".join(text_blocks)
-                            logger.info("Phase B fallback: generated answer via non-streaming converse()")
+                            logger.info(
+                                "Phase B fallback: generated answer via non-streaming converse()"
+                            )
                         except Exception as fallback_exc:
                             logger.error(f"Phase B non-streaming fallback failed: {fallback_exc}")
                             answer = "(Answer generation failed — please retry)"

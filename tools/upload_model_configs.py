@@ -111,9 +111,7 @@ def convert_floats_to_decimal(obj):
     return obj
 
 
-def upload_to_dynamodb(
-    configs: dict[str, ModelConfig], table_name: str, region: str | None = None
-):
+def upload_to_dynamodb(configs: dict[str, ModelConfig], table_name: str, region: str | None = None):
     if not region:
         region = get_aws_region()
 
@@ -155,7 +153,9 @@ def main():
 
         if args.only:
             if args.only not in configs:
-                print(f"✗ Config '{args.only}' not found in TOML. Available: {list(configs.keys())}")
+                print(
+                    f"✗ Config '{args.only}' not found in TOML. Available: {list(configs.keys())}"
+                )
                 sys.exit(1)
             configs = {args.only: configs[args.only]}
 

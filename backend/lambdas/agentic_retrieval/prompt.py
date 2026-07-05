@@ -40,8 +40,11 @@ def _load_prompt(config_id: str, fallback_attr: str) -> str:
     try:
         return _load_prompt_from_dynamo(config_id)
     except Exception as e:
-        logger.warning(f"Failed to load prompt '{config_id}' from DynamoDB: {e}. Using bundled fallback.")
+        logger.warning(
+            f"Failed to load prompt '{config_id}' from DynamoDB: {e}. Using bundled fallback."
+        )
         import _prompt_fallback
+
         return getattr(_prompt_fallback, fallback_attr)
 
 

@@ -5,7 +5,6 @@ Validates two fixes:
 2. repair_wpam_subheadings — clears leaked subheadings appearing on >5 chunks
 """
 
-
 from tools.ingestion.chunking.wpam_chunk_filter import (
     _body_text,
     _is_garbled,

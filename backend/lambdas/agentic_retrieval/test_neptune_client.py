@@ -67,7 +67,11 @@ def test_get_neighbors_unfiltered_excludes_extracted_from():
             "queryString"
         ) or mock_neptune.execute_query.call_args[1].get("queryString")
         if query_arg is None:
-            query_arg = mock_neptune.execute_query.call_args[0][0] if mock_neptune.execute_query.call_args[0] else ""
+            query_arg = (
+                mock_neptune.execute_query.call_args[0][0]
+                if mock_neptune.execute_query.call_args[0]
+                else ""
+            )
         # Check the WHERE clause and LIMIT are present
         assert "EXTRACTED_FROM" in query_arg
         assert "LIMIT" in query_arg
@@ -90,7 +94,11 @@ def test_get_neighbors_with_edge_types_no_extracted_from_clause():
             "queryString"
         ) or mock_neptune.execute_query.call_args[1].get("queryString")
         if query_arg is None:
-            query_arg = mock_neptune.execute_query.call_args[0][0] if mock_neptune.execute_query.call_args[0] else ""
+            query_arg = (
+                mock_neptune.execute_query.call_args[0][0]
+                if mock_neptune.execute_query.call_args[0]
+                else ""
+            )
         # type filter should include the specified types
         assert "CITES|IMPLEMENTS" in query_arg
         # No WHERE exclusion needed — type filter handles it
@@ -106,8 +114,7 @@ def test_resolve_case_citations():
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {
             "results": [
-                {"id": "case-law-45-wis-2d-683", "title": "Markarian",
-                 "citation": "45 Wis. 2d 683"}
+                {"id": "case-law-45-wis-2d-683", "title": "Markarian", "citation": "45 Wis. 2d 683"}
             ]
         }
 
@@ -139,7 +146,11 @@ def test_find_case_law_with_statute_scope():
             "queryString"
         ) or mock_neptune.execute_query.call_args[1].get("queryString")
         if query_arg is None:
-            query_arg = mock_neptune.execute_query.call_args[0][0] if mock_neptune.execute_query.call_args[0] else ""
+            query_arg = (
+                mock_neptune.execute_query.call_args[0][0]
+                if mock_neptune.execute_query.call_args[0]
+                else ""
+            )
         assert "$statute_id" in query_arg
         assert "CITES" in query_arg
         assert "toLower(n.title) CONTAINS $term_0" in query_arg
@@ -187,7 +198,11 @@ def test_get_neighbors_title_filter():
             "queryString"
         ) or mock_neptune.execute_query.call_args[1].get("queryString")
         if query_arg is None:
-            query_arg = mock_neptune.execute_query.call_args[0][0] if mock_neptune.execute_query.call_args[0] else ""
+            query_arg = (
+                mock_neptune.execute_query.call_args[0][0]
+                if mock_neptune.execute_query.call_args[0]
+                else ""
+            )
         assert "toLower($title_filter)" in query_arg
         params = mock_neptune.execute_query.call_args.kwargs.get("parameters", {})
         assert params.get("title_filter") == "hospital"

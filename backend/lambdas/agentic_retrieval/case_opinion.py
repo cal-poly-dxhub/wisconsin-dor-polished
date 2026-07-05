@@ -73,10 +73,7 @@ def citation_to_raw_key(citation: str) -> str:
 def scholar_url(citation: str) -> str:
     """Google Scholar search URL for a case citation."""
     q = urllib.parse.quote(citation)
-    return (
-        f"http://scholar.google.com/scholar?hl=en&as_sdt=4&as_sdts=50"
-        f"&as_vis=1&q={q}"
-    )
+    return f"http://scholar.google.com/scholar?hl=en&as_sdt=4&as_sdts=50&as_vis=1&q={q}"
 
 
 def fetch_case_opinion(
@@ -134,7 +131,10 @@ def fetch_case_opinion(
 
     text = obj["Body"].read().decode("utf-8", errors="replace")
     if len(text) > MAX_OPINION_CHARS:
-        text = text[:MAX_OPINION_CHARS] + "\n\n[Opinion truncated to fit context; full text available at the source link.]"
+        text = (
+            text[:MAX_OPINION_CHARS]
+            + "\n\n[Opinion truncated to fit context; full text available at the source link.]"
+        )
 
     return {
         "found": True,

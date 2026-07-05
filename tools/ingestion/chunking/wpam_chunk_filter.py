@@ -78,23 +78,21 @@ def _is_table_cells(body: str) -> bool:
 
     # Count truly meaningless single-char lines (letters, numbers) but
     # exclude common bullet/symbol characters that appear in real content
-    single_char_lines = sum(
-        1 for line in lines if len(line) <= 2 and line not in _BULLET_CHARS
-    )
+    single_char_lines = sum(1 for line in lines if len(line) <= 2 and line not in _BULLET_CHARS)
     if single_char_lines > len(lines) * 0.3:
         return True
 
     # Count very short lines, excluding bullets
-    very_short_lines = sum(
-        1 for line in lines if len(line) < 10 and line not in _BULLET_CHARS
-    )
+    very_short_lines = sum(1 for line in lines if len(line) < 10 and line not in _BULLET_CHARS)
     if very_short_lines > len(lines) * 0.7 and len(lines) > 5:
         return True
 
     return False
 
 
-def filter_wpam_chunks(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def filter_wpam_chunks(
+    chunks: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Filter out useless/garbled WPAM chunks.
 
     Returns (kept, removed) where removed includes the reason for filtering.
@@ -147,9 +145,8 @@ def merge_short_chunks(
         text = chunk.get("text", "")
         prev = result[-1]
         prev_text = prev.get("text", "")
-        same_heading = (
-            chunk.get("metadata", {}).get("heading")
-            == prev.get("metadata", {}).get("heading")
+        same_heading = chunk.get("metadata", {}).get("heading") == prev.get("metadata", {}).get(
+            "heading"
         )
 
         if (

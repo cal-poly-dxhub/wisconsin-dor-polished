@@ -39,9 +39,7 @@ def get_chat_history(session_id: str) -> list[dict[str, str]]:
         ]
         if len(history) > MAX_HISTORY_TURNS:
             history = history[-MAX_HISTORY_TURNS:]
-        logger.info(
-            f"Loaded {len(history)} history turn(s) for session {session_id}"
-        )
+        logger.info(f"Loaded {len(history)} history turn(s) for session {session_id}")
         return history
     except Exception:  # noqa: BLE001
         logger.warning(

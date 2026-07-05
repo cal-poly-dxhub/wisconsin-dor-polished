@@ -24,16 +24,10 @@ def extract_flowcharts_from_document(
 
     for page_idx, page in enumerate(document.pages):
         if not hasattr(page, "image") or page.image is None:
-            print(
-                f"⚠️  No image found for page {page_idx + 1}, skipping flowchart detection."
-            )
+            print(f"⚠️  No image found for page {page_idx + 1}, skipping flowchart detection.")
             continue
 
-        figures = (
-            page.page_layout.figures
-            if page.page_layout and page.page_layout.figures
-            else []
-        )
+        figures = page.page_layout.figures if page.page_layout and page.page_layout.figures else []
 
         for _i, fig in enumerate(figures):
             bbox = fig.bbox

@@ -69,20 +69,20 @@ class AnswerToolStreamParser:
 
             elif self._state == _State.IN_RESPONSE_VALUE:
                 if self._escape_next:
-                    if char == 'n':
-                        fragments.append('\n')
-                    elif char == 't':
-                        fragments.append('\t')
-                    elif char == '\\':
-                        fragments.append('\\')
+                    if char == "n":
+                        fragments.append("\n")
+                    elif char == "t":
+                        fragments.append("\t")
+                    elif char == "\\":
+                        fragments.append("\\")
                     elif char == '"':
                         fragments.append('"')
-                    elif char == '/':
-                        fragments.append('/')
+                    elif char == "/":
+                        fragments.append("/")
                     else:
-                        fragments.append('\\' + char)
+                        fragments.append("\\" + char)
                     self._escape_next = False
-                elif char == '\\':
+                elif char == "\\":
                     self._escape_next = True
                 elif char == '"':
                     self._state = _State.DONE

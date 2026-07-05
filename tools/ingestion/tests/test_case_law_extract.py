@@ -137,9 +137,19 @@ def test_result_shape_matches_load_contract() -> None:
 
     # Fields load.py expects to exist on every document record
     required = {
-        "doc_id", "s3_key", "doc_type", "framework_id", "authority_level",
-        "title", "summary", "statute_refs", "admin_rule_refs",
-        "implements_refs", "topics", "source_url", "chunks",
+        "doc_id",
+        "s3_key",
+        "doc_type",
+        "framework_id",
+        "authority_level",
+        "title",
+        "summary",
+        "statute_refs",
+        "admin_rule_refs",
+        "implements_refs",
+        "topics",
+        "source_url",
+        "chunks",
     }
     assert required.issubset(result.keys())
     assert result["doc_type"] == "case_law"

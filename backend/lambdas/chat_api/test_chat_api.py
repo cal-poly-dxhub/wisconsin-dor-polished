@@ -21,6 +21,7 @@ with patch.dict(os.environ, {"SESSIONS_TABLE_NAME": "test-sessions-table", "LOG_
         send_message_handler,
     )
 
+
 # Capture chat_api's `main` module object at import time and patch attributes on
 # THIS reference, not the string "main.dynamodb". Several lambdas share the
 # module name "main"; agentic_retrieval's test suite reassigns

@@ -156,9 +156,7 @@ def extract_qa_pairs(html: str) -> list[tuple[str, str]]:
     pairs: list[tuple[str, str]] = []
     for idx, (start_i, _anchor) in enumerate(anchor_positions):
         end_i = (
-            anchor_positions[idx + 1][0]
-            if idx + 1 < len(anchor_positions)
-            else len(answer_nodes)
+            anchor_positions[idx + 1][0] if idx + 1 < len(anchor_positions) else len(answer_nodes)
         )
         slot = answer_nodes[start_i + 1 : end_i]
 
@@ -212,9 +210,7 @@ def format_qa_file(question: str, answer: str) -> str:
     return f"Q: {question}\nA: {answer}\n"
 
 
-def iter_qa_records(
-    urls: Iterable[str], sleep_seconds: float
-) -> list[tuple[str, str, str]]:
+def iter_qa_records(urls: Iterable[str], sleep_seconds: float) -> list[tuple[str, str, str]]:
     """Return a list of (source_url, question, answer) triples."""
     records: list[tuple[str, str, str]] = []
     total_urls = len(list(urls)) if isinstance(urls, list) else None
@@ -324,9 +320,9 @@ def main() -> int:
 
     faq_url_table = None
     if args.faq_url_table:
-        faq_url_table = session.resource(
-            "dynamodb", region_name=args.table_region
-        ).Table(args.faq_url_table)
+        faq_url_table = session.resource("dynamodb", region_name=args.table_region).Table(
+            args.faq_url_table
+        )
 
     next_id = args.start_id
     uploaded = 0
