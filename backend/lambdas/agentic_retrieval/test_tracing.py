@@ -49,14 +49,22 @@ class TestCompactLogValue:
 
 class TestFilterMetadata:
     def test_keeps_allowed_keys(self):
+        # `query` is intentionally in ALLOWED_METADATA_KEYS — the refined query
+        # is surfaced in the retrieval trace modal for debugging. Keys not in
+        # the allowlist (e.g. rawUserText) are dropped.
         out = filter_metadata({
             "chunkCount": 3,
             "topScore": 0.9,
             "latencyMs": 120,
-            "query": "sensitive user text",
-            "rawUserText": "also sensitive",
+            "query": "shown in trace",
+            "rawUserText": "dropped — not allowlisted",
         })
-        assert out == {"chunkCount": 3, "topScore": 0.9, "latencyMs": 120}
+        assert out == {
+            "chunkCount": 3,
+            "topScore": 0.9,
+            "latencyMs": 120,
+            "query": "shown in trace",
+        }
 
     def test_non_dict_returns_empty(self):
         assert filter_metadata(None) == {}
