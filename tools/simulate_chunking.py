@@ -36,7 +36,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("AWS_REGION", "us-east-1")
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
@@ -168,8 +168,8 @@ def main():
     print(f"Processing {len(docs)} document(s)...\n")
 
     # Import after env setup so module-level AWS clients get the right region
-    import pdf_chunking.pdfChunker as chunker_module
-    from pdf_chunking.pdfChunker import process_pdf_from_s3
+    import tools.ingestion.chunking.pdfChunker as chunker_module
+    from tools.ingestion.chunking.pdfChunker import process_pdf_from_s3
 
     if args.report_only:
         chunker_module.DEBUG = False
