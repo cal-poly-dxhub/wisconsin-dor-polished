@@ -52,16 +52,21 @@ class FakeFAQResource(pydantic.BaseModel):
         return {"faqs": [f.model_dump() for f in self.faqs]}
 
 
-models_mock = sys.modules["step_function_types.models"]
-models_mock.UserQuery = MockUserQuery
-models_mock.RAGDocument = MockRAGDocument
-models_mock.DocumentResource = MagicMock()
-models_mock.FAQ = FakeFAQ
-models_mock.FAQResource = FakeFAQResource
-
-errors_mock = sys.modules["step_function_types.errors"]
-errors_mock.ValidationError = Exception
-errors_mock.report_error = MagicMock()
+# NOTE: these fakes are injected into the freshly-imported `main` module's
+# namespace by _import_main() below — NOT into the shared
+# sys.modules["step_function_types.*"] entries. Mutating the shared modules
+# corrupts the real step_function_types package for every other test that
+# runs in the same process (e.g. test_step_function_types.py, whose
+# report_error would become a non-awaitable MagicMock). main.py looks these
+# names up in its own globals at call time, so rebinding them on `main`
+# after import gives us the mocks we want with zero cross-file pollution.
+def _inject_fakes(main) -> None:
+    main.UserQuery = MockUserQuery
+    main.RAGDocument = MockRAGDocument
+    main.FAQ = FakeFAQ
+    main.FAQResource = FakeFAQResource
+    main.ValidationError = Exception
+    main.report_error = MagicMock()
 
 
 def _converse_response_to_stream(response):
@@ -116,6 +121,7 @@ def _import_main():
             main = importlib.util.module_from_spec(spec)
             sys.modules["main"] = main
             spec.loader.exec_module(main)
+    _inject_fakes(main)
     return main
 
 
