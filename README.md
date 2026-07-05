@@ -36,76 +36,75 @@ A property tax Q&A assistant for the Wisconsin Department of Revenue (DOR). User
 ## Architecture
 
 ```
-┌─────────────┐      ┌────────────────────────────────────────────────────┐
-│  Next.js    │ WSS  │  AWS (CDK-managed)                                 │
-│  Frontend   │─────▶│  Cognito ─▶ API Gateway (HTTP + WebSocket)         │
-│  (CloudFront)│      │       │                                            │
-└─────────────┘      │       ▼                                            │
-                     │  EventBridge ─▶ Step Functions                      │
-                     │       │                                            │
-                     │       ▼                                            │
-                     │  ┌──────────────────────┐    ┌──────────────────┐  │
-                     │  │ Agentic Retrieval    │───▶│ Neptune Analytics │  │
-                     │  │ Lambda (Claude loop) │    │ (Knowledge Graph) │  │
-                     │  └──────────────────────┘    └──────────────────┘  │
-                     │       │                                            │
-                     │       ▼                                            │
-                     │  Parallel: Response Streaming + Resource Streaming  │
-                     │       │                                            │
-                     │       ▼                                            │
-                     │  WebSocket ─▶ Client                               │
-                     └────────────────────────────────────────────────────┘
+┌──────────────┐  WSS  ┌────────────────────────────────────────────────────┐
+│  Next.js     │──────▶│  AWS (CDK-managed)                                  │
+│  Frontend    │       │  Cognito ─▶ API Gateway (HTTP + WebSocket)          │
+│  (CloudFront)│       │       │                                             │
+└──────────────┘       │       ▼                                             │
+                       │  EventBridge (ChatMessageReceived)                  │
+                       │       │                                             │
+                       │       ▼                                             │
+                       │  ┌──────────────────────┐    ┌───────────────────┐ │
+                       │  │ Agentic Retrieval    │───▶│ Neptune Analytics │ │
+                       │  │ Lambda (Claude loop) │    │ (Knowledge Graph) │ │
+                       │  └──────────────────────┘    └───────────────────┘ │
+                       │       │                                             │
+                       │       ▼  streams answer + documents + FAQs          │
+                       │  WebSocket ─▶ Client                                │
+                       └────────────────────────────────────────────────────┘
 ```
 
 ### How a Query Flows
 
 1. User sends a message via WebSocket (authenticated by Cognito)
 2. A `ChatMessageReceived` event is published to EventBridge
-3. EventBridge triggers the GraphRAG Step Function
-4. **Agentic Retrieval Lambda** runs a Claude tool-use loop:
-   - Searches a Bedrock FAQ Knowledge Base for quick-answer matches
-   - Calls Neptune graph tools (`vector_search`, `get_neighbors`, `get_authority_chain`) to find relevant document chunks and their legal context
+3. EventBridge triggers the **Agentic Retrieval Lambda** directly (no Step Function)
+4. The Lambda runs a Claude tool-use loop:
+   - Searches a Bedrock FAQ Knowledge Base (`faq_search`) for quick-answer matches
+   - Calls Neptune graph tools (`vector_search`, `get_neighbors`, `get_authority_chain`) to find
+     relevant document chunks and their legal context
    - Claude decides when it has enough evidence and produces a cited answer
-5. Response and source documents stream back to the client in parallel via WebSocket
+5. The same Lambda streams the answer, source documents, and FAQs back to the client over WebSocket
+   (single Lambda, single DynamoDB write)
 
 ### Key Components
 
 | Component | Description |
 |-----------|-------------|
 | **Frontend** (`frontend/`) | Next.js app served via CloudFront. Real-time streaming via WebSocket, Cognito auth, Zustand state management. |
-| **Agentic Retrieval** (`backend/lambdas/agentic_retrieval/`) | Core retrieval engine — a Claude tool-use loop backed by Neptune Analytics vector search and graph traversal. |
-| **Neptune Analytics** | Knowledge graph storing documents, chunks (with 1024-dim vector embeddings), topics, and a 9-level authority hierarchy (Constitution → Statutes → Case Law → Admin Rules → WPAM → FAQs → Gov Pubs → IAAO → USPAP). |
-| **Streaming Lambdas** (`backend/lambdas/streaming/`, `resource_streaming/`) | Stream the LLM response and cited source documents to the frontend over WebSocket. |
+| **Agentic Retrieval** (`backend/lambdas/agentic_retrieval/`) | Core retrieval engine — a Claude tool-use loop backed by Neptune Analytics vector search and graph traversal. Also streams the answer, documents, and FAQs to the frontend over WebSocket. |
+| **Chat API** (`backend/lambdas/chat_api/`) | REST endpoint that initiates a chat and publishes the `ChatMessageReceived` event to EventBridge. |
 | **Citation Resolver** (`backend/lambdas/citation_resolver/`) | Generates presigned S3 URLs with `#page=N` fragments so users link directly to specific PDF pages. |
+| **WebSocket Handlers** (`backend/lambdas/websocket/`) | Connect / disconnect / default WebSocket route handlers. |
+| **Neptune Analytics** | Knowledge graph storing documents, chunks (with 1024-dim vector embeddings), topics, and a 9-level authority hierarchy (Constitution → Statutes → Case Law → Admin Rules → WPAM → FAQs → Gov Pubs → IAAO → USPAP). |
 | **Sessions** (`infra/stacks/sessions-stack.ts`) | Cognito user pool, HTTP API, WebSocket API, DynamoDB sessions + chat history. |
 | **Infrastructure** (`infra/`) | CDK stacks. Entry point: `infra/bin/wisconsin-app.ts`. |
-
-### Legacy Path
-
-A legacy retrieval path using OpenSearch Serverless (Bedrock Knowledge Bases) still exists in `archive/` and is toggled by the CDK context flag `useGraphRAG=false`. When `useGraphRAG=true` (default for new deployments), the OpenSearch collections are not provisioned.
 
 ## Project Layout
 
 ```
 ├── backend/
 │   ├── lambdas/          # Python Lambda functions
-│   │   ├── agentic_retrieval/   # GraphRAG tool-use loop
-│   │   ├── chat_api/            # REST chat initiation
-│   │   ├── citation_resolver/   # Presigned URL generation
-│   │   ├── resource_streaming/  # Source doc WebSocket streaming
-│   │   ├── streaming/           # LLM response WebSocket streaming
+│   │   ├── agentic_retrieval/   # Claude tool-use loop + WebSocket streaming
+│   │   ├── chat_api/            # REST chat initiation → EventBridge
+│   │   ├── citation_resolver/   # Presigned S3 URL generation
 │   │   └── websocket/           # Connect/disconnect/default handlers
 │   └── layers/           # Shared Lambda layers
 │       ├── step_function_types/ # Pydantic models for inter-Lambda contracts
-│       └── websocket_utils/     # WebSocket connection management
-├── frontend/             # Next.js application
+│       └── websocket_utils/     # WebSocket connection management + message models
+├── frontend/             # Next.js application (CloudFront-served)
 ├── infra/                # CDK stacks (TypeScript)
-│   ├── bin/              # CDK app entry point
-│   └── stacks/           # Nested stacks (sessions, messages, graphrag, webapp)
-├── config/               # Model configuration (prompts, inference params)
-├── archive/              # Legacy OpenSearch path (retained for rollback)
+│   ├── bin/              # CDK app entry point (wisconsin-app.ts)
+│   └── stacks/           # sessions, graphrag, graphrag-messages, webapp,
+│                         #   ingestion, lambda-layers, cloudwatch-iam
+├── tools/                # Ingestion pipeline + build tooling
+│   ├── ingestion/        # scrape, extract, embed, load, case law, config, Docker
+│   ├── bundle.py         # Lambda bundling script
+│   └── upload_model_configs.py  # push prompts to DynamoDB
+├── pdf_chunking/         # PDF extraction + chunking library (used by ingestion)
+├── config/               # Shared config (model prompts, inference params)
+├── archive/              # Retired scripts + seed data (pre-GraphRAG)
 ├── docs/                 # Engineering documentation
-├── tools/                # Build tooling (bundle script)
 └── bundles.toml          # Lambda bundling manifest
 ```
 
@@ -156,8 +155,8 @@ bun run deploy     # bundles lambdas + cdk deploy
 For GraphRAG-specific deploys:
 ```bash
 cd infra
-AWS_PROFILE=<profile> AWS_REGION=us-east-1 cdk diff -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG
-AWS_PROFILE=<profile> AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
+AWS_PROFILE=<profile> AWS_REGION=us-east-1 cdk diff -c stackName=WisconsinBotGraphRAG
+AWS_PROFILE=<profile> AWS_REGION=us-east-1 cdk deploy -c stackName=WisconsinBotGraphRAG --require-approval never
 ```
 
 ### First-Time Setup
