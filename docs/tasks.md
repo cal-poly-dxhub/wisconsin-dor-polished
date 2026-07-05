@@ -13,6 +13,7 @@
 | 32 | Show trimmed section page index in answer synthesis trace card | — |
 | 35 | Graph wiring overhaul — stubs as routing nodes, not dead ends | — |
 | 39 | Discover and ingest 2026 news pages | — |
+| 40 | Harden inline linking prose — quote verbatim instead of paraphrasing | — |
 
 ## Done
 
@@ -540,4 +541,45 @@ tools/
 - `tools/graphrag/document_manifest.yaml` — add discovered URLs here
 - `tools/graphrag/scrape_documents.py` — existing scrape pipeline handles the rest
 - `tools/graphrag/ingest_config.yaml` — `news_pages` framework already defined
+
+---
+
+### Task 40: Harden inline linking prose — quote verbatim instead of paraphrasing
+
+**Problem:** The agent sometimes paraphrases content when generating inline link prose (the text that appears before a citation like "According to § 70.04 [source]"). This is problematic because:
+- Paraphrased text may not match the actual source text, making it impossible for users to verify the citation
+- Users can't search for the exact quoted text in the original document
+- It undermines trust in the citations — if the quoted text doesn't match the source, users question the entire answer
+
+**Current behavior:** The agent extracts the relevant chunk text, then rewrites it in its own words before appending the citation. Example:
+```
+Current: "The property owner must file an appeal within 30 days of receiving the notice [source]."
+Source text: "The owner of the property shall file an appeal within 30 days after receiving the notice."
+```
+
+**Desired behavior:** Quote the exact text from the source document verbatim:
+```
+Desired: "The owner of the property shall file an appeal within 30 days after receiving the notice [source]."
+```
+
+**Root cause:** The agent's prompt encourages "natural language" responses, which leads the LLM to paraphrase. The citation extraction happens separately from the prose generation.
+
+**Proposed solution:** Modify the inline link generation step to extract and quote the exact text from the retrieved chunks:
+1. When the agent identifies relevant chunks, extract the exact text spans that support each claim
+2. Pass these exact text spans (not paraphrased versions) to the answer generation model
+3. The model then weaves the quoted text into its response, with citations pointing to the original source positions
+
+**Implementation approach:**
+- In `backend/lambdas/agentic_retrieval/main.py`, modify the answer synthesis step to preserve exact text spans from chunks
+- Update the prompt to instruct the model to "quote the exact text from sources" rather than "paraphrase"
+- Adjust citation formatting to include the quoted text with inline markers (e.g., `"exact quote" [source]`)
+
+**Key files:**
+- `backend/lambdas/agentic_retrieval/main.py` — answer synthesis logic
+- `config/model_configs.toml` — system prompt for answer generation
+- `backend/layers/websocket_utils/models.py` — if citation format needs updating
+
+**Validation:** Compare paraphrased vs. verbatim responses for the same query, measure user satisfaction, verify citations match source text exactly.
+
+**Effort:** Medium — requires changing the answer generation pipeline and prompt instructions.
 

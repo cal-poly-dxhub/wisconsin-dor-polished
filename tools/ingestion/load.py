@@ -1,18 +1,17 @@
 """
 Phase 5: Load embedded documents into Neptune Analytics graph.
 
-Implements 11 sequential sub-phases:
+Implements 10 sequential sub-phases:
 1. Scaffold (frameworks + hierarchy)
 2. Document nodes
-3. Cross-reference edges (CITES + IMPLEMENTS)
-4. Statute hierarchy (PART_OF)
-5. Topic merging via LLM
-6. Sub-document links
-7. Universal hierarchy post-pass
-8. Chunk nodes
-9. Stub resolution
-10. Vector upserts
-11. Semantic edges
+3. Statute hierarchy (PART_OF)
+4. Hierarchy links (sub-document + universal)
+5. Chunk nodes
+6. Case Law CITES (Statute→CaseLaw reverse edges)
+7. Stub resolution (DEFINED_BY edges from stubs to statute chunks)
+8. Vector upserts
+9. Semantic edges
+10. Orphan cleanup
 
 Usage:
     python -m tools.ingestion.load \
@@ -251,174 +250,9 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
     logger.info(f"  Created {count} document nodes")
 
 
-PHASE_3_BATCH_SIZE = 50
-PHASE_3_MAX_PAIRS_PER_FLUSH = 400
 
 
-def _pair_count(doc: dict) -> int:
-    return (
-        len(doc.get("statute_refs", []))
-        + len(doc.get("implements_refs", []))
-        + len(doc.get("admin_rule_refs", []))
-    )
 
-
-def _flush_phase_3_batch(client, graph_id: str, batch: list[dict]) -> tuple[int, int]:
-    """Write one batch of doc-level cross-references using UNWIND.
-
-    Returns (edges_created, stubs_created) counts.
-    """
-    if not batch:
-        return 0, 0
-
-    edges = 0
-    stubs = 0
-
-    # 1. Statute stubs used by either CITES or IMPLEMENTS.
-    statute_refs = sorted(
-        {ref for b in batch for ref in list(b["statute_refs"]) + list(b["implements_refs"])}
-    )
-    if statute_refs:
-        execute_query(
-            client,
-            graph_id,
-            "UNWIND $rows AS row "
-            "MERGE (s:Statute {id: row.id}) "
-            "ON CREATE SET s.title = row.title, s.stub = true",
-            {"rows": [{"id": f"WIS-STAT-{r}", "title": f"Wis. Stat. {r}"} for r in statute_refs]},
-        )
-        stubs += len(statute_refs)
-
-    # 2. doc -CITES-> Statute
-    cite_statute_pairs = [
-        {"doc_id": b["doc_id"], "stub_id": f"WIS-STAT-{ref}"}
-        for b in batch
-        for ref in b["statute_refs"]
-    ]
-    if cite_statute_pairs:
-        execute_query(
-            client,
-            graph_id,
-            "UNWIND $rows AS row "
-            "MATCH (d {id: row.doc_id}), (s:Statute {id: row.stub_id}) "
-            "MERGE (d)-[:CITES]->(s)",
-            {"rows": cite_statute_pairs},
-        )
-        edges += len(cite_statute_pairs)
-
-        # 2b. Mirror the edge for case-law docs: (Statute)-[:CITES]->(CaseLaw).
-        # Lets the agent traverse outgoing CITES from a Statute to discover
-        # interpreting cases. The forward edge alone (Case→Statute) means
-        # case discovery requires either incoming-direction get_neighbors or
-        # vector-search luck on bulky statute annotation chunks. Markarian
-        # buried in a 7K-char §70.32 chunk failed both at retrieval time.
-        case_law_pairs = [
-            row for row in cite_statute_pairs if row["doc_id"].startswith("case-law-")
-        ]
-        if case_law_pairs:
-            execute_query(
-                client,
-                graph_id,
-                "UNWIND $rows AS row "
-                "MATCH (s:Statute {id: row.stub_id}), (c:CaseLaw {id: row.doc_id}) "
-                "MERGE (s)-[:CITES]->(c)",
-                {"rows": case_law_pairs},
-            )
-            edges += len(case_law_pairs)
-
-    # 3. doc -IMPLEMENTS-> Statute
-    impl_pairs = [
-        {"doc_id": b["doc_id"], "stub_id": f"WIS-STAT-{ref}"}
-        for b in batch
-        for ref in b["implements_refs"]
-    ]
-    if impl_pairs:
-        execute_query(
-            client,
-            graph_id,
-            "UNWIND $rows AS row "
-            "MATCH (d {id: row.doc_id}), (s:Statute {id: row.stub_id}) "
-            "MERGE (d)-[:IMPLEMENTS]->(s)",
-            {"rows": impl_pairs},
-        )
-        edges += len(impl_pairs)
-
-    # 4. AdminRule stubs + doc -CITES-> AdminRule
-    admin_refs = sorted({ref for b in batch for ref in b["admin_rule_refs"]})
-    if admin_refs:
-        execute_query(
-            client,
-            graph_id,
-            "UNWIND $rows AS row "
-            "MERGE (r:AdminRule {id: row.id}) "
-            "ON CREATE SET r.title = row.title, r.stub = true",
-            {"rows": [{"id": f"ADMIN-{r.replace(' ', '-')}", "title": r} for r in admin_refs]},
-        )
-        stubs += len(admin_refs)
-
-        cite_admin_pairs = [
-            {"doc_id": b["doc_id"], "stub_id": f"ADMIN-{ref.replace(' ', '-')}"}
-            for b in batch
-            for ref in b["admin_rule_refs"]
-        ]
-        execute_query(
-            client,
-            graph_id,
-            "UNWIND $rows AS row "
-            "MATCH (d {id: row.doc_id}), (r:AdminRule {id: row.stub_id}) "
-            "MERGE (d)-[:CITES]->(r)",
-            {"rows": cite_admin_pairs},
-        )
-        edges += len(cite_admin_pairs)
-
-    return edges, stubs
-
-
-def phase_3_cross_references(client, graph_id: str, documents: list[dict]):
-    logger.info(
-        f"Phase 3: Creating cross-reference edges (CITES + IMPLEMENTS) "
-        f"(batch size {PHASE_3_BATCH_SIZE})..."
-    )
-
-    batch: list[dict] = []
-    batch_pairs = 0
-    edges_created = 0
-    stubs_created = 0
-    docs_processed = 0
-
-    for doc in documents:
-        entry = {
-            "doc_id": doc["doc_id"],
-            "statute_refs": doc.get("statute_refs", []) or [],
-            "implements_refs": doc.get("implements_refs", []) or [],
-            "admin_rule_refs": doc.get("admin_rule_refs", []) or [],
-        }
-        pairs = _pair_count(entry)
-
-        # Flush before adding if this doc alone would blow the pair cap.
-        if batch and (
-            len(batch) >= PHASE_3_BATCH_SIZE or batch_pairs + pairs > PHASE_3_MAX_PAIRS_PER_FLUSH
-        ):
-            e, s = _flush_phase_3_batch(client, graph_id, batch)
-            edges_created += e
-            stubs_created += s
-            batch = []
-            batch_pairs = 0
-            logger.info(
-                f"  Phase 3 progress: {docs_processed}/{len(documents)} docs, "
-                f"{edges_created} edges, {stubs_created} stubs"
-            )
-
-        batch.append(entry)
-        batch_pairs += pairs
-        docs_processed += 1
-
-    if batch:
-        e, s = _flush_phase_3_batch(client, graph_id, batch)
-        edges_created += e
-        stubs_created += s
-
-    logger.info(f"  Created {edges_created} cross-reference edges, {stubs_created} stubs")
 
 
 def phase_4_statute_hierarchy(client, graph_id: str):
@@ -512,106 +346,6 @@ def phase_4_statute_hierarchy(client, graph_id: str):
     )
 
 
-def phase_5_topic_merging(client, graph_id: str, documents: list[dict], config: dict):
-    logger.info("Phase 5: Merging topics via LLM...")
-
-    all_topics = set()
-    for doc in documents:
-        for topic in doc.get("topics", []):
-            all_topics.add(topic.strip().lower())
-
-    all_topics = sorted(all_topics)
-    logger.info(f"  {len(all_topics)} unique raw topics")
-
-    if not all_topics:
-        return
-
-    batch_size = 60
-    canonical_map = {}
-    llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-20250514")
-
-    total_batches = (len(all_topics) + batch_size - 1) // batch_size
-    for batch_i, i in enumerate(range(0, len(all_topics), batch_size), start=1):
-        batch = all_topics[i : i + batch_size]
-        logger.info(f"  Phase 5 LLM call {batch_i}/{total_batches} ({len(batch)} topics)...")
-        prompt = (
-            "Given these raw topic labels from Wisconsin DOR property tax documents, "
-            "merge synonyms into canonical names. Return JSON only:\n"
-            '{"clusters": [{"canonical": "...", "members": ["...", "..."]}]}\n\n'
-            f"Topics: {json.dumps(batch)}"
-        )
-
-        response = bedrock.converse(
-            modelId=llm_model,
-            messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"maxTokens": 8192, "temperature": 0.0},
-        )
-
-        result_text = response["output"]["message"]["content"][0]["text"]
-        result_text = re.sub(r"^```(?:json)?\n?", "", result_text.strip())
-        result_text = re.sub(r"\n?```$", "", result_text.strip())
-
-        try:
-            clusters = json.loads(result_text).get("clusters", [])
-            for cluster in clusters:
-                canonical = cluster["canonical"]
-                for member in cluster["members"]:
-                    canonical_map[member.lower()] = canonical
-        except json.JSONDecodeError:
-            logger.warning(f"  Failed to parse LLM topic response for batch {i}")
-
-    canonical_topics = set(canonical_map.values())
-
-    # Batch-MERGE all Topic nodes in one UNWIND.
-    if canonical_topics:
-        execute_query(
-            client,
-            graph_id,
-            "UNWIND $rows AS row MERGE (t:Topic {id: row.id}) SET t.title = row.title",
-            {
-                "rows": [
-                    {"id": topic.lower().replace(" ", "-"), "title": topic}
-                    for topic in sorted(canonical_topics)
-                ]
-            },
-        )
-    logger.info(f"  Merged {len(canonical_topics)} Topic nodes")
-
-    # Build all (doc_id, topic_id) pairs, deduped.
-    pairs: list[dict] = []
-    seen: set[tuple[str, str]] = set()
-    for doc in documents:
-        doc_id = doc["doc_id"]
-        for raw_topic in doc.get("topics", []):
-            canonical = canonical_map.get(raw_topic.strip().lower(), raw_topic.strip())
-            topic_id = canonical.lower().replace(" ", "-")
-            key = (doc_id, topic_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            pairs.append({"doc_id": doc_id, "topic_id": topic_id})
-
-    logger.info(f"  {len(pairs)} doc→topic edges to create")
-
-    # UNWIND-batch COVERS_TOPIC edges. Cap pair count per flush to avoid Neptune OOM.
-    flush_cap = 400
-    written = 0
-    for start in range(0, len(pairs), flush_cap):
-        chunk = pairs[start : start + flush_cap]
-        execute_query(
-            client,
-            graph_id,
-            "UNWIND $rows AS row "
-            "MATCH (d {id: row.doc_id}), (t:Topic {id: row.topic_id}) "
-            "MERGE (d)-[:COVERS_TOPIC]->(t)",
-            {"rows": chunk},
-        )
-        written += len(chunk)
-        logger.info(f"  Phase 5 edges: {written}/{len(pairs)}")
-
-    logger.info(
-        f"  Created {len(canonical_topics)} canonical topics from {len(all_topics)} raw topics"
-    )
 
 
 def phase_6_7_hierarchy(client, graph_id: str, documents: list[dict]):
@@ -652,6 +386,43 @@ def phase_6_7_hierarchy(client, graph_id: str, documents: list[dict]):
     )
 
     logger.info("  Hierarchy links complete")
+
+
+def phase_case_law_cites(client, graph_id: str, documents: list[dict]):
+    """Create (Statute)-[:CITES]->(CaseLaw) edges for case law documents.
+
+    Case law docs have statute_refs derived from citing-statute PDF page headers
+    (deterministic regex, not LLM). This wires the reverse edge so the agent can
+    traverse from a Statute stub outward to discover interpreting cases.
+    """
+    logger.info("Creating case law reverse CITES edges...")
+
+    rows = [
+        {"stub_id": f"WIS-STAT-{ref}", "doc_id": doc["doc_id"]}
+        for doc in documents
+        if doc.get("doc_type") == "case_law"
+        for ref in doc.get("statute_refs", [])
+    ]
+
+    if not rows:
+        logger.info("  No case law documents with statute_refs found")
+        return
+
+    flush_cap = 400
+    edges_created = 0
+    for start in range(0, len(rows), flush_cap):
+        batch = rows[start : start + flush_cap]
+        execute_query(
+            client,
+            graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (s:Statute {id: row.stub_id}), (c:CaseLaw {id: row.doc_id}) "
+            "MERGE (s)-[:CITES]->(c)",
+            {"rows": batch},
+        )
+        edges_created += len(batch)
+
+    logger.info(f"  Created {edges_created} Statute→CaseLaw CITES edges")
 
 
 PHASE_8_BATCH_SIZE = 10
@@ -873,50 +644,82 @@ def phase_8_chunks(client, graph_id: str, documents: list[dict]):
 
 
 def phase_9_stub_resolution(client, graph_id: str):
-    logger.info("Phase 9: Resolving stub nodes...")
+    """Wire DEFINED_BY edges from statute stubs to their matching statute chunks.
+
+    Stubs like WIS-STAT-70.32 become routing nodes that point to the actual
+    chunk(s) containing that section's text, matched by chunk heading prefix.
+    """
+    logger.info("Phase 9: Wiring DEFINED_BY edges from stubs to statute chunks...")
 
     result = execute_query(
-        client, graph_id, "MATCH (s) WHERE s.stub = true RETURN s.id AS id, labels(s) AS labels"
+        client, graph_id, "MATCH (s:Statute) WHERE s.stub = true RETURN s.id AS id"
     )
     stubs = result.get("results", [])
-    logger.info(f"  {len(stubs)} stubs to consider")
+    logger.info(f"  {len(stubs)} statute stubs found")
 
-    # Build candidate (stub_id, real_id) pairs from stub IDs matching WIS-STAT-{chapter}.
-    candidates = []
+    parsed = []
     for stub in stubs:
         stub_id = stub["id"]
-        m = re.match(r"WIS-STAT-(\d+)", stub_id)
-        if m:
-            candidates.append(
-                {"stub_id": stub_id, "real_id": f"statutes-wi-statute-ch{m.group(1)}"}
-            )
+        m = re.match(r"WIS-STAT-(.+)", stub_id)
+        if not m:
+            continue
+        section = m.group(1)
+        chapter = section.split(".")[0]
+        if not chapter.isdigit():
+            continue
+        if "." not in section:
+            continue
+        # Strip subsection qualifiers — chunk headings are section-level only
+        # e.g. "70.47(1)" → "70.47", "70.111 (27)" → "70.111"
+        match_section = re.split(r"[\s(]", section, maxsplit=1)[0]
+        parsed.append({
+            "stub_id": stub_id,
+            "doc_id": f"statutes-{chapter}",
+            "section": match_section,
+        })
 
-    if not candidates:
-        logger.info("  No resolvable candidates")
+    if not parsed:
+        logger.info("  No section-level stubs to resolve")
         return
 
-    logger.info(f"  {len(candidates)} resolvable candidate pairs")
+    logger.info(f"  {len(parsed)} section-level stubs to resolve")
 
-    # Re-point CITES and IMPLEMENTS edges from stub → real (if real exists and is not itself a stub).
-    # Two UNWINDs per batch (one per edge type). Chunked to stay under per-query memory.
-    flush_cap = 200
-    for edge_type in ("CITES", "IMPLEMENTS"):
-        for start in range(0, len(candidates), flush_cap):
-            chunk = candidates[start : start + flush_cap]
-            execute_query(
+    # Group by chapter doc to reduce query count
+    by_doc: dict[str, list[dict]] = {}
+    for entry in parsed:
+        by_doc.setdefault(entry["doc_id"], []).append(entry)
+
+    pairs: list[dict] = []
+    for doc_id, entries in by_doc.items():
+        for entry in entries:
+            result = execute_query(
                 client,
                 graph_id,
-                "UNWIND $rows AS row "
-                "MATCH (real {id: row.real_id}) WHERE real.stub IS NULL "
-                "MATCH (s {id: row.stub_id})<-[:" + edge_type + "]-(citing) "
-                "MERGE (citing)-[:" + edge_type + "]->(real)",
-                {"rows": chunk},
+                "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: $doc_id}) "
+                "WHERE c.heading STARTS WITH $section "
+                "RETURN c.id AS chunk_id",
+                {"doc_id": doc_id, "section": entry["section"]},
             )
-        logger.info(f"  Phase 9 {edge_type}: re-pointed {len(candidates)} candidate stubs")
+            for row in result.get("results", []):
+                pairs.append({"stub_id": entry["stub_id"], "chunk_id": row["chunk_id"]})
 
-    logger.info(
-        f"  Processed {len(candidates)}/{len(stubs)} candidate stubs (no-op if real nodes absent)"
-    )
+    resolved_count = len({p["stub_id"] for p in pairs})
+
+    flush_cap = 200
+    edges_created = 0
+    for start in range(0, len(pairs), flush_cap):
+        batch = pairs[start : start + flush_cap]
+        execute_query(
+            client,
+            graph_id,
+            "UNWIND $rows AS row "
+            "MATCH (s:Statute {id: row.stub_id}), (c:Chunk {id: row.chunk_id}) "
+            "MERGE (s)-[:DEFINED_BY]->(c)",
+            {"rows": batch},
+        )
+        edges_created += len(batch)
+
+    logger.info(f"  Wired {edges_created} DEFINED_BY edges for {resolved_count}/{len(parsed)} stubs")
 
 
 PHASE_10_WORKERS = 8
@@ -1283,7 +1086,7 @@ def main():
     if args.source_filter:
         purge_phase = [
             (
-                6.5,
+                4.5,
                 "Purge Stale Chunks",
                 lambda: phase_purge_stale_chunks(client, graph_id, documents),
             )
@@ -1294,20 +1097,19 @@ def main():
     phases = [
         (1, "Scaffold", lambda: phase_1_scaffold(client, graph_id, config)),
         (2, "Document Nodes", lambda: phase_2_document_nodes(client, graph_id, documents, config)),
-        (3, "Cross-References", lambda: phase_3_cross_references(client, graph_id, documents)),
-        (4, "Statute Hierarchy", lambda: phase_4_statute_hierarchy(client, graph_id)),
-        (5, "Topic Merging", lambda: phase_5_topic_merging(client, graph_id, documents, config)),
-        (6, "Hierarchy Links", lambda: phase_6_7_hierarchy(client, graph_id, documents)),
+        (3, "Statute Hierarchy", lambda: phase_4_statute_hierarchy(client, graph_id)),
+        (4, "Hierarchy Links", lambda: phase_6_7_hierarchy(client, graph_id, documents)),
         *purge_phase,
-        (7, "Chunk Nodes", lambda: phase_8_chunks(client, graph_id, documents)),
-        (8, "Stub Resolution", lambda: phase_9_stub_resolution(client, graph_id)),
-        (9, "Vector Upserts", lambda: phase_10_vectors(client, graph_id, documents)),
+        (5, "Chunk Nodes", lambda: phase_8_chunks(client, graph_id, documents)),
+        (6, "Case Law CITES", lambda: phase_case_law_cites(client, graph_id, documents)),
+        (7, "Stub Resolution", lambda: phase_9_stub_resolution(client, graph_id)),
+        (8, "Vector Upserts", lambda: phase_10_vectors(client, graph_id, documents)),
         (
-            10,
+            9,
             "Semantic Edges",
             lambda: phase_11_semantic_edges(client, graph_id, documents, config),
         ),
-        (11, "Orphan Cleanup", lambda: phase_12_cleanup(client, graph_id)),
+        (10, "Orphan Cleanup", lambda: phase_12_cleanup(client, graph_id)),
     ]
 
     for phase_num, name, fn in phases:

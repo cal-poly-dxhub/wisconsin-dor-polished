@@ -132,20 +132,11 @@ def build_rag_documents(
             continue
 
         if not doc_info.get("summary"):
-            promotion = neptune_client.find_stub_promotion(doc_id)
-            if promotion:
-                stub_authority = doc_info.get("authority_level")
-                if stub_authority is None and doc_id.startswith("WIS-STAT-"):
-                    stub_authority = 2
-                doc_info = {
-                    **doc_info,
-                    "summary": promotion.get("summary"),
-                    "source_url": promotion.get("source_url") or doc_info.get("source_url"),
-                    "s3_key": promotion.get("s3_key") or doc_info.get("s3_key"),
-                    "authority_level": stub_authority,
-                    "_promoted_start_page": promotion.get("start_page"),
-                    "_promoted_end_page": promotion.get("end_page"),
-                }
+            logger.warning(
+                "STUB_PROMOTION_TRIGGERED: doc_id=%s reached citation card with no summary. "
+                "Expected DEFINED_BY auto-resolution to prevent this — investigate.",
+                doc_id,
+            )
 
         content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
         tag = discovery.get(doc_id, "unknown")

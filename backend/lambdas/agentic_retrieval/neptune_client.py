@@ -346,16 +346,18 @@ class NeptuneClient:
 
         results = self.query(
             f"{pattern}{where_clause} "
-            "OPTIONAL MATCH (n)-[:BELONGS_TO]->(fw:Framework) "
-            "RETURN type(r) AS relationship, n.id AS id, n.title AS title, "
-            "n.summary AS summary, n.source_url AS source_url, "
-            "n.doc_type AS doc_type, n.citation AS citation, "
-            "n.effective_date AS effective_date, "
-            "n.edition_year AS edition_year, "
-            "n.heading AS heading, "
-            "n.authority_level AS authority_level, "
+            "OPTIONAL MATCH (n)-[:DEFINED_BY]->(resolved) WHERE n.stub = true "
+            "WITH r, CASE WHEN resolved IS NOT NULL THEN resolved ELSE n END AS node "
+            "OPTIONAL MATCH (node)-[:BELONGS_TO]->(fw:Framework) "
+            "RETURN DISTINCT type(r) AS relationship, node.id AS id, node.title AS title, "
+            "node.summary AS summary, node.source_url AS source_url, "
+            "node.doc_type AS doc_type, node.citation AS citation, "
+            "node.effective_date AS effective_date, "
+            "node.edition_year AS edition_year, "
+            "node.heading AS heading, "
+            "node.authority_level AS authority_level, "
             "fw.id AS framework_id, "
-            "labels(n) AS labels "
+            "labels(node) AS labels "
             f"LIMIT {int(limit)}",
             params,
             query_name="get_neighbors",
