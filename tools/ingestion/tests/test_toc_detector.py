@@ -13,7 +13,6 @@ import pytest
 
 from tools.ingestion.chunking.toc_detector import is_toc_chunk
 
-
 # --- Positive samples (real TOC chunks from the graph) ---
 
 TOC_MOBHME_X = (

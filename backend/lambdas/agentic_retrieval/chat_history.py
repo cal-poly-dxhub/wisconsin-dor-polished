@@ -4,7 +4,7 @@ import logging
 import os
 
 import boto3
-from step_function_types.models import FAQ, FAQResource, RAGDocument
+from step_function_types.models import FAQResource, RAGDocument
 
 logger = logging.getLogger(__name__)
 

@@ -15,7 +15,6 @@ import pytest
 
 from tools.ingestion.chunking.pymupdf_extractor import looks_like_real_table
 
-
 # --- Positive: real tables (should stay tables) ---
 
 WISCONSIN_COUNTY_GRID = [

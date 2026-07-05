@@ -1,30 +1,30 @@
+import json
 import os
 import re
-import json
-import boto3
 from collections import OrderedDict
 from datetime import datetime
+from typing import Any
+
+import boto3
 import botocore
 from botocore.config import Config
-from typing import List, Dict, Tuple, Any
+from PIL import Image
 from textractor.data.text_linearization_config import TextLinearizationConfig
+
 from tools.ingestion.chunking.aws_utils import *
-from tools.ingestion.chunking.table_tools import *
+from tools.ingestion.chunking.boilerplate import strip_boilerplate
 from tools.ingestion.chunking.pymupdf_extractor import (
-    extract_with_pymupdf,
     extract_raw_text_with_pymupdf,
+    extract_with_pymupdf,
     extraction_looks_good,
 )
-from tools.ingestion.chunking.boilerplate import strip_boilerplate
+from tools.ingestion.chunking.table_tools import *
+from tools.ingestion.chunking.toc_detector import is_toc_chunk
 from tools.ingestion.chunking.wpam_chunk_filter import (
     filter_wpam_chunks,
     merge_short_chunks,
     repair_wpam_subheadings,
 )
-from pdf2image import convert_from_path
-from PIL import Image
-from tools.ingestion.chunking.flowchart_tools import extract_flowcharts_from_document
-from tools.ingestion.chunking.toc_detector import is_toc_chunk
 
 config = Config(read_timeout=600, retries=dict(max_attempts=5))
 
@@ -101,7 +101,7 @@ def strip_newline(cell: Any) -> str:
     return str(cell).strip()
 
 
-def sub_header_content_splitter(string: str) -> List[str]:
+def sub_header_content_splitter(string: str) -> list[str]:
     """Split content by XML tags and return relevant segments."""
     pattern = re.compile(r"<<[^>]+>>")
     segments = re.split(pattern, string)
@@ -120,7 +120,7 @@ def sub_header_content_splitter(string: str) -> List[str]:
     return result
 
 
-def split_list_items_(items: str) -> List[str]:
+def split_list_items_(items: str) -> list[str]:
     """Split a string into a list of items, handling nested lists."""
     parts = re.split("(<<list>><list>|</list><</list>>)", items)
     output = []
@@ -144,7 +144,7 @@ def split_list_items_(items: str) -> List[str]:
     return output
 
 import os
-import re
+
 
 def process_document(document, local_pdf_path: str):
     """
@@ -891,7 +891,7 @@ def extract_clean_plaintext(doc_chunks, doc_id=None, is_statute=False):
             if line is None:
                 return ""
             return re.sub(r"<[^>]+>", "", str(line)).strip()
-        except Exception as e:
+        except Exception:
             print("⚠️ clean_line failed on line:", repr(line))
             return ""
 

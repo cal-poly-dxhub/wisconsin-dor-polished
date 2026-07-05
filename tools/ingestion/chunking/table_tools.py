@@ -1,7 +1,8 @@
-import pdfplumber
-import io
 import base64
+import io
 import re
+
+import pdfplumber
 
 
 def get_table_base64_from_pdf(

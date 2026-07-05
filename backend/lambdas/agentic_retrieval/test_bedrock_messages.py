@@ -3,15 +3,13 @@
 import json
 from unittest.mock import MagicMock
 
-import pytest
-
 from bedrock_messages import (
-    converse_with_cache,
-    converse_stream_with_cache,
-    _convert_tool_definitions,
     _convert_messages,
     _convert_response_content,
+    _convert_tool_definitions,
     _convert_usage,
+    converse_stream_with_cache,
+    converse_with_cache,
 )
 
 

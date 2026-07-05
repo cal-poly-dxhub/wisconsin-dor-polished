@@ -80,8 +80,8 @@ def main():
 
     # Get target directory from config, default to "bundle"
     target_dir = config.get("target_directory", "bundle")
-    
-    colored_print(f"Starting bundling process...", Colors.BOLD + Colors.CYAN)
+
+    colored_print("Starting bundling process...", Colors.BOLD + Colors.CYAN)
     colored_print(f"Target directory: {target_dir}", Colors.BLUE)
     colored_print(f"Found {len(bundles)} bundle(s) to process\n", Colors.BLUE)
 

@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -52,9 +52,9 @@ _ws_real = _ilu.find_spec("websocket_utils") is not None
 _sft_real = _ilu.find_spec("step_function_types") is not None
 
 if _ws_real:
-    import websocket_utils
-    import websocket_utils.models
-    import websocket_utils.utils
+    import websocket_utils  # noqa: F401
+    import websocket_utils.models  # noqa: F401
+    import websocket_utils.utils  # noqa: F401
 else:
     for mod_name in [
         "websocket_utils", "websocket_utils.batching",
@@ -67,9 +67,9 @@ else:
     sys.modules["websocket_utils.models"].FragmentMessage = FakeFragmentMessage
 
 if _sft_real:
-    import step_function_types
-    import step_function_types.models
-    import step_function_types.errors
+    import step_function_types  # noqa: F401
+    import step_function_types.models  # noqa: F401
+    import step_function_types.errors  # noqa: F401
 else:
     for mod_name in [
         "step_function_types", "step_function_types.errors",

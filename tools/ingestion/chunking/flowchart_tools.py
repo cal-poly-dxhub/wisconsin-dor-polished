@@ -1,7 +1,7 @@
-import io
 import base64
+import io
 import json
-from typing import List, Dict
+
 from PIL import Image
 from textractor.entities.document import Document
 
@@ -14,7 +14,7 @@ def encode_image_to_base64(img: Image.Image) -> str:
 
 def extract_flowcharts_from_document(
     document: Document, bedrock_runtime, doc_id: str
-) -> List[Dict]:
+) -> list[dict]:
     """
     Extract and describe flowcharts (LAYOUT_FIGURE) using Claude via Bedrock.
     Requires Textractor document to be loaded with save_image=True.

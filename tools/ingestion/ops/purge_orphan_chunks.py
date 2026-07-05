@@ -175,7 +175,7 @@ def main() -> None:
     neptune_chunks = chunks_per_doc_in_neptune(args.graph_id)
 
     orphans = compute_orphans(neptune_chunks, embedded_counts)
-    logger.info(f"\n=== ORPHAN AUDIT ===")
+    logger.info("\n=== ORPHAN AUDIT ===")
     logger.info(f"Orphan chunks to delete: {len(orphans)}")
 
     # Per-doc breakdown for the top offenders

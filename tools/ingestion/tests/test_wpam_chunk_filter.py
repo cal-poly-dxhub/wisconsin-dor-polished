@@ -5,16 +5,14 @@ Validates two fixes:
 2. repair_wpam_subheadings — clears leaked subheadings appearing on >5 chunks
 """
 
-import pytest
 
 from tools.ingestion.chunking.wpam_chunk_filter import (
-    filter_wpam_chunks,
-    repair_wpam_subheadings,
     _body_text,
     _is_garbled,
     _is_table_cells,
+    filter_wpam_chunks,
+    repair_wpam_subheadings,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers to build test chunks

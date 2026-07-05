@@ -199,7 +199,7 @@ def main():
     if not args.dry_run:
         logger.info("\nNext steps:")
         logger.info("  1. Re-run load from Phase 9 (vectors) to re-embed the updated chunks:")
-        logger.info(f"     ./tools/ingestion/scripts/run_fargate.sh load --start-phase 9 --stop-after-phase 9")
+        logger.info("     ./tools/ingestion/scripts/run_fargate.sh load --start-phase 9 --stop-after-phase 9")
         logger.info("  2. Optionally re-run Phase 11 (semantic edges) if desired.")
 
 

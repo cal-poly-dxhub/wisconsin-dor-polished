@@ -8,7 +8,6 @@ spanned >10 pages). The rewrite tracks ``(line, page)`` pairs through
 buffer building, so page ranges reflect the chunk's ACTUAL source.
 """
 
-import pytest
 
 from tools.ingestion.chunking.pdfChunker import chunk_document
 

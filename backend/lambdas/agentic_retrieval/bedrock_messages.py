@@ -8,7 +8,8 @@ and mapping responses back to the Converse-compatible shape that main.py expects
 
 import json
 import logging
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

@@ -1078,7 +1078,7 @@ def phase_11_semantic_edges(client, graph_id: str, documents: list[dict], config
     batches_done = 0
     pending_edges: list[dict] = []
     flush_cap = 200
-    type_counts: dict[str, int] = {t: 0 for t in PHASE_11_ALLOWED_TYPES}
+    type_counts: dict[str, int] = dict.fromkeys(PHASE_11_ALLOWED_TYPES, 0)
 
     with ThreadPoolExecutor(max_workers=PHASE_11_LLM_WORKERS) as pool:
         future_to_idx = {

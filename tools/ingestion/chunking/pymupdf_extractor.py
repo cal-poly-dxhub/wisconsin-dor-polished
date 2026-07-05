@@ -1,6 +1,5 @@
 import re
 from collections import Counter
-from typing import List, Tuple
 
 import fitz  # PyMuPDF
 
@@ -12,8 +11,8 @@ STATUTE_NOISE_PATTERNS = [
 
 
 def strip_statute_noise(
-    line_page_mapping: List[Tuple[str, int]],
-) -> List[Tuple[str, int]]:
+    line_page_mapping: list[tuple[str, int]],
+) -> list[tuple[str, int]]:
     """Remove repeating headers, footers, and bare page numbers from statute PDFs."""
     return [
         (line, pnum)
@@ -164,7 +163,7 @@ def _rects_overlap(r1: tuple, r2: tuple) -> bool:
 
 def extract_with_pymupdf(
     pdf_path: str, is_statute: bool
-) -> Tuple[List[str], List[Tuple[str, int]]]:
+) -> tuple[list[str], list[tuple[str, int]]]:
     """
     Extract structured text from a PDF using PyMuPDF with font-based detection.
 
@@ -174,8 +173,8 @@ def extract_with_pymupdf(
     doc = fitz.open(pdf_path)
     body_size = _get_body_font_size(doc)
 
-    all_tagged_lines: List[str] = []
-    line_page_mapping: List[Tuple[str, int]] = []
+    all_tagged_lines: list[str] = []
+    line_page_mapping: list[tuple[str, int]] = []
 
     for page in doc:
         page_num = page.number + 1  # fitz is 0-based; pipeline expects 1-based
@@ -281,8 +280,8 @@ def extract_raw_text_with_pymupdf(pdf_path: str) -> str:
 
 
 def extraction_looks_good(
-    header_split: List[str],
-    line_page_mapping: List[Tuple[str, int]],
+    header_split: list[str],
+    line_page_mapping: list[tuple[str, int]],
     min_lines: int = 5,
 ) -> bool:
     """Evaluate whether PyMuPDF extraction produced sufficient usable content."""

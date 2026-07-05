@@ -10,7 +10,6 @@ On the user's follow-up reply, chat history contains the clarification
 exchange and the agent proceeds with targeted retrieval.
 """
 
-import json
 import logging
 import os
 

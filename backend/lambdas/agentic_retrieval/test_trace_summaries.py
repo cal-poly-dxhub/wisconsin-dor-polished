@@ -3,14 +3,12 @@
 from unittest.mock import MagicMock
 
 import pytest
-
 from trace_summaries import (
     build_tool_call_summary,
     build_tool_result_summary,
     discovery_summary,
     summarize_assistant_message,
     summarize_bedrock_response,
-    summarize_tool_result,
 )
 
 

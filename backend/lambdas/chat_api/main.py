@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -199,7 +199,7 @@ def require_admin() -> None:
 def create_session(user_id: str, email: str | None = None) -> str:
     """Create a new chat session; return the session ID."""
     session_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     item: dict[str, dict[str, str]] = {
         "sessionId": {"S": session_id},
@@ -738,9 +738,6 @@ def ingest_handler() -> dict[str, Any]:
       - category: document category key
       - title_override: optional title string
     """
-    import re
-    import urllib.parse
-    import urllib.request
 
     try:
         require_admin()
@@ -954,7 +951,7 @@ def feedback_handler(session_id) -> dict[str, Any]:
 
 def update_session_timestamp(session_id: str) -> None:
     """Update the lastMessageAt timestamp for a session."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     try:
         dynamodb.update_item(
             TableName=session_table_name,

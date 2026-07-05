@@ -37,7 +37,7 @@ class MockRAGDocument(pydantic.BaseModel):
 sys.modules["step_function_types.models"].RAGDocument = MockRAGDocument
 sys.modules["step_function_types.models"].ChunkSnippet = MockChunkSnippet
 
-from rag_documents import build_rag_documents, _generate_source_label
+from rag_documents import _generate_source_label, build_rag_documents
 
 
 class TestGenerateSourceLabel:

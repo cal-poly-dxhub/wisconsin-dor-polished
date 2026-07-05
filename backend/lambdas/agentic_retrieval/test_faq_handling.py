@@ -1,7 +1,7 @@
 """Tests for the faq_handling module."""
 
-import sys
 import os
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest

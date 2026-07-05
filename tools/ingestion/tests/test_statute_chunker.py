@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from tools.ingestion.chunking.pdfChunker import (
     CHUNK_MAX_CHARS,
+    _split_statute_section,
     chunk_document_admin_rule,
     chunk_document_statute,
     get_chunk_cap,
-    _split_statute_section,
 )
 
 

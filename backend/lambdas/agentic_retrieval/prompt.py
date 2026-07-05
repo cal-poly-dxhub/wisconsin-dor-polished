@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def _load_prompt_from_dynamo(config_id: str) -> str:
     table_name = os.environ.get("MODEL_CONFIG_TABLE_NAME")
     if not table_name:
-        raise EnvironmentError("MODEL_CONFIG_TABLE_NAME not set")
+        raise OSError("MODEL_CONFIG_TABLE_NAME not set")
 
     client = boto3.client("dynamodb")
     response = client.get_item(

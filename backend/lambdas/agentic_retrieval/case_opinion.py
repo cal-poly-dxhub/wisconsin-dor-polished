@@ -12,7 +12,6 @@ import urllib.parse
 import boto3
 from botocore.exceptions import ClientError
 
-
 logger = logging.getLogger(__name__)
 
 MAX_OPINION_CHARS = 40_000

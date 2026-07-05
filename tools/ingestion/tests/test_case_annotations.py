@@ -21,7 +21,6 @@ from tools.ingestion.lib.case_annotations import (
     gather_case_annotations,
 )
 
-
 # ---------------------------------------------------------------------------
 # Text-only parsing tests (no PDFs required)
 # ---------------------------------------------------------------------------

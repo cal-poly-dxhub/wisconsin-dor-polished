@@ -38,7 +38,6 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
-
 # Page-header boilerplate that appears on every Wisconsin Statutes page.
 # Removing it before scanning lets annotations span page breaks cleanly.
 _PAGE_HEADER_RE = re.compile(

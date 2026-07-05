@@ -1,11 +1,11 @@
 """Integration tests for handler and run_agentic_loop."""
 
-import json
-import sys
-import os
 import itertools
-from unittest.mock import MagicMock, patch
+import json
+import os
+import sys
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 

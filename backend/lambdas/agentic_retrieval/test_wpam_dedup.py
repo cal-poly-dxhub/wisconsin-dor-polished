@@ -1,6 +1,5 @@
 """Unit tests for WPAM cross-edition chunk deduplication."""
 
-import pytest
 
 from wpam_dedup import dedupe_wpam_chunks
 

@@ -2,14 +2,10 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from tracing import (
-    ALLOWED_METADATA_KEYS,
     compact_log_value,
     emit_trace,
     filter_metadata,
-    log_agent_event,
     query_log_fields,
     truncate_text,
 )

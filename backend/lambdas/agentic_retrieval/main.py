@@ -28,6 +28,8 @@ from typing import Any
 
 import boto3
 import pydantic
+from agent_tools import TOOL_DEFINITIONS, execute_tool
+from bedrock_messages import converse_stream_with_cache, converse_with_cache
 from case_law_handling import is_case_law_stub
 from case_opinion import citation_to_doc_id, fetch_case_opinion
 from chat_history import get_chat_history, save_chat_history
@@ -45,8 +47,6 @@ from step_function_types.models import (
     RAGDocument,
     UserQuery,
 )
-from agent_tools import TOOL_DEFINITIONS, execute_tool
-from bedrock_messages import converse_with_cache, converse_stream_with_cache
 from trace_summaries import (
     build_tool_call_summary,
     build_tool_result_summary,
@@ -1500,7 +1500,11 @@ def handler(event: dict, context) -> dict[str, Any]:
         # Pre-loop disambiguation: if enabled, check whether the query is
         # a generic property assessment question that needs classification.
         if ENABLE_DISAMBIGUATION:
-            from disambiguation import CLARIFICATION_QUESTION, PROPERTY_TYPE_CHOICES, should_disambiguate
+            from disambiguation import (
+                CLARIFICATION_QUESTION,
+                PROPERTY_TYPE_CHOICES,
+                should_disambiguate,
+            )
 
             needs_disambiguation = should_disambiguate(user_query.query, chat_history)
             _emit(

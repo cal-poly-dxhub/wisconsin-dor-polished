@@ -24,7 +24,6 @@ from pathlib import Path
 
 import boto3
 import toml
-from botocore.exceptions import ClientError
 
 script_dir = Path(__file__).parent
 repo_root = script_dir.parent

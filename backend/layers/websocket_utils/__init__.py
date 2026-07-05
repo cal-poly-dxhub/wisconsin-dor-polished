@@ -2,15 +2,13 @@
 WebSocket utilities for handling WebSocket connections and messages.
 """
 
-from .models import PlainWebSocketMessage, WebSocketMessage
-from .utils import WebSocketServer
 from .errors import (
     InvalidMessageError,
     MessageDeliveryError,
-    SessionNotFoundError,
-    WebSocketError,
     SessionLookupError,
+    SessionNotFoundError,
     WebSocketConnectionError,
+    WebSocketError,
 )
 from .models import (
     AgentEventMessage,
@@ -18,8 +16,11 @@ from .models import (
     DocumentsMessage,
     FAQContent,
     FAQMessage,
+    PlainWebSocketMessage,
     SourceDocument,
+    WebSocketMessage,
 )
+from .utils import WebSocketServer
 
 __all__ = [
     "AgentEventMessage",

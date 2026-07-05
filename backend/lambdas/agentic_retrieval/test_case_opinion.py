@@ -5,7 +5,7 @@ full opinion text if the file exists, and falls back to a Google Scholar
 search URL if it doesn't.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from botocore.exceptions import ClientError
 
@@ -59,7 +59,7 @@ def test_fetch_case_opinion_not_found_returns_scholar_url():
 
 
 def test_fetch_case_opinion_truncates_large_opinion():
-    from case_opinion import fetch_case_opinion, MAX_OPINION_CHARS
+    from case_opinion import MAX_OPINION_CHARS, fetch_case_opinion
 
     long_text = "A" * (MAX_OPINION_CHARS + 5000)
     mock_s3 = MagicMock()

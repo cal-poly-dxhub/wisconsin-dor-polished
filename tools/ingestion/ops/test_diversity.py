@@ -114,7 +114,7 @@ def print_comparison(query: str, baseline: SearchResult, capped: SearchResult, m
     print(f"QUERY: {query}")
     print(f"{'='*80}")
 
-    print(f"\n{'BASELINE (no cap)':<40} | {'CAPPED (max {0}/doc)'.format(max_per_doc):<40}")
+    print(f"\n{'BASELINE (no cap)':<40} | {f'CAPPED (max {max_per_doc}/doc)':<40}")
     print(f"{'-'*40}-+-{'-'*40}")
     print(f"{'Chunks returned:':<40} | {'Chunks returned:':<40}")
     print(f"  {len(baseline.chunks):<38} |   {len(capped.chunks):<38}")
@@ -123,16 +123,16 @@ def print_comparison(query: str, baseline: SearchResult, capped: SearchResult, m
     print(f"{'Unique frameworks:':<40} | {'Unique frameworks:':<40}")
     print(f"  {baseline.unique_frameworks:<38} |   {capped.unique_frameworks:<38}")
 
-    print(f"\n--- Document distribution (baseline) ---")
+    print("\n--- Document distribution (baseline) ---")
     for doc_id, count in baseline.doc_distribution.most_common():
         marker = " <<<" if count > max_per_doc else ""
         print(f"  {count:>2}x  {doc_id[:60]}{marker}")
 
-    print(f"\n--- Document distribution (capped) ---")
+    print("\n--- Document distribution (capped) ---")
     for doc_id, count in capped.doc_distribution.most_common():
         print(f"  {count:>2}x  {doc_id[:60]}")
 
-    print(f"\n--- Framework distribution ---")
+    print("\n--- Framework distribution ---")
     print(f"  {'Framework':<20} {'Baseline':>8} {'Capped':>8} {'Delta':>8}")
     all_frameworks = sorted(set(list(baseline.framework_distribution.keys()) + list(capped.framework_distribution.keys())))
     for fw in all_frameworks:
@@ -145,7 +145,7 @@ def print_comparison(query: str, baseline: SearchResult, capped: SearchResult, m
     # Show what was GAINED (docs in capped but not in baseline)
     gained_docs = set(capped.doc_distribution.keys()) - set(baseline.doc_distribution.keys())
     if gained_docs:
-        print(f"\n--- NEW docs surfaced by diversity cap ---")
+        print("\n--- NEW docs surfaced by diversity cap ---")
         for doc_id in sorted(gained_docs):
             fw = next((c.get("framework_id", "?") for c in capped.chunks if c.get("doc_id") == doc_id), "?")
             print(f"  + {doc_id[:60]} ({fw})")
@@ -153,7 +153,7 @@ def print_comparison(query: str, baseline: SearchResult, capped: SearchResult, m
     # Show what was LOST (docs in baseline whose chunks were ALL removed)
     lost_docs = set(baseline.doc_distribution.keys()) - set(capped.doc_distribution.keys())
     if lost_docs:
-        print(f"\n--- Docs LOST (all chunks removed) ---")
+        print("\n--- Docs LOST (all chunks removed) ---")
         for doc_id in sorted(lost_docs):
             count = baseline.doc_distribution[doc_id]
             print(f"  - {doc_id[:60]} (had {count} chunks)")
@@ -171,7 +171,7 @@ def print_comparison(query: str, baseline: SearchResult, capped: SearchResult, m
 
     baseline_parents = top_3_parents(baseline.chunks)
     capped_parents = top_3_parents(capped.chunks)
-    print(f"\n--- Auto-enrichment targets (top 3 parent docs) ---")
+    print("\n--- Auto-enrichment targets (top 3 parent docs) ---")
     print(f"  Baseline: {baseline_parents}")
     print(f"  Capped:   {capped_parents}")
     if len(set(baseline_parents)) < 3 and len(set(capped_parents)) >= 3:

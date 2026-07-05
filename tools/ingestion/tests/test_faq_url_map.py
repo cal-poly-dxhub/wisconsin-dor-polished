@@ -1,4 +1,4 @@
-from tools.ingestion.lib.faq_url_map import normalize_question, build_url_map, lookup_url
+from tools.ingestion.lib.faq_url_map import build_url_map, lookup_url, normalize_question
 
 
 def test_normalize_question_collapses_and_strips():
