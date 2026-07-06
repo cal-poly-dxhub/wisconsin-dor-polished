@@ -286,7 +286,7 @@ export function StreamResponse({
   );
 }
 
-function InlineSources({ items, streamingComplete, citationsByDoc }: { items: ResourceItem[]; streamingComplete?: boolean; citationsByDoc?: Map<string, InlineCitation[]> }) {
+export function InlineSources({ items, streamingComplete, citationsByDoc }: { items: ResourceItem[]; streamingComplete?: boolean; citationsByDoc?: Map<string, InlineCitation[]> }) {
   const [open, setOpen] = useState(true);
 
   if (!items.length || !streamingComplete) return null;
