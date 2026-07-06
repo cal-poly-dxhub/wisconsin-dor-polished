@@ -54,6 +54,7 @@ ALLOWED_METADATA_KEYS = frozenset(
         "zThreshold",
         "flatDistribution",
         "chunkScores",
+        "chunkIds",
     }
 )
 

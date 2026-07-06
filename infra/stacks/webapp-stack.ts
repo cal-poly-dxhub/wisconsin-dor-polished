@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import { Nextjs } from 'cdk-nextjs-standalone';
 import { Construct } from 'constructs';
@@ -10,6 +11,7 @@ export interface WebAppStackProps extends cdk.StackProps {
   userPoolClient: cognito.UserPoolClient;
   httpApiUrl: string;
   websocketApiUrl: string;
+  workBucketName: string;
   domainName?: string;
   hostedZoneName?: string;
   hostedZoneId?: string;
@@ -50,6 +52,7 @@ export class WebAppStack extends cdk.NestedStack {
         NEXT_PUBLIC_USER_POOL_CLIENT_ID: props.userPoolClient.userPoolClientId,
         NEXT_PUBLIC_API_BASE_URL: props.httpApiUrl,
         NEXT_PUBLIC_WEBSOCKET_URL: props.websocketApiUrl,
+        WORK_BUCKET_NAME: props.workBucketName,
       },
       overrides: {
         nextjsServer: {
@@ -70,6 +73,15 @@ export class WebAppStack extends cdk.NestedStack {
           },
         }),
     });
+
+    // Grant the Next.js server Lambda read access to work bucket (for presigned URL generation)
+    nextjs.serverFunction.lambdaFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['s3:GetObject'],
+        resources: [`arn:aws:s3:::${props.workBucketName}/visualizer/*`],
+      })
+    );
 
     this.distributionUrl = props.domainName
       ? `https://${props.domainName}`

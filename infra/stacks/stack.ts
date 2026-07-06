@@ -112,6 +112,7 @@ export class WisconsinBotStack extends cdk.Stack {
       userPoolClient: sessionsStack.userPoolClient,
       httpApiUrl: sessionsStack.httpApiUrl,
       websocketApiUrl: sessionsStack.websocketApiUrl,
+      workBucketName: graphRAGStack.workBucketName,
       domainName,
       hostedZoneName,
       hostedZoneId,
