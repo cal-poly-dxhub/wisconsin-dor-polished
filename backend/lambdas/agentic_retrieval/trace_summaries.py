@@ -293,6 +293,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         for chunk in chunks:
             did = chunk.get("doc_id", "unknown")
             doc_chunks[did] = doc_chunks.get(did, 0) + 1
+        chunk_ids = [c.get("chunk_id") for c in chunks if c.get("chunk_id")]
         metadata = {
             "chunkCount": n_chunks,
             "docCount": n_docs,
@@ -303,6 +304,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             "caseLawCount": len(related_case_law),
             "scoreBuckets": score_buckets,
             "docChunks": doc_chunks,
+            "chunkIds": chunk_ids,
         }
         if target_wpam_year is not None:
             metadata["targetWpamYear"] = target_wpam_year
@@ -325,7 +327,8 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             summary_text = f"Keyword fallback: found {len(chunks)} chunks in {doc_title}"
         else:
             summary_text = f"Searched {doc_title}"
-        metadata = {"chunkCount": len(chunks), "docId": target_doc, "docTitle": doc_title}
+        chunk_ids = [c.get("chunk_id") for c in chunks if c.get("chunk_id")]
+        metadata = {"chunkCount": len(chunks), "docId": target_doc, "docTitle": doc_title, "chunkIds": chunk_ids}
         if fallback_used:
             metadata["keywordFallback"] = True
 
@@ -383,11 +386,13 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             status = "miss"
         n = len(chunks)
         summary_text = f'Got "{heading}" ({n} chunks) from {doc_title}'
+        chunk_ids = [c.get("chunk_id") for c in chunks if c.get("chunk_id")]
         metadata = {
             "chunkCount": n,
             "docId": target_doc,
             "docTitle": doc_title,
             "heading": heading,
+            "chunkIds": chunk_ids,
         }
         ranking_stats = result.get("ranking_stats")
         if ranking_stats:
