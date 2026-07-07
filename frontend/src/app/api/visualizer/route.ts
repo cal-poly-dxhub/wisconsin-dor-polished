@@ -29,7 +29,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Empty response from S3' }, { status: 502 });
     }
 
-    return new NextResponse(body, {
+    return new NextResponse(Buffer.from(body), {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400',
