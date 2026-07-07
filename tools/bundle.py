@@ -156,6 +156,16 @@ def main():
 
         colored_print(f"  Total files in {dest}: {file_count}\n", Colors.CYAN)
 
+    # Purge leftover destination dirs from bundles that no longer exist in
+    # bundles.toml (e.g. deleted lambdas). Without this, stale bundles from
+    # removed code linger in the target dir forever.
+    expected_roots = {bundle["dest"].split("/")[0] for bundle in bundles}
+    for entry in sorted(os.listdir(target_dir)):
+        path = os.path.join(target_dir, entry)
+        if os.path.isdir(path) and entry not in expected_roots:
+            shutil.rmtree(path)
+            colored_print(f"Purged stale bundle dir: {entry}", Colors.YELLOW)
+
     colored_print(
         f"Bundling complete! Total files bundled: {total_files}", Colors.BOLD + Colors.GREEN
     )

@@ -1,8 +1,10 @@
 """
-Step function types and error handling for message processing workflows.
+Shared Pydantic models and error handling for chat message processing.
+
+(The layer name is a holdover from the removed Step Function architecture;
+the models themselves are the live inter-Lambda contracts.)
 """
 
-# Models
 # Errors
 from .errors import (
     MessagesError,
@@ -10,17 +12,14 @@ from .errors import (
     ValidationError,
     report_error,
 )
+
+# Models
 from .models import (
-    ClassifierResult,
-    DocumentResource,
     FAQResource,
-    GenerateResponseJob,
     MessageEvent,
     MessageProcessingErrorResponse,
     MessageRequest,
     RAGDocument,
-    RetrieveJob,
-    StreamResourcesJob,
     UserQuery,
 )
 
@@ -31,12 +30,7 @@ __all__ = [
     "UserQuery",
     "FAQResource",
     "RAGDocument",
-    "DocumentResource",
-    "GenerateResponseJob",
-    "RetrieveJob",
-    "StreamResourcesJob",
     "MessageProcessingErrorResponse",
-    "ClassifierResult",
     # Errors
     "MessagesError",
     "ValidationError",
