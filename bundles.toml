@@ -54,7 +54,3 @@ sources = [
 [[bundles]]
 dest = "agentic_retrieval"
 sources = ["./backend/lambdas/agentic_retrieval"]
-
-[[bundles]]
-dest = "citation_resolver"
-sources = ["./backend/lambdas/citation_resolver"]

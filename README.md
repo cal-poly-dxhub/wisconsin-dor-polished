@@ -74,7 +74,6 @@ A property tax Q&A assistant for the Wisconsin Department of Revenue (DOR). User
 | **Frontend** (`frontend/`) | Next.js app served via CloudFront. Real-time streaming via WebSocket, Cognito auth, Zustand state management. |
 | **Agentic Retrieval** (`backend/lambdas/agentic_retrieval/`) | Core retrieval engine — a Claude tool-use loop backed by Neptune Analytics vector search and graph traversal. Also streams the answer, documents, and FAQs to the frontend over WebSocket. |
 | **Chat API** (`backend/lambdas/chat_api/`) | REST endpoint that initiates a chat and publishes the `ChatMessageReceived` event to EventBridge. |
-| **Citation Resolver** (`backend/lambdas/citation_resolver/`) | Generates presigned S3 URLs with `#page=N` fragments so users link directly to specific PDF pages. |
 | **WebSocket Handlers** (`backend/lambdas/websocket/`) | Connect / disconnect / default WebSocket route handlers. |
 | **Neptune Analytics** | Knowledge graph storing documents, chunks (with 1024-dim vector embeddings), topics, and a 9-level authority hierarchy (Constitution → Statutes → Case Law → Admin Rules → WPAM → FAQs → Gov Pubs → IAAO → USPAP). |
 | **Sessions** (`infra/stacks/sessions-stack.ts`) | Cognito user pool, HTTP API, WebSocket API, DynamoDB sessions + chat history. |
@@ -87,7 +86,6 @@ A property tax Q&A assistant for the Wisconsin Department of Revenue (DOR). User
 │   ├── lambdas/          # Python Lambda functions
 │   │   ├── agentic_retrieval/   # Claude tool-use loop + WebSocket streaming
 │   │   ├── chat_api/            # REST chat initiation → EventBridge
-│   │   ├── citation_resolver/   # Presigned S3 URL generation
 │   │   └── websocket/           # Connect/disconnect/default handlers
 │   └── layers/           # Shared Lambda layers
 │       ├── step_function_types/ # Pydantic models for inter-Lambda contracts

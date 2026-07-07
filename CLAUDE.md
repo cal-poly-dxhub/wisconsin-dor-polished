@@ -191,7 +191,7 @@ PyMuPDF-first extraction with Textract fallback. `pdfChunker.py` routes by sourc
 
 ### Citation Support
 
-Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeline. At query time, `backend/lambdas/agentic_retrieval/main.py` generates presigned S3 URLs with `#page=N` fragments so users get direct links to specific PDF pages. Case law is metadata stubs with Google Scholar links (no full opinion text).
+Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeline. Citation cards link to each document's public `source_url` (docs.legis.wisconsin.gov, revenue.wi.gov, iaao.org, ...) with `#page=N` fragments for direct PDF page links; no presigned URLs are generated. Case law is metadata stubs with Google Scholar links (no full opinion text).
 
 ## Key Conventions
 

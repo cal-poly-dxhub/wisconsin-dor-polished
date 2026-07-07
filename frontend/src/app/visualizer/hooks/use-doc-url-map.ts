@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import type { FAQ } from '@messages/websocket-interface';
 import type { ResourceItem } from '@/stores/types';
-import { buildResolverUrl } from '@/lib/citation-resolver';
 import { appendPageFragment, chooseSourceTarget } from '@/components/documents/document-card/source-target';
 import type { Document } from '@/components/documents/document-card/document-card';
 
@@ -20,10 +19,8 @@ export function useDocUrlMap(resourceItems: ResourceItem[]): Record<string, stri
           const doc = item.data as Document;
           let url: string | undefined;
           const target = chooseSourceTarget(doc);
-          if (target?.kind === 'url') {
+          if (target) {
             url = appendPageFragment(target.url, doc.startPage);
-          } else if (target?.kind === 's3') {
-            url = (await buildResolverUrl(target.s3Key, doc.startPage)) ?? undefined;
           }
           if (url) {
             map[doc.documentId] = url;

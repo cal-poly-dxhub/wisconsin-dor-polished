@@ -343,13 +343,12 @@ After `prepare_answer`, up to 3 cited-but-unfetched case-law stubs have their op
 
 ## 11. Citations and Source Cards
 
-Citation cards carry stable references (`s3_key`, `start_page`, `end_page`). URLs are minted **on demand at click time** by the `citation_resolver` Lambda — not pre-generated.
+Citation cards link to each document's **public `source_url`** (docs.legis.wisconsin.gov, revenue.wi.gov, iaao.org, Google Scholar, ...) with a `#page=N` fragment from the chunk's `start_page`. The `s3_key`/page-range fields still flow through the pipeline for provenance/debugging, but no presigned URLs are generated — the old `citation_resolver` Lambda and its `/citation` route were removed after the graph was cleaned of URL-less legacy documents (every non-stub doc now carries a public URL).
 
 ### Click-time flow
 
-1. Card click → `chooseSourceTarget(document)` decides: PDF `s3Key` → presigned URL + `#page` anchor; `.txt`/case-law → public `sourceUrl` (Scholar/revenue.wi.gov).
-2. For PDF: `window.open('about:blank')` opens a popup synchronously, then `buildResolverUrl` fetches the Cognito id token async and redirects to `GET /citation?s3Key=...&token=<jwt>&page=N`.
-3. `citation_resolver` validates the key, `head_object`s it, mints a 900s presigned URL, appends `#page=N`, returns a **302** with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
+1. Card click → `chooseSourceTarget(document)` returns the public `sourceUrl` (or null — the card then renders without a link).
+2. `appendPageFragment(url, page)` adds `#page=N` and the link opens in a new tab with `noopener,noreferrer`.
 
 ### Inline prose citations
 
@@ -500,7 +499,7 @@ Cognito-authenticated users get a sidebar of past chats. Two DynamoDB tables:
 - **SessionTable** — PK `sessionId`; `userIdIndex` GSI (PK `userId`, SK `lastMessageAt`); `connectionId` GSI for WebSocket.
 - **ChatHistoryTable** — PK `queryId`; `sessionIdKey` GSI (PK `sessionId`, SK `timestamp`).
 
-All routes live in one Powertools Lambda (`backend/lambdas/chat_api/main.py`): `POST /session`, `GET /sessions`, `PATCH /session/{id}`, `DELETE /session/{id}`, `POST /session/{id}/message`, `GET /session/{id}/history`, `POST /session/{id}/feedback`, `GET /citation`.
+All routes live in one Powertools Lambda (`backend/lambdas/chat_api/main.py`): `POST /session`, `GET /sessions`, `PATCH /session/{id}`, `DELETE /session/{id}`, `POST /session/{id}/message`, `GET /session/{id}/history`, `POST /session/{id}/feedback`.
 
 ### Key invariants
 

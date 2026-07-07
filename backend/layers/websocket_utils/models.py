@@ -46,9 +46,9 @@ class SourceDocument(WebSocketMessage):
     source_url: str | None = None
     discovery_tag: str = "unknown"
     authority_level: int | None = None
-    # Mirror of RAGDocument: stable S3 reference + page range for click-time
-    # resolution by the citation_resolver Lambda. Camel-case aliasing makes
-    # these s3Key / startPage / endPage on the wire.
+    # Mirror of RAGDocument: stable S3 reference + page range. Links use the
+    # public source_url; s3_key is kept for provenance/debugging. Camel-case
+    # aliasing makes these s3Key / startPage / endPage on the wire.
     s3_key: str | None = None
     start_page: int | None = None
     end_page: int | None = None

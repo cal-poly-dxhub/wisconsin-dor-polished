@@ -21,9 +21,8 @@ export const SourceDocumentSchema = z.object({
   sourceUrl: optStr,
   discoveryTag: optStr,
   authorityLevel: optNum,
-  // Stable references to the raw S3 object. The frontend sends these to
-  // GET /citation at click time; the resolver mints a 15-minute presigned
-  // URL and 302-redirects.
+  // Stable reference to the raw S3 object plus page range. Links use the
+  // public sourceUrl; s3Key is kept for provenance/debugging only.
   s3Key: optStr,
   startPage: optInt,
   endPage: optInt,
