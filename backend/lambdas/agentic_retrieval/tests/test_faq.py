@@ -1,7 +1,6 @@
-"""Tests for the faq_handling module."""
+"""Tests for the faq module (FAQ search, parsing, URL resolution)."""
 
 import os
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,10 +19,7 @@ class FakeFAQResource(pydantic.BaseModel):
     faqs: list[FakeFAQ]
 
 
-sys.modules["step_function_types.models"].FAQ = FakeFAQ
-sys.modules["step_function_types.models"].FAQResource = FakeFAQResource
-
-from faq_handling import (
+from faq import (
     build_cited_faq_resource,
     build_faq_resource,
     faq_id_from_uri,
@@ -118,7 +114,7 @@ class TestBuildFaqResource:
             {"text": "Q: Is X a Y?\nA: Yes it is.", "source_uri": "s3://b/faq_1.txt"},
             {"text": "Q: Second?\nA: Also yes.", "source_uri": "s3://b/faq_2.txt"},
         ]
-        with patch("faq_handling.lookup_faq_url", return_value=None):
+        with patch("faq.lookup_faq_url", return_value=None):
             resource = build_faq_resource(results)
         assert resource is not None
         assert len(resource.faqs) == 2
@@ -129,7 +125,7 @@ class TestBuildFaqResource:
         results = [
             {"text": "no Q/A format", "source_uri": "s3://b/faq_1.txt"},
         ]
-        with patch("faq_handling.lookup_faq_url", return_value=None):
+        with patch("faq.lookup_faq_url", return_value=None):
             resource = build_faq_resource(results)
         assert resource is None
 
@@ -137,7 +133,7 @@ class TestBuildFaqResource:
         results = [
             {"text": "Q: Is X a Y?\nA: Yes.", "source_uri": "s3://b/faq_1.txt"},
         ]
-        with patch("faq_handling.lookup_faq_url", return_value="https://revenue.wi.gov/x"):
+        with patch("faq.lookup_faq_url", return_value="https://revenue.wi.gov/x"):
             resource = build_faq_resource(results)
         assert resource.faqs[0].source_url == "https://revenue.wi.gov/x"
 
@@ -145,7 +141,7 @@ class TestBuildFaqResource:
         results = [
             {"text": f"Q: Q{i}?\nA: A{i}.", "source_uri": f"s3://b/faq_{i}.txt"} for i in range(10)
         ]
-        with patch("faq_handling.lookup_faq_url", return_value=None):
+        with patch("faq.lookup_faq_url", return_value=None):
             resource = build_faq_resource(results)
         assert len(resource.faqs) == 3  # MAX_FAQS
 
@@ -156,7 +152,7 @@ class TestBuildCitedFaqResource:
             {"text": "Q: A?\nA: B.", "source_uri": "s3://b/faq_1.txt"},
             {"text": "Q: C?\nA: D.", "source_uri": "s3://b/faq_2.txt"},
         ]
-        with patch("faq_handling.lookup_faq_url", return_value=None):
+        with patch("faq.lookup_faq_url", return_value=None):
             resource = build_cited_faq_resource(results, {"faq_1"})
         assert resource is not None
         assert len(resource.faqs) == 1
@@ -165,7 +161,7 @@ class TestBuildCitedFaqResource:
 
 class TestLookupFaqUrl:
     def test_returns_none_when_table_unconfigured(self):
-        with patch("faq_handling.FAQ_URL_TABLE", ""):
+        with patch("faq.FAQ_URL_TABLE", ""):
             assert lookup_faq_url("anything") is None
 
     def test_returns_url_on_match(self):
@@ -174,8 +170,8 @@ class TestLookupFaqUrl:
             "Item": {"normalized_question": "what is x", "source_url": "https://example.com"}
         }
         with (
-            patch("faq_handling.FAQ_URL_TABLE", "FaqTable"),
-            patch("faq_handling._faq_url_table", return_value=fake_table),
+            patch("faq.FAQ_URL_TABLE", "FaqTable"),
+            patch("faq._faq_url_table", return_value=fake_table),
         ):
             assert lookup_faq_url("What is X?") == "https://example.com"
 
@@ -183,8 +179,8 @@ class TestLookupFaqUrl:
         fake_table = MagicMock()
         fake_table.get_item.return_value = {}
         with (
-            patch("faq_handling.FAQ_URL_TABLE", "FaqTable"),
-            patch("faq_handling._faq_url_table", return_value=fake_table),
+            patch("faq.FAQ_URL_TABLE", "FaqTable"),
+            patch("faq._faq_url_table", return_value=fake_table),
         ):
             assert lookup_faq_url("Unknown?") is None
 

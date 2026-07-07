@@ -1,6 +1,5 @@
-"""Tests for the case_law_handling module."""
+"""Tests for case_law stub handling, dedup, and link resolution."""
 
-import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -28,9 +27,7 @@ class MockRAGDocument(pydantic.BaseModel):
         return MockRAGDocument(**data)
 
 
-sys.modules["step_function_types.models"].RAGDocument = MockRAGDocument
-
-from case_law_handling import (
+from case_law import (
     apply_case_law_links,
     build_opinion_card,
     collapse_case_law_by_title,

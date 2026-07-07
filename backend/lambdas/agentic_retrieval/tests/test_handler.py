@@ -1,41 +1,12 @@
-"""Integration tests for handler and run_agentic_loop."""
+"""Integration tests for handler.py and loop.phase_a.run_agentic_loop."""
 
 import itertools
-import json
-import os
-import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 pydantic = pytest.importorskip("pydantic")
-
-
-class MockUserQuery(pydantic.BaseModel):
-    query: str
-    query_id: str
-    session_id: str
-
-
-class MockRAGDocument(pydantic.BaseModel):
-    document_id: str
-    title: str
-    content: str
-    source: str | None = None
-    source_url: str | None = None
-    discovery_tag: str = "unknown"
-    authority_level: int | None = None
-    s3_key: str | None = None
-    start_page: int | None = None
-    end_page: int | None = None
-    edition_year: int | None = None
-
-    def model_copy(self, update=None):
-        data = self.model_dump()
-        if update:
-            data.update(update)
-        return MockRAGDocument(**data)
 
 
 class FakeFAQ(pydantic.BaseModel):
@@ -48,109 +19,27 @@ class FakeFAQ(pydantic.BaseModel):
 class FakeFAQResource(pydantic.BaseModel):
     faqs: list[FakeFAQ]
 
-    def model_dump(self):
-        return {"faqs": [f.model_dump() for f in self.faqs]}
-
-
-# NOTE: these fakes are injected into the freshly-imported `main` module's
-# namespace by _import_main() below — NOT into the shared
-# sys.modules["step_function_types.*"] entries. Mutating the shared modules
-# corrupts the real step_function_types package for every other test that
-# runs in the same process (e.g. test_step_function_types.py, whose
-# report_error would become a non-awaitable MagicMock). main.py looks these
-# names up in its own globals at call time, so rebinding them on `main`
-# after import gives us the mocks we want with zero cross-file pollution.
-def _inject_fakes(main) -> None:
-    main.UserQuery = MockUserQuery
-    main.RAGDocument = MockRAGDocument
-    main.FAQ = FakeFAQ
-    main.FAQResource = FakeFAQResource
-    main.ValidationError = Exception
-    main.report_error = MagicMock()
-
-
-def _converse_response_to_stream(response):
-    """Convert a converse() response dict into a fake converse_stream() response.
-
-    This allows existing test fixtures (written for converse()) to work
-    with the new converse_stream() code path.
-    """
-    events = []
-    message = response["output"]["message"]
-    events.append({"messageStart": {"role": message.get("role", "assistant")}})
-
-    for idx, block in enumerate(message.get("content", [])):
-        if "text" in block:
-            events.append({"contentBlockStart": {"contentBlockIndex": idx, "start": {}}})
-            events.append({"contentBlockDelta": {"delta": {"text": block["text"]}}})
-            events.append({"contentBlockStop": {"contentBlockIndex": idx}})
-        elif "toolUse" in block:
-            tool = block["toolUse"]
-            events.append(
-                {
-                    "contentBlockStart": {
-                        "contentBlockIndex": idx,
-                        "start": {
-                            "toolUse": {"toolUseId": tool["toolUseId"], "name": tool["name"]}
-                        },
-                    }
-                }
-            )
-            input_json = json.dumps(tool["input"])
-            events.append({"contentBlockDelta": {"delta": {"toolUse": {"input": input_json}}}})
-            events.append({"contentBlockStop": {"contentBlockIndex": idx}})
-
-    events.append({"messageStop": {"stopReason": response.get("stopReason", "")}})
-    events.append({"metadata": {"usage": response.get("usage", {})}})
-    return {"stream": iter(events)}
-
-
-def _import_main():
-    """Import main with all AWS deps mocked."""
-    import importlib.util
-
-    with patch.dict(
-        os.environ,
-        {
-            "AWS_REGION": "us-east-1",
-            "RAW_BUCKET": "test-bucket",
-            "CHAT_HISTORY_TABLE_NAME": "",
-            "EMIT_AGENT_TRACE": "true",
-        },
-    ):
-        if "main" in sys.modules:
-            del sys.modules["main"]
-        with patch("boto3.client"), patch("boto3.resource"), patch("neptune_client.NeptuneClient"):
-            spec = importlib.util.spec_from_file_location(
-                "main", os.path.join(os.path.dirname(__file__), "main.py")
-            )
-            main = importlib.util.module_from_spec(spec)
-            sys.modules["main"] = main
-            spec.loader.exec_module(main)
-    _inject_fakes(main)
-    return main
-
 
 class TestProcessEvent:
-    def test_flat_input(self):
-        main = _import_main()
+    def test_flat_input(self, fresh_modules):
+        (handler,) = fresh_modules("handler")
         event = {"query": "What is property tax?", "query_id": "q-1", "session_id": "s-1"}
-        result = main.process_event(event)
+        result = handler.process_event(event)
         assert result.query == "What is property tax?"
 
-    def test_rejects_malformed(self):
-        main = _import_main()
+    def test_rejects_malformed(self, fresh_modules):
+        (handler,) = fresh_modules("handler")
         with pytest.raises(Exception):  # noqa: B017
-            main.process_event({"bad": "data"})
+            handler.process_event({"bad": "data"})
 
 
 class TestRunAgenticLoop:
-    def _setup_main(self, monkeypatch):
-        main = _import_main()
+    def _setup_phase_a(self, fresh_modules, monkeypatch):
+        (phase_a,) = fresh_modules("loop.phase_a")
 
         # FAQ returns a low-scoring hit so we fall through to the loop.
         monkeypatch.setattr(
-            main,
+            phase_a,
             "faq_search_direct",
             lambda q, n, e: {
                 "faqs": [
@@ -163,19 +52,13 @@ class TestRunAgenticLoop:
                 "count": 1,
             },
         )
-        monkeypatch.setattr(main, "build_faq_resource", lambda results: None)
-        monkeypatch.setattr(main, "build_cited_faq_resource", lambda results, cited: None)
+        monkeypatch.setattr(phase_a, "build_faq_resource", lambda results: None)
+        phase_a.neptune.get_document = MagicMock(return_value=None)
 
-        def fake_run(coro):
-            coro.close()
+        return phase_a
 
-        monkeypatch.setattr(main.asyncio, "run", fake_run)
-        main.neptune.get_document = MagicMock(return_value=None)
-
-        return main
-
-    def test_emits_trace_sequence(self, monkeypatch):
-        main = self._setup_main(monkeypatch)
+    def test_emits_trace_sequence(self, fresh_modules, monkeypatch):
+        phase_a = self._setup_phase_a(fresh_modules, monkeypatch)
 
         responses = [
             {
@@ -219,7 +102,7 @@ class TestRunAgenticLoop:
                 "metrics": {"latencyMs": 120},
             },
         ]
-        main.converse_with_cache = MagicMock(side_effect=responses)
+        monkeypatch.setattr(phase_a, "converse_with_cache", MagicMock(side_effect=responses))
 
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "vector_search":
@@ -231,7 +114,7 @@ class TestRunAgenticLoop:
                 }
             return {}
 
-        monkeypatch.setattr(main, "execute_tool", fake_execute)
+        monkeypatch.setattr(phase_a, "execute_tool", fake_execute)
 
         sent = []
         mock_ws = MagicMock()
@@ -246,7 +129,7 @@ class TestRunAgenticLoop:
 
         mock_ws.send_json = capture
 
-        result = main.run_agentic_loop(
+        result = phase_a.run_agentic_loop(
             "what is use value?",
             query_id="q-1",
             session_id="s-1",
@@ -273,8 +156,8 @@ class TestRunAgenticLoop:
         assert result.fallback_answer is None
         assert result.cited_doc_ids == ["doc-a"]
 
-    def test_recovers_from_tool_exception(self, monkeypatch):
-        main = self._setup_main(monkeypatch)
+    def test_recovers_from_tool_exception(self, fresh_modules, monkeypatch):
+        phase_a = self._setup_phase_a(fresh_modules, monkeypatch)
 
         responses = [
             {
@@ -314,7 +197,8 @@ class TestRunAgenticLoop:
                 "metrics": {"latencyMs": 120},
             },
         ]
-        main.converse_with_cache = MagicMock(side_effect=responses)
+        mock_converse = MagicMock(side_effect=responses)
+        monkeypatch.setattr(phase_a, "converse_with_cache", mock_converse)
 
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "get_document":
@@ -323,7 +207,7 @@ class TestRunAgenticLoop:
                 return {"cited_doc_ids": input_.get("cited_doc_ids", []), "answer_plan": ""}
             return {}
 
-        monkeypatch.setattr(main, "execute_tool", fake_execute)
+        monkeypatch.setattr(phase_a, "execute_tool", fake_execute)
 
         mock_ws = MagicMock()
 
@@ -335,7 +219,7 @@ class TestRunAgenticLoop:
 
         mock_ws.send_json = capture
 
-        result = main.run_agentic_loop(
+        result = phase_a.run_agentic_loop(
             "what is use value?",
             query_id="q-1",
             session_id="s-1",
@@ -344,13 +228,13 @@ class TestRunAgenticLoop:
         )
         assert result.fallback_answer is None
         assert result.cited_doc_ids == []
-        assert main.converse_with_cache.call_count == 2
+        assert mock_converse.call_count == 2
 
-    def test_high_confidence_faq_continues_into_graph(self, monkeypatch):
-        main = _import_main()
+    def test_high_confidence_faq_continues_into_graph(self, fresh_modules, monkeypatch):
+        (phase_a,) = fresh_modules("loop.phase_a")
 
         monkeypatch.setattr(
-            main,
+            phase_a,
             "faq_search_direct",
             lambda q, n, e: {
                 "faqs": [
@@ -364,7 +248,7 @@ class TestRunAgenticLoop:
             },
         )
         monkeypatch.setattr(
-            main,
+            phase_a,
             "build_faq_resource",
             lambda results: FakeFAQResource(
                 faqs=[
@@ -374,13 +258,7 @@ class TestRunAgenticLoop:
                 ]
             ),
         )
-        monkeypatch.setattr(main, "build_cited_faq_resource", lambda results, cited: None)
-
-        def fake_run(coro):
-            coro.close()
-
-        monkeypatch.setattr(main.asyncio, "run", fake_run)
-        main.neptune.get_document = MagicMock(return_value=None)
+        phase_a.neptune.get_document = MagicMock(return_value=None)
 
         responses = [
             {
@@ -423,7 +301,8 @@ class TestRunAgenticLoop:
                 "metrics": {"latencyMs": 120},
             },
         ]
-        main.converse_with_cache = MagicMock(side_effect=responses)
+        mock_converse = MagicMock(side_effect=responses)
+        monkeypatch.setattr(phase_a, "converse_with_cache", mock_converse)
 
         def fake_execute(name, input_, neptune_client, chat_history=None):
             if name == "vector_search":
@@ -435,7 +314,7 @@ class TestRunAgenticLoop:
                 }
             return {}
 
-        monkeypatch.setattr(main, "execute_tool", fake_execute)
+        monkeypatch.setattr(phase_a, "execute_tool", fake_execute)
 
         sent = []
         mock_ws = MagicMock()
@@ -450,7 +329,7 @@ class TestRunAgenticLoop:
 
         mock_ws.send_json = capture
 
-        result = main.run_agentic_loop(
+        result = phase_a.run_agentic_loop(
             "what is TID?",
             query_id="q-1",
             session_id="s-1",
@@ -458,7 +337,7 @@ class TestRunAgenticLoop:
             trace_seq=itertools.count(1).__next__,
         )
 
-        assert main.converse_with_cache.call_count == 2
+        assert mock_converse.call_count == 2
         # high_confidence_faq is stored on the result for the handler to use
         assert result.high_confidence_faq is not None
         assert result.high_confidence_faq.faqs[0].faq_id == "faq_1"
@@ -468,11 +347,9 @@ class TestRunAgenticLoop:
 
 
 class TestHandler:
-    def _make_fallback_result(self):
+    def _make_fallback_result(self, phase_a):
         """Create a mock AgentLoopResult with a fallback answer."""
-        from main import AgentLoopResult
-
-        return AgentLoopResult(
+        return phase_a.AgentLoopResult(
             cited_doc_ids=[],
             all_chunks=[],
             all_doc_ids=set(),
@@ -487,54 +364,47 @@ class TestHandler:
             faq_entries=[],
         )
 
-    def test_attaches_ws_server(self, monkeypatch):
-        main = _import_main()
-        mock_ws = MagicMock()
-        monkeypatch.setattr(main, "get_ws_connection_from_session", MagicMock(return_value=mock_ws))
+    def _setup_handler(self, fresh_modules, monkeypatch):
+        handler, phase_a = fresh_modules("handler", "loop.phase_a")
         monkeypatch.setattr(
-            main, "run_agentic_loop", MagicMock(return_value=self._make_fallback_result())
+            handler, "run_agentic_loop", MagicMock(return_value=self._make_fallback_result(phase_a))
         )
-        monkeypatch.setattr(main, "get_chat_history", lambda sid: [])
-        monkeypatch.setattr(main, "save_chat_history", lambda *a, **kw: None)
-        monkeypatch.setattr(main, "build_rag_documents", lambda *a, **kw: [])
-        monkeypatch.setattr(main, "build_cited_faq_resource", lambda *a, **kw: None)
+        monkeypatch.setattr(handler, "get_chat_history", lambda sid: [])
+        monkeypatch.setattr(handler, "save_chat_history", lambda *a, **kw: None)
+        monkeypatch.setattr(handler, "build_rag_documents", lambda *a, **kw: [])
+        monkeypatch.setattr(handler, "build_cited_faq_resource", lambda *a, **kw: None)
         monkeypatch.setattr(
-            main,
+            handler,
             "process_event",
-            lambda e: SimpleNamespace(query="q", query_id="q-1", session_id="s-1"),
+            lambda e: SimpleNamespace(query="q", query_id="q-1", session_id="s-1", persona=None),
         )
-        monkeypatch.setattr(main.asyncio, "run", lambda coro: coro.close())
+        monkeypatch.setattr(handler.asyncio, "run", lambda coro: coro.close())
+        return handler
+
+    def test_attaches_ws_server(self, fresh_modules, monkeypatch):
+        handler = self._setup_handler(fresh_modules, monkeypatch)
+        mock_ws = MagicMock()
+        monkeypatch.setattr(
+            handler, "get_ws_connection_from_session", MagicMock(return_value=mock_ws)
+        )
 
         ctx = SimpleNamespace(aws_request_id="r-1")
-        main.handler({"query": "q", "query_id": "q-1", "session_id": "s-1"}, ctx)
+        handler.handler({"query": "q", "query_id": "q-1", "session_id": "s-1"}, ctx)
 
-        kwargs = main.run_agentic_loop.call_args.kwargs
+        kwargs = handler.run_agentic_loop.call_args.kwargs
         assert kwargs["ws_server"] is mock_ws
         assert callable(kwargs["trace_seq"])
 
-    def test_runs_with_ws_none_on_session_lookup_failure(self, monkeypatch):
-        main = _import_main()
+    def test_runs_with_ws_none_on_session_lookup_failure(self, fresh_modules, monkeypatch):
+        handler = self._setup_handler(fresh_modules, monkeypatch)
         monkeypatch.setattr(
-            main,
+            handler,
             "get_ws_connection_from_session",
             MagicMock(side_effect=RuntimeError("no session")),
         )
-        monkeypatch.setattr(
-            main, "run_agentic_loop", MagicMock(return_value=self._make_fallback_result())
-        )
-        monkeypatch.setattr(main, "get_chat_history", lambda sid: [])
-        monkeypatch.setattr(main, "save_chat_history", lambda *a, **kw: None)
-        monkeypatch.setattr(main, "build_rag_documents", lambda *a, **kw: [])
-        monkeypatch.setattr(main, "build_cited_faq_resource", lambda *a, **kw: None)
-        monkeypatch.setattr(
-            main,
-            "process_event",
-            lambda e: SimpleNamespace(query="q", query_id="q-1", session_id="s-1"),
-        )
-        monkeypatch.setattr(main.asyncio, "run", lambda coro: coro.close())
 
         ctx = SimpleNamespace(aws_request_id="r-1")
-        main.handler({"query": "q", "query_id": "q-1", "session_id": "s-1"}, ctx)
+        handler.handler({"query": "q", "query_id": "q-1", "session_id": "s-1"}, ctx)
 
-        kwargs = main.run_agentic_loop.call_args.kwargs
+        kwargs = handler.run_agentic_loop.call_args.kwargs
         assert kwargs["ws_server"] is None

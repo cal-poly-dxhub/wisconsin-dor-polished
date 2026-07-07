@@ -24,7 +24,7 @@ def test_vector_search_auto_enriches_top_parents():
         {"relationship": "CITES", "id": f"{node_id}-cited", "title": "cited title"}
     ]
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
 
     # Chunks present
@@ -48,7 +48,7 @@ def test_vector_search_no_enrichment_when_no_chunks():
     mock_neptune = MagicMock()
     mock_neptune.vector_search.return_value = []
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
 
     assert result["chunks"] == []
@@ -65,7 +65,7 @@ def test_vector_search_enrichment_swallows_neighbor_errors():
     ]
     mock_neptune.get_neighbors.side_effect = RuntimeError("neptune down")
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
 
     # Chunks still returned, enrichment absent but no crash

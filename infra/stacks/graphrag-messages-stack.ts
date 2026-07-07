@@ -30,7 +30,7 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
       'AgenticRetrievalFunction',
       {
         runtime: lambda.Runtime.PYTHON_3_12,
-        handler: 'main.handler',
+        handler: 'handler.handler',
         code: lambda.Code.fromAsset('bundle/agentic_retrieval', {
           bundling: {
             image: lambda.Runtime.PYTHON_3_12.bundlingImage,

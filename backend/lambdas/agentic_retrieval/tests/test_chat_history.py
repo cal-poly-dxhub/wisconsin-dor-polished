@@ -1,6 +1,5 @@
 """Tests for the chat_history module."""
 
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,10 +31,6 @@ class FakeFAQ(pydantic.BaseModel):
 class FakeFAQResource(pydantic.BaseModel):
     faqs: list[FakeFAQ]
 
-
-sys.modules["step_function_types.models"].RAGDocument = FakeRAGDocument
-sys.modules["step_function_types.models"].FAQ = FakeFAQ
-sys.modules["step_function_types.models"].FAQResource = FakeFAQResource
 
 import chat_history
 

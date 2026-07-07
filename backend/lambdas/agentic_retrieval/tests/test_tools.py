@@ -11,7 +11,7 @@ def test_execute_tool_vector_search():
         {"chunk_id": "c1", "text": "test chunk", "score": 0.9}
     ]
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test query"}, mock_neptune)
 
     assert "chunks" in result
@@ -98,8 +98,8 @@ def test_execute_tool_fetch_case_opinion_success():
     mock_neptune = MagicMock()
 
     with (
-        patch("agent_tools.fetch_case_opinion") as mock_fetch,
-        patch("agent_tools.RAW_BUCKET", "test-bucket"),
+        patch("agent_tools.executor.fetch_case_opinion") as mock_fetch,
+        patch("agent_tools.executor.RAW_BUCKET", "test-bucket"),
     ):
         mock_fetch.return_value = {
             "found": True,
@@ -130,7 +130,7 @@ def test_execute_tool_fetch_case_opinion_no_bucket():
 
     mock_neptune = MagicMock()
 
-    with patch("agent_tools.RAW_BUCKET", ""):
+    with patch("agent_tools.executor.RAW_BUCKET", ""):
         result = execute_tool(
             "fetch_case_opinion",
             {"citation": "109 Wis. 2d 290"},
@@ -149,7 +149,7 @@ def test_get_document_falls_back_to_vector_search_on_not_found():
         {"chunk_id": "c1", "text": "match", "doc_id": "real-doc-id", "score": 0.8},
     ]
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("get_document", {"doc_id": "typo-or-format-mismatch"}, mock_neptune)
 
     # Fallback kicked in; returns a suggestion result, not a bare error
@@ -167,7 +167,7 @@ def test_get_document_no_fallback_matches_returns_error():
     mock_neptune.get_document.return_value = None
     mock_neptune.vector_search.return_value = []
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("get_document", {"doc_id": "nonsense"}, mock_neptune)
 
     assert "error" in result
@@ -194,7 +194,7 @@ def test_refine_query_uses_history_when_present():
     mock_bedrock = MagicMock()
     mock_bedrock.converse.return_value = fake_response
 
-    with patch("agent_tools.bedrock", mock_bedrock):
+    with patch("agent_tools.executor.bedrock", mock_bedrock):
         result = execute_tool(
             "refine_query",
             {"query": "what about agriculture"},
@@ -219,7 +219,7 @@ def test_refine_query_falls_back_on_error():
     mock_bedrock = MagicMock()
     mock_bedrock.converse.side_effect = RuntimeError("bedrock down")
 
-    with patch("agent_tools.bedrock", mock_bedrock):
+    with patch("agent_tools.executor.bedrock", mock_bedrock):
         result = execute_tool(
             "refine_query",
             {"query": "original question"},
@@ -246,7 +246,7 @@ def test_refine_query_extracts_target_wpam_year():
             }
         }
     }
-    with patch("agent_tools.bedrock") as mock_bedrock:
+    with patch("agent_tools.executor.bedrock") as mock_bedrock:
         mock_bedrock.converse.return_value = mock_response
         result = execute_tool(
             "refine_query",
@@ -274,7 +274,7 @@ def test_refine_query_no_target_year_when_no_year_mentioned():
             }
         }
     }
-    with patch("agent_tools.bedrock") as mock_bedrock:
+    with patch("agent_tools.executor.bedrock") as mock_bedrock:
         mock_bedrock.converse.return_value = mock_response
         result = execute_tool(
             "refine_query",
@@ -293,7 +293,7 @@ def test_refine_query_falls_back_on_invalid_json():
 
     mock_neptune = MagicMock()
     mock_response = {"output": {"message": {"content": [{"text": "WPAM agricultural land"}]}}}
-    with patch("agent_tools.bedrock") as mock_bedrock:
+    with patch("agent_tools.executor.bedrock") as mock_bedrock:
         mock_bedrock.converse.return_value = mock_response
         result = execute_tool(
             "refine_query",
@@ -310,7 +310,7 @@ def test_refine_query_falls_back_on_bedrock_error():
     from agent_tools import execute_tool
 
     mock_neptune = MagicMock()
-    with patch("agent_tools.bedrock") as mock_bedrock:
+    with patch("agent_tools.executor.bedrock") as mock_bedrock:
         mock_bedrock.converse.side_effect = RuntimeError("bedrock unavailable")
         result = execute_tool(
             "refine_query",
@@ -349,7 +349,7 @@ def test_vector_search_applies_wpam_dedup():
     ]
     mock_neptune.get_neighbors.return_value = []
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool(
             "vector_search",
             {"query": "manufactured homes"},
@@ -384,7 +384,7 @@ def test_vector_search_target_year_overrides_max():
     ]
     mock_neptune.get_neighbors.return_value = []
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool(
             "vector_search",
             {"query": "2018 manufactured homes", "target_wpam_year": 2018},
@@ -482,7 +482,7 @@ def test_vector_search_auto_enrichment_filters_chunks():
     ]
     mock_neptune.resolve_case_citations.return_value = []
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
 
     assert "graph_context" in result
@@ -515,7 +515,7 @@ def test_vector_search_extracts_citations_and_resolves_case_law():
         },
     ]
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "sale of subject"}, mock_neptune)
 
     assert "related_case_law" in result
@@ -544,7 +544,7 @@ def test_vector_search_no_related_case_law_when_no_citations():
     mock_neptune.get_neighbors.return_value = []
     mock_neptune.resolve_case_citations.return_value = []
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
 
     assert "related_case_law" not in result
@@ -622,7 +622,7 @@ def test_vector_search_neighbor_citation_discovery():
         "Agricultural classification per 2019 WI 23 requires land use.",
     ]
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "ag classification"}, mock_neptune)
 
     assert "related_case_law" in result
@@ -690,7 +690,7 @@ def test_vector_search_neighbor_citation_deduplicates():
         "See Markarian, 45 Wis. 2d 683, and 2019 WI 23.",
     ]
 
-    with patch("agent_tools.embed_query", return_value=[0.1] * 1024):
+    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
 
     assert len(result["related_case_law"]) == 2

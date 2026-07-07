@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from tracing import truncate_text
+from .logger import truncate_text
 
 
 def summarize_assistant_message(message: dict, max_chars: int) -> dict[str, Any]:
@@ -328,7 +328,12 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         else:
             summary_text = f"Searched {doc_title}"
         chunk_ids = [c.get("chunk_id") for c in chunks if c.get("chunk_id")]
-        metadata = {"chunkCount": len(chunks), "docId": target_doc, "docTitle": doc_title, "chunkIds": chunk_ids}
+        metadata = {
+            "chunkCount": len(chunks),
+            "docId": target_doc,
+            "docTitle": doc_title,
+            "chunkIds": chunk_ids,
+        }
         if fallback_used:
             metadata["keywordFallback"] = True
 

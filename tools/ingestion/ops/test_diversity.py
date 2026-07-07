@@ -31,7 +31,7 @@ import boto3
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "../../../backend/lambdas/agentic_retrieval")
 )
-from neptune_client import NeptuneClient
+from graph.neptune_client import NeptuneClient
 from wpam_dedup import dedupe_wpam_chunks
 
 GRAPH_ID = "g-ndvl4j73v4"

@@ -17,7 +17,7 @@ sys.path.insert(
         os.path.dirname(__file__), "..", "..", "..", "backend", "lambdas", "agentic_retrieval"
     ),
 )
-from case_opinion import citation_to_raw_key
+from case_law import citation_to_raw_key
 
 
 @pytest.mark.parametrize(
