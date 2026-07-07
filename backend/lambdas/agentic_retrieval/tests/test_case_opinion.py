@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 
 
 def test_fetch_case_opinion_success():
-    from case_opinion import fetch_case_opinion
+    from case_law import fetch_case_opinion
 
     mock_s3 = MagicMock()
     mock_s3.get_object.return_value = {
@@ -38,7 +38,7 @@ def test_fetch_case_opinion_success():
 
 
 def test_fetch_case_opinion_not_found_returns_scholar_url():
-    from case_opinion import fetch_case_opinion
+    from case_law import fetch_case_opinion
 
     mock_s3 = MagicMock()
     mock_s3.get_object.side_effect = ClientError(
@@ -61,7 +61,7 @@ def test_fetch_case_opinion_not_found_returns_scholar_url():
 
 
 def test_fetch_case_opinion_truncates_large_opinion():
-    from case_opinion import MAX_OPINION_CHARS, fetch_case_opinion
+    from case_law import MAX_OPINION_CHARS, fetch_case_opinion
 
     long_text = "A" * (MAX_OPINION_CHARS + 5000)
     mock_s3 = MagicMock()
@@ -82,7 +82,7 @@ def test_fetch_case_opinion_truncates_large_opinion():
 
 
 def test_fetch_case_opinion_empty_citation():
-    from case_opinion import fetch_case_opinion
+    from case_law import fetch_case_opinion
 
     mock_s3 = MagicMock()
 
@@ -98,7 +98,7 @@ def test_fetch_case_opinion_empty_citation():
 
 
 def test_scholar_url_public_alias_encodes_citation():
-    from case_opinion import scholar_url
+    from case_law import scholar_url
 
     url = scholar_url("109 Wis. 2d 290")
     assert url.startswith("http://scholar.google.com/scholar?")

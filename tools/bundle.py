@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import fnmatch
 import os
 import shutil
 import tomllib
@@ -40,6 +41,9 @@ IGNORE_PATTERNS = [
     "*.egg-info",
     ".coverage",
     "node_modules",
+    "tests",
+    "conftest.py",
+    "test_*.py",
 ]
 
 
@@ -53,10 +57,8 @@ def should_ignore(path: str) -> bool:
 
     # Check wildcard patterns
     for pattern in IGNORE_PATTERNS:
-        if "*" in pattern:
-            # Simple wildcard matching for *.ext patterns
-            if pattern.startswith("*.") and basename.endswith(pattern[1:]):
-                return True
+        if "*" in pattern and fnmatch.fnmatch(basename, pattern):
+            return True
 
     return False
 
@@ -96,7 +98,11 @@ def main():
     for i, bundle in enumerate(bundles, 1):
         dest = os.path.join(target_dir, bundle["dest"])
 
-        # Create target directory if it doesn't exist
+        # Clean the destination first so renamed/deleted sources never leave
+        # stale files in the deployed bundle (e.g. an old module shadowing a
+        # new package of the same name).
+        if os.path.isdir(dest):
+            shutil.rmtree(dest)
         os.makedirs(dest, exist_ok=True)
 
         colored_print(f"[{i}/{len(bundles)}] Bundling to {dest}:", Colors.BOLD + Colors.MAGENTA)

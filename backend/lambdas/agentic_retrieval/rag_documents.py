@@ -3,7 +3,7 @@
 import hashlib
 import logging
 
-from case_law_handling import (
+from case_law import (
     apply_case_law_links,
     build_opinion_card,
     collapse_case_law_by_title,

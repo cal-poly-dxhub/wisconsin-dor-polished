@@ -1,41 +1,15 @@
-"""Tests for the rag_documents module."""
+"""Tests for the rag_documents module.
 
-import sys
+Uses the real step_function_types models (available via backend/layers on
+sys.path) — do NOT stub them into sys.modules; that mutates shared module
+objects and poisons other test files in the same pytest process.
+"""
+
 from unittest.mock import MagicMock
 
 import pytest
 
-pydantic = pytest.importorskip("pydantic")
-
-
-class MockChunkSnippet(pydantic.BaseModel):
-    page: int
-    text: str
-
-
-class MockRAGDocument(pydantic.BaseModel):
-    document_id: str
-    title: str
-    content: str
-    source: str | None = None
-    source_url: str | None = None
-    discovery_tag: str = "unknown"
-    authority_level: int | None = None
-    s3_key: str | None = None
-    start_page: int | None = None
-    end_page: int | None = None
-    edition_year: int | None = None
-    chunks: list[MockChunkSnippet] = pydantic.Field(default_factory=list)
-
-    def model_copy(self, update=None):
-        data = self.model_dump()
-        if update:
-            data.update(update)
-        return MockRAGDocument(**data)
-
-
-sys.modules["step_function_types.models"].RAGDocument = MockRAGDocument
-sys.modules["step_function_types.models"].ChunkSnippet = MockChunkSnippet
+pytest.importorskip("pydantic")
 
 from rag_documents import _generate_source_label, build_rag_documents
 
@@ -61,7 +35,6 @@ class TestBuildRagDocuments:
     def _mock_neptune(self, doc_info=None):
         mock = MagicMock()
         mock.get_document.return_value = doc_info or {"title": "Test Doc", "id": "doc-1"}
-        mock.find_stub_promotion.return_value = None
         return mock
 
     def test_basic_chunk_assembly(self):
@@ -106,86 +79,56 @@ class TestBuildRagDocuments:
         docs = build_rag_documents(chunks, {"doc-A"}, {}, neptune_client=neptune)
         assert docs[0].discovery_tag == "unknown"
 
-    def test_promotes_stub_statute_to_parent(self):
+    def test_doc_with_summary_uses_summary_as_content(self):
+        """Docs reached only via graph traversal render their node summary.
+
+        Stub resolution now happens in the graph itself (DEFINED_BY
+        auto-traversal in get_neighbors, from the graph wiring overhaul),
+        so build_rag_documents no longer promotes stubs to parent docs.
+        """
         mock = MagicMock()
-
-        def get_document(doc_id):
-            if doc_id == "WIS-STAT-70.32":
-                return {
-                    "id": "WIS-STAT-70.32",
-                    "title": "Wis. Stat. 70.32",
-                    "summary": None,
-                    "source_url": None,
-                    "s3_key": None,
-                    "authority_level": 2,
-                    "labels": ["Statute"],
-                }
-            return None
-
-        mock.get_document.side_effect = get_document
-        mock.find_stub_promotion.return_value = {
+        mock.get_document.return_value = {
             "id": "statutes-70",
             "title": "Chapter 70",
             "summary": "Chapter 70 governs general property taxes...",
-            "source_url": "",
+            "source_url": "https://docs.legis.wisconsin.gov/document/statutes/ch.%2070.pdf",
             "s3_key": "raw/statutes-70/statutes-70.pdf",
             "authority_level": 2,
-            "start_page": 22,
-            "end_page": 23,
-        }
-
-        docs = build_rag_documents([], {"WIS-STAT-70.32"}, {}, neptune_client=mock)
-        assert len(docs) == 1
-        card = docs[0]
-        assert card.document_id.startswith("WIS-STAT-70.32-")
-        assert card.title == "Wis. Stat. 70.32"
-        assert "Chapter 70 governs" in card.content
-        assert card.s3_key == "raw/statutes-70/statutes-70.pdf"
-        assert card.start_page == 22
-        assert card.authority_level == 2
-
-    def test_stub_keeps_statute_authority_when_promoted_to_wpam(self):
-        mock = MagicMock()
-
-        def get_document(doc_id):
-            if doc_id == "WIS-STAT-70.49(2)":
-                return {
-                    "id": "WIS-STAT-70.49(2)",
-                    "title": "Wis. Stat. 70.49(2)",
-                    "summary": None,
-                    "authority_level": None,
-                    "labels": ["Statute"],
-                }
-            return None
-
-        mock.get_document.side_effect = get_document
-        mock.find_stub_promotion.return_value = {
-            "summary": "The WPAM reference...",
-            "s3_key": "raw/wpam/wpam.pdf",
-            "authority_level": 5,
-            "start_page": 10,
-            "end_page": 11,
-        }
-
-        docs = build_rag_documents([], {"WIS-STAT-70.49(2)"}, {}, neptune_client=mock)
-        card = docs[0]
-        assert "WPAM reference" in card.content
-        assert card.authority_level == 2  # Statute, not WPAM's 5
-
-    def test_skips_promotion_when_no_parent(self):
-        mock = MagicMock()
-        mock.get_document.return_value = {
-            "id": "ORPHAN-STUB",
-            "title": "Orphan Stub",
-            "summary": None,
             "labels": ["Statute"],
         }
-        mock.find_stub_promotion.return_value = None
 
-        docs = build_rag_documents([], {"ORPHAN-STUB"}, {}, neptune_client=mock)
+        docs = build_rag_documents([], {"statutes-70"}, {}, neptune_client=mock)
         assert len(docs) == 1
-        assert docs[0].title == "Orphan Stub"
-        assert docs[0].content == ""
+        card = docs[0]
+        assert card.document_id.startswith("statutes-70-")
+        assert card.title == "Chapter 70"
+        assert "Chapter 70 governs" in card.content
+        assert card.s3_key == "raw/statutes-70/statutes-70.pdf"
+        assert card.authority_level == 2
+
+    def test_summaryless_stub_builds_empty_card_and_warns(self, caplog):
+        """A summaryless stub reaching the citation card is unexpected —
+        DEFINED_BY auto-resolution should have replaced it. The card is
+        still rendered (empty content) and a loud warning is logged."""
+        mock = MagicMock()
+        mock.get_document.return_value = {
+            "id": "WIS-STAT-70.32",
+            "title": "Wis. Stat. 70.32",
+            "summary": None,
+            "source_url": None,
+            "s3_key": None,
+            "authority_level": 2,
+            "labels": ["Statute"],
+        }
+
+        with caplog.at_level("WARNING", logger="rag_documents"):
+            docs = build_rag_documents([], {"WIS-STAT-70.32"}, {}, neptune_client=mock)
+        assert len(docs) == 1
+        card = docs[0]
+        assert card.title == "Wis. Stat. 70.32"
+        assert card.content == ""
+        assert card.authority_level == 2
+        assert any("STUB_PROMOTION_TRIGGERED" in r.getMessage() for r in caplog.records)
 
     def test_case_law_stub_uses_node_source_url(self):
         mock = MagicMock()
@@ -196,7 +139,6 @@ class TestBuildRagDocuments:
             "source_url": "https://www.courtlistener.com/opinion/12345/",
             "s3_key": "raw/case-law/wis-2d/200-wis-2d-1.txt",
         }
-        mock.find_stub_promotion.return_value = None
 
         chunks = [
             {
@@ -219,7 +161,6 @@ class TestBuildRagDocuments:
             "source_url": None,
             "s3_key": "raw/case-law/wis-2d/200-wis-2d-1.txt",
         }
-        mock.find_stub_promotion.return_value = None
 
         chunks = [{"doc_id": "case-law-200-wis-2d-1", "text": "stub", "s3_key": "raw/x.txt"}]
         docs = build_rag_documents(chunks, {"case-law-200-wis-2d-1"}, {}, neptune_client=mock)
@@ -234,7 +175,6 @@ class TestBuildRagDocuments:
             "title": "Test Case",
             "authority_level": 3,
         }
-        mock.find_stub_promotion.return_value = None
 
         fetched_opinions = {
             "case-law-100-wis-2d-1": {

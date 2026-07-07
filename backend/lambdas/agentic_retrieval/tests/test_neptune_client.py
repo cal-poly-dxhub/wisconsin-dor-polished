@@ -4,12 +4,12 @@ from unittest.mock import MagicMock, patch
 
 
 def test_query_returns_results():
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {"results": [{"id": "doc-1", "title": "Test"}]}
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         results = client.query("MATCH (n) RETURN n.id AS id, n.title AS title")
@@ -20,12 +20,12 @@ def test_query_returns_results():
 
 
 def test_get_document_returns_none_when_not_found():
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {"results": []}
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         result = client.get_document("nonexistent")
@@ -34,14 +34,14 @@ def test_get_document_returns_none_when_not_found():
 
 
 def test_vector_search_passes_embedding():
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {
             "results": [{"chunk_id": "c1", "text": "test", "score": 0.95}]
         }
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         results = client.vector_search([0.1] * 1024, top_k=5)
@@ -53,12 +53,12 @@ def test_vector_search_passes_embedding():
 def test_get_neighbors_unfiltered_excludes_extracted_from():
     """When edge_types is None, the Cypher must exclude EXTRACTED_FROM edges
     and include a LIMIT clause."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {"results": []}
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         client.get_neighbors("doc-1")
@@ -80,12 +80,12 @@ def test_get_neighbors_unfiltered_excludes_extracted_from():
 def test_get_neighbors_with_edge_types_no_extracted_from_clause():
     """When edge_types is provided, no EXTRACTED_FROM WHERE clause is needed
     (the type filter already excludes it), but LIMIT should still be present."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {"results": []}
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         client.get_neighbors("doc-1", edge_types=["CITES", "IMPLEMENTS"])
@@ -109,7 +109,7 @@ def test_get_neighbors_with_edge_types_no_extracted_from_clause():
 
 def test_resolve_case_citations():
     """resolve_case_citations passes citations list as parameter."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {
@@ -118,7 +118,7 @@ def test_resolve_case_citations():
             ]
         }
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         results = client.resolve_case_citations(["45 Wis. 2d 683", "173 N.W.2d 627"])
@@ -132,12 +132,12 @@ def test_resolve_case_citations():
 
 def test_find_case_law_with_statute_scope():
     """find_case_law with statute_id scopes to that statute's CITES edges."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {"results": []}
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         client.find_case_law("Markarian", statute_id="WIS-STAT-70.32")
@@ -161,12 +161,12 @@ def test_find_case_law_with_statute_scope():
 
 def test_find_case_law_splits_multi_word_search():
     """find_case_law splits 'Markarian v City of Cudahy' into significant terms."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {"results": []}
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         client.find_case_law("Markarian v City of Cudahy")
@@ -184,12 +184,12 @@ def test_find_case_law_splits_multi_word_search():
 
 def test_get_neighbors_title_filter():
     """title_filter adds a WHERE clause to scope neighbors by title."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {"results": []}
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         client.get_neighbors("WIS-STAT-70.11", edge_types=["CITES"], title_filter="hospital")
@@ -210,7 +210,7 @@ def test_get_neighbors_title_filter():
 
 def test_get_chunk_statute_ids():
     """get_chunk_statute_ids returns distinct statute IDs from chunk CITES edges."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {
@@ -220,7 +220,7 @@ def test_get_chunk_statute_ids():
             ]
         }
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         result = client.get_chunk_statute_ids(["chunk-1", "chunk-2"])
@@ -232,11 +232,11 @@ def test_get_chunk_statute_ids():
 
 def test_get_chunk_statute_ids_empty_input():
     """get_chunk_statute_ids returns empty list for empty input."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         result = client.get_chunk_statute_ids([])
@@ -247,7 +247,7 @@ def test_get_chunk_statute_ids_empty_input():
 
 def test_rank_neighbors_by_shared_statutes():
     """rank_neighbors_by_shared_statutes returns doc IDs ordered by overlap."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {
@@ -257,7 +257,7 @@ def test_rank_neighbors_by_shared_statutes():
             ]
         }
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         result = client.rank_neighbors_by_shared_statutes(
@@ -274,11 +274,11 @@ def test_rank_neighbors_by_shared_statutes():
 
 def test_rank_neighbors_by_shared_statutes_empty_inputs():
     """rank_neighbors_by_shared_statutes returns empty for empty inputs."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         assert client.rank_neighbors_by_shared_statutes([], ["WIS-STAT-70.32"]) == []
@@ -288,7 +288,7 @@ def test_rank_neighbors_by_shared_statutes_empty_inputs():
 
 def test_get_chunks_text_for_docs():
     """get_chunks_text_for_docs returns flat list of text strings."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
         mock_neptune.execute_query.return_value = {
@@ -298,7 +298,7 @@ def test_get_chunks_text_for_docs():
             ]
         }
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         result = client.get_chunks_text_for_docs(["gov_publications-ag-guide"])
@@ -311,11 +311,11 @@ def test_get_chunks_text_for_docs():
 
 def test_get_chunks_text_for_docs_empty():
     """get_chunks_text_for_docs returns empty for empty input."""
-    with patch("neptune_client.boto3") as mock_boto3:
+    with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
 
-        from neptune_client import NeptuneClient
+        from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
         assert client.get_chunks_text_for_docs([]) == []

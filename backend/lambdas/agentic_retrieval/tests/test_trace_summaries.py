@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
-from trace_summaries import (
+from tracing.summaries import (
     build_tool_call_summary,
     build_tool_result_summary,
     discovery_summary,

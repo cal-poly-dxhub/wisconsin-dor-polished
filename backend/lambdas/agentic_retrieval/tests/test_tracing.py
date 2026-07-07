@@ -95,5 +95,5 @@ class TestEmitTrace:
         from unittest.mock import patch
 
         mock_ws = MagicMock()
-        with patch("tracing.asyncio.run", side_effect=RuntimeError("boom")):
+        with patch("tracing.emitter.asyncio.run", side_effect=RuntimeError("boom")):
             emit_trace(mock_ws, lambda: 1, emit_enabled=True, query_id="q", kind="test")

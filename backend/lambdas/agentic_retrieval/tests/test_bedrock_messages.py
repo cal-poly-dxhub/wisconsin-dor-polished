@@ -3,7 +3,7 @@
 import json
 from unittest.mock import MagicMock
 
-from bedrock_messages import (
+from streaming.bedrock import (
     _convert_messages,
     _convert_response_content,
     _convert_tool_definitions,
