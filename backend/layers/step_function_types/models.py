@@ -12,9 +12,13 @@ class CamelCaseModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel_case, populate_by_name=True)
 
 
+Persona = Literal["citizen", "government"]
+
+
 # Request body used to submit a message
 class MessageRequest(CamelCaseModel):
     message: str
+    persona: Persona | None = None
 
 
 class FeedbackRequest(CamelCaseModel):
@@ -28,6 +32,7 @@ class MessageEvent(BaseModel):
     query: str
     query_id: str
     session_id: str
+    persona: Persona | None = None
 
 
 class ErrorBody(BaseModel):
@@ -43,6 +48,7 @@ class UserQuery(BaseModel):
     query: str
     query_id: str
     session_id: str
+    persona: Persona | None = None
 
 
 class FAQ(BaseModel):

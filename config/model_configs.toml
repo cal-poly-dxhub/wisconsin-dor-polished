@@ -228,6 +228,36 @@ system = []
 temperature = 0.0
 maxTokens = 4096
 
+[personaGovernment]
+id = "personaGovernment"
+prompt = """
+## Audience
+
+The user is a government worker (assessor, clerk, or DOR staff). Use third-person when referring to the property owner and assume familiarity with assessment terminology.
+"""
+
+[personaGovernment.config]
+modelId = "us.anthropic.claude-sonnet-4-6"
+system = []
+
+[personaGovernment.config.inferenceConfig]
+temperature = 0.0
+
+[personaCitizen]
+id = "personaCitizen"
+prompt = """
+## Audience
+
+The user is a property owner or taxpayer. Use second-person ("you", "your") and plain language.
+"""
+
+[personaCitizen.config]
+modelId = "us.anthropic.claude-sonnet-4-6"
+system = []
+
+[personaCitizen.config.inferenceConfig]
+temperature = 0.0
+
 [ragResponse]
 id = "ragResponse"
 prompt = """Prior conversation history: {history}.

@@ -8,7 +8,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
-import { useSettingsStore } from '@/stores/settings-store';
+import { useSettingsStore, type Persona } from '@/stores/settings-store';
 
 interface SettingsModalProps {
   open: boolean;
@@ -20,6 +20,8 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const setDetailedTrace = useSettingsStore((s) => s.setDetailedTrace);
   const autoScroll = useSettingsStore((s) => s.autoScroll);
   const setAutoScroll = useSettingsStore((s) => s.setAutoScroll);
+  const persona = useSettingsStore((s) => s.persona);
+  const setPersona = useSettingsStore((s) => s.setPersona);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -60,6 +62,34 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               checked={detailedTrace}
               onCheckedChange={setDetailedTrace}
             />
+          </div>
+
+          <div className="space-y-2">
+            <div className="space-y-0.5">
+              <label className="text-sm font-medium">I am a...</label>
+              <p className="text-xs text-muted-foreground">
+                Answers are framed differently depending on your role.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {([
+                { value: 'citizen' as Persona, label: 'Property owner / taxpayer' },
+                { value: 'government' as Persona, label: 'Government worker' },
+              ]).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setPersona(opt.value)}
+                  className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition-colors ${
+                    persona === opt.value
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border text-muted-foreground hover:border-primary/50'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </DialogContent>

@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useChatStore } from '@/stores/chat-store';
+import { useSettingsStore } from '@/stores/settings-store';
 import { useSendMessage, useCreateSession } from './api/chat';
 import { WebSocket } from 'partysocket';
 import {
@@ -246,9 +247,10 @@ export const useValidatedWebSocket = (
         return;
       }
 
+      const persona = useSettingsStore.getState().persona;
       sendMessageMutation.mutate({
         sessionId,
-        payload: { message },
+        payload: { message, persona },
       });
     },
     [sendMessageMutation, ensureSession]

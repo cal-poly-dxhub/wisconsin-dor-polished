@@ -50,3 +50,14 @@ def _load_prompt(config_id: str, fallback_attr: str) -> str:
 
 SYSTEM_PROMPT: str = _load_prompt("agenticRetrieval", "SYSTEM_PROMPT_FALLBACK")
 ANSWER_STREAM_SYSTEM_PROMPT: str = _load_prompt("answerStream", "ANSWER_STREAM_PROMPT_FALLBACK")
+
+PERSONA_PROMPTS: dict[str, str] = {}
+for _persona_id, _fallback_attr in [
+    ("personaGovernment", "PERSONA_GOVERNMENT_FALLBACK"),
+    ("personaCitizen", "PERSONA_CITIZEN_FALLBACK"),
+]:
+    try:
+        PERSONA_PROMPTS[_persona_id] = _load_prompt_from_dynamo(_persona_id)
+    except Exception:
+        logger.warning(f"Persona prompt '{_persona_id}' not in DynamoDB; using empty.")
+        PERSONA_PROMPTS[_persona_id] = ""

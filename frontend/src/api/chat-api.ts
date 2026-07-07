@@ -13,7 +13,10 @@ const ApiResponse = z.object({
 const CreateSessionResponse = z.object({
   sessionId: z.string().uuid(),
 });
-const SendMessageRequest = z.object({ message: z.string().min(1) });
+const SendMessageRequest = z.object({
+  message: z.string().min(1),
+  persona: z.enum(['citizen', 'government']).optional(),
+});
 const SendMessageResponse = z.object({
   message: z.string(),
   queryId: z.string().uuid(),

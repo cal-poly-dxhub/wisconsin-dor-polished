@@ -77,9 +77,9 @@ def create_error_response(
     return create_api_response(error.status_code, error.to_response(extra))
 
 
-def emit_message_event(session_id: str, query: str, query_id: str):
+def emit_message_event(session_id: str, query: str, query_id: str, persona: str | None = None):
     """Emit an EventBridge event to trigger chat message processing."""
-    event = MessageEvent(query=query, query_id=query_id, session_id=session_id)
+    event = MessageEvent(query=query, query_id=query_id, session_id=session_id, persona=persona)
     logger.info(f"Emitting event: {event}")
 
     try:
@@ -1024,7 +1024,7 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
 
         logger.info(f"Processing message with query_id {query_id} for session {session_id}")
 
-        emit_message_event(session_id, message_request.message, query_id)
+        emit_message_event(session_id, message_request.message, query_id, message_request.persona)
         update_session_timestamp(session_id)
         set_session_title_if_missing(session_id, message_request.message)
 
