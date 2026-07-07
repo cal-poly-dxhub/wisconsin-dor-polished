@@ -39,7 +39,7 @@ from faq_handling import (
     faq_search_direct,
 )
 from neptune_client import NeptuneClient
-from prompt import ANSWER_STREAM_SYSTEM_PROMPT, SYSTEM_PROMPT
+from prompt import ANSWER_STREAM_SYSTEM_PROMPT, PERSONA_PROMPTS, SYSTEM_PROMPT
 from rag_documents import build_rag_documents
 from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import (
@@ -94,6 +94,18 @@ def _is_document_neighbor(neighbor: dict) -> bool:
     """True when this neighbor node represents a citable document."""
     labels = neighbor.get("labels") or []
     return not any(label in _NON_DOCUMENT_LABELS for label in labels)
+
+
+_PERSONA_KEY = {
+    "government": "personaGovernment",
+    "citizen": "personaCitizen",
+}
+
+
+def _apply_persona(base_prompt: str, persona: str | None) -> str:
+    key = _PERSONA_KEY.get(persona or "")
+    suffix = PERSONA_PROMPTS.get(key or "") if key else ""
+    return base_prompt + suffix if suffix else base_prompt
 
 
 _CHUNK_FIELDS_FOR_MODEL = frozenset(
@@ -1372,6 +1384,7 @@ def _stream_answer(
     answer_context: str,
     trace_seq,
     ws_connection_alive: list[bool],
+    persona: str | None = None,
 ) -> str:
     """Phase B: Stream the answer token-by-token via converse_stream().
 
@@ -1418,7 +1431,7 @@ def _stream_answer(
             bedrock,
             model_id=AGENTIC_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": answer_context}]}],
-            system=[{"text": ANSWER_STREAM_SYSTEM_PROMPT}],
+            system=[{"text": _apply_persona(ANSWER_STREAM_SYSTEM_PROMPT, persona)}],
             inference_config={"maxTokens": 4096, "temperature": 0.0},
         )
     except Exception as exc:
@@ -1624,6 +1637,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                 return {"successful": True}
 
         # === Phase A: Research Loop ===
+        persona = user_query.persona
         result = run_agentic_loop(
             user_query.query,
             chat_history=chat_history,
@@ -1759,6 +1773,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                         answer_context,
                         trace_seq,
                         ws_connection_alive,
+                        persona=persona,
                     )
                 except Exception as phase_b_exc:
                     logger.error(
@@ -1783,7 +1798,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                             response = bedrock.converse(
                                 modelId=AGENTIC_MODEL_ID,
                                 messages=[{"role": "user", "content": [{"text": answer_context}]}],
-                                system=[{"text": ANSWER_STREAM_SYSTEM_PROMPT}],
+                                system=[{"text": _apply_persona(ANSWER_STREAM_SYSTEM_PROMPT, persona)}],
                                 inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
                             )
                             text_blocks = [
@@ -1814,7 +1829,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                     response = bedrock.converse(
                         modelId=AGENTIC_MODEL_ID,
                         messages=[{"role": "user", "content": [{"text": answer_context}]}],
-                        system=[{"text": ANSWER_STREAM_SYSTEM_PROMPT}],
+                        system=[{"text": _apply_persona(ANSWER_STREAM_SYSTEM_PROMPT, persona)}],
                         inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
                     )
                     text_blocks = [

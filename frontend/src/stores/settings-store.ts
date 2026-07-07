@@ -3,11 +3,15 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export type Persona = 'citizen' | 'government';
+
 interface SettingsState {
   detailedTrace: boolean;
   setDetailedTrace: (value: boolean) => void;
   autoScroll: boolean;
   setAutoScroll: (value: boolean) => void;
+  persona: Persona;
+  setPersona: (value: Persona) => void;
 }
 
 const isDev =
@@ -22,6 +26,8 @@ export const useSettingsStore = create<SettingsState>()(
       setDetailedTrace: (value) => set({ detailedTrace: value }),
       autoScroll: true,
       setAutoScroll: (value) => set({ autoScroll: value }),
+      persona: 'citizen',
+      setPersona: (value) => set({ persona: value }),
     }),
     {
       name: 'wisco:settings',
