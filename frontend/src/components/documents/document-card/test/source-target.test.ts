@@ -3,17 +3,18 @@ import { describe, test, expect } from 'bun:test';
 import { appendPageFragment, chooseSourceTarget } from '../source-target';
 
 describe('chooseSourceTarget', () => {
-  test('sourceUrl wins over s3Key (public link is stable, no auth needed)', () => {
+  test('sourceUrl produces a url target (public link is stable, no auth needed)', () => {
     const target = chooseSourceTarget({
-      s3Key: 'raw/statutes-70/statutes-70.pdf',
       sourceUrl: 'https://docs.legis.wisconsin.gov/statutes/statutes/70.pdf',
     });
     expect(target).toEqual({ kind: 'url', url: 'https://docs.legis.wisconsin.gov/statutes/statutes/70.pdf' });
   });
 
-  test('s3Key used as fallback when no sourceUrl', () => {
-    const target = chooseSourceTarget({ s3Key: 'raw/iaao-standard/iaao-standard.pdf' });
-    expect(target).toEqual({ kind: 's3', s3Key: 'raw/iaao-standard/iaao-standard.pdf' });
+  test('no s3 fallback: a doc without sourceUrl yields null', () => {
+    // The citation-resolver (presigned S3) path was removed — every corpus
+    // doc must carry a public sourceUrl.
+    const target = chooseSourceTarget({ sourceUrl: undefined });
+    expect(target).toBeNull();
   });
 
   test('sourceUrl only', () => {

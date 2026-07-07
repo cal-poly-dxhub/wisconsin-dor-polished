@@ -12,7 +12,6 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ExternalLink, Maximize2, X } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
-import { buildResolverUrl } from '@/lib/citation-resolver';
 import type { InlineCitation } from '@/lib/parse-inline-citations';
 import { AuthorityBadge } from './authority-badge';
 import { DiscoveryBadge } from './discovery-badge';
@@ -258,7 +257,7 @@ export function DocumentCardCompact({
           )}
         </CardHeader>
 
-        {citations && citations.length > 0 && (document.s3Key || document.sourceUrl) ? (
+        {citations && citations.length > 0 && document.sourceUrl ? (
           <div className="mt-auto flex flex-col divide-y divide-border border-t border-border">
             {citations.slice(0, 2).map((c) => {
               const snippet = document.chunks?.find(ch => ch.page === c.page);
@@ -270,13 +269,7 @@ export function DocumentCardCompact({
                   onClick={(e) => {
                     e.stopPropagation();
                     const target = chooseSourceTarget(document);
-                    if (target?.kind === 's3') {
-                      const popup = window.open('about:blank', '_blank');
-                      if (!popup) return;
-                      void buildResolverUrl(target.s3Key, c.page)
-                        .then(url => { if (url) popup.location.href = url; else popup.close(); })
-                        .catch(() => popup.close());
-                    } else if (target?.kind === 'url') {
+                    if (target) {
                       window.open(appendPageFragment(target.url, c.page), '_blank', 'noopener,noreferrer');
                     }
                   }}
@@ -312,7 +305,7 @@ export function DocumentCardCompact({
               </CardDescription>
             </CardContent>
 
-            {document.source && (document.sourceUrl || document.s3Key) && (
+            {document.source && document.sourceUrl && (
               <button
                 type="button"
                 className="mt-auto w-full border-t border-border/50 bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-[color,background-color,border-color] cursor-pointer inline-flex items-center justify-end gap-1.5"
@@ -400,7 +393,7 @@ function DocumentCardModal({
           </div>
 
           {/* Per-page citation links */}
-          {citations && citations.length > 0 && (document.s3Key || document.sourceUrl) ? (
+          {citations && citations.length > 0 && document.sourceUrl ? (
             <CardContent className="flex-1 overflow-y-auto px-5 pt-5 pb-5">
               <p className="text-sm font-medium text-foreground mb-3">
                 Cited {citations.length} {citations.length === 1 ? 'location' : 'locations'} in this response
@@ -416,13 +409,7 @@ function DocumentCardModal({
                       onClick={(e) => {
                         e.stopPropagation();
                         const target = chooseSourceTarget(document);
-                        if (target?.kind === 's3') {
-                          const popup = window.open('about:blank', '_blank');
-                          if (!popup) return;
-                          void buildResolverUrl(target.s3Key, c.page)
-                            .then(url => { if (url) popup.location.href = url; else popup.close(); })
-                            .catch(() => popup.close());
-                        } else if (target?.kind === 'url') {
+                        if (target) {
                           window.open(appendPageFragment(target.url, c.page), '_blank', 'noopener,noreferrer');
                         }
                       }}
@@ -452,7 +439,7 @@ function DocumentCardModal({
                     {cleanContentText(document.content || 'No content available.')}
                   </p>
                 </div>
-                {document.source && (document.sourceUrl || document.s3Key) && (
+                {document.source && document.sourceUrl && (
                   <button
                     type="button"
                     className="w-full border-t border-border bg-muted/70 px-4 py-2.5 text-sm font-medium text-primary hover:bg-muted transition-[color,background-color,border-color] cursor-pointer inline-flex items-center justify-center gap-1.5"
@@ -505,19 +492,7 @@ export const DocumentCard = memo(function DocumentCard({
 
       const target = chooseSourceTarget(document);
       const page = (citations && citations.length > 0 ? citations[0].page : undefined) ?? document.startPage;
-      if (target?.kind === 's3') {
-        const popup = window.open('about:blank', '_blank');
-        if (!popup) return;
-        void buildResolverUrl(target.s3Key, page)
-          .then(url => {
-            if (url) {
-              popup.location.href = url;
-            } else {
-              popup.close();
-            }
-          })
-          .catch(() => popup.close());
-      } else if (target?.kind === 'url') {
+      if (target) {
         window.open(appendPageFragment(target.url, page), '_blank', 'noopener,noreferrer');
       }
 

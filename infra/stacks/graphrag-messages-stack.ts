@@ -114,8 +114,8 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
     );
 
     // S3 read permissions: fetch_case_opinion GETs case-law .txt files
-    // to feed full opinion text into the agent prompt. Citation URLs are
-    // minted by the citation_resolver Lambda, not here.
+    // to feed full opinion text into the agent prompt. Citation links use
+    // each document's public source_url; no presigned URLs are minted.
     // ListBucket is required so that GetObject on a missing key returns
     // NoSuchKey (404) instead of AccessDenied (403).
     agenticRetrievalHandler.addToRolePolicy(

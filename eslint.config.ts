@@ -14,8 +14,6 @@ export default tseslint.config(
       '**/build/**',
       '**/.next/**',
       '**/out/**',
-      '**/.sst/**',
-      '**/sst/**',
       '**/cdk.out/**',
       '**/infra/**/*.js',
       '**/infra/**/*.d.ts',

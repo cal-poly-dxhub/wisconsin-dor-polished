@@ -9,7 +9,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DocumentCard, type Document } from '../documents/document-card/document-card';
 import { FAQCard } from '../documents/document-card/faq-card';
-import { buildResolverUrl } from '@/lib/citation-resolver';
 import { appendPageFragment, chooseSourceTarget } from '../documents/document-card/source-target';
 import { parseInlineCitations, type InlineCitation } from '@/lib/parse-inline-citations';
 import { useDevTrace } from '@/hooks/use-dev-trace';
@@ -595,10 +594,8 @@ export function ChatMessage({
           const doc = item.data as Document;
           let url: string | undefined;
           const target = chooseSourceTarget(doc);
-          if (target?.kind === 'url') {
+          if (target) {
             url = appendPageFragment(target.url, doc.startPage);
-          } else if (target?.kind === 's3') {
-            url = (await buildResolverUrl(target.s3Key, doc.startPage)) ?? undefined;
           }
           if (url) {
             map[doc.documentId] = url;

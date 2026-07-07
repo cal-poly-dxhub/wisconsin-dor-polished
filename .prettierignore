@@ -14,7 +14,3 @@
 
 # Environment files
 .env*
-
-# SST
-**/.sst/**
-**/sst/**
