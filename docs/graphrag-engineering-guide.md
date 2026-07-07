@@ -46,7 +46,7 @@ Key facts:
 - **Region:** us-east-1 (`WisconsinBotGraphRAG` stack). Neptune graph: `g-ndvl4j73v4`.
 - **Model:** `us.anthropic.claude-sonnet-4-6` (configurable via `AGENTIC_MODEL_ID` env var).
 - **Embedding:** Titan Embed Text V2, 1024 dimensions.
-- **Legacy path** (`useGraphRAG=false`): Step Function + separate streaming Lambdas in `MessagesStack`. Not deployed, not under active development. CDK context flag gates it.
+- The old Step Function path (`useGraphRAG=false`, separate classifier/retrieval/streaming Lambdas) was fully removed — GraphRAG is the only path.
 
 ---
 
@@ -415,8 +415,7 @@ All LLM prompts are externalized to `config/model_configs.toml` and loaded from 
 
 - `agenticRetrieval` — system prompt for Phase A (the research loop tool instructions).
 - `answerStream` — system prompt for Phase B (answer generation with citation formatting rules).
-- `ragResponse` — legacy RAG generation (unused in GraphRAG path).
-- `faqResponse` — legacy FAQ synthesis (unused in GraphRAG path).
+- `personaGovernment` / `personaCitizen` — persona suffixes appended to the Phase B prompt.
 
 ### Iteration workflow
 

@@ -326,7 +326,7 @@ AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs filter-log-events \
 
 All LLM prompts are externalized to `config/model_configs.toml` and loaded from DynamoDB at Lambda cold-start. The TOML is the source of truth; DynamoDB is the runtime store.
 
-**Entries:** `agenticRetrieval` (agentic system prompt), `ragResponse` (legacy RAG generation), `faqResponse` (FAQ synthesis).
+**Entries:** `agenticRetrieval` (agentic system prompt), `answerStream` (Phase B answer generation), `personaGovernment` / `personaCitizen` (persona suffixes).
 
 **Iteration workflow:**
 ```bash

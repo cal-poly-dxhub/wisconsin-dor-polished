@@ -27,7 +27,7 @@ class FeedbackRequest(CamelCaseModel):
     feedback: str | None = None
 
 
-# Event emitted over EventBridge to trigger step function
+# Event emitted over EventBridge to trigger the agentic retrieval Lambda
 class MessageEvent(BaseModel):
     query: str
     query_id: str
@@ -43,7 +43,7 @@ class MessageProcessingErrorResponse(BaseModel):
     error: ErrorBody
 
 
-# Possible inputs to the step function via EventBridge
+# Input to the agentic retrieval Lambda via EventBridge
 class UserQuery(BaseModel):
     query: str
     query_id: str
@@ -93,64 +93,3 @@ class RAGDocument(BaseModel):
     edition_year: int | None = Field(default=None)
     # Per-page chunk snippets for citation link previews.
     chunks: list[ChunkSnippet] = Field(default_factory=list)
-
-
-class DocumentResource(BaseModel):
-    documents: list[RAGDocument] = Field(default_factory=list)
-
-
-# Job passed to the response generation lambda. Optionally
-# include frequently asked questions and RAG documents in
-# independent fields.
-class GenerateResponseJob(BaseModel):
-    query: str
-    query_id: str
-    session_id: str
-    faqs: FAQResource | None = Field(default=None)
-    documents: DocumentResource | None = Field(default=None)
-
-
-# Job passed to the retrieval lambda. Can take FAQs to provide
-# context for RAG retrieval.
-class RetrieveJob(BaseModel):
-    query: str
-    query_id: str
-    faqs: FAQResource | None = Field(default=None)
-    session_id: str
-
-
-# Job passed to the document streaming lambda
-class StreamResourcesJob(BaseModel):
-    query_id: str
-    session_id: str
-    faqs: FAQResource | None = Field(default=None)
-    documents: DocumentResource | None = Field(default=None)
-
-
-# Either a response generation job with a streaming job for FAQs or
-# a plan retrieval job for queries classified as RAG. Differentiate
-# based on the query_class field.
-class ClassifierResult(BaseModel):
-    successful: bool
-    faqs: FAQResource | None = Field(default=None)
-    query_class: Literal["faq", "rag"] | None = None
-    stream_documents_job: StreamResourcesJob | None = None
-    generate_response_job: GenerateResponseJob | None = None
-    retrieve_job: RetrieveJob | None = None
-
-
-# Retrieving documents causes document streaming and
-# response generation jobs
-class RetrieveResult(BaseModel):
-    successful: bool
-    stream_documents_job: StreamResourcesJob | None = None
-    generate_response_job: GenerateResponseJob | None = None
-
-
-# Terminal states
-class StreamResourcesResult(BaseModel):
-    successful: bool
-
-
-class GenerateResponseResult(BaseModel):
-    successful: bool

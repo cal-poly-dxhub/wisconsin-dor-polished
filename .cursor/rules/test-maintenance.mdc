@@ -1,0 +1,29 @@
+---
+description: Keep tests in sync with behavior changes; where tests live and how to run them
+alwaysApply: true
+---
+
+# Test Maintenance
+
+`docs/testing.md` is the source of truth for this repo's tests: the full test
+map, the "when you change X, update tests Y" table, and the conventions.
+Consult it whenever you change behavior.
+
+Non-negotiables:
+
+- **Any behavior change ships with its test update in the same PR.** Before
+  finishing a change, check the "When you change X" table in `docs/testing.md`
+  and update/add the listed tests.
+- **Run both suites before declaring work done:** `uv run pytest` and
+  `bun run test`. Both must be fully green — there are no expected failures.
+- **WebSocket contract changes** must update backend models
+  (`backend/layers/websocket_utils/models.py`), frontend Zod schemas
+  (`frontend/types/message-types.ts`), the handler switch
+  (`frontend/src/hooks/use-websocket-chat.ts`), and the tests for all three.
+- **Never mutate shared `sys.modules` entries in tests** (e.g. assigning fakes
+  onto `step_function_types.models`) — it poisons other test files. Use real
+  layer models, `monkeypatch.setattr` on the consuming module, or the
+  `fresh_modules` fixture in `backend/lambdas/agentic_retrieval/tests/conftest.py`.
+- New test files follow existing placement: `tests/` subdir for
+  agentic_retrieval, co-located `test/` dirs in `frontend/src`,
+  `tools/ingestion/tests/` for ingestion.

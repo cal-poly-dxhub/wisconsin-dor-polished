@@ -4,7 +4,8 @@ grid-manifest.json — tile layout data (id, docId, auth, idx) + doc info. Loade
 grid-metadata.json — per-chunk metadata (startPage, endPage, heading, subheading). Loaded lazily.
 
 Usage:
-    AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/visualizer/generate_grid_manifest.py \
+    AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python \
+        tools/visualizer/generate_grid_manifest.py \
         --graph-id g-ndvl4j73v4 \
         --output-dir frontend/public/data
 """
@@ -12,7 +13,6 @@ Usage:
 import argparse
 import json
 import os
-import sys
 
 import boto3
 
@@ -181,7 +181,9 @@ def upload_to_s3(bucket: str, key: str, local_path: str):
 def main():
     parser = argparse.ArgumentParser(description="Generate visualizer grid manifests from Neptune")
     parser.add_argument("--graph-id", default="g-ndvl4j73v4", help="Neptune graph identifier")
-    parser.add_argument("--output-dir", default="frontend/public/data", help="Local output directory")
+    parser.add_argument(
+        "--output-dir", default="frontend/public/data", help="Local output directory"
+    )
     parser.add_argument("--bucket", default="wis-work-bucket-c8e69250", help="S3 bucket for upload")
     parser.add_argument("--s3-prefix", default="visualizer/", help="S3 key prefix")
     parser.add_argument("--no-upload", action="store_true", help="Skip S3 upload (local only)")
