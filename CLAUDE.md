@@ -322,6 +322,13 @@ AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs filter-log-events \
 
 **What to provide:** The **queryId** is the fastest identifier — it's a direct DynamoDB key and a unique grep token in logs. A timestamp alone requires a scan + stream correlation.
 
+**Report format:** When presenting investigation results, use this structure:
+
+1. **Summary table** — query ID, timestamps, total latency (retrieval vs. streaming breakdown), turns used, docs discovered (by source: vector-search vs. graph-neighbor), chunks accumulated, cited doc count, feedback status.
+2. **Tool loop table** — columns: Turn, Tool, Input/Query, Latency. One row per tool call.
+3. **Cited sources list** — doc ID + short description for each cited document/FAQ.
+4. **Notable observations** — good agent behavior worth preserving, potential issues (e.g., missing nodes, hallucinated citations, unnecessary turns), and performance notes.
+
 ## Prompt Management
 
 All LLM prompts are externalized to `config/model_configs.toml` and loaded from DynamoDB at Lambda cold-start. The TOML is the source of truth; DynamoDB is the runtime store.

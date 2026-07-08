@@ -182,14 +182,12 @@ def main():
     parser = argparse.ArgumentParser(description="Generate visualizer grid manifests from Neptune")
     parser.add_argument("--graph-id", default="g-ndvl4j73v4", help="Neptune graph identifier")
     parser.add_argument(
-        "--output-dir", default="frontend/public/data", help="Local output directory"
+        "--output-dir", default=None, help="Also write to a local directory"
     )
     parser.add_argument("--bucket", default="wis-work-bucket-c8e69250", help="S3 bucket for upload")
     parser.add_argument("--s3-prefix", default="visualizer/", help="S3 key prefix")
-    parser.add_argument("--no-upload", action="store_true", help="Skip S3 upload (local only)")
+    parser.add_argument("--no-upload", action="store_true", help="Skip S3 upload")
     args = parser.parse_args()
-
-    os.makedirs(args.output_dir, exist_ok=True)
 
     print(f"Connecting to Neptune graph {args.graph_id} in {REGION}...")
     client = get_client()
@@ -203,24 +201,33 @@ def main():
     print(f"  → {manifest['totalChunks']} tiles, {manifest['totalDocs']} docs")
     print(f"  → {len(metadata)} chunks with metadata")
 
-    manifest_path = os.path.join(args.output_dir, "grid-manifest.json")
-    metadata_path = os.path.join(args.output_dir, "grid-metadata.json")
+    manifest_json = json.dumps(manifest, separators=(",", ":"))
+    metadata_json = json.dumps(metadata, separators=(",", ":"))
 
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, separators=(",", ":"))
-    manifest_size = os.path.getsize(manifest_path)
-    print(f"  → {manifest_path} ({manifest_size / 1024:.0f} KB)")
-
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, separators=(",", ":"))
-    metadata_size = os.path.getsize(metadata_path)
-    print(f"  → {metadata_path} ({metadata_size / 1024:.0f} KB)")
+    if args.output_dir:
+        os.makedirs(args.output_dir, exist_ok=True)
+        manifest_path = os.path.join(args.output_dir, "grid-manifest.json")
+        metadata_path = os.path.join(args.output_dir, "grid-metadata.json")
+        with open(manifest_path, "w") as f:
+            f.write(manifest_json)
+        print(f"  → {manifest_path} ({len(manifest_json) / 1024:.0f} KB)")
+        with open(metadata_path, "w") as f:
+            f.write(metadata_json)
+        print(f"  → {metadata_path} ({len(metadata_json) / 1024:.0f} KB)")
 
     if not args.no_upload:
+        import tempfile
+
         print(f"\nUploading to s3://{args.bucket}/{args.s3_prefix}...")
-        upload_to_s3(args.bucket, f"{args.s3_prefix}grid-manifest.json", manifest_path)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=True) as tmp:
+            tmp.write(manifest_json)
+            tmp.flush()
+            upload_to_s3(args.bucket, f"{args.s3_prefix}grid-manifest.json", tmp.name)
         print(f"  → s3://{args.bucket}/{args.s3_prefix}grid-manifest.json")
-        upload_to_s3(args.bucket, f"{args.s3_prefix}grid-metadata.json", metadata_path)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=True) as tmp:
+            tmp.write(metadata_json)
+            tmp.flush()
+            upload_to_s3(args.bucket, f"{args.s3_prefix}grid-metadata.json", tmp.name)
         print(f"  → s3://{args.bucket}/{args.s3_prefix}grid-metadata.json")
 
     print("Done!")
