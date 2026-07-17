@@ -116,11 +116,26 @@ def run_one_query(entry: dict) -> dict:
             logger.warning(f"  answer generation failed for {entry.get('queryId')}: {exc}")
             answer_text = ""
 
+    # Per-cited-doc discovery attribution: which retrieval path surfaced each
+    # cited doc. This is what makes the baseline↔after comparison exact —
+    # "auto-enrichment" is the path Direction 1 Option A removes, so a cited
+    # doc tagged that way at baseline is a citation *at risk*; "graph-neighbor"
+    # (explicit get_neighbors) is preserved. Also record the full discovery
+    # count breakdown (all discovered docs, not just cited) so the ~96→~15-25
+    # discovery-volume drop is captured directly in the snapshot.
+    cited_discovery = {doc_id: result.discovery.get(doc_id, "unknown") for doc_id in cited_doc_ids}
+    discovery_counts: dict[str, int] = {}
+    for tag in result.discovery.values():
+        discovery_counts[tag] = discovery_counts.get(tag, 0) + 1
+
     return {
         "queryId": entry.get("queryId", ""),
         "stratum": entry.get("stratum", ""),
         "query": query,
         "cited_doc_ids": cited_doc_ids,
+        "cited_discovery": cited_discovery,
+        "discovery_counts": discovery_counts,
+        "discovered_doc_count": len(result.discovery),
         "answer": answer_text,
         "turns": len(result.trace_log),
         "latency_ms": round((time.perf_counter() - started) * 1000),
@@ -320,8 +335,19 @@ def compare() -> None:
         marker = "  ⚠️ REGRESSION" if is_regression else ""
         logger.info(f"\n  [{stratum}] {qid}{marker}")
         logger.info(f"      cited: baseline={len(base_cited)} after={len(after_cited)}")
+        # Discovery-volume drop (Option A's headline effect): total docs
+        # discovered should fall sharply as enrichment fan-out stops.
+        base_disc = b.get("discovered_doc_count")
+        after_disc = a.get("discovered_doc_count")
+        if base_disc is not None and after_disc is not None:
+            logger.info(f"      discovered: baseline={base_disc} after={after_disc}")
         if dropped:
-            logger.info(f"      dropped: {dropped}")
+            # Annotate each dropped citation with the baseline path that found
+            # it. A drop tagged "auto-enrichment" is expected under Option A; a
+            # drop tagged "vector-search"/"graph-neighbor"/etc. is a real loss.
+            base_cd = b.get("cited_discovery", {})
+            annotated = [f"{d} (was: {base_cd.get(d, 'unknown')})" for d in dropped]
+            logger.info(f"      dropped: {annotated}")
         if added:
             logger.info(f"      added:   {added}")
         if lost_facts:

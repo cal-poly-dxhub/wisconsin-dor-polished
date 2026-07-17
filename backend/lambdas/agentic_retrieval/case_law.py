@@ -155,6 +155,7 @@ DISCOVERY_TAG_PRIORITY = [
     "fetched",
     "vector-search",
     "graph-neighbor",
+    "auto-enrichment",
     "framework-list",
     "unknown",
 ]

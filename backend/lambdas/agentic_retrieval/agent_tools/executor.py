@@ -419,7 +419,14 @@ def execute_tool(
         )
 
         # Auto-enrichment: graph neighbors for top-3 distinct parent docs.
-        # From docs/graphrag.md §1: gives the agent graph context for free.
+        # This is now an INTERNAL-ONLY signal: it powers the deterministic
+        # case-law discovery blocks below (which read graph_context.values())
+        # but is NOT returned to the model. Over 45 days of production traces,
+        # model-facing enrichment produced 84.8% of discovered docs at a ~5%
+        # cite rate — pure context noise. The valuable authority traversal is
+        # the model's explicit get_neighbors(..., edge_types=["CITES"]) on
+        # statute stubs (prompt step 8), not this auto-fan-out. See
+        # docs/direction-1-auto-enrichment-spec.md (Option A).
         graph_context: dict[str, list[dict]] = {}
         seen: list[str] = []
         for chunk in chunks:
@@ -429,7 +436,7 @@ def execute_tool(
                 if len(seen) >= 3:
                     break
 
-        _ENRICH_CAP = int(os.environ.get("ENRICH_CAP_PER_DOC", "20"))
+        _ENRICH_CAP = int(os.environ.get("ENRICH_CAP_PER_DOC", "5"))
         _ENRICH_CAP_PER_TYPE = int(os.environ.get("ENRICH_CAP_PER_TYPE", "4"))
         _EDGE_PRIORITY = {
             "CITES": 0,
@@ -609,9 +616,12 @@ def execute_tool(
             latency_ms=round((time.perf_counter() - started) * 1000),
             **_query_fields(tool_input["query"]),
         )
+        # graph_context is intentionally NOT included in the model-facing result
+        # (Direction 1, Option A). It was consumed above by the internal
+        # case-law discovery blocks; surfacing it to the model just floods the
+        # tool result with low-cite-rate neighbor stubs.
         result: dict[str, Any] = {
             "chunks": chunks,
-            "graph_context": graph_context,
             "pre_dedup_count": pre_dedup_count,
         }
         if target_year is not None:

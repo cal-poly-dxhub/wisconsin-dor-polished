@@ -1,14 +1,17 @@
 """Tests for vector_search auto-enrichment.
 
 After vector_search returns chunks, execute_tool auto-fetches neighbors
-for the top-3 distinct parent doc_ids and folds them into the result.
-This gives the agent graph context for free without an extra turn.
+for the top-3 distinct parent doc_ids. This is an INTERNAL-ONLY signal
+(Direction 1, Option A): it powers the deterministic case-law discovery
+blocks but is NOT surfaced to the model — `graph_context` is deliberately
+absent from the returned result to avoid flooding the model with
+low-cite-rate neighbor stubs.
 """
 
 from unittest.mock import MagicMock, patch
 
 
-def test_vector_search_auto_enriches_top_parents():
+def test_vector_search_enriches_internally_but_hides_from_model():
     from agent_tools import execute_tool
 
     mock_neptune = MagicMock()
@@ -31,15 +34,13 @@ def test_vector_search_auto_enriches_top_parents():
     assert "chunks" in result
     assert len(result["chunks"]) == 5
 
-    # Enrichment: top-3 distinct parents (A, B, C) got get_neighbors called
+    # Enrichment still runs internally: top-3 distinct parents (A, B, C) got
+    # get_neighbors called — this feeds the case-law discovery blocks.
     called_ids = [call.args[0] for call in mock_neptune.get_neighbors.call_args_list]
     assert called_ids == ["doc-A", "doc-B", "doc-C"]
 
-    # Enrichment payload present on the result
-    assert "graph_context" in result
-    assert "doc-A" in result["graph_context"]
-    assert "doc-B" in result["graph_context"]
-    assert "doc-C" in result["graph_context"]
+    # ...but the enrichment payload is NOT surfaced to the model (Option A).
+    assert "graph_context" not in result
 
 
 def test_vector_search_no_enrichment_when_no_chunks():

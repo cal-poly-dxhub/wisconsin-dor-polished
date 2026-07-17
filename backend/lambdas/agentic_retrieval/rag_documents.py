@@ -173,7 +173,7 @@ def build_rag_documents(
             docs_by_id[stub_doc_id] = build_opinion_card(stub_doc_id, payload, neptune_client)
 
         fetched_ids = set(fetched_opinions.keys())
-        noise_tags = {"graph-neighbor", "framework-list"}
+        noise_tags = {"graph-neighbor", "auto-enrichment", "framework-list"}
         docs_by_id = {
             doc_id: rag_doc
             for doc_id, rag_doc in docs_by_id.items()

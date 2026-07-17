@@ -467,9 +467,10 @@ def test_get_neighbors_filters_out_chunk_labels():
     assert "chunk-2" not in ids
 
 
-def test_vector_search_auto_enrichment_filters_chunks():
-    """Auto-enrichment in vector_search should not include Chunk-labeled
-    neighbors in graph_context."""
+def test_vector_search_enrichment_runs_but_is_not_surfaced():
+    """Auto-enrichment still runs internally (feeding case-law discovery) but
+    is NOT surfaced to the model — graph_context is absent from the result
+    (Direction 1, Option A)."""
     from agent_tools import execute_tool
 
     mock_neptune = MagicMock()
@@ -485,10 +486,10 @@ def test_vector_search_auto_enrichment_filters_chunks():
     with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
 
-    assert "graph_context" in result
-    neighbors = result["graph_context"].get("doc-1", [])
-    assert len(neighbors) == 1
-    assert neighbors[0]["id"] == "related-doc"
+    # Enrichment still fires internally for the top parent doc.
+    mock_neptune.get_neighbors.assert_called_once_with("doc-1")
+    # But nothing is surfaced to the model.
+    assert "graph_context" not in result
 
 
 def test_vector_search_extracts_citations_and_resolves_case_law():

@@ -612,12 +612,12 @@ def run_agentic_loop(
                         all_doc_ids.add(doc_id)
                         discovery.setdefault(doc_id, "vector-search")
                     all_chunks.append(chunk)
-                for neighbors in result.get("graph_context", {}).values():
-                    for neighbor in neighbors:
-                        neighbor_id = neighbor.get("id")
-                        if neighbor_id and _is_document_neighbor(neighbor):
-                            all_doc_ids.add(neighbor_id)
-                            discovery.setdefault(neighbor_id, "graph-neighbor")
+                # Auto-enrichment neighbors are no longer surfaced (Direction 1,
+                # Option A): a doc becomes citable only when the model actually
+                # retrieves it (vector chunk, explicit get_neighbors,
+                # get_document, or a case-law path). vector_search no longer
+                # returns graph_context, so there are no enrichment neighbors to
+                # first-class as discovery here.
 
             if tool_name in ("search_document", "get_section") and "chunks" in result:
                 for chunk in result["chunks"]:
@@ -755,6 +755,13 @@ def run_agentic_loop(
             if tool_name == "prepare_answer":
                 cited = list(result.get("cited_doc_ids", []))
                 answer_plan = result.get("answer_plan", "")
+                # Per-source breakdown of the CITED docs (not all discovered).
+                # Lets us query "what fraction of cited docs came from each
+                # discovery path" directly from logs — the forward-measurement
+                # signal for the Direction 1 enrichment retarget.
+                cited_discovery = discovery_summary(
+                    {doc_id: discovery.get(doc_id, "unknown") for doc_id in cited}
+                )
                 _log(
                     "agent_loop_complete",
                     **trace_context,
@@ -765,6 +772,7 @@ def run_agentic_loop(
                     discovered_doc_count=len(all_doc_ids),
                     has_plan=bool(answer_plan),
                     discovery=discovery_summary(discovery),
+                    cited_discovery=cited_discovery,
                 )
                 _record_trace(
                     "loop_complete",

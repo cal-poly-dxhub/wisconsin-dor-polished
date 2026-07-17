@@ -8,10 +8,10 @@
 | 17 | Handle multipart queries (split or unified answering strategy) | — |
 | 20 | Add user persona setting (government worker vs. citizen) | — |
 | 21 | Add z-score normalization to search_document result filtering | — |
-| 26 | Admin ingestion page — ingest documents via URL from the UI | — |
 | 27 | Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags | — |
-| 39 | Discover and ingest 2026 news pages | — |
 | 40 | Harden inline linking prose — quote verbatim instead of paraphrasing | — |
+| 41 | Fix statute citation page numbers, card titles, and chunker page-header pollution | — |
+| 42 | Markarian hierarchy query fails to ground `statutes-70` (turn-budget exhaustion) | `8d5f49aa` |
 
 ## Done
 
@@ -45,6 +45,8 @@
 | 38 | Restructure tools/ directory — consolidate ingestion pipeline |
 | 32 | Show trimmed section page index in answer synthesis trace card |
 | 35 | Graph wiring overhaul — stubs as routing nodes, not dead ends |
+| 39 | Discover and ingest 2026 news pages |
+| 26 | Admin ingestion page — ingest documents via URL from the UI |
 
 ---
 
@@ -133,37 +135,6 @@
 
 ---
 
-### Task 26: Admin ingestion page — ingest documents via URL from the UI
-
-**Problem:** Ingesting new documents (PDFs, web pages) currently requires CLI access and manual invocation of the scrape → extract → embed → load pipeline. DOR staff or project maintainers should be able to paste a URL into an admin page and have the document ingested without SSH/CLI.
-
-**Design:**
-
-- **New admin route** — `/admin/ingest`, Cognito-gated (same as `/admin/activity`)
-- **UI:** URL text input, category dropdown (gov_publications, faq_pages, news_pages, etc. — drives framework_id + authority_level), optional title override, "Ingest" button with progress/status display
-- **Hybrid backend — Lambda for single docs, Fargate for bulk:**
-  - **1-3 URLs** → Single Lambda handles all 4 phases inline (scrape → S3, extract+classify, embed, load to Neptune). ~2-3 min wall clock, well within Lambda 15-min limit. Stream status updates back over WebSocket (reuse existing infra).
-  - **4+ URLs** → Lambda does scrape → S3 for all docs, then kicks off a Fargate task with `--source-filter` targeting the batch. Frontend polls ECS task status or tails CloudWatch for progress.
-- **Status tracking:** WebSocket updates for Lambda path (reuse existing connection infra); ECS DescribeTask polling for Fargate path. Optionally a DynamoDB "ingestion jobs" table with status field for persistence across refreshes.
-- **Validation:** Before ingesting, HEAD the URL to verify it's reachable and check content-type (PDF vs HTML). Show file size and last-modified to the user for confirmation.
-
-**Key considerations:**
-
-- The extract/embed/load code is pure Python with boto3 — runs fine in a Lambda with the existing layer. Only risk is very large PDFs (500+ pages) potentially exceeding Lambda memory/timeout — these should route to Fargate.
-- Need to handle the `source_to_framework` mapping at upload time — the category dropdown populates metadata (framework_id, authority_level, doc_type) that the scraper currently hardcodes.
-- The `doc_id` derivation (currently `make_doc_id()` in `scrape_documents.py`) needs to be reusable from the Lambda.
-- Existing `scrape_documents.py` logic (download, HTML scraping, metadata generation, S3 upload) should be extracted into a shared module rather than duplicated.
-
-**Key files:**
-- `frontend/src/app/admin/ingest/page.tsx` — new admin page (to create)
-- `backend/lambdas/agentic_retrieval/` — pattern reference for Lambda + WebSocket streaming
-- `tools/graphrag/scrape_documents.py` — scrape/upload logic to extract into shared module
-- `tools/graphrag/extract.py`, `embed.py`, `load.py` — pipeline steps to invoke from Lambda
-- `infra/stacks/ingestion-stack.ts` — existing Fargate infra to reuse for bulk path
-- `infra/stacks/sessions-stack.ts` — HTTP API routes (add `POST /admin/ingest`)
-
----
-
 ### Task 27: Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags
 
 **Problem:** WPAM 2026 chunks have solid chapter-level headings (19 distinct chapters, clean "Chapter N Title" format) but subheadings are mostly empty. Only a handful of chunks have useful subheading metadata (e.g., "GRM", "3. Estimate accrued depreciation."). This limits the agent's ability to navigate within a chapter — it can retrieve all 7-15 chunks in a chapter but can't identify which section within that chapter is relevant without reading all of them.
@@ -222,27 +193,6 @@ for raw_line, page in line_page_mapping:
 - `tools/ingestion/chunking/pymupdf_extractor.py` — `_classify_line()` (the font-based classifier, already working)
 - `tools/ingestion/chunking/wpam_chunk_filter.py` — `repair_wpam_subheadings()` (safety net, keep as-is)
 
-### Task 39: Discover and ingest 2026 news pages
-
-**Problem:** The DOR sitemap doesn't include 2026 news URLs. The assessor and COTVC landing pages (`assessor-messages-home.aspx`, `cotvc-messages-home.aspx` without `?PubYear` param) are SharePoint pages that render content dynamically via JS — static scraping returns zero links.
-
-**Options:**
-
-1. **Headless browser (Playwright)** — Use Playwright to render the landing pages, wait for JS to populate the link list, then extract individual news page URLs. Pros: works regardless of the underlying CMS implementation. Cons: adds a heavyweight dependency (Chromium binary), fragile to DOM structure changes, slower.
-
-2. **SharePoint REST API** — Hit the SharePoint list API directly to enumerate news items. The pages likely back onto a SharePoint list with columns for title, publish date, and URL. Pros: reliable, fast, returns structured data. Cons: requires discovering the correct list GUID and API endpoint, may need auth tokens.
-
-3. **Ask DOR to update their sitemap** — Request that DOR include 2026 news pages in their XML sitemap or provide a machine-readable feed (RSS/Atom). Pros: zero maintenance on our side, canonical source. Cons: depends on DOR staff action and timeline.
-
-**Once URLs are discovered:** Add them to `tools/graphrag/document_manifest.yaml` under the `news_pages` category and run the normal scrape pipeline (`scrape_documents.py` → extract → embed → load).
-
-**Key files:**
-- `tools/graphrag/document_manifest.yaml` — add discovered URLs here
-- `tools/graphrag/scrape_documents.py` — existing scrape pipeline handles the rest
-- `tools/graphrag/ingest_config.yaml` — `news_pages` framework already defined
-
----
-
 ### Task 40: Harden inline linking prose — quote verbatim instead of paraphrasing
 
 **Problem:** The agent sometimes paraphrases content when generating inline link prose (the text that appears before a citation like "According to § 70.04 [source]"). This is problematic because:
@@ -281,4 +231,90 @@ Desired: "The owner of the property shall file an appeal within 30 days after re
 **Validation:** Compare paraphrased vs. verbatim responses for the same query, measure user satisfaction, verify citations match source text exactly.
 
 **Effort:** Medium — requires changing the answer generation pipeline and prompt instructions.
+
+---
+
+### Task 41: Fix statute citation page numbers, card titles, and chunker page-header pollution
+
+**Origin:** Triaged from a live query — "How do you determine the tax increment for a tid" — whose citation card for `statutes-66` showed the wrong title ("66.0101 - Home Rule") and an inline citation to `p.161` that opened to § 66.1103 in the browser instead of § 66.1105.
+
+**Root causes found (three distinct bugs):**
+
+1. **Stale chunks in Neptune** — The June 23 load crashed during phase 1, so the July 4 re-extraction was never loaded. Worse, the load's `phase_purge_stale_chunks` only ran when `--source-filter` was set — a full load used `MERGE` which updates/creates chunk IDs but never deletes ones that no longer exist. `statutes-66` had 1171 chunks in Neptune but the current extraction only produces ~740. The 365 stale ghost chunks carried old (wrong) page numbers.
+
+2. **Card title = document-level title** — `build_rag_documents()` in `rag_documents.py` grouped all chunks by `doc_id` and pulled the title from the Document node (`d.title`), which for a statute chapter is always the first section ("66.0101 - Home Rule"). Every cited section from that chapter collapsed into one card with that misleading title.
+
+3. **Statute chunker page-header / TOC pollution** — The statute chunker's section regex matched bare section numbers appearing in running page headers (e.g., "66.1105" at the top of odd pages) and in the table of contents (pages 1-2). These spurious matches created chunks with incorrect `start_page` metadata and could poison the deterministic Section Page Index (mapping `§ 66.1105 → page 2` from a TOC entry).
+
+**Fixes applied (all committed, main):**
+
+- **`tools/ingestion/load.py`** — `phase_purge_stale_chunks` now runs unconditionally (not gated on `--source-filter`), so every load starts from a clean chunk slate. Also added S3-based caching for phase 9 (semantic edges) keyed on embedding fingerprints — subsequent loads skip ~$41/~40 min of Bedrock LLM calls when embeddings are unchanged.
+- **`backend/lambdas/agentic_retrieval/rag_documents.py`** — citation cards now group by `(doc_id, heading)` and title each section card `Statute § {heading}`. Sections without headings (WPAM, FAQs, gov pubs) keep the existing doc-level behavior.
+- **`tools/ingestion/chunking/pdfChunker.py`** — `chunk_document_statute` now skips bare section numbers at the top of a page (running headers) and all matches on pages 1-2 (TOC), so only real section headings trigger chunk boundaries. Verified: `§ 66.1105 → page 162` (correct), no TOC/header entries remain in the index.
+
+**Also cleaned up:** removed the orphaned duplicate `gov_publications-tax-incremental-financing-manual` (same PDF as `gov_publications-tif-manual`, no longer in the manifest) from the raw bucket + extraction/embedding/classified caches.
+
+**Deployment status:**
+- Card title fix — **deployed** (`bun run bundle` + `cdk deploy`, 2026-07-08).
+- Purge fix — **live**; a targeted load (phases 4-8) already ran and confirmed `statutes-66` back to correct 806→~740 chunks with right page numbers.
+
+**Still needs to be done:**
+- **Docker rebuild + full re-extract/embed/load** to apply the chunker page-header/TOC fix and phase 9 caching across the whole corpus. Blocked on a separate in-flight change swapping the phase 9 model from Sonnet to Haiku — batch the Docker rebuild so both go out together.
+  - `cd tools/ingestion/docker && ./build_and_push.sh`
+  - `run_fargate.sh extract --smart` → `embed` → `load`
+- **Verify end-to-end** after re-load: re-ask the TID query, confirm the card title reads "Statute § 66.1105" and the inline citation opens to the correct PDF page.
+- **Section Page Index** requires no code change — it reads chunk metadata from Neptune, so it self-corrects once the clean chunker data is loaded.
+
+**Key files:**
+- `tools/ingestion/load.py` — purge + phase 9 caching
+- `backend/lambdas/agentic_retrieval/rag_documents.py` — card grouping/title
+- `tools/ingestion/chunking/pdfChunker.py` — `chunk_document_statute` header/TOC filter
+- `backend/lambdas/agentic_retrieval/loop/phase_b.py` — Section Page Index consumer (no change needed)
+
+---
+
+### Task 42: Markarian hierarchy query fails to ground `statutes-70` (turn-budget exhaustion)
+
+**Origin:** Surfaced by the Direction-1 (auto-enrichment retarget) regression baseline
+run on 2026-07-17. Golden-set query `8d5f49aa` — "What is the hierarchy of
+assessment methods under Markarian?" (Stratum B, case-law two-hop control) — is the
+one query of 15 that fails its baseline gate: `must_cite: [statutes-70]` is missing.
+
+**Important:** This is a **pre-existing production weakness, NOT caused by the
+auto-enrichment change.** It fails with enrichment fully live. None of the query's 6
+cited docs came from the `auto-enrichment` path, so Direction 1 Option A does not make
+it worse. It is logged here so it isn't mistaken for a Direction-1 regression during
+the after-run comparison.
+
+**What happens:** The agent finds both Markarian case-law nodes
+(`case-law-45-wis-2d-683`, `case-law-173-n-w-2d-627`) and the WPAM / gov-pub guidance
+that describes the assessment hierarchy, but never retrieves a chunk from `statutes-70`
+(the § 70.32 assessment statute) to ground the rule in its statutory authority. The run
+**exhausts all 10 turns** (`terminal_reason=turn_budget_exhausted`), which is the likely
+proximate cause — it runs out of turns before tracing back to the statute. This is
+exactly the "trace back from guides" requirement (system prompt Requirement 2) not
+firing in time.
+
+**Secondary observation (attribution blind spot):** The two case-law citations are
+tagged `discovery="unknown"` because they enter `cited_doc_ids` via the internal
+case-law discovery pipeline (`resolve_case_citations` / `get_cases_for_subsections`
+inside `vector_search`), which appends to `related_case_law` but never writes to the
+`discovery` map in `phase_a.py`. Consider tagging that path (e.g.
+`"case-law-discovery"`) so cited-doc attribution is complete. This path is preserved
+under Option A, so it is not itself at risk — but the `unknown` tag makes the
+regression comparison less precise for case-law citations.
+
+**Direction (needs investigation):**
+- Why does this query need 10 turns? Check whether it loops on redundant
+  vector_search / get_neighbors calls instead of tracing to `statutes-70` early.
+- Consider whether the turn-budget warning (injected at turn 7) should more forcefully
+  steer toward statute grounding when case law is already in hand.
+- Tag the internal case-law discovery path in the `discovery` map (attribution fix).
+
+**Key files:**
+- `backend/lambdas/agentic_retrieval/loop/phase_a.py` — turn loop, discovery tagging
+- `backend/lambdas/agentic_retrieval/agent_tools/executor.py` — `vector_search`
+  internal case-law discovery blocks
+- `config/model_configs.toml` — Requirement 2 (trace back from guides), turn-budget prompt
+- `tools/ingestion/tests/graph_regression_queries.yaml` — `8d5f49aa` golden entry
 
