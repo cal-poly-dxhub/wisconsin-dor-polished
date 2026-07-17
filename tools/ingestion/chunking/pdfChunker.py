@@ -505,15 +505,41 @@ def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
                 }
             )
 
+    # Build a set of line positions at the top of each page (first 4 lines)
+    # so we can identify page headers and TOC entries.
+    _page_top_positions: set[int] = set()
+    _current_page = None
+    _lines_on_page = 0
+    for idx, (_, pg) in enumerate(line_page_mapping):
+        if pg != _current_page:
+            _current_page = pg
+            _lines_on_page = 0
+        if _lines_on_page < 4:
+            _page_top_positions.add(idx)
+        _lines_on_page += 1
+
+    # Noise patterns: lines that are just page chrome, not real section starts.
+    _noise_re = re.compile(
+        r"^(MUNICIPAL LAW|TOWNS|Updated \d|^\d+\s+Updated|\d+$)", re.IGNORECASE
+    )
+
     # Walk through line–page mapping directly
-    for line, page_num in line_page_mapping:
+    for idx, (line, page_num) in enumerate(line_page_mapping):
         clean = line.strip()
         if not clean:
             continue
 
         if rule_pattern.match(clean):
-            flush_chunk(heading, local_buffer)
-            heading, local_buffer = clean, []
+            # A bare section number at the top of a page is a running header.
+            # Anything on pages 1-2 is a TOC entry. Skip both as heading triggers.
+            is_bare = rule_pattern.match(clean) and clean == rule_pattern.match(clean).group(1)
+            is_page_top = idx in _page_top_positions
+            is_toc_page = page_num <= 2
+            if (is_bare and is_page_top) or is_toc_page:
+                local_buffer.append((clean, page_num))
+            else:
+                flush_chunk(heading, local_buffer)
+                heading, local_buffer = clean, []
         else:
             local_buffer.append((clean, page_num))
 

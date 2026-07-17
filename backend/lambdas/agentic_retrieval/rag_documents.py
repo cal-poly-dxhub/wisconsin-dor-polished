@@ -48,10 +48,15 @@ def build_rag_documents(
         doc_id = chunk.get("doc_id", "unknown")
         chunk_text = chunk.get("text") or ""
         tag = discovery.get(doc_id, "unknown")
+        heading = chunk.get("heading") or ""
+
+        # Group by (doc_id, heading) so distinct statute sections get separate
+        # cards instead of collapsing into one chapter-level card.
+        group_key = f"{doc_id}::{heading}" if heading else doc_id
 
         page = chunk.get("start_page")
         if page is not None and chunk_text:
-            snippets = snippets_by_doc.setdefault(doc_id, [])
+            snippets = snippets_by_doc.setdefault(group_key, [])
             if not any(s.page == page for s in snippets):
                 snippets.append(
                     ChunkSnippet(
@@ -60,17 +65,24 @@ def build_rag_documents(
                     )
                 )
 
-        if doc_id not in docs_by_id:
-            doc_info = neptune_client.get_document(doc_id)
-            doc_infos[doc_id] = doc_info or {}
-            title = (doc_info.get("title") if doc_info else None) or doc_id
-            content_hash = hashlib.sha256(doc_id.encode()).hexdigest()[:7]
+        if group_key not in docs_by_id:
+            if doc_id not in doc_infos:
+                doc_info = neptune_client.get_document(doc_id)
+                doc_infos[doc_id] = doc_info or {}
+            else:
+                doc_info = doc_infos[doc_id]
+
+            if heading:
+                title = f"Statute § {heading}"
+            else:
+                title = (doc_info.get("title") if doc_info else None) or doc_id
+            content_hash = hashlib.sha256(group_key.encode()).hexdigest()[:7]
             label = _generate_source_label(chunk, doc_info)
             raw_url = chunk.get("source_url") or (doc_info or {}).get("source_url") or ""
             gov_url = raw_url if raw_url.startswith(("http://", "https://")) else None
             s3_key = chunk.get("s3_key") or (doc_info or {}).get("s3_key")
 
-            docs_by_id[doc_id] = RAGDocument(
+            docs_by_id[group_key] = RAGDocument(
                 document_id=f"{doc_id}-{content_hash}",
                 title=title,
                 content=chunk_text,
@@ -84,12 +96,9 @@ def build_rag_documents(
                 edition_year=chunk.get("edition_year"),
             )
         else:
-            existing = docs_by_id[doc_id]
+            existing = docs_by_id[group_key]
             if existing.s3_key:
                 merged_s3_key = existing.s3_key
-                # Use the earliest page across all merged chunks so the
-                # source card links to the first relevant section, not an
-                # arbitrary chunk.
                 chunk_start = chunk.get("start_page")
                 chunk_end = chunk.get("end_page")
                 existing_start = existing.start_page
@@ -109,7 +118,7 @@ def build_rag_documents(
                 merged_start_page = chunk.get("start_page")
                 merged_end_page = chunk.get("end_page")
             merged_edition_year = existing.edition_year or chunk.get("edition_year")
-            docs_by_id[doc_id] = RAGDocument(
+            docs_by_id[group_key] = RAGDocument(
                 document_id=existing.document_id,
                 title=existing.title,
                 content=existing.content + "\n\n" + chunk_text,
@@ -123,7 +132,8 @@ def build_rag_documents(
                 edition_year=merged_edition_year,
             )
 
-    for doc_id in doc_ids - docs_by_id.keys():
+    represented_doc_ids = {k.split("::")[0] for k in docs_by_id.keys()}
+    for doc_id in doc_ids - represented_doc_ids:
         doc_info = neptune_client.get_document(doc_id)
         if not doc_info:
             continue

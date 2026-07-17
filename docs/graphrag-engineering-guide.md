@@ -163,8 +163,6 @@ The answer context is a structured prompt built from: prior conversation (last 3
 | `DERIVED_FROM` | Framework → Framework | Authority precedence chain |
 | `COVERS_TOPIC` | Doc → Topic | Semantic grouping |
 
-Phase 11 additionally creates semantic edges: `RELATED_TO`, `SUPPLEMENTS`, `SUPERSEDES`, `CONFLICTS_WITH`.
-
 ---
 
 ## 6. Neptune Analytics Constraints
@@ -455,8 +453,7 @@ load.py → Neptune graph (11 CLI phases of batched Cypher)
 | 7 | Chunk Nodes | MERGE chunks + EXTRACTED_FROM edges |
 | 8 | Stub Resolution | Create stub nodes for unresolved citations |
 | 9 | Vector Upserts | Upsert embeddings (one per query, 8 threads) |
-| 10 | Semantic Edges | LLM-classified RELATED_TO/SUPPLEMENTS/etc. |
-| 11 | Orphan Cleanup | Delete chunks/edges with no parent |
+| 10 | Orphan Cleanup | Delete chunks/edges with no parent |
 
 **CLI step ≠ function name.** `--start-phase 7` runs the function `phase_8_chunks`. Log references to "phase 8" mean the function name, not the CLI step.
 

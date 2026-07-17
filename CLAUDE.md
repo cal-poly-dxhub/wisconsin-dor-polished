@@ -117,7 +117,7 @@ AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tool
 AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.ingestion.embed \
   --work-bucket wis-work-bucket-c8e69250 --config tools/ingestion/config/ingest_config.yaml
 
-# Load into Neptune graph (11 sub-phases)
+# Load into Neptune graph (9 sub-phases)
 AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.ingestion.load \
   --work-bucket wis-work-bucket-c8e69250 --graph-id g-ndvl4j73v4 \
   --config tools/ingestion/config/ingest_config.yaml
@@ -177,7 +177,6 @@ Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM 
 - Authority: `CITES` (Doc→Statute, Doc→AdminRule, Statute→CaseLaw mirror, Chunk→Statute, Chunk→AdminRule), `IMPLEMENTS` (Doc→Statute)
 - Hierarchy: `PART_OF` (Section→Chapter, Subsection→Section), `BELONGS_TO` (Doc→Framework), `HAS_SUBSECTION` (Doc→Doc multi-part), `EXTRACTED_FROM` (Chunk→Doc), `DERIVED_FROM` (Framework→Framework, e.g., IAAO→WPAM)
 - Topical: `COVERS_TOPIC` (Doc→Topic)
-- Semantic (LLM-classified, phase 11): `RELATED_TO`, `SUPPLEMENTS`, `SUPERSEDES`, `CONFLICTS_WITH`
 
 **S3 bucket structure:** `raw/{category}-{clean-name}/{category}-{clean-name}.pdf` + `.metadata.json`
 
@@ -321,6 +320,13 @@ AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs filter-log-events \
 - `answer_stream_complete` — Phase B finished (this timestamp ≈ DynamoDB timestamp)
 
 **What to provide:** The **queryId** is the fastest identifier — it's a direct DynamoDB key and a unique grep token in logs. A timestamp alone requires a scan + stream correlation.
+
+**Report format:** When presenting investigation results, use this structure:
+
+1. **Summary table** — query ID, timestamps, total latency (retrieval vs. streaming breakdown), turns used, docs discovered (by source: vector-search vs. graph-neighbor), chunks accumulated, cited doc count, feedback status.
+2. **Tool loop table** — columns: Turn, Tool, Input/Query, Latency. One row per tool call.
+3. **Cited sources list** — doc ID + short description for each cited document/FAQ.
+4. **Notable observations** — good agent behavior worth preserving, potential issues (e.g., missing nodes, hallucinated citations, unnecessary turns), and performance notes.
 
 ## Prompt Management
 
