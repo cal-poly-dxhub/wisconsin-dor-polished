@@ -13,17 +13,12 @@ chunk_overlap: 200
 large_doc_threshold: 10000
 max_split_sections: 15
 
-# --- Semantic Thresholds ---
-semantic_similarity_threshold: 0.55
-semantic_batch_size: 15
-
 # --- Concurrency ---
 concurrency:
   file_extraction: 5
   chunk_embedding: 10
   vector_upserts: 20
   doc_embedding: 10
-  semantic_llm: 5
 
 # --- Document Types -> Graph Node Labels ---
 doc_types:

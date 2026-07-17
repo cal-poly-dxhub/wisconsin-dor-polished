@@ -237,9 +237,10 @@ TOOL_DEFINITIONS = [
             "name": "get_neighbors",
             "description": (
                 "Traverse graph edges from a document to find related nodes. "
-                "Use this to find what a document CITES, IMPLEMENTS, is PART_OF, "
-                "SUPPLEMENTS, SUPERSEDES, or is RELATED_TO. "
-                "Critical for finding authoritative sources and newer guidance."
+                "Use this to find what a document CITES, IMPLEMENTS, or is "
+                "PART_OF. Critical for finding authoritative sources — most "
+                "importantly, the interpreting case law that hangs off a "
+                "statute stub via CITES edges."
             ),
             "inputSchema": {
                 "json": {
@@ -254,9 +255,7 @@ TOOL_DEFINITIONS = [
                             "items": {"type": "string"},
                             "description": (
                                 "Filter by edge types. Options: CITES, IMPLEMENTS, PART_OF, "
-                                "BELONGS_TO, DERIVED_FROM, COVERS_TOPIC, EXTRACTED_FROM, "
-                                "HAS_SUBSECTION, SUPPLEMENTS, SUPERSEDES, "
-                                "CONFLICTS_WITH, RELATED_TO"
+                                "BELONGS_TO, DERIVED_FROM, COVERS_TOPIC, EXTRACTED_FROM"
                             ),
                         },
                         "direction": {

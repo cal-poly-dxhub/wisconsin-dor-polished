@@ -117,7 +117,7 @@ AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tool
 AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.ingestion.embed \
   --work-bucket wis-work-bucket-c8e69250 --config tools/ingestion/config/ingest_config.yaml
 
-# Load into Neptune graph (11 sub-phases)
+# Load into Neptune graph (9 sub-phases)
 AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.ingestion.load \
   --work-bucket wis-work-bucket-c8e69250 --graph-id g-ndvl4j73v4 \
   --config tools/ingestion/config/ingest_config.yaml
@@ -177,7 +177,6 @@ Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM 
 - Authority: `CITES` (Doc→Statute, Doc→AdminRule, Statute→CaseLaw mirror, Chunk→Statute, Chunk→AdminRule), `IMPLEMENTS` (Doc→Statute)
 - Hierarchy: `PART_OF` (Section→Chapter, Subsection→Section), `BELONGS_TO` (Doc→Framework), `HAS_SUBSECTION` (Doc→Doc multi-part), `EXTRACTED_FROM` (Chunk→Doc), `DERIVED_FROM` (Framework→Framework, e.g., IAAO→WPAM)
 - Topical: `COVERS_TOPIC` (Doc→Topic)
-- Semantic (LLM-classified, phase 11): `RELATED_TO`, `SUPPLEMENTS`, `SUPERSEDES`, `CONFLICTS_WITH`
 
 **S3 bucket structure:** `raw/{category}-{clean-name}/{category}-{clean-name}.pdf` + `.metadata.json`
 

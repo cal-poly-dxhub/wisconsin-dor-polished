@@ -1,0 +1,136 @@
+# Graph-regression golden set — question-accuracy guardrail for the Phase 9
+# (LLM semantic edges) removal. See docs/phase-9-removal-spec.md §7.
+#
+# Stratified by risk. Grading (run_graph_regression.py):
+#   - must_cite:     key authoritative doc_ids that must still appear in the
+#                    answer's cited_doc_ids (primary gate).
+#   - must_contain:  regex/substring facts that must still be asserted in the
+#                    answer text (case-insensitive).
+#   - stratum:       risk bucket (A–E) — drives the pass criterion.
+#
+# Pass criterion by stratum:
+#   A (semantic-edge-dependent): cited set may drop only supplementary
+#     news-page docs; must_contain correctness facts fully retained.
+#   B/D/E: 100% must_cite + must_contain retention (do not depend on Phase 9).
+#   C: LLM-judge equivalence within variance floor.
+#   Zero hallucinated case citations across the whole set.
+
+queries:
+  # --- Stratum A: semantic-edge-dependent (highest risk) ---
+  - queryId: b861447d
+    stratum: A
+    query: "Are pipelines state or locally assessed in Wisconsin?"
+    must_cite: [statutes-76]
+    must_contain: ["Ch\\.? ?76|chapter 76|76\\.01"]
+    notes: >
+      THE stress case. Answer must stay grounded in Ch. 76 / statutes-76 via
+      vector search. Supplementary news-page docs that were reachable only via
+      semantic edges may drop — that is acceptable.
+
+  - queryId: 42085b1d
+    stratum: A
+    query: "What does the 2026 Agricultural Assessment Guide say about valuing agricultural land?"
+    must_cite: [gov_publications-2026-agricultural-assessment-guide]
+    must_contain: ["use.?value|agricultural"]
+    notes: 2026 ag guide — was reachable via RELATED_TO fan-out.
+
+  - queryId: 77c2bab3
+    stratum: A
+    query: "How does zoning affect agricultural classification for property tax?"
+    must_cite: []
+    must_contain: ["zoning", "agricultural"]
+    notes: >
+      Zoning for ag classification. No hard must_cite — grade on fact
+      retention and judge equivalence.
+
+  - queryId: 3e648cf8
+    stratum: A
+    query: "How does tax increment financing (TID) affect property assessment?"
+    must_cite: []
+    must_contain: ["tax increment|TID|TIF"]
+    notes: TID tax increment — cross-doc topic that used semantic fan-out.
+
+  # --- Stratum B: case-law two-hop (control — must be identical) ---
+  - queryId: 8d5f49aa
+    stratum: B
+    query: "What is the hierarchy of assessment methods under Markarian?"
+    must_cite: [statutes-70]
+    must_contain: ["Markarian", "recent sale|arm.s.length|sales"]
+    notes: Markarian hierarchy — protect the case-law value path.
+
+  - queryId: a00bdbcc
+    stratum: B
+    query: "What did Goldberg v. Board of Zoning Appeals hold?"
+    must_cite: []
+    must_contain: ["Goldberg"]
+    notes: Goldberg v. BZA — case must resolve without semantic edges.
+
+  - queryId: b4a29aca
+    stratum: B
+    query: "Explain the holding in Markarian v. City of Cudahy."
+    must_cite: []
+    must_contain: ["Markarian", "Cudahy"]
+    notes: Markarian v. Cudahy — direct case lookup.
+
+  - queryId: a15bb8a3
+    stratum: B
+    query: "How should big-box retail stores be valued for property tax?"
+    must_cite: [statutes-70]
+    must_contain: ["big.?box|Lowe.s|Walgreens|dark.?store"]
+    notes: 👍 rated. Big-box valuation via the case-law path.
+
+  - queryId: 57b19285
+    stratum: B
+    query: "Is Native American tribal property exempt from Wisconsin property tax?"
+    must_cite: []
+    must_contain: ["exempt", "tribal|Native American|reservation"]
+    notes: 👍 rated. Exemption + case-law path.
+
+  # --- Stratum C: cross-doc synthesis (WEAK-tier, WPAM prose + enrichment) ---
+  - queryId: c64709dc
+    stratum: C
+    query: "How do aerial imagery and reference materials compare for assessment purposes?"
+    must_cite: []
+    must_contain: ["imagery|aerial"]
+    notes: >
+      Multi-turn imagery/reference comparison. Grade via LLM-judge
+      equivalence within the variance floor, not exact cited-doc match.
+
+  # --- Stratum D: bread-and-butter (collateral — the 83%, must be stable) ---
+  - queryId: 41eee328
+    stratum: D
+    query: "What are the levy limits for Wisconsin municipalities?"
+    must_cite: []
+    must_contain: ["levy limit", "net new construction|valuation factor"]
+    notes: 👍 rated. Levy limits.
+
+  - queryId: 9de278ac
+    stratum: D
+    query: "How is net new construction calculated for levy limit purposes?"
+    must_cite: []
+    must_contain: ["net new construction"]
+    notes: 👎 rated at baseline — track that removal does not worsen it.
+
+  - queryId: ef9e54de
+    stratum: D
+    query: "How much notice is required to object to an assessment at the Board of Review?"
+    must_cite: [statutes-70]
+    must_contain: ["48.?hour|48 hours", "Board of Review|BOR"]
+    notes: 👍 rated. BOR 48-hr objection notice.
+
+  # --- Stratum E: WPAM version-sensitive (editioning plumbing, untouched) ---
+  - queryId: df92f36e
+    stratum: E
+    query: "What does the WPAM say about the sales comparison approach for agricultural land?"
+    must_cite: []
+    must_contain: ["sales comparison|sales.?comparison approach", "agricultural"]
+    notes: WPAM sales-comparison for ag land. Confirm editioning still fires.
+
+  - queryId: ag-substitute-01
+    stratum: E
+    query: "How is agricultural land valued using its use-value in Wisconsin?"
+    must_cite: []
+    must_contain: ["use.?value", "agricultural"]
+    notes: >
+      Substitute ag query for the unavailable 32cd5c47. Second WPAM
+      version-sensitive probe to confirm dedup returns the current edition.

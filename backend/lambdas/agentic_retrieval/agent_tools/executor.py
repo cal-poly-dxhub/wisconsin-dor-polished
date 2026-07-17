@@ -437,10 +437,6 @@ def execute_tool(
             "DERIVED_FROM": 1,
             "BELONGS_TO": 2,
             "COVERS_TOPIC": 3,
-            "RELATED_TO": 4,
-            "SUPPLEMENTS": 4,
-            "SUPERSEDES": 4,
-            "CONFLICTS_WITH": 4,
         }
 
         def _rank_neighbors(neighbors: list[dict]) -> list[dict]:
