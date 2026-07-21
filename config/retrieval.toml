@@ -1,0 +1,281 @@
+# Retrieval pipeline configuration — source of truth for agentic_retrieval
+# Lambda environment variables and model-controlled tool params.
+#
+# Read by:
+#   - CDK (infra/lib/retrieval-config.ts) to set Lambda env var defaults at
+#     deploy time. Env vars set explicitly elsewhere (context overrides,
+#     manual console changes) still take precedence at runtime — this file
+#     only supplies the *default* value CDK writes into the environment map.
+#   - The Lambda's cold-start validator (backend/lambdas/agentic_retrieval/
+#     config_validator.py), which checks that any env var actually present
+#     in the Lambda's environment matches the documented type/range. It does
+#     NOT enforce values for vars that are simply absent (those fall back to
+#     each module's own hardcoded default, exactly as before this file
+#     existed).
+#
+# This file documents infra/pipeline configuration only. Prompts remain in
+# model_configs.toml -> DynamoDB (see docs/spec-retrieval-pipeline-refactor.md,
+# "Out of Scope").
+
+# ---------------------------------------------------------------------------
+# [env.*] — Lambda environment variables
+# ---------------------------------------------------------------------------
+
+[env.STATUTE_BACKFILL_SOURCE_GATE]
+default = 3
+type = "int"
+description = "Number of top relevance chunks to use as backfill sources"
+range = [0, 10]
+stage = "statute_backfill"
+model_override = false
+
+[env.STATUTE_BACKFILL_CAP]
+default = 3
+type = "int"
+description = "Max statute chunks surfaced via chunk-level CITES backfill"
+range = [0, 10]
+stage = "statute_backfill"
+model_override = false
+
+[env.CASELAW_BACKFILL_CAP]
+default = 3
+type = "int"
+description = "Max ranked case-law holdings surfaced via CITES traversal from statute stubs"
+range = [0, 10]
+stage = "caselaw_backfill"
+model_override = false
+
+[env.BROAD_DISCOVERY_CAP]
+default = 15
+type = "int"
+description = "Max chunks returned by the broad discovery arm (same pipeline as narrow, additive docs only)"
+range = [0, 25]
+stage = "broad_discovery"
+model_override = false
+
+[env.DIVERSITY_CAP_PER_DOC]
+default = 5
+type = "int"
+description = "Max chunks per document in vector_search results"
+range = [1, 25]
+stage = "diversity_cap"
+model_override = false
+
+[env.ENRICH_CAP_PER_DOC]
+default = 5
+type = "int"
+description = "Max auto-enrichment neighbors kept per top parent document"
+range = [0, 25]
+stage = "auto_enrichment"
+model_override = false
+
+[env.ENRICH_CAP_PER_TYPE]
+default = 4
+type = "int"
+description = "Max auto-enrichment neighbors kept per doc_type, within a document's cap"
+range = [0, 25]
+stage = "auto_enrichment"
+model_override = false
+
+[env.SEARCH_DOCUMENT_FETCH_K]
+default = 800
+type = "int"
+description = "Global over-fetch size for search_document before filtering to the target doc_id"
+range = [10, 2000]
+stage = "search_document"
+model_override = false
+
+[env.SEARCH_DOC_FALLBACK_MAX]
+default = 150
+type = "int"
+description = "Max chunks a document may have for the keyword fallback to run when vector search finds nothing"
+range = [1, 1000]
+stage = "search_document"
+model_override = false
+
+[env.FAQ_KNOWLEDGE_BASE_ID]
+default = ""
+type = "string"
+description = "Bedrock Knowledge Base ID backing faq_search"
+stage = "faq_seed"
+model_override = false
+
+[env.FAQ_SCORE_THRESHOLD]
+default = 0.70
+type = "float"
+description = "Minimum FAQ score to trigger high-confidence FAQ steering"
+range = [0.0, 1.0]
+stage = "faq_seed"
+model_override = false
+
+[env.MAX_TURNS]
+default = 8
+type = "int"
+description = "Maximum agentic loop turns before forced prepare_answer"
+range = [3, 15]
+stage = "loop"
+model_override = false
+
+[env.AGENTIC_MODEL_ID]
+default = "us.anthropic.claude-sonnet-4-6"
+type = "string"
+description = "Bedrock model ID for the agentic loop (Phase A)"
+stage = "loop"
+model_override = false
+
+[env.REFINEMENT_MODEL_ID]
+default = "us.anthropic.claude-sonnet-4-6"
+type = "string"
+description = "Model used by auto-refine to rewrite the query before vector_search (defaults to AGENTIC_MODEL_ID if unset)"
+stage = "auto_refine"
+model_override = false
+
+[env.CASE_LAW_SUMMARY_MODEL]
+default = "us.amazon.nova-2-lite-v1:0"
+type = "string"
+description = "Model used by extract.py to generate case-law holding summaries"
+stage = "ingestion"
+model_override = false
+
+[env.RAW_BUCKET]
+default = ""
+type = "string"
+description = "S3 bucket holding raw case-law opinion text, read by fetch_case_opinion"
+stage = "fetch_case_opinion"
+model_override = false
+
+[env.LOG_TOOL_TRACE]
+default = "true"
+type = "bool"
+description = "Emit granular CloudWatch log events for each tool stage"
+stage = "observability"
+model_override = false
+
+[env.LOG_AGENT_TRACE]
+default = "true"
+type = "bool"
+description = "Emit CloudWatch log events for the agentic loop (turn-level, phase_a)"
+stage = "observability"
+model_override = false
+
+[env.LOG_QUERY_TEXT]
+default = "true"
+type = "bool"
+description = "Include raw query text previews in tool trace log events"
+stage = "observability"
+model_override = false
+
+[env.LOG_NEPTUNE_TRACE]
+default = "true"
+type = "bool"
+description = "Emit granular CloudWatch log events for each Neptune query"
+stage = "observability"
+model_override = false
+
+[env.LOG_NEPTUNE_QUERY_TEXT]
+default = "true"
+type = "bool"
+description = "Include raw Cypher/query text previews in Neptune trace log events"
+stage = "observability"
+model_override = false
+
+[env.LOG_MAX_TEXT_CHARS]
+default = 500
+type = "int"
+description = "Max characters kept per text field in tool trace log events before truncation"
+range = [50, 5000]
+stage = "observability"
+model_override = false
+
+[env.LOG_MAX_QUERY_CHARS]
+default = 1000
+type = "int"
+description = "Max characters kept per query field in Neptune trace log events before truncation"
+range = [50, 5000]
+stage = "observability"
+model_override = false
+
+[env.EMIT_AGENT_TRACE]
+default = "true"
+type = "bool"
+description = "Emit the structured frontend/DynamoDB agent trace payload over WebSocket"
+stage = "observability"
+model_override = false
+
+[env.ENABLE_DISAMBIGUATION]
+default = "false"
+type = "bool"
+description = "Enable the disambiguation pre-check before the agentic loop starts"
+stage = "loop"
+model_override = false
+
+[env.WEBSOCKET_CALLBACK_URL]
+default = ""
+type = "string"
+description = "API Gateway Management API endpoint used to post messages back to the WebSocket connection"
+stage = "streaming"
+model_override = false
+
+[env.SESSIONS_TABLE_NAME]
+default = ""
+type = "string"
+description = "DynamoDB table holding WebSocket session/connection state"
+stage = "persistence"
+model_override = false
+
+[env.CHAT_HISTORY_TABLE_NAME]
+default = ""
+type = "string"
+description = "DynamoDB table holding prior chat turns for follow-up resolution"
+stage = "persistence"
+model_override = false
+
+[env.FAQ_URL_TABLE_NAME]
+default = ""
+type = "string"
+description = "DynamoDB table mapping FAQ ids to their public revenue.wi.gov URL"
+stage = "persistence"
+model_override = false
+
+[env.MODEL_CONFIG_TABLE_NAME]
+default = ""
+type = "string"
+description = "DynamoDB table holding the externalized agentic system prompt"
+stage = "prompt_loading"
+model_override = false
+
+[env.NEPTUNE_GRAPH_ID]
+default = ""
+type = "string"
+description = "Neptune Analytics graph identifier queried by NeptuneClient"
+stage = "neptune"
+model_override = false
+
+# ---------------------------------------------------------------------------
+# [tool_params.*] — model-controlled parameters (from tool input schemas)
+# ---------------------------------------------------------------------------
+
+[tool_params.vector_search.top_k]
+default = 15
+max = 25
+description = "Number of chunks returned to the model. Model can pass lower values."
+
+[tool_params.search_document.top_k]
+default = 5
+max = 10
+description = "Max chunks returned from the target document matching the sub-query."
+
+[tool_params.get_section.top_k]
+default = 5
+max = 10
+description = "Max chunks returned when query is provided for relevance ranking."
+
+[tool_params.get_neighbors.top_k]
+default = 5
+max = 10
+description = "Max ranked neighbors when query param triggers semantic ranking."
+
+[tool_params.faq_search.top_k]
+default = 5
+max = 10
+description = "Max FAQ results returned from the Bedrock Knowledge Base."

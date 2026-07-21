@@ -53,4 +53,7 @@ sources = [
 
 [[bundles]]
 dest = "agentic_retrieval"
-sources = ["./backend/lambdas/agentic_retrieval"]
+sources = [
+    "./backend/lambdas/agentic_retrieval",
+    "./config/retrieval.toml",
+]

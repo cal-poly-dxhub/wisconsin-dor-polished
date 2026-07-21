@@ -104,7 +104,7 @@ class TestRunAgenticLoop:
         ]
         monkeypatch.setattr(phase_a, "converse_with_cache", MagicMock(side_effect=responses))
 
-        def fake_execute(name, input_, neptune_client, chat_history=None):
+        def fake_execute(name, input_, neptune_client, chat_history=None, **kwargs):
             if name == "vector_search":
                 return {"chunks": [{"doc_id": "doc-a", "text": "..."}], "graph_context": {}}
             if name == "prepare_answer":
@@ -200,7 +200,7 @@ class TestRunAgenticLoop:
         mock_converse = MagicMock(side_effect=responses)
         monkeypatch.setattr(phase_a, "converse_with_cache", mock_converse)
 
-        def fake_execute(name, input_, neptune_client, chat_history=None):
+        def fake_execute(name, input_, neptune_client, chat_history=None, **kwargs):
             if name == "get_document":
                 raise KeyError("doc_id")
             if name == "prepare_answer":
@@ -304,7 +304,7 @@ class TestRunAgenticLoop:
         mock_converse = MagicMock(side_effect=responses)
         monkeypatch.setattr(phase_a, "converse_with_cache", mock_converse)
 
-        def fake_execute(name, input_, neptune_client, chat_history=None):
+        def fake_execute(name, input_, neptune_client, chat_history=None, **kwargs):
             if name == "vector_search":
                 return {"chunks": [{"doc_id": "doc-stat", "text": "..."}], "graph_context": {}}
             if name == "prepare_answer":

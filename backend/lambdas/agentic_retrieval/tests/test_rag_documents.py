@@ -130,6 +130,51 @@ class TestBuildRagDocuments:
         assert card.authority_level == 2
         assert any("STUB_PROMOTION_TRIGGERED" in r.getMessage() for r in caplog.records)
 
+    def test_statute_chapter_splits_sections_by_heading(self):
+        """A statute chapter PDF splits into per-section cards, each titled
+        'Statute § <heading>'."""
+        neptune = self._mock_neptune(
+            {"title": "Chapter 70", "authority_level": 2, "source_url": "http://x"}
+        )
+        chunks = [
+            {"doc_id": "statutes-70", "text": "a", "heading": "70.30", "authority_level": 2},
+            {"doc_id": "statutes-70", "text": "b", "heading": "70.32", "authority_level": 2},
+        ]
+        docs = build_rag_documents(chunks, {"statutes-70"}, {}, neptune_client=neptune)
+        titles = sorted(d.title for d in docs)
+        assert titles == ["Statute § 70.30", "Statute § 70.32"]
+
+    def test_non_statute_headings_stay_collapsed_and_untitled_as_statute(self):
+        """WPAM / gov-pub chunks carry headings too, but must NOT be split into
+        per-heading cards nor titled 'Statute § ...' (regression from 4d97390)."""
+        neptune = self._mock_neptune(
+            {
+                "title": "WI Property Assessment Manual",
+                "authority_level": 5,
+                "source_url": "http://wpam",
+            }
+        )
+        chunks = [
+            {
+                "doc_id": "wpam-2024",
+                "text": "a",
+                "heading": "Chapter 9 Real Property Valuation",
+                "authority_level": 5,
+                "framework_id": "FW-WPAM",
+            },
+            {
+                "doc_id": "wpam-2024",
+                "text": "b",
+                "heading": "Chapter 12 Residential Property Valuation",
+                "authority_level": 5,
+                "framework_id": "FW-WPAM",
+            },
+        ]
+        docs = build_rag_documents(chunks, {"wpam-2024"}, {}, neptune_client=neptune)
+        assert len(docs) == 1
+        assert docs[0].title == "WI Property Assessment Manual"
+        assert not docs[0].title.startswith("Statute §")
+
     def test_case_law_stub_uses_node_source_url(self):
         mock = MagicMock()
         mock.get_document.return_value = {

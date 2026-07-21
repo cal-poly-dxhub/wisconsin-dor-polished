@@ -202,27 +202,85 @@ def _derive_case_statute_refs(citing_statutes: list[dict], state_laws_dir: Path)
     return sorted(refs)
 
 
+_CASE_LAW_SUMMARY_MODEL = os.environ.get(
+    "CASE_LAW_SUMMARY_MODEL", "us.amazon.nova-2-lite-v1:0"
+)
+
+_CASE_LAW_SUMMARY_PROMPT = (
+    "Read the following Wisconsin court opinion excerpt and write a 2-3 sentence "
+    "summary of the HOLDING. State clearly: (1) who won, (2) which Wisconsin "
+    "statute sections were at issue, and (3) what the court decided about them. "
+    "Do not include a heading or labels — just write the sentences directly.\n\n"
+    "Opinion excerpt:\n{text}\n\n"
+    "Holding summary (2-3 sentences):"
+)
+
+_CASE_STATUTE_RE = re.compile(
+    r"(?:(?:Wis\.?\s*Stat\.?|ss?\.|sec\.?|§§?)\s*(\d{1,3}\.\d{2,4}[a-z]?))"
+    r"|(?:(\d{2,3}\.\d{2,4}[a-z]?)\s*(?:\(\d+\))*\s*(?:,\s*(?:Wis\.?\s*Stat|Stats)))",
+    re.IGNORECASE,
+)
+
+
+def _fetch_opinion_text(raw_bucket: str, doc_id: str, s3_key: str) -> str | None:
+    """Fetch the opinion .txt from S3. Tries s3_key path, then reporter-path fallback."""
+    slug = doc_id.replace("case-law-", "")
+    # Try direct key (if stored on the node)
+    if s3_key and ".txt" in s3_key:
+        try:
+            obj = s3.get_object(Bucket=raw_bucket, Key=s3_key)
+            return obj["Body"].read().decode("utf-8", errors="replace")
+        except Exception:
+            pass
+    # Reporter-path fallback
+    for reporter in ["wis-2d", "wi", "wi-app", "n-w-2d", "n-w-3d", "f-2d", "f-3d",
+                     "f-supp-2d", "f-supp-3d", "f-4th", "s-ct", "u-s", "l-ed-2d"]:
+        try:
+            key = f"raw/case-law/{reporter}/{slug}.txt"
+            obj = s3.get_object(Bucket=raw_bucket, Key=key)
+            return obj["Body"].read().decode("utf-8", errors="replace")
+        except Exception:
+            continue
+    return None
+
+
+def _summarize_opinion(text: str) -> str:
+    """Generate a 2-3 sentence holding summary via Nova 2 Lite."""
+    prompt = _CASE_LAW_SUMMARY_PROMPT.format(text=text[:4000])
+    try:
+        resp = bedrock.converse(
+            modelId=_CASE_LAW_SUMMARY_MODEL,
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            inferenceConfig={"maxTokens": 200, "temperature": 0.0},
+        )
+        return " ".join(
+            b.get("text", "").strip()
+            for b in resp["output"]["message"]["content"]
+            if b.get("text")
+        ).strip()
+    except Exception as exc:
+        logger.warning(f"Case-law summary failed: {exc}")
+        return ""
+
+
+def _extract_statute_refs_from_text(text: str) -> list[str]:
+    """Regex-extract section-level statute refs from opinion text."""
+    matches = _CASE_STATUTE_RE.findall(text[:8000])
+    return sorted({m[0] or m[1] for m in matches if m[0] or m[1]})
+
+
 def process_case_law_document(
     doc: dict, raw_bucket: str, metadata: dict, config: dict
 ) -> dict | None:
-    """Build a thin-stub extraction result for a case-law document.
+    """Extract a case-law document with a 1-chunk holding summary.
 
-    Case-law nodes are citation markers only — never a vector-search entry
-    point. The editorial annotation text for each cited case is already
-    embedded in the citing statute's own PDF text (Wisconsin Statutes
-    Annotated prints annotations directly under the statute section), so
-    there's no benefit to duplicating it here and every reason NOT to give
-    case-law docs their own embeddings: it would let the agent "answer from
-    the case" without ever consulting the contextualizing statute.
+    Reads the opinion text from S3, generates a 2-3 sentence holding summary
+    via Nova 2 Lite, and extracts section-level statute references from the
+    opinion text. The summary becomes a single chunk (embedded downstream by
+    embed.py) making the case semantically searchable and rankable.
 
-    The returned record has:
-      - identity fields (id, title, citation, source_url, doc_type, authority_level)
-      - empty `chunks` — no embeddings will be produced, no chunk nodes loaded
-      - empty `summary` — the annotation text lives on the statute's chunks
-      - `citing_statute_refs` — used by load.py to wire Statute -[:CITES]-> CaseLaw edges
-
-    The full opinion text (in S3 `.txt` files) is still reachable by agents
-    via the `fetch_case_opinion` tool; it's just not part of the graph index.
+    Falls back to a thin stub (empty chunks, chapter-level refs) when opinion
+    text is unavailable.
     """
     doc_id = doc["doc_id"]
     key = doc["key"]
@@ -230,9 +288,6 @@ def process_case_law_document(
     citing_statutes = _parse_citing_statutes(metadata)
     citation = metadata.get("citation", "")
 
-    # Title preference: metadata case_name → citation → doc_id. We no longer
-    # run annotation extraction here — that moved to the statute-side derivation
-    # path, since the annotation text belongs ON the statute, not on the case.
     meta_case_name = metadata.get("case_name", "").strip()
     if meta_case_name and citation:
         title = f"{meta_case_name}, {citation}"
@@ -243,13 +298,34 @@ def process_case_law_document(
     else:
         title = doc_id
 
-    # Statute refs drive the Document-level CITES edge targets in load.py.
-    # We emit both chapter- and section-level refs (e.g., "70" AND "70.32")
-    # so the agent can find this case from either granularity. Section is
-    # derived from the page header in the local statute PDF; falls back to
-    # chapter-only when the mirror is unavailable.
+    # Try to fetch opinion text and generate summary + section-level refs
+    opinion_text = _fetch_opinion_text(raw_bucket, doc_id, key)
+    summary = ""
+    text_statute_refs: list[str] = []
+
+    if opinion_text:
+        summary = _summarize_opinion(opinion_text)
+        text_statute_refs = _extract_statute_refs_from_text(opinion_text)
+
+    # Statute refs: union of text-extracted (section-level) and the legacy
+    # page-header derivation (chapter-level fallback). Text extraction is
+    # preferred because it gives section-level granularity directly.
     state_laws_dir = Path(config.get("state_laws_dir") or DEFAULT_STATE_LAWS_DIR)
-    statute_refs = _derive_case_statute_refs(citing_statutes, state_laws_dir)
+    legacy_refs = _derive_case_statute_refs(citing_statutes, state_laws_dir)
+    statute_refs = sorted(set(text_statute_refs) | set(legacy_refs))
+
+    # Build chunk from summary (if we have one)
+    chunks = []
+    if summary:
+        chunks.append({
+            "text": summary,
+            "metadata": {
+                "doc_id": doc_id,
+                "heading": "Holding",
+                "start_page": 1,
+                "end_page": 1,
+            },
+        })
 
     result = {
         "doc_id": doc_id,
@@ -260,19 +336,20 @@ def process_case_law_document(
             metadata, metadata.get("framework_id", "FW-CASE-LAW"), config
         ),
         "title": title,
-        "summary": "",  # intentionally empty — annotation lives on the citing statute
+        "summary": summary,
         "citation": citation,
         "statute_refs": statute_refs,
         "admin_rule_refs": [],
         "implements_refs": [],
-        "topics": [],  # no topic edges either; case-law is not a primary entry point
+        "topics": [],
         "source_url": metadata.get("source_url", ""),
-        "full_text": title,  # used only for doc-level embedding; stub nodes don't get one
-        "chunks": [],  # the key Path A change: no chunks, no embeddings
+        "full_text": f"{title}\n{summary}" if summary else title,
+        "chunks": chunks,
     }
 
+    status = "with summary" if summary else "stub (no opinion text)"
     logger.info(
-        f"  Extracted {doc_id}: thin case-law stub, title={title[:60]}, "
+        f"  Extracted {doc_id}: {status}, title={title[:50]}, "
         f"cites {len(statute_refs)} statute refs ({statute_refs[:5]})"
     )
     return result

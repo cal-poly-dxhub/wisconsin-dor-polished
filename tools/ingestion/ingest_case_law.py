@@ -660,6 +660,11 @@ def main():
     parser.add_argument(
         "--no-cache", action="store_true", help="Skip S3 cache, force CL lookup for all"
     )
+    parser.add_argument(
+        "--clean-losers",
+        action="store_true",
+        help="After dedup, delete parallel-reporter losers from raw + work S3 buckets",
+    )
     parser.add_argument("--profile", default="widor")
     parser.add_argument("--region", default="us-east-1")
     args = parser.parse_args()
@@ -789,6 +794,33 @@ def main():
     before_count = len(enriched)
     deduped = deduplicate_by_cluster(enriched)
     logger.info(f"After dedup: {len(deduped)} cases (from {before_count} citations)")
+
+    if args.clean_losers:
+        winner_slugs = {entry["slug"] for entry in deduped}
+        loser_slugs = [entry["slug"] for entry in enriched if entry["slug"] not in winner_slugs]
+        if loser_slugs:
+            logger.info(f"Cleaning {len(loser_slugs)} parallel-reporter losers from S3...")
+            deleted_raw, deleted_work = 0, 0
+            for slug in loser_slugs:
+                reporter = _reporter_for_slug(slug)
+                for ext in (".txt", ".json", ".metadata.json"):
+                    key = f"raw/case-law/{reporter}/{slug}{ext}"
+                    try:
+                        s3.delete_object(Bucket=args.bucket, Key=key)
+                        deleted_raw += 1
+                    except Exception:  # noqa: BLE001
+                        pass
+                work_key = f"extracted/case-law-{slug}.json"
+                try:
+                    s3.delete_object(Bucket=args.work_bucket, Key=work_key)
+                    deleted_work += 1
+                except Exception:  # noqa: BLE001
+                    pass
+            logger.info(
+                f"  Deleted {deleted_raw} raw files, {deleted_work} extraction caches"
+            )
+        else:
+            logger.info("No losers to clean — all enriched entries are winners")
 
     if args.dry_run:
         logger.info("")

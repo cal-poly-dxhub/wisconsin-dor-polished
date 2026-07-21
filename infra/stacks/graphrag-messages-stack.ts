@@ -4,6 +4,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
+import { getRetrievalEnv } from '../lib/retrieval-config';
 
 export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   stepFunctionTypesLayer: lambda.LayerVersion;
@@ -50,27 +51,20 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
         timeout: cdk.Duration.seconds(120),
         memorySize: 512,
         tracing: lambda.Tracing.ACTIVE,
-        environment: {
+        environment: getRetrievalEnv({
           WEBSOCKET_CALLBACK_URL: props.websocketCallbackUrl,
           SESSIONS_TABLE_NAME: props.sessionsTable.tableName,
           CHAT_HISTORY_TABLE_NAME: props.chatHistoryTable.tableName,
           NEPTUNE_GRAPH_ID: props.neptuneGraphId,
-          AGENTIC_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
           RAW_BUCKET: props.rawBucketName,
           FAQ_KNOWLEDGE_BASE_ID: props.faqKnowledgeBaseId,
           FAQ_URL_TABLE_NAME: props.faqUrlTable.tableName,
           MODEL_CONFIG_TABLE_NAME: props.modelConfigTable.tableName,
           LOG_LEVEL: 'INFO',
-          LOG_AGENT_TRACE: 'true',
-          LOG_TOOL_TRACE: 'true',
-          LOG_NEPTUNE_TRACE: 'true',
-          LOG_QUERY_TEXT: 'true',
-          LOG_NEPTUNE_QUERY_TEXT: 'true',
-          LOG_MAX_TEXT_CHARS: '500',
-          LOG_MAX_QUERY_CHARS: '1000',
-          EMIT_AGENT_TRACE: 'true',
+          // Overrides the retrieval.toml default (false) to preserve this
+          // stack's currently-deployed behavior.
           ENABLE_DISAMBIGUATION: 'true',
-        },
+        }),
       }
     );
 

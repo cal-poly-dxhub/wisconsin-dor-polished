@@ -67,6 +67,9 @@ _CHUNK_FIELDS_FOR_MODEL = frozenset(
         "end_page",
         "authority_level",
         "doc_title",
+        # statute-backfill only: tells the model which statute section this
+        # chunk resolves (e.g. WIS-STAT-70.47) so it can cite it precisely.
+        "cited_stubs",
     }
 )
 
@@ -96,8 +99,8 @@ def _compact_for_model(result: dict, tool_name: str) -> dict:
     for key, value in result.items():
         if value is None:
             continue
-        if key == "chunks":
-            compacted["chunks"] = [
+        if key in ("chunks", "statute_backfill", "caselaw_backfill", "broad_discovery"):
+            compacted[key] = [
                 {k: v for k, v in chunk.items() if k in _CHUNK_FIELDS_FOR_MODEL and v is not None}
                 for chunk in value
             ]
@@ -183,35 +186,26 @@ def run_agentic_loop(
         _emit(ws, trace_seq_fn, **kwargs)
 
     # Turn 0 refinement: rewrite context-dependent follow-ups against history.
+    # This runs _auto_refine to resolve pronouns/short follow-ups before the FAQ
+    # seed. The same refinement also runs inside vector_search, so this primarily
+    # benefits the faq_search seed query.
     search_query = query
     if chat_history:
-        _emit_safe(
-            ws_server,
-            trace_seq,
-            query_id=query_id,
-            kind="tool_call",
-            turn=0,
-            payload={
-                "toolName": "refine_query",
-                "summary": "",
-                "status": "pending",
-            },
-        )
-        refine_result = execute_tool(
-            "refine_query", {"query": query}, neptune, chat_history=chat_history
-        )
-        refined = refine_result.get("refined_query") or query
+        from agent_tools.executor import _auto_refine
+
+        refined, _target_year = _auto_refine(query, chat_history)
         if refined and refined != query:
             logger.info(f"Turn-0 refine: '{query[:80]}' -> '{refined[:80]}'")
             search_query = refined
-        refine_summary = _tool_result_summary("refine_query", refine_result)
+        refine_status = "ok" if refined != query else "no_change"
+        refine_meta = {"refined": refined != query, "refinedQuery": refined}
         _record_trace(
             "tool_result",
             turn=0,
-            toolName="refine_query",
-            status=refine_summary["status"],
-            summary=refine_summary["summary_text"],
-            metadata=refine_summary["metadata"],
+            toolName="auto_refine",
+            status=refine_status,
+            summary=f'Refined to "{refined[:80]}"' if refined != query else "No refinement needed",
+            metadata=refine_meta,
         )
         _emit_safe(
             ws_server,
@@ -220,14 +214,13 @@ def run_agentic_loop(
             kind="tool_result",
             turn=0,
             payload={
-                "toolName": "refine_query",
-                "status": refine_summary["status"],
-                "summary": refine_summary["summary_text"],
-                "docIds": refine_summary["doc_ids"],
-                "docTitles": refine_summary["doc_titles"],
-                "metadata": filter_metadata(refine_summary["metadata"]),
+                "toolName": "auto_refine",
+                "status": refine_status,
+                "summary": f'Refined to "{refined[:80]}"' if refined != query else "No refinement needed",
+                "docIds": [],
+                "docTitles": [],
+                "metadata": refine_meta,
             },
-            dev_payload={"raw": refine_summary["raw"]},
         )
 
     trace_context = {
@@ -264,7 +257,9 @@ def run_agentic_loop(
             "status": "pending",
         },
     )
+    faq_started = time.perf_counter()
     faq_result = faq_search_direct(search_query, neptune, execute_tool)
+    faq_latency_ms = round((time.perf_counter() - faq_started) * 1000)
     faq_entries = faq_result.get("faqs", [])
     top_score = faq_entries[0].get("score", 0.0) if faq_entries else 0.0
     logger.info(
@@ -272,6 +267,8 @@ def run_agentic_loop(
         f"threshold={FAQ_SCORE_THRESHOLD}"
     )
     faq_summary = _tool_result_summary("faq_search", faq_result)
+    faq_metadata = dict(faq_summary["metadata"])
+    faq_metadata["latencyMs"] = faq_latency_ms
     _record_trace(
         "tool_result",
         turn=0,
@@ -280,7 +277,8 @@ def run_agentic_loop(
         summary=faq_summary["summary_text"],
         docIds=faq_summary["doc_ids"],
         docTitles=faq_summary["doc_titles"],
-        metadata=faq_summary["metadata"],
+        metadata=faq_metadata,
+        latencyMs=faq_latency_ms,
     )
     _emit_safe(
         ws_server,
@@ -294,7 +292,7 @@ def run_agentic_loop(
             "summary": faq_summary["summary_text"],
             "docIds": faq_summary["doc_ids"],
             "docTitles": faq_summary["doc_titles"],
-            "metadata": filter_metadata(faq_summary["metadata"]),
+            "metadata": filter_metadata(faq_metadata),
         },
         dev_payload={"raw": faq_summary["raw"]},
     )
@@ -351,7 +349,90 @@ def run_agentic_loop(
         messages.append({"role": "user", "content": [{"text": turn["query"]}]})
         messages.append({"role": "assistant", "content": [{"text": turn["answer"]}]})
 
-    # Seed the conversation with the FAQ result as if Claude had called it.
+    # Run vector_search pre-loop (the model always calls this first anyway).
+    # This saves one full Bedrock round-trip (~7s) per query.
+    vs_tool_use_id = "vector_search_turn0"
+    _emit_safe(
+        ws_server,
+        trace_seq,
+        query_id=query_id,
+        kind="tool_call",
+        turn=0,
+        payload={
+            "toolName": "vector_search",
+            "summary": tool_call_summary("vector_search", {"query": search_query}),
+            "status": "pending",
+        },
+    )
+    vs_started = time.perf_counter()
+    vs_result = execute_tool(
+        "vector_search",
+        {"query": search_query},
+        neptune,
+        chat_history=chat_history,
+        original_user_query=query,
+    )
+    vs_latency_ms = round((time.perf_counter() - vs_started) * 1000)
+    vs_summary = _tool_result_summary("vector_search", vs_result)
+    # The summary builder now includes statuteBackfill, caselawBackfill,
+    # broadDiscovery metadata. We add "seeded: true" so the frontend knows
+    # this was the pre-loop auto-search (not model-initiated).
+    vs_meta = {**vs_summary["metadata"], "seeded": True, "latencyMs": vs_latency_ms}
+    _record_trace(
+        "tool_result",
+        turn=0,
+        toolName="vector_search",
+        status=vs_summary["status"],
+        summary=vs_summary["summary_text"],
+        docIds=vs_summary["doc_ids"],
+        docTitles=vs_summary["doc_titles"],
+        metadata=vs_meta,
+        latencyMs=vs_latency_ms,
+    )
+    _emit_safe(
+        ws_server,
+        trace_seq,
+        query_id=query_id,
+        kind="tool_result",
+        turn=0,
+        payload={
+            "toolName": "vector_search",
+            "status": vs_summary["status"],
+            "summary": vs_summary["summary_text"],
+            "docIds": vs_summary["doc_ids"],
+            "docTitles": vs_summary["doc_titles"],
+            "metadata": {**filter_metadata(vs_meta)},
+        },
+    )
+
+    # Process vector_search result into all_chunks/discovery (same as in-loop handling)
+    if "chunks" in vs_result:
+        for chunk in vs_result["chunks"]:
+            doc_id = chunk.get("doc_id", "")
+            if doc_id:
+                all_doc_ids.add(doc_id)
+                discovery.setdefault(doc_id, "vector-search")
+            all_chunks.append(chunk)
+        for chunk in vs_result.get("statute_backfill", []):
+            doc_id = chunk.get("doc_id", "")
+            if doc_id:
+                all_doc_ids.add(doc_id)
+                discovery.setdefault(doc_id, "statute-backfill")
+            all_chunks.append(chunk)
+        for chunk in vs_result.get("caselaw_backfill", []):
+            doc_id = chunk.get("doc_id", "")
+            if doc_id:
+                all_doc_ids.add(doc_id)
+                discovery.setdefault(doc_id, "caselaw-backfill")
+            all_chunks.append(chunk)
+        for chunk in vs_result.get("broad_discovery", []):
+            doc_id = chunk.get("doc_id", "")
+            if doc_id:
+                all_doc_ids.add(doc_id)
+                discovery.setdefault(doc_id, "broad-discovery")
+            all_chunks.append(chunk)
+
+    # Seed the conversation with both FAQ and vector_search results.
     seed_tool_use_id = "faq_search_turn0"
     messages.extend(
         [
@@ -365,7 +446,14 @@ def run_agentic_loop(
                             "name": "faq_search",
                             "input": {"query": search_query},
                         }
-                    }
+                    },
+                    {
+                        "toolUse": {
+                            "toolUseId": vs_tool_use_id,
+                            "name": "vector_search",
+                            "input": {"query": search_query},
+                        }
+                    },
                 ],
             },
             {
@@ -376,7 +464,15 @@ def run_agentic_loop(
                             "toolUseId": seed_tool_use_id,
                             "content": [{"json": faq_result}],
                         }
-                    }
+                    },
+                    {
+                        "toolResult": {
+                            "toolUseId": vs_tool_use_id,
+                            "content": [
+                                {"json": _compact_for_model(vs_result, "vector_search")}
+                            ],
+                        }
+                    },
                 ],
             },
         ]
@@ -394,13 +490,12 @@ def run_agentic_loop(
                             f"(top score {top_score:.2f} ≥ {FAQ_SCORE_THRESHOLD:.2f}, "
                             f"FAQ id(s): {', '.join(faq_ids)}). Treat the FAQ Q/A as "
                             "the PRIMARY source of truth for your answer. Still run "
-                            "vector_search and graph traversal to find authoritative "
-                            "documents (statutes, admin rules, WPAM) that support, "
+                            "graph traversal to find authoritative documents — "
+                            "statutes, admin rules, WPAM sections — that support, "
                             "ground, or add useful detail to what the FAQ says — but "
-                            "do NOT contradict the FAQ. Use graph results to "
-                            "supplement and cite, not to replace. Include the FAQ "
-                            "id(s) above in your final cited_doc_ids alongside any "
-                            "supporting docs you retrieve."
+                            "do NOT contradict the FAQ. Include the FAQ id(s) above "
+                            "in your final cited_doc_ids alongside any supporting "
+                            "docs you retrieve."
                         )
                     }
                 ],
@@ -408,6 +503,7 @@ def run_agentic_loop(
         )
 
     tool_config = {"tools": TOOL_DEFINITIONS}
+    broad_fired = [True]  # broad discovery already fired in the pre-loop vector_search
 
     for turn in range(MAX_TURNS):
         turn_number = turn + 1
@@ -588,8 +684,15 @@ def run_agentic_loop(
             )
 
             tool_started = time.perf_counter()
+            # Only pass original_user_query on the first vector_search call
+            # so broad discovery fires once, not on every subsequent search.
+            _pass_original = query if (tool_name == "vector_search" and not broad_fired[0]) else None
             try:
-                result = execute_tool(tool_name, tool_input, neptune, chat_history=chat_history)
+                result = execute_tool(
+                    tool_name, tool_input, neptune,
+                    chat_history=chat_history,
+                    original_user_query=_pass_original,
+                )
             except Exception as exc:
                 _log(
                     "agent_tool_error",
@@ -606,18 +709,36 @@ def run_agentic_loop(
             tool_latency_ms = round((time.perf_counter() - tool_started) * 1000)
 
             if tool_name == "vector_search" and "chunks" in result:
+                broad_fired[0] = True
                 for chunk in result["chunks"]:
                     doc_id = chunk.get("doc_id", "")
                     if doc_id:
                         all_doc_ids.add(doc_id)
                         discovery.setdefault(doc_id, "vector-search")
                     all_chunks.append(chunk)
-                # Auto-enrichment neighbors are no longer surfaced (Direction 1,
-                # Option A): a doc becomes citable only when the model actually
-                # retrieves it (vector chunk, explicit get_neighbors,
-                # get_document, or a case-law path). vector_search no longer
-                # returns graph_context, so there are no enrichment neighbors to
-                # first-class as discovery here.
+                # Statute backfill: the statute-text chunks reached by following
+                # CITES edges from the top retrieved chunks. These are real,
+                # relevance-gated statute chunks the model should be able to
+                # cite, so add them to all_chunks (they flow into citation cards)
+                # and tag their discovery source distinctly for measurement.
+                for chunk in result.get("statute_backfill", []):
+                    doc_id = chunk.get("doc_id", "")
+                    if doc_id:
+                        all_doc_ids.add(doc_id)
+                        discovery.setdefault(doc_id, "statute-backfill")
+                    all_chunks.append(chunk)
+                for chunk in result.get("caselaw_backfill", []):
+                    doc_id = chunk.get("doc_id", "")
+                    if doc_id:
+                        all_doc_ids.add(doc_id)
+                        discovery.setdefault(doc_id, "caselaw-backfill")
+                    all_chunks.append(chunk)
+                for chunk in result.get("broad_discovery", []):
+                    doc_id = chunk.get("doc_id", "")
+                    if doc_id:
+                        all_doc_ids.add(doc_id)
+                        discovery.setdefault(doc_id, "broad-discovery")
+                    all_chunks.append(chunk)
 
             if tool_name in ("search_document", "get_section") and "chunks" in result:
                 for chunk in result["chunks"]:

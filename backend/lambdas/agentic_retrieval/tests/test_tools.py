@@ -2,6 +2,22 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _passthrough_auto_refine(request, monkeypatch):
+    """Make _auto_refine a no-op passthrough for all tests by default.
+
+    Tests marked with @pytest.mark.real_auto_refine skip this fixture.
+    """
+    if "real_auto_refine" in request.keywords:
+        return
+    monkeypatch.setattr(
+        "agent_tools.executor._auto_refine",
+        lambda query, history: (query, None),
+    )
+
 
 def test_execute_tool_vector_search():
     from agent_tools import execute_tool
@@ -174,153 +190,127 @@ def test_get_document_no_fallback_matches_returns_error():
     assert result.get("fallback_matches", []) == []
 
 
-def test_refine_query_tool_in_definitions():
+def test_refine_query_tool_removed_from_definitions():
     from agent_tools import TOOL_DEFINITIONS
 
     names = {t["toolSpec"]["name"] for t in TOOL_DEFINITIONS}
-    assert "refine_query" in names
+    assert "refine_query" not in names
 
 
-def test_refine_query_uses_history_when_present():
-    """When chat history is supplied, the Bedrock prompt should include it
-    so the model can resolve 'what about X' follow-ups."""
-    from agent_tools import execute_tool
+@pytest.mark.real_auto_refine
+def test_auto_refine_uses_history(monkeypatch):
+    """_auto_refine passes chat history to Bedrock so follow-ups resolve."""
+    from agent_tools.executor import _auto_refine
 
     fake_response = {
         "output": {
-            "message": {"content": [{"text": "agricultural land classification requirements"}]}
+            "message": {
+                "content": [
+                    {"text": '{"refined_query": "agricultural land classification", "target_wpam_year": null}'}
+                ]
+            }
         }
     }
     mock_bedrock = MagicMock()
     mock_bedrock.converse.return_value = fake_response
+    monkeypatch.setattr("agent_tools.executor.bedrock", mock_bedrock)
 
-    with patch("agent_tools.executor.bedrock", mock_bedrock):
-        result = execute_tool(
-            "refine_query",
-            {"query": "what about agriculture"},
-            MagicMock(),
-            chat_history=[
-                {"query": "what are land classifications", "answer": "..."},
-            ],
-        )
+    refined, year = _auto_refine(
+        "what about agriculture",
+        [{"query": "what are land classifications", "answer": "..."}],
+    )
 
-    assert result["refined_query"] == "agricultural land classification requirements"
-    # The Bedrock call must have received the history in the user content.
-    messages = mock_bedrock.converse.call_args.kwargs["messages"]
-    user_text = messages[0]["content"][0]["text"]
+    assert refined == "agricultural land classification"
+    assert year is None
+    user_text = mock_bedrock.converse.call_args.kwargs["messages"][0]["content"][0]["text"]
     assert "what are land classifications" in user_text
     assert "what about agriculture" in user_text
 
 
-def test_refine_query_falls_back_on_error():
-    """If Bedrock throws, the tool must not break the loop — return original."""
-    from agent_tools import execute_tool
+@pytest.mark.real_auto_refine
+def test_auto_refine_falls_back_on_error(monkeypatch):
+    """If Bedrock throws, return original query unchanged."""
+    from agent_tools.executor import _auto_refine
 
     mock_bedrock = MagicMock()
     mock_bedrock.converse.side_effect = RuntimeError("bedrock down")
+    monkeypatch.setattr("agent_tools.executor.bedrock", mock_bedrock)
 
-    with patch("agent_tools.executor.bedrock", mock_bedrock):
-        result = execute_tool(
-            "refine_query",
-            {"query": "original question"},
-            MagicMock(),
-            chat_history=None,
-        )
+    refined, year = _auto_refine("original question", None)
 
-    assert result["refined_query"] == "original question"
+    assert refined == "original question"
+    assert year is None
 
 
-def test_refine_query_extracts_target_wpam_year():
-    """LLM should return target_wpam_year when user explicitly mentions a year + WPAM."""
-    from agent_tools import execute_tool
+@pytest.mark.real_auto_refine
+def test_auto_refine_extracts_target_wpam_year(monkeypatch):
+    from agent_tools.executor import _auto_refine
 
-    mock_neptune = MagicMock()
     mock_response = {
         "output": {
             "message": {
                 "content": [
-                    {
-                        "text": '{"refined_query": "WPAM agricultural land 2018", "target_wpam_year": 2018}'
-                    }
+                    {"text": '{"refined_query": "WPAM agricultural land 2018", "target_wpam_year": 2018}'}
                 ]
             }
         }
     }
-    with patch("agent_tools.executor.bedrock") as mock_bedrock:
-        mock_bedrock.converse.return_value = mock_response
-        result = execute_tool(
-            "refine_query",
-            {"query": "what does the 2018 WPAM say about agricultural land?"},
-            mock_neptune,
-            chat_history=[],
-        )
+    mock_bedrock = MagicMock()
+    mock_bedrock.converse.return_value = mock_response
+    monkeypatch.setattr("agent_tools.executor.bedrock", mock_bedrock)
 
-    assert result["refined_query"] == "WPAM agricultural land 2018"
-    assert result["target_wpam_year"] == 2018
+    refined, year = _auto_refine("what does the 2018 WPAM say about agricultural land?", [])
+
+    assert refined == "WPAM agricultural land 2018"
+    assert year == 2018
 
 
-def test_refine_query_no_target_year_when_no_year_mentioned():
-    from agent_tools import execute_tool
+@pytest.mark.real_auto_refine
+def test_auto_refine_no_target_year_when_none(monkeypatch):
+    from agent_tools.executor import _auto_refine
 
-    mock_neptune = MagicMock()
     mock_response = {
         "output": {
             "message": {
                 "content": [
-                    {
-                        "text": '{"refined_query": "WPAM agricultural land", "target_wpam_year": null}'
-                    }
+                    {"text": '{"refined_query": "WPAM agricultural land", "target_wpam_year": null}'}
                 ]
             }
         }
     }
-    with patch("agent_tools.executor.bedrock") as mock_bedrock:
-        mock_bedrock.converse.return_value = mock_response
-        result = execute_tool(
-            "refine_query",
-            {"query": "what does WPAM say about agricultural land?"},
-            mock_neptune,
-            chat_history=[],
-        )
+    mock_bedrock = MagicMock()
+    mock_bedrock.converse.return_value = mock_response
+    monkeypatch.setattr("agent_tools.executor.bedrock", mock_bedrock)
 
-    assert result["target_wpam_year"] is None
+    _, year = _auto_refine("what does WPAM say about agricultural land?", [])
+    assert year is None
 
 
-def test_refine_query_falls_back_on_invalid_json():
-    """If the LLM doesn't return JSON, treat the entire output as the
-    refined query and target_wpam_year as None."""
-    from agent_tools import execute_tool
+@pytest.mark.real_auto_refine
+def test_auto_refine_falls_back_on_invalid_json(monkeypatch):
+    from agent_tools.executor import _auto_refine
 
-    mock_neptune = MagicMock()
     mock_response = {"output": {"message": {"content": [{"text": "WPAM agricultural land"}]}}}
-    with patch("agent_tools.executor.bedrock") as mock_bedrock:
-        mock_bedrock.converse.return_value = mock_response
-        result = execute_tool(
-            "refine_query",
-            {"query": "what does WPAM say about agricultural land?"},
-            mock_neptune,
-            chat_history=[],
-        )
+    mock_bedrock = MagicMock()
+    mock_bedrock.converse.return_value = mock_response
+    monkeypatch.setattr("agent_tools.executor.bedrock", mock_bedrock)
 
-    assert result["refined_query"] == "WPAM agricultural land"
-    assert result["target_wpam_year"] is None
+    refined, year = _auto_refine("what does WPAM say?", [])
+    assert refined == "WPAM agricultural land"
+    assert year is None
 
 
-def test_refine_query_falls_back_on_bedrock_error():
-    from agent_tools import execute_tool
+@pytest.mark.real_auto_refine
+def test_auto_refine_falls_back_on_bedrock_error(monkeypatch):
+    from agent_tools.executor import _auto_refine
 
-    mock_neptune = MagicMock()
-    with patch("agent_tools.executor.bedrock") as mock_bedrock:
-        mock_bedrock.converse.side_effect = RuntimeError("bedrock unavailable")
-        result = execute_tool(
-            "refine_query",
-            {"query": "what does WPAM say about agricultural land?"},
-            mock_neptune,
-            chat_history=[],
-        )
+    mock_bedrock = MagicMock()
+    mock_bedrock.converse.side_effect = RuntimeError("bedrock unavailable")
+    monkeypatch.setattr("agent_tools.executor.bedrock", mock_bedrock)
 
-    assert result["refined_query"] == "what does WPAM say about agricultural land?"
-    assert result["target_wpam_year"] is None
+    refined, year = _auto_refine("what does WPAM say about agricultural land?", None)
+    assert refined == "what does WPAM say about agricultural land?"
+    assert year is None
 
 
 def test_vector_search_applies_wpam_dedup():
@@ -360,7 +350,7 @@ def test_vector_search_applies_wpam_dedup():
     assert result["chunks"][0]["edition_year"] == 2025
 
 
-def test_vector_search_target_year_overrides_max():
+def test_vector_search_target_year_overrides_max(monkeypatch):
     from agent_tools import execute_tool
 
     mock_neptune = MagicMock()
@@ -383,11 +373,15 @@ def test_vector_search_target_year_overrides_max():
         },
     ]
     mock_neptune.get_neighbors.return_value = []
+    monkeypatch.setattr(
+        "agent_tools.executor._auto_refine",
+        lambda q, h: (q, 2018),
+    )
 
     with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool(
             "vector_search",
-            {"query": "2018 manufactured homes", "target_wpam_year": 2018},
+            {"query": "2018 manufactured homes"},
             mock_neptune,
         )
 
@@ -465,6 +459,38 @@ def test_get_neighbors_filters_out_chunk_labels():
     assert "stat-1" in ids
     assert "chunk-1" not in ids
     assert "chunk-2" not in ids
+
+
+def test_get_neighbors_ranked_result_includes_trace_context():
+    from agent_tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.get_neighbor_case_summaries_with_embeddings.return_value = [
+        {
+            "case_id": f"case-{i}",
+            "summary": f"Case summary {i}",
+            "title": f"Case {i}",
+            "citation": f"{i} Wis. 2d 1",
+            "embedding": [1.0, 0.0],
+        }
+        for i in range(10)
+    ]
+
+    with patch("agent_tools.executor.embed_query", return_value=[1.0, 0.0]):
+        result = execute_tool(
+            "get_neighbors",
+            {
+                "node_id": "WIS-STAT-70.32",
+                "query": "agricultural assessment",
+                "top_k": 10,
+            },
+            mock_neptune,
+        )
+
+    assert len(result["neighbors"]) == 10
+    assert result["query"] == "agricultural assessment"
+    assert result["top_k"] == 10
+    assert result["total_cases"] == 10
 
 
 def test_vector_search_enrichment_runs_but_is_not_surfaced():
@@ -573,131 +599,6 @@ def test_extract_citations():
     assert "24 N.W.3d 601" in citations
 
 
-def test_vector_search_neighbor_citation_discovery():
-    """vector_search should discover case law by scanning neighbor doc chunk
-    text for citations, using the top-ranked cross-framework neighbors."""
-    from agent_tools import execute_tool
-
-    mock_neptune = MagicMock()
-    mock_neptune.vector_search.return_value = [
-        {
-            "chunk_id": "c1",
-            "doc_id": "wpam-2025-ag",
-            "score": 0.9,
-            "text": "Agricultural land classification under sec. 70.32.",
-        },
-        {
-            "chunk_id": "c2",
-            "doc_id": "wpam-2025-ag",
-            "score": 0.85,
-            "text": "Land devoted primarily to agricultural use.",
-        },
-    ]
-    mock_neptune.get_neighbors.return_value = [
-        {
-            "id": "gov_publications-ag-guide",
-            "title": "Ag Assessment Guide",
-            "labels": ["Document"],
-            "framework_id": "FW-GOV-PUBS",
-            "relationship": "SUPPLEMENTS",
-        },
-    ]
-    # No citations in query chunk text, so resolve_case_citations is only
-    # called once — for the neighbor doc citations.
-    mock_neptune.resolve_case_citations.return_value = [
-        {
-            "id": "case-law-2019-wi-23",
-            "title": "Peter Ogden v. DOR",
-            "citation": "2019 WI 23",
-            "doc_type": "case_law",
-            "authority_level": 3,
-            "source_url": None,
-            "labels": ["CaseLaw"],
-        },
-    ]
-    mock_neptune.get_chunk_statute_ids.return_value = ["WIS-STAT-70.32"]
-    mock_neptune.rank_neighbors_by_shared_statutes.return_value = [
-        "gov_publications-ag-guide",
-    ]
-    mock_neptune.get_chunks_text_for_docs.return_value = [
-        "Agricultural classification per 2019 WI 23 requires land use.",
-    ]
-
-    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
-        result = execute_tool("vector_search", {"query": "ag classification"}, mock_neptune)
-
-    assert "related_case_law" in result
-    assert len(result["related_case_law"]) == 1
-    assert result["related_case_law"][0]["id"] == "case-law-2019-wi-23"
-    mock_neptune.get_chunk_statute_ids.assert_called_once_with(["c1", "c2"])
-    mock_neptune.rank_neighbors_by_shared_statutes.assert_called_once_with(
-        ["gov_publications-ag-guide"], ["WIS-STAT-70.32"], limit=3
-    )
-    mock_neptune.get_chunks_text_for_docs.assert_called_once_with(["gov_publications-ag-guide"])
-
-
-def test_vector_search_neighbor_citation_deduplicates():
-    """Neighbor citation discovery should not duplicate cases already found
-    by direct citation resolution from the query chunks."""
-    from agent_tools import execute_tool
-
-    mock_neptune = MagicMock()
-    mock_neptune.vector_search.return_value = [
-        {
-            "chunk_id": "c1",
-            "doc_id": "wpam-2025",
-            "score": 0.9,
-            "text": "See Markarian, 45 Wis. 2d 683.",
-        },
-    ]
-    mock_neptune.get_neighbors.return_value = [
-        {
-            "id": "gov-pub-1",
-            "title": "Guide",
-            "labels": ["Document"],
-            "framework_id": "FW-GOV-PUBS",
-            "relationship": "RELATED_TO",
-        },
-    ]
-    # Direct citation resolution finds Markarian from query chunk text
-    # Second resolve call returns both Markarian (dupe) and Peter Ogden (new)
-    mock_neptune.resolve_case_citations.side_effect = [
-        [
-            {
-                "id": "case-law-45-wis-2d-683",
-                "title": "Markarian",
-                "citation": "45 Wis. 2d 683",
-                "labels": ["CaseLaw"],
-            }
-        ],
-        [
-            {
-                "id": "case-law-45-wis-2d-683",
-                "title": "Markarian",
-                "citation": "45 Wis. 2d 683",
-                "labels": ["CaseLaw"],
-            },
-            {
-                "id": "case-law-2019-wi-23",
-                "title": "Peter Ogden v. DOR",
-                "citation": "2019 WI 23",
-                "labels": ["CaseLaw"],
-            },
-        ],
-    ]
-    mock_neptune.get_chunk_statute_ids.return_value = ["WIS-STAT-70.32"]
-    mock_neptune.rank_neighbors_by_shared_statutes.return_value = ["gov-pub-1"]
-    mock_neptune.get_chunks_text_for_docs.return_value = [
-        "See Markarian, 45 Wis. 2d 683, and 2019 WI 23.",
-    ]
-
-    with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
-        result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
-
-    assert len(result["related_case_law"]) == 2
-    ids = [c["id"] for c in result["related_case_law"]]
-    assert "case-law-45-wis-2d-683" in ids
-    assert "case-law-2019-wi-23" in ids
 
 
 def test_find_case_law_tool_by_citation():

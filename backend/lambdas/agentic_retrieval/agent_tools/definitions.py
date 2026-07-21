@@ -24,41 +24,14 @@ TOOL_DEFINITIONS = [
     },
     {
         "toolSpec": {
-            "name": "refine_query",
-            "description": (
-                "Rewrite the user's question into a focused search query "
-                "before calling vector_search. Call this "
-                "when: (1) the user's question is a short follow-up that "
-                "depends on earlier conversation (e.g., 'what about "
-                "agriculture' with no other context), OR (2) the question "
-                "uses casual phrasing unlikely to match document "
-                "vocabulary (e.g., 'my land', 'can I'), OR (3) the "
-                "question has obvious typos or is very brief. Returns a "
-                "single rewritten query string you should pass to the "
-                "next search tool. Do NOT call this for already-specific "
-                "questions — it adds a turn for no gain."
-            ),
-            "inputSchema": {
-                "json": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": ("The original user question to refine."),
-                        }
-                    },
-                    "required": ["query"],
-                }
-            },
-        }
-    },
-    {
-        "toolSpec": {
             "name": "vector_search",
             "description": (
                 "Search for relevant document chunks using semantic similarity. "
                 "Returns the most relevant text chunks from Wisconsin DOR documents. "
-                "Always start with this tool to find relevant content."
+                "Always start with this tool to find relevant content. "
+                "The query is automatically refined for retrieval (casual wording "
+                "translated to assessment vocabulary, follow-up context resolved) — "
+                "just pass the user's question directly."
             ),
             "inputSchema": {
                 "json": {
@@ -66,21 +39,15 @@ TOOL_DEFINITIONS = [
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "The search query to find relevant chunks",
+                            "description": (
+                                "The search query — pass the user's question directly "
+                                "or a specific topic to search for"
+                            ),
                         },
                         "top_k": {
                             "type": "integer",
                             "description": "Number of results to return (default: 15, max: 25)",
                             "default": 15,
-                        },
-                        "target_wpam_year": {
-                            "type": ["integer", "null"],
-                            "description": (
-                                "Optional. If the user explicitly asked about a "
-                                "specific WPAM edition year, pass it here so dedup "
-                                "returns chunks from that edition instead of the "
-                                "most recent. Use the value returned by refine_query."
-                            ),
                         },
                     },
                     "required": ["query"],
@@ -264,16 +231,22 @@ TOOL_DEFINITIONS = [
                             "description": "Edge direction (default: both)",
                             "default": "both",
                         },
-                        "title_filter": {
+                        "query": {
                             "type": "string",
                             "description": (
-                                "Optional. Filter neighbors to those whose title "
-                                "contains this substring (case-insensitive). Use "
-                                "when the node has many neighbors (e.g., a statute "
-                                "with hundreds of CITES edges) and you want a "
-                                "specific subset (e.g., title_filter='hospital' to "
-                                "find hospital-related cases citing a statute)."
+                                "Optional. When provided, semantically ranks neighbors "
+                                "by relevance to your query and returns only the most "
+                                "relevant results. Use this to improve accuracy when a "
+                                "node has many neighbors."
                             ),
+                        },
+                        "top_k": {
+                            "type": "integer",
+                            "description": (
+                                "Max neighbors to return when query is provided "
+                                "(default: 5, max: 10). Ignored without a query."
+                            ),
+                            "default": 5,
                         },
                         "target_wpam_year": {
                             "type": ["integer", "null"],
@@ -281,7 +254,7 @@ TOOL_DEFINITIONS = [
                                 "Optional. If the user explicitly asked about a "
                                 "specific WPAM edition year, pass it here so dedup "
                                 "returns chunks from that edition instead of the "
-                                "most recent. Use the value returned by refine_query."
+                                "most recent."
                             ),
                         },
                     },

@@ -294,8 +294,50 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             did = chunk.get("doc_id", "unknown")
             doc_chunks[did] = doc_chunks.get(did, 0) + 1
         chunk_ids = [c.get("chunk_id") for c in chunks if c.get("chunk_id")]
+        # Statute backfill: statute-text chunks pulled in because a top-ranked
+        # retrieved chunk CITES them. Each carries `cited_by_source_rank`
+        # (1-based rank into the retrieved chunks) so the visualizer can anchor
+        # the backfill dot's edge to the source chunk it was cited from.
+        statute_backfill = result.get("statute_backfill", []) or []
+        backfill_meta = [
+            {
+                "chunkId": b.get("chunk_id"),
+                "docId": b.get("doc_id"),
+                "sourceRank": b.get("cited_by_source_rank"),
+            }
+            for b in statute_backfill
+            if b.get("chunk_id")
+        ]
+        caselaw_backfill = result.get("caselaw_backfill", []) or []
+        caselaw_backfill_meta = [
+            {
+                "caseId": b.get("doc_id"),
+                "title": b.get("heading", ""),
+                "citation": b.get("subheading", ""),
+                "summary": (b.get("text") or "")[:150],
+                "relevanceScore": b.get("relevance_score"),
+            }
+            for b in caselaw_backfill
+        ]
+        broad_discovery = result.get("broad_discovery", []) or []
+        broad_meta = [
+            {
+                "docId": b.get("doc_id"),
+                "score": round(float(b.get("score", 0)), 4),
+            }
+            for b in broad_discovery
+            if b.get("doc_id")
+        ]
+        broad_additive_doc_chunks: dict[str, int] = result.get("broad_additive_doc_chunks") or {}
+        if not broad_additive_doc_chunks:
+            for chunk in broad_discovery:
+                did = chunk.get("doc_id", "unknown")
+                broad_additive_doc_chunks[did] = broad_additive_doc_chunks.get(did, 0) + 1
+        broad_chunk_count = len(broad_discovery)
         metadata = {
             "chunkCount": n_chunks,
+            "broadChunkCount": broad_chunk_count,
+            "totalChunkCount": n_chunks + broad_chunk_count,
             "docCount": n_docs,
             "autoEnrichedCount": auto_enriched_count,
             "topScore": round(top_score, 4),
@@ -306,6 +348,45 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             "docChunks": doc_chunks,
             "chunkIds": chunk_ids,
         }
+        if backfill_meta:
+            metadata["statuteBackfill"] = backfill_meta
+        if caselaw_backfill_meta:
+            metadata["caselawBackfill"] = caselaw_backfill_meta
+        if broad_meta:
+            metadata["broadDiscovery"] = broad_meta
+        if broad_additive_doc_chunks:
+            metadata["broadDocChunks"] = broad_additive_doc_chunks
+        broad_full_doc_chunks = result.get("broad_full_doc_chunks") or {}
+        if broad_full_doc_chunks:
+            metadata["broadFullDocChunks"] = broad_full_doc_chunks
+        broad_pre_dedup = result.get("broad_pre_dedup_count")
+        if broad_pre_dedup is not None:
+            metadata["broadPreDedupCount"] = broad_pre_dedup
+        broad_kept = result.get("broad_kept_count")
+        if broad_kept is not None:
+            metadata["broadKeptCount"] = broad_kept
+        broad_authority = result.get("broad_authority_breakdown") or {}
+        if broad_authority:
+            metadata["broadAuthorityBreakdown"] = broad_authority
+        broad_score_buckets = result.get("broad_score_buckets") or {}
+        if broad_score_buckets:
+            metadata["broadScoreBuckets"] = broad_score_buckets
+        if result.get("broad_top_score") is not None:
+            metadata["broadTopScore"] = result["broad_top_score"]
+        refined_query = result.get("refined_query", "")
+        if refined_query:
+            metadata["refinedQuery"] = refined_query
+        broad_query = result.get("broad_query", "")
+        if broad_query:
+            metadata["broadQuery"] = broad_query
+        if "broad_skipped" in result:
+            metadata["broadSkipped"] = bool(result["broad_skipped"])
+        top_k = result.get("top_k")
+        if top_k is not None:
+            metadata["topK"] = top_k
+        diversity_cap = result.get("diversity_cap_per_doc")
+        if diversity_cap is not None:
+            metadata["diversityCapPerDoc"] = diversity_cap
         if target_wpam_year is not None:
             metadata["targetWpamYear"] = target_wpam_year
 
@@ -392,18 +473,22 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         n = len(chunks)
         summary_text = f'Got "{heading}" ({n} chunks) from {doc_title}'
         chunk_ids = [c.get("chunk_id") for c in chunks if c.get("chunk_id")]
+        ranking_stats = result.get("ranking_stats")
+        # `filtered` tells the trace UI whether z-score ranking was applied
+        # (query passed) or chunks came back in document order (no query).
+        # Counts are always sent so unranked calls don't render as "0 of 0".
         metadata = {
             "chunkCount": n,
             "docId": target_doc,
             "docTitle": doc_title,
             "heading": heading,
             "chunkIds": chunk_ids,
+            "filtered": bool(ranking_stats),
+            "sectionChunkCount": (ranking_stats["sectionChunkCount"] if ranking_stats else n),
+            "returnedChunkCount": (ranking_stats["returnedChunkCount"] if ranking_stats else n),
         }
-        ranking_stats = result.get("ranking_stats")
         if ranking_stats:
             metadata["query"] = result.get("query", "")
-            metadata["sectionChunkCount"] = ranking_stats["sectionChunkCount"]
-            metadata["returnedChunkCount"] = ranking_stats["returnedChunkCount"]
             metadata["mean"] = ranking_stats["mean"]
             metadata["std"] = ranking_stats["std"]
             metadata["zThreshold"] = ranking_stats["zThreshold"]
@@ -415,29 +500,49 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         doc_ids = [n["id"] for n in neighbors if n.get("id")][:10]
         n = len(neighbors)
         summary_text = f"Retrieved {n} related {'document' if n == 1 else 'documents'} from graph"
+        ranking_stats = result.get("ranking_stats")
+        ranked = bool(ranking_stats)
+        score_by_id = {
+            score.get("chunkId"): score
+            for score in (ranking_stats or {}).get("chunkScores", [])
+            if score.get("chunkId")
+        }
         relationship_counts: dict[str, int] = {}
         for neighbor in neighbors:
-            rel = neighbor.get("relationship", "unknown")
+            rel = neighbor.get("relationship") or ("SEMANTIC_MATCH" if ranked else "unknown")
             relationship_counts[rel] = relationship_counts.get(rel, 0) + 1
         neighbor_titles = [
-            nb.get("title") or nb.get("id", "")
-            for nb in neighbors[:8]
-            if nb.get("title") or nb.get("id")
+            nb.get("title") or nb.get("heading") or nb.get("id", "")
+            for nb in neighbors[:10]
+            if nb.get("title") or nb.get("heading") or nb.get("id")
         ]
         neighbor_edges = [
             {
-                "title": nb.get("title") or nb.get("id", ""),
-                "relationship": nb.get("relationship", ""),
+                "id": nb.get("id", ""),
+                "title": nb.get("title") or nb.get("heading") or nb.get("id", ""),
+                "relationship": nb.get("relationship")
+                or ("SEMANTIC_MATCH" if ranked else ""),
+                "rank": rank,
+                "score": (
+                    score_by_id.get(nb.get("id"), {}).get("cosine")
+                    if ranked
+                    else None
+                ),
             }
-            for nb in neighbors[:8]
-            if nb.get("title") or nb.get("id")
+            for rank, nb in enumerate(neighbors[:10], start=1)
+            if nb.get("title") or nb.get("heading") or nb.get("id")
         ]
         metadata = {
             "neighborCount": len(neighbors),
             "relationshipCounts": relationship_counts,
             "neighborTitles": neighbor_titles,
             "neighborEdges": neighbor_edges,
+            "ranked": ranked,
         }
+        if ranked:
+            metadata["query"] = result.get("query", "")
+            metadata["topK"] = result.get("top_k", len(neighbors))
+            metadata["totalCandidates"] = result.get("total_cases", len(neighbors))
 
     elif tool_name == "get_document":
         doc = result.get("document")

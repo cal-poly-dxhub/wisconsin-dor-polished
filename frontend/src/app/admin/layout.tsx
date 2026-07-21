@@ -3,12 +3,13 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ProtectedRoute } from '@/components/auth/protected-route';
-import { Activity, Upload, Grid3X3 } from 'lucide-react';
+import { Activity, Upload, Grid3X3, Workflow } from 'lucide-react';
 
 const NAV_ITEMS = [
   { href: '/admin/activity', label: 'Activity', icon: Activity },
   { href: '/admin/ingest', label: 'Ingest', icon: Upload },
   { href: '/admin/chunks', label: 'Chunks', icon: Grid3X3 },
+  { href: '/admin/canvas', label: 'Canvas', icon: Workflow },
 ];
 
 function AdminSidebar() {

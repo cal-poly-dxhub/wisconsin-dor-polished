@@ -50,9 +50,21 @@ def build_rag_documents(
         tag = discovery.get(doc_id, "unknown")
         heading = chunk.get("heading") or ""
 
+        # Heading-based splitting and the "Statute § " title are STATUTE-ONLY.
+        # A statute chapter PDF holds many sections (70.30, 70.32, ...), so we
+        # split it into per-section cards. Every other doc type (WPAM, gov pubs,
+        # IAAO, ...) also carries headings, but those should stay collapsed into
+        # a single card titled by the document, not fragmented and mislabeled
+        # "Statute § ...". See regression from commit 4d97390.
+        is_statute = (
+            chunk.get("authority_level") == 2
+            or chunk.get("framework_id") == "FW-STATUTES"
+            or doc_id.startswith("WIS-STAT-")
+        )
+
         # Group by (doc_id, heading) so distinct statute sections get separate
-        # cards instead of collapsing into one chapter-level card.
-        group_key = f"{doc_id}::{heading}" if heading else doc_id
+        # cards; non-statutes group by doc_id so all their chunks share one card.
+        group_key = f"{doc_id}::{heading}" if (is_statute and heading) else doc_id
 
         page = chunk.get("start_page")
         if page is not None and chunk_text:
@@ -72,7 +84,7 @@ def build_rag_documents(
             else:
                 doc_info = doc_infos[doc_id]
 
-            if heading:
+            if is_statute and heading:
                 title = f"Statute § {heading}"
             else:
                 title = (doc_info.get("title") if doc_info else None) or doc_id

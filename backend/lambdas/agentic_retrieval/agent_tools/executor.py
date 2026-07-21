@@ -255,16 +255,111 @@ def _rank_chunks_by_relevance(
     }
 
 
+_REFINE_PROMPT = (
+    "Lightly rewrite the current user question into ONE standalone search "
+    "query for retrieving Wisconsin property-tax source documents. Use the "
+    "prior conversation only to resolve references or missing context. Make "
+    "the SMALLEST change that improves retrieval.\n\n"
+    "Rewrite rules:\n"
+    "1. Replace clearly casual/colloquial wording with the standard "
+    "assessment term ONLY when the mapping is obvious and certain: "
+    '"my land"/"my property" -> "real property" (or "agricultural land" for '
+    'farming topics); "fight/appeal my assessment" -> "board of review '
+    'objection"; "what my property is worth for taxes" -> "assessed value" / '
+    '"fair market value".\n'
+    "2. DO NOT expand or guess the meaning of any acronym, abbreviation, "
+    "program name, form number, or term you are not certain about. Leave it "
+    "EXACTLY as written. Keeping an unknown term verbatim is far better than "
+    "inventing an expansion.\n"
+    "3. DO NOT append any statute chapter or section number.\n"
+    "4. DO NOT add topic words, synonyms, or context the user did not imply.\n"
+    "5. If the question is already clear and specific, return it essentially "
+    'unchanged (add "Wisconsin" only if it is missing and the question is not '
+    "obviously Wisconsin-specific).\n\n"
+    "Also: if the user explicitly mentions a 4-digit year (e.g., '2018', "
+    "'the 2024 manual') AND the question is about WPAM / Wisconsin Property "
+    "Assessment Manual / property assessment guidance, populate "
+    "target_wpam_year with that year. Otherwise, target_wpam_year is null. "
+    "A year that refers only to a tax-filing deadline or a statute year is "
+    "NOT a target_wpam_year.\n\n"
+    "Return ONLY a JSON object on a single line, no prose, no markdown:\n"
+    '{"refined_query": "<rewritten query>", "target_wpam_year": <year or null>}'
+)
+
+
+def _auto_refine(query: str, chat_history: list[dict[str, str]] | None) -> tuple[str, int | None]:
+    """Refine a query for vector_search. Returns (refined_query, target_wpam_year).
+
+    Always called inside vector_search. On any error, returns the original query
+    unchanged so retrieval still proceeds.
+    """
+    refine_started = time.perf_counter()
+    prompt = (
+        f"{_REFINE_PROMPT}\n\n"
+        f"Prior conversation:\n{_history_context(chat_history)}\n\n"
+        f"Current question: {query}"
+    )
+    target_year: int | None = None
+    refined = query
+    try:
+        response = bedrock.converse(
+            modelId=REFINEMENT_MODEL_ID,
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            inferenceConfig={"maxTokens": 256, "temperature": 0.0},
+        )
+        message = response["output"]["message"]
+        raw = " ".join(
+            block.get("text", "").strip()
+            for block in message.get("content", [])
+            if block.get("text")
+        ).strip()
+        try:
+            parsed = json.loads(raw)
+            refined = str(parsed.get("refined_query", "")).strip()
+            year_value = parsed.get("target_wpam_year")
+            if isinstance(year_value, int) and not isinstance(year_value, bool):
+                target_year = year_value
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            refined = raw
+    except Exception as exc:  # noqa: BLE001
+        _log_tool_event(
+            "auto_refine_error",
+            logging.WARNING,
+            tool_name="vector_search",
+            error_type=type(exc).__name__,
+            error=str(exc),
+            **_query_fields(query),
+        )
+        refined = query
+
+    if not refined:
+        refined = query
+    _log_tool_event(
+        "auto_refine_complete",
+        tool_name="vector_search",
+        latency_ms=round((time.perf_counter() - refine_started) * 1000),
+        original_query=query[:200],
+        refined_query=refined,
+        target_wpam_year=target_year,
+        history_turns=len(chat_history or []),
+        **_query_fields(refined),
+    )
+    return refined, target_year
+
+
 def execute_tool(
     tool_name: str,
     tool_input: dict,
     neptune: NeptuneClient,
     chat_history: list[dict[str, str]] | None = None,
+    original_user_query: str | None = None,
 ) -> dict:
     """Execute a tool call and return the result.
 
-    ``chat_history`` is threaded through for ``refine_query`` only. Other
-    branches ignore it.
+    ``chat_history`` is threaded through for auto-refine inside vector_search.
+    ``original_user_query`` is the user's verbatim question — used by
+    vector_search's broad discovery arm to catch practitioner-oriented docs
+    (news, guides) that keyword-heavy model queries miss.
     """
     started = time.perf_counter()
     _log_tool_event(
@@ -305,330 +400,29 @@ def execute_tool(
         )
         return {"faqs": faqs, "count": len(faqs)}
 
-    elif tool_name == "refine_query":
-        query = tool_input["query"]
-        prompt = (
-            "Rewrite the current user question as one standalone search query for "
-            "Wisconsin property tax retrieval. Use the prior conversation only to "
-            "resolve references or missing context.\n\n"
-            "Also: if the user explicitly mentions a 4-digit year (e.g., '2018', "
-            "'the 2024 manual') AND the question is about WPAM / Wisconsin Property "
-            "Assessment Manual / property assessment guidance, populate "
-            "target_wpam_year with that year. Otherwise, target_wpam_year is null. "
-            "A year that refers only to a tax-filing deadline or a statute year is "
-            "NOT a target_wpam_year.\n\n"
-            "Return ONLY a JSON object on a single line, no prose, no markdown:\n"
-            '{"refined_query": "<rewritten query>", "target_wpam_year": <year or null>}\n\n'
-            f"Prior conversation:\n{_history_context(chat_history)}\n\n"
-            f"Current question: {query}"
-        )
-        target_year: int | None = None
-        refined = query
-        try:
-            response = bedrock.converse(
-                modelId=REFINEMENT_MODEL_ID,
-                messages=[{"role": "user", "content": [{"text": prompt}]}],
-                inferenceConfig={"maxTokens": 256, "temperature": 0.0},
-            )
-            message = response["output"]["message"]
-            raw = " ".join(
-                block.get("text", "").strip()
-                for block in message.get("content", [])
-                if block.get("text")
-            ).strip()
-            try:
-                parsed = json.loads(raw)
-                refined = str(parsed.get("refined_query", "")).strip()
-                year_value = parsed.get("target_wpam_year")
-                if isinstance(year_value, int) and not isinstance(year_value, bool):
-                    target_year = year_value
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                # LLM didn't return JSON — treat output as refined query, no target year
-                refined = raw
-        except Exception as exc:  # noqa: BLE001
-            _log_tool_event(
-                "refine_query_error",
-                logging.WARNING,
-                tool_name=tool_name,
-                error_type=type(exc).__name__,
-                error=str(exc),
-                **_query_fields(query),
-            )
-            refined = query
-
-        if not refined:
-            refined = query
-        _log_tool_event(
-            "refine_query_complete",
-            tool_name=tool_name,
-            latency_ms=round((time.perf_counter() - started) * 1000),
-            refined_query=refined,
-            target_wpam_year=target_year,
-            history_turns=len(chat_history or []),
-            **_query_fields(query),
-        )
-        return {"refined_query": refined, "target_wpam_year": target_year}
-
     elif tool_name == "vector_search":
-        embedding = embed_query(tool_input["query"])
+        # Delegates to the composable pipeline (agent_tools/pipeline.py +
+        # agent_tools/stages/*). Kept as a thin call here — rather than
+        # importing pipeline.run_vector_search directly into this module's
+        # namespace — so tests that patch this module's attributes
+        # (_auto_refine, embed_query, bedrock, RAW_BUCKET, extract_citations,
+        # _log_tool_event, _query_fields, _rank_chunks_by_relevance) keep
+        # intercepting calls exactly as before: the pipeline stages call back
+        # into `agent_tools.executor` at run time to resolve these names, so
+        # a monkeypatch on this module is honored regardless of which stage
+        # ends up invoking it.
+        from agent_tools import pipeline as _pipeline
+
+        raw_query = tool_input["query"]
         top_k = min(tool_input.get("top_k", 15), 25)
-        target_year = tool_input.get("target_wpam_year")
-        fetch_k = top_k * 6
-        vector_started = time.perf_counter()
-        chunks = neptune.vector_search(embedding, top_k=fetch_k)
-        pre_dedup_count = len(chunks)
-        chunks = dedupe_wpam_chunks(
-            chunks,
-            target_year=target_year,
-            current_wpam_year=neptune.current_wpam_year,
-        )
-        max_per_doc = int(os.environ.get("DIVERSITY_CAP_PER_DOC", "5"))
-        if max_per_doc > 0:
-            doc_counts: dict[str, int] = {}
-            diverse_chunks: list[dict] = []
-            for chunk in chunks:
-                doc_id = chunk.get("doc_id", "unknown")
-                if doc_counts.get(doc_id, 0) >= max_per_doc:
-                    continue
-                doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
-                diverse_chunks.append(chunk)
-            chunks = diverse_chunks
-        chunks = chunks[:top_k]
-        # Authority-aware tiebreaking: among chunks with similar relevance
-        # scores, prefer higher-authority sources (lower authority_level int).
-        # Chunks are bucketed by score — within the same bucket, authority wins.
-        # Between buckets, relevance wins.
-        _AUTH_TIE_THRESHOLD = 0.03
-        if chunks:
-            for i, chunk in enumerate(chunks):
-                score = chunk.get("score", 0)
-                bucket = int(score / _AUTH_TIE_THRESHOLD)
-                auth = chunk.get("authority_level") or 9
-                chunks[i]["_sort_key"] = (-bucket, auth)
-            chunks.sort(key=lambda c: c.pop("_sort_key"))
-        _log_tool_event(
-            "vector_search_neptune_complete",
-            tool_name=tool_name,
+        return _pipeline.run_vector_search(
+            query=raw_query,
+            neptune=neptune,
+            chat_history=chat_history,
+            original_user_query=original_user_query,
             top_k=top_k,
-            chunk_count=len(chunks),
-            pre_dedup_count=pre_dedup_count,
-            target_wpam_year=target_year,
-            latency_ms=round((time.perf_counter() - vector_started) * 1000),
-            top_doc_ids=[chunk.get("doc_id") for chunk in chunks[:5]],
-            **_query_fields(tool_input["query"]),
-        )
-
-        # Auto-enrichment: graph neighbors for top-3 distinct parent docs.
-        # This is now an INTERNAL-ONLY signal: it powers the deterministic
-        # case-law discovery blocks below (which read graph_context.values())
-        # but is NOT returned to the model. Over 45 days of production traces,
-        # model-facing enrichment produced 84.8% of discovered docs at a ~5%
-        # cite rate — pure context noise. The valuable authority traversal is
-        # the model's explicit get_neighbors(..., edge_types=["CITES"]) on
-        # statute stubs (prompt step 8), not this auto-fan-out. See
-        # docs/direction-1-auto-enrichment-spec.md (Option A).
-        graph_context: dict[str, list[dict]] = {}
-        seen: list[str] = []
-        for chunk in chunks:
-            doc_id = chunk.get("doc_id", "")
-            if doc_id and doc_id not in seen:
-                seen.append(doc_id)
-                if len(seen) >= 3:
-                    break
-
-        _ENRICH_CAP = int(os.environ.get("ENRICH_CAP_PER_DOC", "5"))
-        _ENRICH_CAP_PER_TYPE = int(os.environ.get("ENRICH_CAP_PER_TYPE", "4"))
-        _EDGE_PRIORITY = {
-            "CITES": 0,
-            "IMPLEMENTS": 0,
-            "DERIVED_FROM": 1,
-            "BELONGS_TO": 2,
-            "COVERS_TOPIC": 3,
-        }
-
-        def _rank_neighbors(neighbors: list[dict]) -> list[dict]:
-            """Rank by edge priority then authority, diversity-cap per doc_type."""
-            for n in neighbors:
-                n["_edge_pri"] = _EDGE_PRIORITY.get(n.get("relationship", ""), 5)
-                n["_auth"] = n.get("authority_level") or 9
-            neighbors.sort(key=lambda n: (n["_edge_pri"], n["_auth"]))
-            result = []
-            type_counts: dict[str, int] = {}
-            for n in neighbors:
-                dt = n.get("doc_type") or "unknown"
-                if type_counts.get(dt, 0) >= _ENRICH_CAP_PER_TYPE:
-                    continue
-                type_counts[dt] = type_counts.get(dt, 0) + 1
-                n.pop("_edge_pri", None)
-                n.pop("_auth", None)
-                result.append(n)
-                if len(result) >= _ENRICH_CAP:
-                    break
-            return result
-
-        for doc_id in seen:
-            try:
-                enrich_started = time.perf_counter()
-                neighbors = neptune.get_neighbors(doc_id)
-                neighbors = [n for n in neighbors if "Chunk" not in (n.get("labels") or [])]
-                neighbors = _rank_neighbors(neighbors)
-                if neighbors:
-                    graph_context[doc_id] = neighbors
-                _log_tool_event(
-                    "vector_search_auto_enrichment_complete",
-                    tool_name=tool_name,
-                    doc_id=doc_id,
-                    neighbor_count=len(neighbors),
-                    latency_ms=round((time.perf_counter() - enrich_started) * 1000),
-                )
-            except Exception:  # noqa: BLE001 — best-effort enrichment
-                _log_tool_event(
-                    "vector_search_auto_enrichment_error",
-                    logging.WARNING,
-                    tool_name=tool_name,
-                    doc_id=doc_id,
-                    error="auto-enrichment failed; continuing without neighbors",
-                )
-                logger.warning(
-                    f"auto-enrichment failed for {doc_id}; continuing without neighbors",
-                    exc_info=True,
-                )
-
-        # Case law discovery: extract citations from retrieved chunks and resolve
-        # them to CaseLaw nodes. This surfaces cases like Markarian that are
-        # mentioned in WPAM text but buried in 1500+ CITES neighbors of a statute.
-        related_case_law: list[dict] = []
-        try:
-            all_chunk_text = " ".join(c.get("text", "") for c in chunks)
-            citations = extract_citations(all_chunk_text)
-            if citations:
-                related_case_law = neptune.resolve_case_citations(citations)
-                _log_tool_event(
-                    "vector_search_case_law_resolved",
-                    tool_name=tool_name,
-                    citations_extracted=len(citations),
-                    cases_resolved=len(related_case_law),
-                    case_ids=[c.get("id") for c in related_case_law[:10]],
-                )
-        except Exception:  # noqa: BLE001
-            logger.warning("case law citation resolution failed", exc_info=True)
-
-        # Graph-structural case law discovery: derive statute subsection IDs
-        # from chunk headings, then traverse CITES edges to find CaseLaw nodes
-        # connected to those subsections. Prioritizes recent cases (2000+) that
-        # aren't mentioned in text yet.
-        try:
-            subsection_ids: set[str] = set()
-            for chunk in chunks:
-                heading = chunk.get("heading") or ""
-                doc_id = chunk.get("doc_id") or ""
-                if doc_id.startswith("statutes-") and heading:
-                    m = re.match(r"^(\d+\.\d+(?:\s*\(\d+\w*\))?)", heading)
-                    if m:
-                        subsection_ids.add(f"WIS-STAT-{m.group(1).strip()}")
-            if subsection_ids:
-                existing_ids = {c.get("id") for c in related_case_law}
-                graph_cases = neptune.get_cases_for_subsections(list(subsection_ids), limit=100)
-                # Sort by year from node ID (modern citations: case-law-YYYY-wi-*)
-                _yr_re = re.compile(r"^case-law-(\d{4})-wi")
-
-                def _case_year(c: dict) -> int:
-                    m = _yr_re.match(c.get("id") or "")
-                    return int(m.group(1)) if m else 0
-
-                graph_cases.sort(key=_case_year, reverse=True)
-                new_cases = [c for c in graph_cases[:15] if c.get("id") not in existing_ids]
-                if new_cases:
-                    related_case_law.extend(new_cases)
-                    _log_tool_event(
-                        "vector_search_subsection_case_discovery",
-                        tool_name=tool_name,
-                        subsection_ids=sorted(subsection_ids),
-                        total_cases=len(graph_cases),
-                        new_cases=len(new_cases),
-                        case_ids=[c.get("id") for c in new_cases[:10]],
-                    )
-        except Exception:  # noqa: BLE001
-            logger.warning("subsection case law discovery failed", exc_info=True)
-
-        # Neighbor-doc citation extraction: pick the most topically relevant
-        # non-WPAM neighbor docs (ranked by shared statutes with query chunks),
-        # read their chunk text, and extract case citations via regex. This
-        # surfaces cases like Peter Ogden (2019 WI 23) that are mentioned in
-        # neighbor doc text but not in the directly-retrieved chunks.
-        try:
-            neighbor_doc_ids = sorted(
-                {
-                    n.get("id")
-                    for neighbors in graph_context.values()
-                    for n in neighbors
-                    if n.get("id")
-                    and n.get("framework_id") != "FW-WPAM"
-                    and not any(
-                        lbl in (n.get("labels") or [])
-                        for lbl in ("CaseLaw", "Statute", "Framework", "Topic", "Chunk")
-                    )
-                }
-            )
-            if neighbor_doc_ids:
-                chunk_ids = [c.get("chunk_id", "") for c in chunks if c.get("chunk_id")]
-                chunk_statute_ids = neptune.get_chunk_statute_ids(chunk_ids)
-                if chunk_statute_ids:
-                    ranked_docs = neptune.rank_neighbors_by_shared_statutes(
-                        neighbor_doc_ids, chunk_statute_ids, limit=3
-                    )
-                    if ranked_docs:
-                        neighbor_texts = neptune.get_chunks_text_for_docs(ranked_docs)
-                        neighbor_text_blob = " ".join(neighbor_texts)
-                        neighbor_citations = extract_citations(neighbor_text_blob)
-                        if neighbor_citations:
-                            existing_citations = set(citations) if citations else set()
-                            new_citations = [
-                                c for c in neighbor_citations if c not in existing_citations
-                            ]
-                            if new_citations:
-                                existing_ids = {c.get("id") for c in related_case_law}
-                                resolved = neptune.resolve_case_citations(new_citations)
-                                resolved = [c for c in resolved if c.get("id") not in existing_ids]
-                                if resolved:
-                                    related_case_law.extend(resolved)
-                                    _log_tool_event(
-                                        "vector_search_neighbor_citation_discovery",
-                                        tool_name=tool_name,
-                                        ranked_neighbor_docs=ranked_docs,
-                                        neighbor_chunks_scanned=len(neighbor_texts),
-                                        citations_extracted=len(neighbor_citations),
-                                        new_citations=len(new_citations),
-                                        cases_resolved=len(resolved),
-                                        case_ids=[c.get("id") for c in resolved[:10]],
-                                    )
-        except Exception:  # noqa: BLE001
-            logger.warning("neighbor citation discovery failed", exc_info=True)
-
-        _log_tool_event(
-            "vector_search_complete",
             tool_name=tool_name,
-            top_k=top_k,
-            chunk_count=len(chunks),
-            graph_context_doc_count=len(graph_context),
-            graph_context_neighbor_count=sum(len(v) for v in graph_context.values()),
-            related_case_law_count=len(related_case_law),
-            latency_ms=round((time.perf_counter() - started) * 1000),
-            **_query_fields(tool_input["query"]),
         )
-        # graph_context is intentionally NOT included in the model-facing result
-        # (Direction 1, Option A). It was consumed above by the internal
-        # case-law discovery blocks; surfacing it to the model just floods the
-        # tool result with low-cite-rate neighbor stubs.
-        result: dict[str, Any] = {
-            "chunks": chunks,
-            "pre_dedup_count": pre_dedup_count,
-        }
-        if target_year is not None:
-            result["target_wpam_year"] = target_year
-        if related_case_law:
-            result["related_case_law"] = related_case_law
-        return result
 
     elif tool_name == "search_document":
         target_doc_id = tool_input.get("doc_id") or tool_input.get("node_id") or ""
@@ -782,10 +576,68 @@ def execute_tool(
         }
 
     elif tool_name == "get_neighbors":
+        node_id = tool_input["node_id"]
+        edge_types = tool_input.get("edge_types")
+        direction = tool_input.get("direction", "both")
+        query = tool_input.get("query", "")
+        top_k = min(tool_input.get("top_k", 5), 10)
+
+        # When a query is provided, attempt semantic ranking on neighbor chunks.
+        # Works best for statute stubs with CITES→CaseLaw (summary embeddings),
+        # but applies to any node whose neighbors have embedded chunks.
+        if query and node_id.startswith("WIS-STAT-"):
+            try:
+                case_summaries = neptune.get_neighbor_case_summaries_with_embeddings(
+                    node_id, direction=direction
+                )
+                if case_summaries:
+                    query_embedding = embed_query(query)
+                    rank_result = _rank_chunks_by_relevance(
+                        [
+                            {
+                                "id": cs.get("case_id"),
+                                "text": cs.get("summary", ""),
+                                "heading": cs.get("title", ""),
+                                "subheading": cs.get("citation", ""),
+                                "start_page": None,
+                                "end_page": None,
+                                "embedding": cs.get("embedding"),
+                                "source_url": cs.get("source_url", ""),
+                                "case_id": cs.get("case_id"),
+                                "citation": cs.get("citation"),
+                            }
+                            for cs in case_summaries
+                        ],
+                        query_embedding,
+                        top_k,
+                    )
+                    ranked_cases = rank_result["chunks"]
+                    _log_tool_event(
+                        "get_neighbors_ranked_cases",
+                        tool_name=tool_name,
+                        node_id=node_id,
+                        query=query[:200],
+                        total_cases=len(case_summaries),
+                        returned=len(ranked_cases),
+                        latency_ms=round((time.perf_counter() - started) * 1000),
+                    )
+                    return {
+                        "neighbors": ranked_cases,
+                        "ranking_stats": rank_result.get("ranking_stats"),
+                        "total_cases": len(case_summaries),
+                        "query": query,
+                        "top_k": top_k,
+                    }
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Ranked case-law neighbors failed; falling back to unranked",
+                    exc_info=True,
+                )
+
         neighbors = neptune.get_neighbors(
-            tool_input["node_id"],
-            edge_types=tool_input.get("edge_types"),
-            direction=tool_input.get("direction", "both"),
+            node_id,
+            edge_types=edge_types,
+            direction=direction,
             title_filter=tool_input.get("title_filter"),
         )
         target_year = tool_input.get("target_wpam_year")
@@ -799,9 +651,9 @@ def execute_tool(
         _log_tool_event(
             "get_neighbors_complete",
             tool_name=tool_name,
-            node_id=tool_input["node_id"],
-            edge_types=tool_input.get("edge_types"),
-            direction=tool_input.get("direction", "both"),
+            node_id=node_id,
+            edge_types=edge_types,
+            direction=direction,
             target_wpam_year=target_year,
             neighbor_count=len(neighbors),
             filtered_chunk_count=pre_filter_count - len(neighbors),

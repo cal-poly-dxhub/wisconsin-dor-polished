@@ -97,7 +97,7 @@ def embed_chunks(doc: dict, model_id: str, dimension: int) -> dict:
     doc_id = doc["doc_id"]
     chunks = doc.get("chunks", [])
 
-    if doc.get("doc_type") == "case_law":
+    if doc.get("doc_type") == "case_law" and not chunks:
         return doc
 
     for i, chunk in enumerate(chunks):

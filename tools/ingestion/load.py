@@ -753,10 +753,10 @@ def phase_8_vector_upserts(client, graph_id: str, documents: list[dict]):
     logger.info(f"  Upserted {total} chunk vectors")
 
 
-def phase_9_cleanup(client, graph_id: str):
+def phase_9_cleanup(client, graph_id: str, documents: list[dict] | None = None):
     """Garbage-collect orphan nodes left over from prior loads.
 
-    Two specific classes:
+    Three specific classes:
       1. Orphan Statute STUBs — created on demand by phase 3 / phase 8 when
          a chunk's regex matches a section we never indexed full text for.
          If after the whole load the stub has zero incoming AND zero
@@ -767,6 +767,10 @@ def phase_9_cleanup(client, graph_id: str):
          canonical that isn't a "member" of any cluster, so the doc→topic
          edge is never wired). Topics with zero COVERS_TOPIC are dead
          weight in the index.
+      3. Stale CaseLaw nodes — parallel-reporter duplicates from prior loads
+         that were later deduplicated from S3. Their extracted cache no
+         longer exists, so they'll never be updated. Delete any CaseLaw
+         node whose ID isn't in the current document set.
 
     This phase is run-once-and-safe. MERGE-idempotent phases above will
     not re-create the orphans because the underlying conditions for stub
@@ -806,6 +810,42 @@ def phase_9_cleanup(client, graph_id: str):
     )
     deleted_topics = topic_orphans.get("results", [{}])[0].get("deleted", 0)
     logger.info(f"  Deleted {deleted_topics} orphan Topic nodes (no incoming COVERS_TOPIC)")
+
+    # Stale CaseLaw nodes: parallel-reporter duplicates whose extracted cache
+    # was removed by --clean-losers or dedup. Delete any CaseLaw node not in
+    # the current document set being loaded.
+    if documents:
+        current_case_ids = {
+            d["doc_id"] for d in documents if d.get("doc_type") == "case_law"
+        }
+        if current_case_ids:
+            all_graph_cases = execute_query(
+                client, graph_id,
+                "MATCH (c:CaseLaw) RETURN c.id AS id",
+            )
+            graph_case_ids = {r["id"] for r in all_graph_cases.get("results", [])}
+            stale_ids = sorted(graph_case_ids - current_case_ids)
+            if stale_ids:
+                logger.info(
+                    f"  Found {len(stale_ids)} stale CaseLaw nodes "
+                    f"(in graph but not in current extracted set of {len(current_case_ids)})"
+                )
+                batch_size = 100
+                total_deleted = 0
+                for i in range(0, len(stale_ids), batch_size):
+                    batch = stale_ids[i : i + batch_size]
+                    result = execute_query(
+                        client, graph_id,
+                        "UNWIND $ids AS cid "
+                        "MATCH (c:CaseLaw {id: cid}) "
+                        "DETACH DELETE c "
+                        "RETURN count(c) AS deleted",
+                        {"ids": batch},
+                    )
+                    total_deleted += result.get("results", [{}])[0].get("deleted", 0)
+                logger.info(f"  Purged {total_deleted} stale CaseLaw nodes")
+            else:
+                logger.info("  No stale CaseLaw nodes found")
 
 
 def main():
@@ -847,7 +887,7 @@ def main():
         (6, "Case Law CITES", lambda: phase_6_case_law_cites(client, graph_id, documents)),
         (7, "Stub Resolution", lambda: phase_7_stub_resolution(client, graph_id)),
         (8, "Vector Upserts", lambda: phase_8_vector_upserts(client, graph_id, documents)),
-        (9, "Orphan Cleanup", lambda: phase_9_cleanup(client, graph_id)),
+        (9, "Orphan Cleanup", lambda: phase_9_cleanup(client, graph_id, documents)),
     ]
 
     for phase_num, name, fn in phases:

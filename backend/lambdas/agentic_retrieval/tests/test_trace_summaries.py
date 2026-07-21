@@ -86,6 +86,41 @@ class TestBuildToolResultSummary:
         assert "2 related" in s["summary_text"]
         assert set(s["doc_ids"]) == {"d1", "d2"}
 
+    def test_get_neighbors_ranked_emits_ten_results_and_ranking_data(self):
+        neighbors = [
+            {"id": f"case-{i}", "heading": f"Case {i}"}
+            for i in range(1, 11)
+        ]
+        result = {
+            "neighbors": neighbors,
+            "query": "uniformity clause agricultural assessment",
+            "top_k": 10,
+            "total_cases": 27,
+            "ranking_stats": {
+                "chunkScores": [
+                    {"chunkId": f"case-{i}", "cosine": 1 - i / 100}
+                    for i in range(1, 11)
+                ]
+            },
+        }
+
+        s = build_tool_result_summary("get_neighbors", result, self._mock_neptune())
+        metadata = s["metadata"]
+
+        assert len(s["doc_ids"]) == 10
+        assert len(metadata["neighborEdges"]) == 10
+        assert metadata["neighborEdges"][0] == {
+            "id": "case-1",
+            "title": "Case 1",
+            "relationship": "SEMANTIC_MATCH",
+            "rank": 1,
+            "score": 0.99,
+        }
+        assert metadata["ranked"] is True
+        assert metadata["query"] == "uniformity clause agricultural assessment"
+        assert metadata["topK"] == 10
+        assert metadata["totalCandidates"] == 27
+
     def test_faq_search_with_scores(self):
         result = {
             "faqs": [{"text": "Q: x\nA: y", "score": 0.84}, {"text": "Q: p\nA: q", "score": 0.71}],
@@ -112,6 +147,71 @@ class TestBuildToolResultSummary:
         assert s["status"] == "terminal"
         assert "2 sources" in s["summary_text"]
         assert s["doc_ids"] == ["a", "b"]
+
+    def test_get_section_unranked(self):
+        """No-query get_section: counts always present, no ranking fields."""
+        result = {
+            "chunks": [
+                {"chunk_id": "c1", "doc_id": "statutes-79"},
+                {"chunk_id": "c2", "doc_id": "statutes-79"},
+            ],
+            "doc_id": "statutes-79",
+            "heading": "79.036 County and municipal aid; beginning in 2024.",
+        }
+        s = build_tool_result_summary("get_section", result, self._mock_neptune())
+        assert s["status"] == "ok"
+        assert "2 chunks" in s["summary_text"]
+        m = s["metadata"]
+        assert m["chunkCount"] == 2
+        assert m["filtered"] is False
+        assert m["sectionChunkCount"] == 2
+        assert m["returnedChunkCount"] == 2
+        assert m["chunkIds"] == ["c1", "c2"]
+        assert "query" not in m
+        assert "chunkScores" not in m
+
+    def test_get_section_ranked(self):
+        """Query-ranked get_section: ranking stats and query pass through."""
+        result = {
+            "chunks": [{"chunk_id": "c1", "doc_id": "statutes-79"}],
+            "doc_id": "statutes-79",
+            "heading": "79.05 Expenditure restraint incentive program.",
+            "query": "expenditure restraint program sales tax revenues calculation",
+            "ranking_stats": {
+                "sectionChunkCount": 7,
+                "returnedChunkCount": 1,
+                "mean": 0.7823,
+                "std": 0.0941,
+                "zThreshold": 0.5,
+                "flatDistribution": False,
+                "chunkScores": [
+                    {
+                        "chunkId": "c1",
+                        "cosine": 0.8912,
+                        "zScore": 1.16,
+                        "heading": "79.05",
+                        "included": True,
+                    },
+                    {
+                        "chunkId": "c2",
+                        "cosine": 0.6990,
+                        "zScore": -0.88,
+                        "heading": "79.05",
+                        "included": False,
+                    },
+                ],
+            },
+        }
+        s = build_tool_result_summary("get_section", result, self._mock_neptune())
+        assert s["status"] == "ok"
+        m = s["metadata"]
+        assert m["filtered"] is True
+        assert m["query"] == "expenditure restraint program sales tax revenues calculation"
+        assert m["chunkCount"] == 1
+        assert m["sectionChunkCount"] == 7
+        assert m["returnedChunkCount"] == 1
+        assert len(m["chunkScores"]) == 2
+        assert m["zThreshold"] == 0.5
 
     def test_fetch_opinion_miss(self):
         s = build_tool_result_summary(

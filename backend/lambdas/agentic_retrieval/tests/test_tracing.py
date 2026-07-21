@@ -54,6 +54,9 @@ class TestFilterMetadata:
                 "topScore": 0.9,
                 "latencyMs": 120,
                 "query": "shown in trace",
+                "ranked": True,
+                "topK": 10,
+                "totalCandidates": 27,
                 "rawUserText": "dropped — not allowlisted",
             }
         )
@@ -62,6 +65,9 @@ class TestFilterMetadata:
             "topScore": 0.9,
             "latencyMs": 120,
             "query": "shown in trace",
+            "ranked": True,
+            "topK": 10,
+            "totalCandidates": 27,
         }
 
     def test_non_dict_returns_empty(self):

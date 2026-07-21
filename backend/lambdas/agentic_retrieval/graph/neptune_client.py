@@ -377,6 +377,31 @@ class NeptuneClient:
         )
         return results
 
+    def get_neighbor_case_summaries_with_embeddings(
+        self, node_id: str, direction: str = "outgoing"
+    ) -> list[dict]:
+        """Get CaseLaw neighbor summary chunks with embeddings for local ranking.
+
+        Traverses CITES edges from a statute stub to CaseLaw nodes, then fetches
+        their summary chunks (heading='Holding') with stored vectors.
+        """
+        if direction == "outgoing":
+            pattern = "MATCH (s {id: $id})-[:CITES]->(cl:CaseLaw)"
+        elif direction == "incoming":
+            pattern = "MATCH (s {id: $id})<-[:CITES]-(cl:CaseLaw)"
+        else:
+            pattern = "MATCH (s {id: $id})-[:CITES]-(cl:CaseLaw)"
+        results = self.query(
+            f"{pattern} "
+            "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(cl) "
+            "CALL neptune.algo.vectors.get(c) YIELD embedding "
+            "RETURN cl.id AS case_id, cl.title AS title, cl.citation AS citation, "
+            "cl.source_url AS source_url, c.text AS summary, embedding",
+            {"id": node_id},
+            query_name="get_neighbor_case_summaries",
+        )
+        return results
+
     def get_chunk_statute_ids(self, chunk_ids: list[str]) -> list[str]:
         """Return statute IDs cited by the given chunks (via CITES edges)."""
         if not chunk_ids:
@@ -428,6 +453,40 @@ class NeptuneClient:
             query_name="get_chunks_text_for_docs",
         )
         return [r["text"] for r in results if r.get("text")]
+
+    def get_statute_backfill(self, chunk_ids: list[str]) -> list[dict]:
+        """Resolve the statute text that a set of source chunks CITES.
+
+        Two-hop deterministic traversal:
+            (source Chunk)-[:CITES]->(Statute stub)-[:DEFINED_BY]->(statute Chunk)
+
+        Given the top-N most-relevant chunks from a vector search, returns the
+        actual statute-text chunks they cite — the "statute backfill" that lets
+        the agent ground a WPAM/guide passage in the underlying statute without
+        a separate list_sections + get_section round-trip.
+
+        Each returned row carries `source_chunk_id` (which retrieved chunk cited
+        this statute) so the caller can rank/cap by source relevance. A single
+        statute chunk may appear once per citing source chunk; the caller
+        dedups. Returns statute chunk fields shaped like vector_search results
+        so they slot into the same citation-card pipeline.
+        """
+        if not chunk_ids:
+            return []
+        results = self.query(
+            "UNWIND $chunk_ids AS cid "
+            "MATCH (src:Chunk {id: cid})-[:CITES]->(stub:Statute)-[:DEFINED_BY]->(sc:Chunk) "
+            "OPTIONAL MATCH (sc)-[:EXTRACTED_FROM]->(parent) "
+            "RETURN cid AS source_chunk_id, stub.id AS stub_id, "
+            "sc.id AS chunk_id, sc.text AS text, sc.doc_id AS doc_id, "
+            "sc.source_url AS source_url, sc.s3_key AS s3_key, "
+            "sc.start_page AS start_page, sc.end_page AS end_page, "
+            "sc.heading AS heading, sc.subheading AS subheading, "
+            "parent.authority_level AS authority_level",
+            {"chunk_ids": chunk_ids},
+            query_name="get_statute_backfill",
+        )
+        return results
 
     def get_cases_for_subsections(self, subsection_ids: list[str], limit: int = 15) -> list[dict]:
         """Find CaseLaw nodes connected to statute subsections via CITES edges.

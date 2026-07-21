@@ -18,6 +18,7 @@ from typing import Any
 import pydantic
 from case_law import fetch_case_opinion, is_case_law_stub
 from chat_history import get_chat_history, save_chat_history
+from config_validator import validate_env_and_log
 from faq import build_cited_faq_resource
 from loop.phase_a import run_agentic_loop
 from loop.phase_b import apply_persona, build_answer_context, stream_answer
@@ -35,6 +36,12 @@ from websocket_utils.utils import get_ws_connection_from_session
 from config import AGENTIC_MODEL_ID, ENABLE_DISAMBIGUATION, RAW_BUCKET, bedrock, neptune
 
 logger = logging.getLogger(__name__)
+
+# Cold-start validation of env vars against config/retrieval.toml. Emits a
+# CloudWatch log line and never raises — see config_validator.py. Runs once
+# per Lambda cold start (module import), same lifecycle as the AWS client
+# singletons in config.py above.
+validate_env_and_log()
 
 
 def process_event(event: dict) -> UserQuery:
