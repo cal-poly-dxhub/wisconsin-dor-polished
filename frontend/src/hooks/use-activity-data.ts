@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { http } from '@/lib/http';
 
 export interface TraceEvent {
@@ -22,16 +22,19 @@ export interface TraceEvent {
   discovery?: Record<string, number>;
 }
 
-export interface ActivityItem {
+export interface ActivitySummary {
   queryId: string;
   sessionId: string;
   query: string;
-  answer: string;
   timestamp: string;
   thumbUp: boolean | null;
   feedback: string | null;
-  trace: TraceEvent[] | null;
   email: string | null;
+}
+
+export interface ActivityItem extends ActivitySummary {
+  answer: string;
+  trace: TraceEvent[] | null;
 }
 
 export type FeedbackFilter = 'all' | 'up' | 'down' | 'rated' | 'unrated';
@@ -45,174 +48,201 @@ export interface ActivityFilters {
 }
 
 interface PageResponse {
-  items: ActivityItem[];
+  items: ActivitySummary[];
   count: number;
   nextCursor: string | null;
 }
 
 interface CacheEntry {
-  items: ActivityItem[];
+  items: ActivitySummary[];
   nextCursor: string | null;
   fetchedAt: number;
   filterKey: string;
 }
 
-const DEFAULT_PAGE_SIZE = 50;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const STORAGE_KEY = 'admin-activity-cache';
+type CacheStore = Record<string, CacheEntry>;
 
-function loadCache(): CacheEntry | null {
+const DEFAULT_PAGE_SIZE = 50;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const STORAGE_KEY = 'admin-activity-summary-cache-v2';
+const MAX_CACHE_ENTRIES = 8;
+
+function loadCache(): CacheStore {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const entry = JSON.parse(raw) as CacheEntry;
-    if (Date.now() - entry.fetchedAt > CACHE_TTL_MS) return null;
-    return entry;
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as CacheStore;
+    const now = Date.now();
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, entry]) => now - entry.fetchedAt < CACHE_TTL_MS)
+    );
   } catch {
-    return null;
+    return {};
   }
 }
 
-function saveCache(entry: CacheEntry) {
+function saveCache(cache: CacheStore) {
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(entry));
+    const newestEntries = Object.entries(cache)
+      .sort(([, left], [, right]) => right.fetchedAt - left.fetchedAt)
+      .slice(0, MAX_CACHE_ENTRIES);
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(newestEntries)));
   } catch {
-    // quota exceeded — ignore
+    // Storage may be disabled or full. The in-memory cache remains usable.
   }
 }
 
-let moduleCache: CacheEntry | null = loadCache();
+let moduleCache: CacheStore = loadCache();
 
 function buildFilterKey(filters: ActivityFilters): string {
   if (filters.cacheKey) return filters.cacheKey;
-  return JSON.stringify({ after: filters.after, before: filters.before });
+  return JSON.stringify({
+    after: filters.after,
+    before: filters.before,
+    feedback: filters.feedback ?? 'all',
+  });
 }
 
 export function useActivityData() {
-  const [items, setItems] = useState<ActivityItem[]>(moduleCache?.items ?? []);
+  const [items, setItems] = useState<ActivitySummary[]>([]);
   const [loading, setLoading] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(moduleCache?.nextCursor ?? null);
-  const [hasMore, setHasMore] = useState(moduleCache?.nextCursor !== null);
-  const [totalLoaded, setTotalLoaded] = useState(moduleCache?.items.length ?? 0);
-  const [lastFetched, setLastFetched] = useState<number | null>(moduleCache?.fetchedAt ?? null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [totalLoaded, setTotalLoaded] = useState(0);
+  const [lastFetched, setLastFetched] = useState<number | null>(null);
   const currentFiltersRef = useRef<ActivityFilters>({});
-  const currentAutoLoadAllRef = useRef(false);
+  const requestGenerationRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const fetchPage = useCallback(async (filters: ActivityFilters = {}, cursor?: string | null) => {
+  const fetchPage = useCallback(async (
+    filters: ActivityFilters = {},
+    cursor?: string | null,
+    signal?: AbortSignal
+  ) => {
     const params = new URLSearchParams();
     params.set('limit', String(filters.limit ?? DEFAULT_PAGE_SIZE));
     if (cursor) params.set('cursor', cursor);
     if (filters.after) params.set('after', filters.after);
     if (filters.before) params.set('before', filters.before);
-    if (filters.feedback && filters.feedback !== 'all') params.set('feedback', filters.feedback);
+    if (filters.feedback && filters.feedback !== 'all') {
+      params.set('feedback', filters.feedback);
+    }
 
-    const response = await http.get(`admin/activity?${params.toString()}`).json<{
+    const response = await http.get(`admin/activity?${params.toString()}`, { signal }).json<{
       statusCode?: number;
       body?: string;
-      items?: ActivityItem[];
+      items?: ActivitySummary[];
       count?: number;
       nextCursor?: string | null;
     }>();
 
-    let data: PageResponse;
-    if (response.statusCode && response.body) {
-      data = JSON.parse(response.body);
-    } else {
-      data = response as unknown as PageResponse;
-    }
-
-    return data;
+    return response.statusCode && response.body
+      ? JSON.parse(response.body) as PageResponse
+      : response as PageResponse;
   }, []);
 
-  const applyResults = useCallback((allItems: ActivityItem[], cursor: string | null, filterKey: string) => {
-    const entry: CacheEntry = { items: allItems, nextCursor: cursor, fetchedAt: Date.now(), filterKey };
-    moduleCache = entry;
-    saveCache(entry);
+  const applyResults = useCallback((
+    allItems: ActivitySummary[],
+    cursor: string | null,
+    filterKey: string
+  ) => {
+    const fetchedAt = Date.now();
+    const entry: CacheEntry = {
+      items: allItems,
+      nextCursor: cursor,
+      fetchedAt,
+      filterKey,
+    };
+    moduleCache = { ...moduleCache, [filterKey]: entry };
+    saveCache(moduleCache);
     setItems(allItems);
     setNextCursor(cursor);
-    setHasMore(cursor !== null);
     setTotalLoaded(allItems.length);
-    setLastFetched(Date.now());
+    setLastFetched(fetchedAt);
   }, []);
 
-  const loadFirstPage = useCallback(async (filters: ActivityFilters = {}, autoLoadAll = false) => {
+  const loadFirstPage = useCallback(async (filters: ActivityFilters = {}) => {
     currentFiltersRef.current = filters;
-    currentAutoLoadAllRef.current = autoLoadAll;
-
     const filterKey = buildFilterKey(filters);
+    const generation = ++requestGenerationRef.current;
 
-    if (moduleCache && moduleCache.filterKey === filterKey && Date.now() - moduleCache.fetchedAt < CACHE_TTL_MS) {
-      setItems(moduleCache.items);
-      setNextCursor(moduleCache.nextCursor);
-      setHasMore(moduleCache.nextCursor !== null);
-      setTotalLoaded(moduleCache.items.length);
-      setLastFetched(moduleCache.fetchedAt);
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
+
+    const cached = moduleCache[filterKey];
+    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+      setItems(cached.items);
+      setNextCursor(cached.nextCursor);
+      setTotalLoaded(cached.items.length);
+      setLastFetched(cached.fetchedAt);
+      setLoading(false);
       return;
     }
 
+    setItems([]);
+    setNextCursor(null);
+    setTotalLoaded(0);
+    setLastFetched(null);
     setLoading(true);
+
     try {
-      const data = await fetchPage(filters, null);
-      if (!data) return;
-
-      let allItems = data.items;
-      let cursor = data.nextCursor;
-
-      if (autoLoadAll) {
-        while (cursor) {
-          const next = await fetchPage(filters, cursor);
-          if (!next) break;
-          allItems = [...allItems, ...next.items];
-          cursor = next.nextCursor;
-        }
+      const data = await fetchPage(filters, null, abortControllerRef.current.signal);
+      if (generation === requestGenerationRef.current && data) {
+        applyResults(data.items, data.nextCursor, filterKey);
       }
-
-      applyResults(allItems, cursor, filterKey);
-    } catch (err) {
-      console.error('Failed to fetch activity data:', err);
+    } catch (error) {
+      if (generation === requestGenerationRef.current && !abortControllerRef.current.signal.aborted) {
+        console.error('Failed to fetch activity data:', error);
+      }
     } finally {
-      setLoading(false);
+      if (generation === requestGenerationRef.current) setLoading(false);
     }
-  }, [fetchPage, applyResults]);
+  }, [applyResults, fetchPage]);
 
   const loadNextPage = useCallback(async () => {
     if (!nextCursor || loading) return;
+
+    const generation = ++requestGenerationRef.current;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
     setLoading(true);
+
     try {
-      const data = await fetchPage(currentFiltersRef.current, nextCursor);
-      if (data) {
+      const data = await fetchPage(
+        currentFiltersRef.current,
+        nextCursor,
+        abortControllerRef.current.signal
+      );
+      if (generation === requestGenerationRef.current && data) {
         const allItems = [...items, ...data.items];
-        const filterKey = buildFilterKey(currentFiltersRef.current);
-        applyResults(allItems, data.nextCursor, filterKey);
+        applyResults(allItems, data.nextCursor, buildFilterKey(currentFiltersRef.current));
       }
-    } catch (err) {
-      console.error('Failed to load next page:', err);
+    } catch (error) {
+      if (generation === requestGenerationRef.current && !abortControllerRef.current.signal.aborted) {
+        console.error('Failed to load next activity page:', error);
+      }
     } finally {
-      setLoading(false);
+      if (generation === requestGenerationRef.current) setLoading(false);
     }
-  }, [nextCursor, loading, items, fetchPage, applyResults]);
+  }, [applyResults, fetchPage, items, loading, nextCursor]);
 
   const refresh = useCallback(async () => {
-    moduleCache = null;
-    try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
-    await loadFirstPage(currentFiltersRef.current, currentAutoLoadAllRef.current);
+    const filterKey = buildFilterKey(currentFiltersRef.current);
+    const { [filterKey]: _removed, ...remainingCache } = moduleCache;
+    void _removed;
+    moduleCache = remainingCache;
+    saveCache(moduleCache);
+    await loadFirstPage(currentFiltersRef.current);
   }, [loadFirstPage]);
-
-  const getItemById = useCallback(
-    (queryId: string) => items.find(item => item.queryId === queryId) ?? null,
-    [items]
-  );
 
   return {
     items,
     loading,
     lastFetched,
-    hasMore,
+    hasMore: nextCursor !== null,
     totalLoaded,
     nextCursor,
     loadFirstPage,
     loadNextPage,
     refresh,
-    getItemById,
   };
 }

@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   useActivityData,
-  type ActivityItem,
+  type ActivitySummary,
   type ActivityFilters,
   type FeedbackFilter,
 } from '@/hooks/use-activity-data';
@@ -33,6 +34,7 @@ import {
 type TimeRange = 'day' | 'week' | 'month' | 'all';
 
 const PAGE_SIZE = 50;
+const SEARCH_DEBOUNCE_MS = 300;
 
 const TIME_RANGE_LABELS: Record<TimeRange, string> = {
   day: 'Last 24 hours',
@@ -49,6 +51,14 @@ const FEEDBACK_LABELS: Record<FeedbackFilter, string> = {
   unrated: 'No rating',
 };
 
+function isTimeRange(value: string | null): value is TimeRange {
+  return value != null && value in TIME_RANGE_LABELS;
+}
+
+function isFeedbackFilter(value: string | null): value is FeedbackFilter {
+  return value != null && value in FEEDBACK_LABELS;
+}
+
 function getTimeRangeISO(range: TimeRange): string | undefined {
   if (range === 'all') return undefined;
   const now = new Date();
@@ -62,8 +72,8 @@ function getTimeRangeISO(range: TimeRange): string | undefined {
   }
 }
 
-function formatTimestamp(ts: string): string {
-  return new Date(ts).toLocaleDateString('en-US', {
+function formatTimestamp(timestamp: string): string {
+  return new Date(timestamp).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -71,8 +81,8 @@ function formatTimestamp(ts: string): string {
   });
 }
 
-function formatRelativeTime(ts: number): string {
-  const diff = Date.now() - ts;
+function formatRelativeTime(timestamp: number): string {
+  const diff = Date.now() - timestamp;
   const minutes = Math.floor(diff / 60000);
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m ago`;
@@ -81,42 +91,34 @@ function formatRelativeTime(ts: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function applyClientFilters(
-  items: ActivityItem[],
-  feedbackFilter: FeedbackFilter,
-  searchQuery: string
-): ActivityItem[] {
-  return items.filter(item => {
-    switch (feedbackFilter) {
-      case 'up':
-        if (item.thumbUp !== true) return false;
-        break;
-      case 'down':
-        if (item.thumbUp !== false) return false;
-        break;
-      case 'rated':
-        if (item.thumbUp == null) return false;
-        break;
-      case 'unrated':
-        if (item.thumbUp != null) return false;
-        break;
-    }
+function applyClientSearch(items: ActivitySummary[], searchQuery: string): ActivitySummary[] {
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  if (!normalizedQuery) return items;
 
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const matchesQuery = item.query.toLowerCase().includes(q);
-      const matchesAnswer = item.answer.toLowerCase().includes(q);
-      const matchesFeedback = item.feedback?.toLowerCase().includes(q);
-      const matchesEmail = item.email?.toLowerCase().includes(q);
-      if (!matchesQuery && !matchesAnswer && !matchesFeedback && !matchesEmail) return false;
-    }
+  return items.filter(item => (
+    item.query.toLowerCase().includes(normalizedQuery)
+    || item.feedback?.toLowerCase().includes(normalizedQuery)
+    || item.email?.toLowerCase().includes(normalizedQuery)
+  ));
+}
 
-    return true;
-  });
+function ActivityPageFallback() {
+  return (
+    <div className="mx-auto max-w-5xl px-6 py-8">
+      <div className="h-6 w-24 animate-pulse rounded bg-muted" />
+      <div className="mt-6 h-16 animate-pulse rounded bg-muted/50" />
+      <div className="mt-6 h-8 max-w-xl animate-pulse rounded bg-muted/50" />
+      <div className="mt-4 h-72 animate-pulse rounded-lg border border-border bg-muted/30" />
+    </div>
+  );
 }
 
 export default function AdminActivityPage() {
-  return <ActivityDashboard />;
+  return (
+    <Suspense fallback={<ActivityPageFallback />}>
+      <ActivityDashboard />
+    </Suspense>
+  );
 }
 
 function ActivityDashboard() {
@@ -130,218 +132,258 @@ function ActivityDashboard() {
     loadNextPage,
     refresh,
   } = useActivityData();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
-  const [timeRange, setTimeRange] = useState<TimeRange>('week');
-  const [feedbackFilter, setFeedbackFilter] = useState<FeedbackFilter>('all');
-  const [searchQuery, setSearchQuery] = useState('');
-
+  const rangeParam = searchParams.get('range');
+  const feedbackParam = searchParams.get('feedback');
+  const urlSearchQuery = searchParams.get('q') ?? '';
+  const timeRange: TimeRange = isTimeRange(rangeParam) ? rangeParam : 'week';
+  const feedbackFilter: FeedbackFilter = isFeedbackFilter(feedbackParam)
+    ? feedbackParam
+    : 'all';
+  const [searchQuery, setSearchQuery] = useState(urlSearchQuery);
   const loadFirstPageRef = useRef(loadFirstPage);
 
   useEffect(() => {
     loadFirstPageRef.current = loadFirstPage;
   });
 
+  const replaceSearchParams = useCallback((updates: Record<string, string | null>) => {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(updates)) {
+      if (value) nextParams.set(key, value);
+      else nextParams.delete(key);
+    }
+    const queryString = nextParams.toString();
+    router.replace(queryString ? `${pathname}?${queryString}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  useEffect(() => {
+    setSearchQuery(urlSearchQuery);
+  }, [urlSearchQuery]);
+
+  useEffect(() => {
+    if (searchQuery === urlSearchQuery) return;
+    const timer = window.setTimeout(() => {
+      replaceSearchParams({ q: searchQuery.trim() || null });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [replaceSearchParams, searchQuery, urlSearchQuery]);
+
   useEffect(() => {
     const filters: ActivityFilters = {
       after: getTimeRangeISO(timeRange),
+      feedback: feedbackFilter,
       limit: PAGE_SIZE,
-      cacheKey: timeRange,
+      cacheKey: `${timeRange}:${feedbackFilter}`,
     };
-    const autoLoadAll = timeRange !== 'all';
-    loadFirstPageRef.current(filters, autoLoadAll);
-  }, [timeRange]);
+    loadFirstPageRef.current(filters);
+  }, [feedbackFilter, timeRange]);
 
   const displayItems = useMemo(
-    () => applyClientFilters(items, feedbackFilter, searchQuery),
-    [items, feedbackFilter, searchQuery]
+    () => applyClientSearch(items, searchQuery),
+    [items, searchQuery]
   );
 
   const stats = useMemo(() => {
-    const total = displayItems.length;
-    const thumbsUp = displayItems.filter(i => i.thumbUp === true).length;
-    const thumbsDown = displayItems.filter(i => i.thumbUp === false).length;
-    const rated = thumbsUp + thumbsDown;
-    return { total, rated, thumbsUp, thumbsDown };
+    const thumbsUp = displayItems.filter(item => item.thumbUp === true).length;
+    const thumbsDown = displayItems.filter(item => item.thumbUp === false).length;
+    return {
+      total: displayItems.length,
+      rated: thumbsUp + thumbsDown,
+      thumbsUp,
+      thumbsDown,
+    };
   }, [displayItems]);
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    replaceSearchParams({ range: null, feedback: null, q: null });
+  };
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
-        {/* Header */}
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-lg font-semibold text-foreground">Activity</h1>
-            {lastFetched && (
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Synced {formatRelativeTime(lastFetched)}
-              </p>
-            )}
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => refresh()}
-            disabled={loading}
-          >
-            <RefreshCw className={`mr-1.5 h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-            Sync
-          </Button>
-        </div>
-
-        {/* Stats row */}
-        <div className="mt-6 flex gap-6">
-          <div>
-            <div className="text-2xl font-semibold text-foreground">{stats.total}</div>
-            <div className="text-xs text-muted-foreground">queries</div>
-          </div>
-          <Separator orientation="vertical" className="h-10" />
-          <div>
-            <div className="text-2xl font-semibold text-foreground">{stats.rated}</div>
-            <div className="text-xs text-muted-foreground">rated</div>
-          </div>
-          <Separator orientation="vertical" className="h-10" />
-          <div className="flex items-center gap-1.5">
-            <ThumbsUp className="h-3.5 w-3.5 text-green-500" />
-            <span className="text-2xl font-semibold text-foreground">{stats.thumbsUp}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <ThumbsDown className="h-3.5 w-3.5 text-red-500" />
-            <span className="text-2xl font-semibold text-foreground">{stats.thumbsDown}</span>
-          </div>
-        </div>
-
-        {/* Filters bar */}
-        <div className="mt-6 flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search queries, answers, or feedback..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="pl-8 h-8 text-sm"
-            />
-          </div>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
-                <Filter className="h-3 w-3" />
-                {TIME_RANGE_LABELS[timeRange]}
-                <ChevronDown className="h-3 w-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {(Object.entries(TIME_RANGE_LABELS) as [TimeRange, string][]).map(([key, label]) => (
-                <DropdownMenuItem key={key} onClick={() => setTimeRange(key)}>
-                  {label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
-                <MessageSquare className="h-3 w-3" />
-                {FEEDBACK_LABELS[feedbackFilter]}
-                <ChevronDown className="h-3 w-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {(Object.entries(FEEDBACK_LABELS) as [FeedbackFilter, string][]).map(([key, label]) => (
-                <DropdownMenuItem key={key} onClick={() => setFeedbackFilter(key)}>
-                  {label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {(searchQuery || timeRange !== 'week' || feedbackFilter !== 'all') && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs text-muted-foreground"
-              onClick={() => { setSearchQuery(''); setTimeRange('week'); setFeedbackFilter('all'); }}
-            >
-              Clear filters
-            </Button>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-lg font-semibold text-foreground">Activity</h1>
+          {lastFetched && (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Synced {formatRelativeTime(lastFetched)}
+            </p>
           )}
         </div>
+        <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
+          <RefreshCw className={`mr-1.5 h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+          Sync
+        </Button>
+      </div>
 
-        {/* Results */}
-        <div className="mt-4">
-          {loading && items.length === 0 ? (
-            <div className="py-16 text-center text-sm text-muted-foreground">
-              Loading activity data...
-            </div>
-          ) : displayItems.length === 0 ? (
-            <div className="py-16 text-center text-sm text-muted-foreground">
-              No queries match the current filters.
-            </div>
-          ) : (
-            <>
-              <Card>
-                <CardContent className="p-0">
-                  <div className="divide-y divide-border">
-                    {displayItems.map(item => (
-                      <Link
-                        key={item.queryId}
-                        href={`/admin/activity/${item.queryId}`}
-                        className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50"
-                      >
-                        <div className="shrink-0">
-                          {item.thumbUp === true ? (
-                            <ThumbsUp className="h-3.5 w-3.5 text-green-500" />
-                          ) : item.thumbUp === false ? (
-                            <ThumbsDown className="h-3.5 w-3.5 text-red-500" />
-                          ) : (
-                            <MessageSquare className="h-3.5 w-3.5 text-muted-foreground/50" />
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm text-foreground">{item.query}</p>
-                          <div className="mt-0.5 flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">
-                              {item.timestamp ? formatTimestamp(item.timestamp) : 'No timestamp'}
-                            </span>
-                            {item.email && (
-                              <span className="text-xs text-muted-foreground">
-                                &middot; {item.email}
-                              </span>
-                            )}
-                            {item.feedback && (
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                                has comment
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                        <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/50" />
-                      </Link>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Load more */}
-              <div className="mt-4 flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">
-                  Showing {displayItems.length} queries
-                  {totalLoaded !== displayItems.length && ` (${totalLoaded} loaded)`}
-                </span>
-                {hasMore && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={loadNextPage}
-                    disabled={loading}
-                  >
-                    {loading ? 'Loading...' : 'Load more'}
-                  </Button>
-                )}
-              </div>
-            </>
-          )}
+      <div className="mt-6 flex gap-6">
+        <div>
+          <div className="text-2xl font-semibold text-foreground">{stats.total}</div>
+          <div className="text-xs text-muted-foreground">shown</div>
+        </div>
+        <Separator orientation="vertical" className="h-10" />
+        <div>
+          <div className="text-2xl font-semibold text-foreground">{stats.rated}</div>
+          <div className="text-xs text-muted-foreground">rated</div>
+        </div>
+        <Separator orientation="vertical" className="h-10" />
+        <div className="flex items-center gap-1.5">
+          <ThumbsUp className="h-3.5 w-3.5 text-green-500" />
+          <span className="text-2xl font-semibold text-foreground">{stats.thumbsUp}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <ThumbsDown className="h-3.5 w-3.5 text-red-500" />
+          <span className="text-2xl font-semibold text-foreground">{stats.thumbsDown}</span>
         </div>
       </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[240px] max-w-sm flex-1">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search loaded queries, comments, or email..."
+            value={searchQuery}
+            onChange={event => setSearchQuery(event.target.value)}
+            className="h-8 pl-8 text-sm"
+          />
+        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
+              <Filter className="h-3 w-3" />
+              {TIME_RANGE_LABELS[timeRange]}
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {(Object.entries(TIME_RANGE_LABELS) as [TimeRange, string][]).map(([key, label]) => (
+              <DropdownMenuItem
+                key={key}
+                onClick={() => replaceSearchParams({ range: key === 'week' ? null : key })}
+              >
+                {label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
+              <MessageSquare className="h-3 w-3" />
+              {FEEDBACK_LABELS[feedbackFilter]}
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {(Object.entries(FEEDBACK_LABELS) as [FeedbackFilter, string][]).map(([key, label]) => (
+              <DropdownMenuItem
+                key={key}
+                onClick={() => replaceSearchParams({ feedback: key === 'all' ? null : key })}
+              >
+                {label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {(searchQuery || timeRange !== 'week' || feedbackFilter !== 'all') && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs text-muted-foreground"
+            onClick={clearFilters}
+          >
+            Clear filters
+          </Button>
+        )}
+      </div>
+
+      <div className="mt-4">
+        {loading && items.length === 0 ? (
+          <div className="py-16 text-center text-sm text-muted-foreground">
+            Loading activity data...
+          </div>
+        ) : displayItems.length === 0 ? (
+          <div className="py-16 text-center text-sm text-muted-foreground">
+            <p>No loaded queries match the current filters.</p>
+            {hasMore && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={loadNextPage}
+                disabled={loading}
+              >
+                {loading ? 'Loading...' : 'Search next page'}
+              </Button>
+            )}
+          </div>
+        ) : (
+          <>
+            <Card>
+              <CardContent className="p-0">
+                <div className="divide-y divide-border">
+                  {displayItems.map(item => (
+                    <Link
+                      key={item.queryId}
+                      href={`/admin/activity/${item.queryId}${searchParams.toString() ? `?${searchParams.toString()}` : ''}`}
+                      scroll={false}
+                      aria-label={`Open details for: ${item.query}`}
+                      className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    >
+                      <div className="shrink-0">
+                        {item.thumbUp === true ? (
+                          <ThumbsUp className="h-3.5 w-3.5 text-green-500" />
+                        ) : item.thumbUp === false ? (
+                          <ThumbsDown className="h-3.5 w-3.5 text-red-500" />
+                        ) : (
+                          <MessageSquare className="h-3.5 w-3.5 text-muted-foreground/50" />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm text-foreground">{item.query}</p>
+                        <div className="mt-0.5 flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">
+                            {item.timestamp ? formatTimestamp(item.timestamp) : 'No timestamp'}
+                          </span>
+                          {item.email && (
+                            <span className="truncate text-xs text-muted-foreground">
+                              &middot; {item.email}
+                            </span>
+                          )}
+                          {item.feedback && (
+                            <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                              has comment
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                      <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
+                    </Link>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="mt-4 flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
+                Showing {displayItems.length} of {totalLoaded} loaded queries
+              </span>
+              {hasMore && (
+                <Button variant="outline" size="sm" onClick={loadNextPage} disabled={loading}>
+                  {loading ? 'Loading...' : 'Load more'}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

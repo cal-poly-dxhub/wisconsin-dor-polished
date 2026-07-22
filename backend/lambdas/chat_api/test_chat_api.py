@@ -12,10 +12,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 
 from aws_lambda_powertools.event_handler.api_gateway import BaseRouter
+from botocore.exceptions import ClientError
 
 with patch.dict(os.environ, {"SESSIONS_TABLE_NAME": "test-sessions-table", "LOG_LEVEL": "INFO"}):
     import main as chat_api_main
     from main import (
+        activity_handler,
         create_session_handler,
         handler,
         send_message_handler,
@@ -41,7 +43,7 @@ def patch_create_session():
     return patch.object(chat_api_main, "create_session")
 
 
-def _set_current_event(json_body=None, claims=None):
+def _set_current_event(json_body=None, claims=None, query_params=None):
     """Point the resolver's current_event at a mock the handlers can read.
 
     Handlers pull the request body from ``app.current_event.json_body`` and the
@@ -58,6 +60,7 @@ def _set_current_event(json_body=None, claims=None):
     """
     event = MagicMock()
     event.json_body = json_body
+    event.query_string_parameters = query_params or {}
     event.request_context.authorizer.jwt_claim = (
         claims if claims is not None else {"sub": "test-user", "email": "user@example.com"}
     )
@@ -349,3 +352,113 @@ def test_session_route_calls_create_session(mock_create_session):
     # Assert that create_session was called once (the resolver wraps the
     # handler's return value, so we assert on the side effect, not the status).
     mock_create_session.assert_called_once()
+
+
+def _activity_ddb_item(query_id="query-1", session_id="session-1", thumb_up=None):
+    item = {
+        "queryId": {"S": query_id},
+        "sessionId": {"S": session_id},
+        "query": {"S": "How is agricultural land assessed?"},
+        "timestamp": {"S": "2026-07-21T20:00:00+00:00"},
+        "feedback": {"S": "Useful response"},
+        # These large detail attributes must never be returned by the list API.
+        "answer": {"S": "Long answer"},
+        "trace": {"S": "[]"},
+        "resources": {"L": []},
+    }
+    if thumb_up is not None:
+        item["thumbUp"] = {"BOOL": thumb_up}
+    return item
+
+
+@patch_dynamodb()
+def test_activity_list_returns_lean_projected_summaries(mock_dynamodb):
+    mock_dynamodb.query.return_value = {
+        "Items": [_activity_ddb_item(thumb_up=True)],
+        "ScannedCount": 1,
+        "ConsumedCapacity": {"CapacityUnits": 0.5},
+    }
+    mock_dynamodb.batch_get_item.return_value = {
+        "Responses": {
+            "test-sessions-table": [
+                {
+                    "sessionId": {"S": "session-1"},
+                    "email": {"S": "admin@example.com"},
+                }
+            ]
+        }
+    }
+    _set_current_event(
+        claims={"cognito:groups": ["Admins"]},
+        query_params={"limit": "25", "after": "2026-07-01T00:00:00+00:00"},
+    )
+
+    response = activity_handler()
+
+    assert response["statusCode"] == 200
+    body = json.loads(response["body"])
+    assert body["count"] == 1
+    assert body["items"] == [
+        {
+            "queryId": "query-1",
+            "sessionId": "session-1",
+            "query": "How is agricultural land assessed?",
+            "timestamp": "2026-07-21T20:00:00+00:00",
+            "thumbUp": True,
+            "feedback": "Useful response",
+            "email": "admin@example.com",
+        }
+    ]
+
+    query_kwargs = mock_dynamodb.query.call_args.kwargs
+    assert query_kwargs["IndexName"] == "activityIndexV2"
+    assert query_kwargs["Limit"] == 25
+    assert query_kwargs["ProjectionExpression"] == (
+        "queryId, sessionId, #q, #ts, thumbUp, feedback"
+    )
+    assert query_kwargs["ReturnConsumedCapacity"] == "INDEXES"
+
+
+@patch_dynamodb()
+def test_activity_feedback_filter_fills_sparse_page(mock_dynamodb):
+    first_cursor = {
+        "queryId": {"S": "skipped-query"},
+        "gsi1pk": {"S": "ALL"},
+        "timestamp": {"S": "2026-07-21T20:01:00+00:00"},
+    }
+    mock_dynamodb.query.side_effect = [
+        {"Items": [], "ScannedCount": 1, "LastEvaluatedKey": first_cursor},
+        {"Items": [_activity_ddb_item(thumb_up=False)], "ScannedCount": 1},
+    ]
+    mock_dynamodb.batch_get_item.return_value = {"Responses": {"test-sessions-table": []}}
+    _set_current_event(
+        claims={"cognito:groups": ["Admins"]},
+        query_params={"limit": "1", "feedback": "down"},
+    )
+
+    response = activity_handler()
+
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200
+    assert body["count"] == 1
+    assert body["items"][0]["thumbUp"] is False
+    assert mock_dynamodb.query.call_count == 2
+    assert mock_dynamodb.query.call_args_list[0].kwargs["FilterExpression"] == "thumbUp = :fv"
+    assert mock_dynamodb.query.call_args_list[1].kwargs["ExclusiveStartKey"] == first_cursor
+
+
+@patch_dynamodb()
+def test_activity_list_falls_back_during_index_rollout(mock_dynamodb):
+    missing_index = ClientError(
+        {"Error": {"Code": "ResourceNotFoundException", "Message": "Index not active"}},
+        "Query",
+    )
+    mock_dynamodb.query.side_effect = [missing_index, {"Items": [], "ScannedCount": 0}]
+    _set_current_event(claims={"cognito:groups": ["Admins"]})
+
+    response = activity_handler()
+
+    assert response["statusCode"] == 200
+    assert mock_dynamodb.query.call_count == 2
+    assert mock_dynamodb.query.call_args_list[0].kwargs["IndexName"] == "activityIndexV2"
+    assert mock_dynamodb.query.call_args_list[1].kwargs["IndexName"] == "timestampIndex"

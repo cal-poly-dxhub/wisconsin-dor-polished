@@ -454,21 +454,13 @@ def _resolve_session_emails(session_ids: set[str]) -> dict[str, str]:
 
 @app.get("/admin/activity")
 def activity_handler() -> dict[str, Any]:
-    """Return paginated chat history items for the admin activity dashboard.
-
-    Query params:
-      - limit: page size (default 50, max 200)
-      - cursor: opaque pagination token (base64-encoded LastEvaluatedKey)
-      - after: ISO timestamp lower bound (inclusive)
-      - before: ISO timestamp upper bound (exclusive)
-      - feedback: 'up' | 'down' | 'rated' | 'unrated' (server-side filter)
-    """
+    """Return a lean, paginated activity summary for the admin dashboard."""
     import base64
 
     try:
         require_admin()
         params = app.current_event.query_string_parameters or {}
-        limit = min(int(params.get("limit", "50")), 200)
+        limit = max(1, min(int(params.get("limit", "50")), 200))
         cursor = params.get("cursor")
         after = params.get("after")
         before = params.get("before")
@@ -502,34 +494,56 @@ def activity_handler() -> dict[str, Any]:
 
         query_kwargs: dict[str, Any] = {
             "TableName": message_table_name,
-            "IndexName": "timestampIndex",
+            "IndexName": os.environ.get("ACTIVITY_INDEX_NAME", "activityIndexV2"),
             "KeyConditionExpression": key_condition,
             "ExpressionAttributeValues": expr_values,
-            "ExpressionAttributeNames": {"#ts": "timestamp"},
+            "ExpressionAttributeNames": {"#q": "query", "#ts": "timestamp"},
+            "ProjectionExpression": "queryId, sessionId, #q, #ts, thumbUp, feedback",
             "ScanIndexForward": False,
-            "Limit": limit,
+            "ReturnConsumedCapacity": "INDEXES",
         }
         if filter_expression:
             query_kwargs["FilterExpression"] = filter_expression
         if cursor:
             query_kwargs["ExclusiveStartKey"] = json.loads(base64.b64decode(cursor).decode())
 
-        response = dynamodb.query(**query_kwargs)
+        raw_items: list[dict[str, Any]] = []
+        last_evaluated_key = None
+        evaluated_count = 0
+        consumed_capacity = 0.0
+        query_count = 0
+        active_index = query_kwargs["IndexName"]
+
+        while len(raw_items) < limit and query_count < 10 and evaluated_count < 1000:
+            query_kwargs["Limit"] = limit - len(raw_items)
+            query_kwargs["IndexName"] = active_index
+            try:
+                response = dynamodb.query(**query_kwargs)
+            except ClientError as error:
+                error_code = error.response.get("Error", {}).get("Code")
+                if error_code != "ResourceNotFoundException" or active_index == "timestampIndex":
+                    raise
+                active_index = "timestampIndex"
+                query_kwargs["IndexName"] = active_index
+                response = dynamodb.query(**query_kwargs)
+
+            query_count += 1
+            raw_items.extend(response.get("Items", []))
+            evaluated_count += int(response.get("ScannedCount", 0))
+            consumed_capacity += float(
+                response.get("ConsumedCapacity", {}).get("CapacityUnits", 0.0)
+            )
+            last_evaluated_key = response.get("LastEvaluatedKey")
+
+            if not filter_expression or not last_evaluated_key:
+                break
+            query_kwargs["ExclusiveStartKey"] = last_evaluated_key
 
         deserializer = TypeDeserializer()
         results = []
         session_ids: set[str] = set()
-        for item in response.get("Items", []):
+        for item in raw_items:
             deserialized = {k: deserializer.deserialize(v) for k, v in item.items()}
-            trace_raw = deserialized.get("trace")
-            trace = None
-            if trace_raw and isinstance(trace_raw, str):
-                try:
-                    trace = json.loads(trace_raw)
-                except (json.JSONDecodeError, TypeError):
-                    trace = None
-            elif isinstance(trace_raw, list):
-                trace = trace_raw
             sid = deserialized.get("sessionId", "")
             if sid:
                 session_ids.add(sid)
@@ -538,11 +552,9 @@ def activity_handler() -> dict[str, Any]:
                     "queryId": deserialized.get("queryId", ""),
                     "sessionId": sid,
                     "query": deserialized.get("query", ""),
-                    "answer": deserialized.get("answer", ""),
                     "timestamp": deserialized.get("timestamp", ""),
                     "thumbUp": deserialized.get("thumbUp"),
-                    "feedback": deserialized.get("feedback"),
-                    "trace": trace,
+                    "feedback": deserialized.get("feedback") or None,
                 }
             )
 
@@ -551,10 +563,17 @@ def activity_handler() -> dict[str, Any]:
             result["email"] = email_by_session.get(result["sessionId"])
 
         next_cursor = None
-        if "LastEvaluatedKey" in response:
-            next_cursor = base64.b64encode(
-                json.dumps(response["LastEvaluatedKey"]).encode()
-            ).decode()
+        if last_evaluated_key:
+            next_cursor = base64.b64encode(json.dumps(last_evaluated_key).encode()).decode()
+
+        logger.info(
+            "Activity list index=%s items=%d evaluated=%d queries=%d capacity=%.2f",
+            active_index,
+            len(results),
+            evaluated_count,
+            query_count,
+            consumed_capacity,
+        )
 
         return create_api_response(
             200,

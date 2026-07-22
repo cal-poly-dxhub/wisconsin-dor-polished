@@ -135,6 +135,22 @@ export class SessionsStack extends cdk.NestedStack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    // Keep timestampIndex during rollout so the API can fall back while this
+    // lean replacement backfills. Remove the legacy index in a later deploy.
+    this.chatHistoryTable.addGlobalSecondaryIndex({
+      indexName: 'activityIndexV2',
+      partitionKey: {
+        name: 'gsi1pk',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'timestamp',
+        type: dynamodb.AttributeType.STRING,
+      },
+      projectionType: dynamodb.ProjectionType.INCLUDE,
+      nonKeyAttributes: ['sessionId', 'query', 'thumbUp', 'feedback'],
+    });
+
     const apiHandler = new lambda.Function(this, 'ApiHandler', {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'main.handler',
@@ -158,6 +174,7 @@ export class SessionsStack extends cdk.NestedStack {
       environment: {
         SESSIONS_TABLE_NAME: this.sessionsTable.tableName,
         MESSAGES_TABLE_NAME: this.chatHistoryTable.tableName,
+        ACTIVITY_INDEX_NAME: 'activityIndexV2',
         RAW_BUCKET_NAME: props.rawBucketName,
         WORK_BUCKET_NAME: props.workBucketName,
       },
