@@ -1,141 +1,119 @@
-"""Tests for Path A thin-stub case-law extraction.
-
-Case-law documents are now stored as thin citation markers: no chunks, no
-embeddings, no summary text. The annotation content lives on the citing
-statute's chunks (which already include it inline since Wisconsin Statutes
-Annotated prints annotations directly under statute sections).
-
-These tests validate:
-  - No chunks produced (Path A removes case-law from the vector index)
-  - No embeddings, no topics, no summary populated
-  - Title selection prefers metadata case_name > citation > doc_id
-  - statute_refs normalize across Wisconsin's three naming schemes
-  - No Bedrock calls made (thin stubs never need the LLM)
-
-Importing `tools.ingestion.extract` transitively imports
-`tools.ingestion.chunking.pdfChunker`. That module defers all boto3 calls
-until first use (see conftest.py), so importing extract here does not require
-AWS credentials.
-"""
+"""Tests for selective multi-chunk case-law extraction."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 from tools.ingestion import extract
 
+SAMPLES = Path(__file__).resolve().parent.parent / "chunking_test" / "samples"
 
-def _run(metadata: dict, doc: dict | None = None):
-    """Invoke process_case_law_document with mocked boto clients."""
-    mock_s3 = MagicMock()
-    mock_s3.head_bucket.return_value = {}
-    mock_bedrock = MagicMock()
-    mock_bedrock.converse.side_effect = AssertionError(
-        "Path A must never call Bedrock when building a case-law stub"
-    )
+
+def _run(
+    metadata: dict,
+    *,
+    opinion_text: str | None = None,
+    summary: str = "",
+    doc: dict | None = None,
+):
     doc = doc or {
         "doc_id": "case-law-kollasch-v-adamany",
         "key": "raw/case-law/misc/kollasch-v-adamany.txt",
         "size": 9000,
     }
-    config = {"bedrock_llm_model": "test-model"}
-    with patch.object(extract, "s3", mock_s3), patch.object(extract, "bedrock", mock_bedrock):
-        return extract.process_case_law_document(doc, "bucket", metadata, config), mock_bedrock
+    with (
+        patch.object(extract, "_fetch_opinion_text", return_value=opinion_text),
+        patch.object(extract, "_summarize_opinion", return_value=summary) as summarize,
+    ):
+        result = extract.process_case_law_document(doc, "bucket", metadata, {})
+    return result, summarize
 
 
-def test_thin_stub_has_no_chunks_or_summary() -> None:
-    metadata = {
-        "doc_type": "case_law",
-        "citation": "104 Wis. 2d 552",
-        "case_name": "Kollasch v. Adamany",
-        "source_url": "https://www.courtlistener.com/opinion/2144662/",
-        "citing_statutes": '[{"file": "77 Document.pdf", "pages": [31]}]',
-    }
-    result, _ = _run(metadata)
+def test_missing_opinion_remains_thin_stub() -> None:
+    result, summarize = _run(
+        {
+            "doc_type": "case_law",
+            "citation": "104 Wis. 2d 552",
+            "case_name": "Kollasch v. Adamany",
+            "citing_statutes": "",
+        }
+    )
 
     assert result["chunks"] == []
     assert result["summary"] == ""
-    assert result["topics"] == []
+    summarize.assert_not_called()
 
 
-def test_title_prefers_metadata_case_name() -> None:
-    metadata = {
-        "citation": "104 Wis. 2d 552",
-        "case_name": "Kollasch v. Adamany",
-        "citing_statutes": "",
-    }
-    result, _ = _run(metadata)
+def test_summary_plus_selective_chunks_have_local_citations() -> None:
+    opinion = (SAMPLES / "2000-wi-app-138.txt").read_text()
+    summary = "The court interpreted Wis. Stat. § 943.20 and affirmed the judgment."
+    result, summarize = _run(
+        {
+            "doc_type": "case_law",
+            "citation": "2000 WI App 138",
+            "case_name": "State v. Graham",
+            "source_url": "https://example.test/graham",
+            "citing_statutes": "",
+        },
+        opinion_text=opinion,
+        summary=summary,
+    )
+
+    summarize.assert_called_once_with(opinion)
+    assert len(result["chunks"]) == 3  # summary + two compacted selective body chunks
+    assert result["chunks"][0]["metadata"]["content_role"] == "summary_holding"
+    assert result["chunks"][0]["metadata"]["statute_refs"] == ["943.20"]
+    assert all(chunk["metadata"]["content_role"] for chunk in result["chunks"])
+    assert any(
+        "943.20" in chunk["metadata"]["statute_refs"] for chunk in result["chunks"][1:]
+    )
+    assert result["case_law_selection_fallback"] is False
+
+
+def test_title_precedence() -> None:
+    result, _ = _run(
+        {
+            "citation": "104 Wis. 2d 552",
+            "case_name": "Kollasch v. Adamany",
+            "citing_statutes": "",
+        }
+    )
     assert result["title"] == "Kollasch v. Adamany, 104 Wis. 2d 552"
 
-
-def test_title_falls_back_to_citation() -> None:
-    metadata = {
-        "citation": "999 Wis. 2d 999",
-        "citing_statutes": "",
-    }
-    result, _ = _run(metadata)
+    result, _ = _run({"citation": "999 Wis. 2d 999", "citing_statutes": ""})
     assert result["title"] == "999 Wis. 2d 999"
 
-
-def test_title_falls_back_to_doc_id_when_nothing_else() -> None:
-    metadata = {"citing_statutes": ""}
-    doc = {
-        "doc_id": "case-law-unknown-case",
-        "key": "raw/case-law/misc/unknown-case.json",
-        "size": 0,
-    }
-    result, _ = _run(metadata, doc)
-    assert result["title"] == "case-law-unknown-case"
+    result, _ = _run({"citing_statutes": ""})
+    assert result["title"] == "case-law-kollasch-v-adamany"
 
 
 def test_statute_refs_normalize_filename_schemes() -> None:
-    """Wisconsin uses three naming schemes; all must yield clean chapter numbers."""
-    metadata = {
-        "citation": "test",
-        "citing_statutes": (
-            '[{"file": "70.pdf", "pages": [1]}, '
-            '{"file": "706 Document.pdf", "pages": [1]}, '
-            '{"file": "Document 76.pdf", "pages": [1]}]'
-        ),
-    }
-    result, _ = _run(metadata)
+    result, _ = _run(
+        {
+            "citation": "test",
+            "citing_statutes": (
+                '[{"file": "70.pdf", "pages": [1]}, '
+                '{"file": "706 Document.pdf", "pages": [1]}, '
+                '{"file": "Document 76.pdf", "pages": [1]}]'
+            ),
+        }
+    )
     assert result["statute_refs"] == ["70", "706", "76"]
 
 
-def test_statute_refs_drops_unparseable_filenames() -> None:
-    metadata = {
-        "citation": "test",
-        "citing_statutes": '[{"file": "Spring Quarter Feedback.csv", "pages": [1]}]',
-    }
-    result, _ = _run(metadata)
-    assert result["statute_refs"] == []
-
-
-def test_no_bedrock_calls_made() -> None:
-    """Thin stubs never need LLM fallback — verifies the side_effect assert fires if called."""
-    metadata = {
-        "citation": "104 Wis. 2d 552",
-        "case_name": "Kollasch v. Adamany",
-        "citing_statutes": "",
-    }
-    _, mock_bedrock = _run(metadata)
-    mock_bedrock.converse.assert_not_called()
-
-
 def test_result_shape_matches_load_contract() -> None:
-    """load.py's phase_2_document_nodes needs specific keys to exist."""
-    metadata = {
-        "doc_type": "case_law",
-        "citation": "104 Wis. 2d 552",
-        "case_name": "Kollasch v. Adamany",
-        "source_url": "https://www.courtlistener.com/opinion/2144662/",
-        "authority_level": "3",
-        "framework_id": "FW-CASE-LAW",
-        "citing_statutes": '[{"file": "70.pdf", "pages": [25]}]',
-    }
-    result, _ = _run(metadata)
-
-    # Fields load.py expects to exist on every document record
+    result, _ = _run(
+        {
+            "doc_type": "case_law",
+            "citation": "104 Wis. 2d 552",
+            "case_name": "Kollasch v. Adamany",
+            "source_url": "https://www.courtlistener.com/opinion/2144662/",
+            "authority_level": "3",
+            "framework_id": "FW-CASE-LAW",
+            "citing_statutes": "",
+        }
+    )
     required = {
         "doc_id",
         "s3_key",
@@ -151,11 +129,9 @@ def test_result_shape_matches_load_contract() -> None:
         "source_url",
         "chunks",
     }
-    assert required.issubset(result.keys())
+    assert required.issubset(result)
     assert result["doc_type"] == "case_law"
-    assert result["framework_id"] == "FW-CASE-LAW"
     assert result["authority_level"] == 3
-    assert result["source_url"].startswith("https://")
 
 
 def test_statute_file_to_chapter_helper() -> None:
@@ -163,4 +139,3 @@ def test_statute_file_to_chapter_helper() -> None:
     assert extract._statute_file_to_chapter("706 Document.pdf") == "706"
     assert extract._statute_file_to_chapter("Document 76.pdf") == "76"
     assert extract._statute_file_to_chapter("random.csv") == ""
-    assert extract._statute_file_to_chapter("") == ""

@@ -27,6 +27,7 @@ import yaml
 # (python tools/ingestion/extract.py). Running via `-m` already has it on the path.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
+from tools.ingestion.chunking.case_law import select_and_chunk
 from tools.ingestion.chunking.pdfChunker import process_pdf_from_s3
 from tools.ingestion.lib.case_annotations import extract_section_for_page
 
@@ -282,15 +283,13 @@ def _extract_statute_refs_from_text(text: str) -> list[str]:
 def process_case_law_document(
     doc: dict, raw_bucket: str, metadata: dict, config: dict
 ) -> dict | None:
-    """Extract a case-law document with a 1-chunk holding summary.
+    """Extract summary plus selective majority-analysis chunks from case law.
 
-    Reads the opinion text from S3, generates a 2-3 sentence holding summary
-    via Nova 2 Lite, and extracts section-level statute references from the
-    opinion text. The summary becomes a single chunk (embedded downstream by
-    embed.py) making the case semantically searchable and rankable.
-
-    Falls back to a thin stub (empty chunks, chapter-level refs) when opinion
-    text is unavailable.
+    Chunk 0 remains the LLM holding summary. Body chunks retain the majority's
+    opening issue/holding synopsis and legal analysis through disposition while
+    omitting captions, detailed factual narrative, notes, and separate opinions.
+    Each chunk carries only the statute/admin-rule references found in its own
+    text, enabling direct ``Chunk-[:CITES]->Statute`` retrieval.
     """
     doc_id = doc["doc_id"]
     key = doc["key"]
@@ -308,35 +307,53 @@ def process_case_law_document(
     else:
         title = doc_id
 
-    # Try to fetch opinion text and generate summary + section-level refs
     opinion_text = _fetch_opinion_text(raw_bucket, doc_id, key)
     summary = ""
     text_statute_refs: list[str] = []
+    selection = None
 
     if opinion_text:
         summary = _summarize_opinion(opinion_text)
         text_statute_refs = _extract_statute_refs_from_text(opinion_text)
+        selection = select_and_chunk(opinion_text)
 
-    # Statute refs: union of text-extracted (section-level) and the legacy
-    # page-header derivation (chapter-level fallback). Text extraction is
-    # preferred because it gives section-level granularity directly.
     state_laws_dir = Path(config.get("state_laws_dir") or DEFAULT_STATE_LAWS_DIR)
     legacy_refs = _derive_case_statute_refs(citing_statutes, state_laws_dir)
     statute_refs = sorted(set(text_statute_refs) | set(legacy_refs))
 
-    # Build chunk from summary (if we have one)
-    chunks = []
-    if summary:
-        chunks.append({
-            "text": summary,
-            "metadata": {
-                "doc_id": doc_id,
-                "heading": "Holding",
-                "start_page": 1,
-                "end_page": 1,
-            },
-        })
+    source_url = metadata.get("source_url", "")
+    chunks: list[dict] = []
 
+    def append_chunk(text: str, heading: str, content_role: str) -> None:
+        extracted = extract_chunk_citations(text)
+        local_statute_refs = sorted(
+            set(extracted["statute_refs"]) | set(_extract_statute_refs_from_text(text))
+        )
+        chunks.append(
+            {
+                "text": text,
+                "metadata": {
+                    "doc_id": doc_id,
+                    "source": key,
+                    "source_url": source_url,
+                    "heading": heading,
+                    "content_role": content_role,
+                    "start_page": None,
+                    "end_page": None,
+                    "statute_refs": local_statute_refs,
+                    "admin_rule_refs": extracted["admin_rule_refs"],
+                },
+            }
+        )
+
+    if summary:
+        append_chunk(summary, "Holding summary", "summary_holding")
+
+    if selection:
+        for selected in selection.chunks:
+            append_chunk(selected.text, selected.heading, selected.role)
+
+    selected_text = "\n\n".join(chunk["text"] for chunk in chunks)
     result = {
         "doc_id": doc_id,
         "s3_key": key,
@@ -352,15 +369,23 @@ def process_case_law_document(
         "admin_rule_refs": [],
         "implements_refs": [],
         "topics": [],
-        "source_url": metadata.get("source_url", ""),
-        "full_text": f"{title}\n{summary}" if summary else title,
+        "source_url": source_url,
+        "full_text": f"{title}\n{selected_text}" if selected_text else title,
         "chunks": chunks,
+        "case_law_selection_fallback": bool(selection and selection.fallback_used),
+        "case_law_selection_confidence": selection.confidence if selection else None,
     }
 
-    status = "with summary" if summary else "stub (no opinion text)"
+    if selection:
+        selection_status = (
+            f"selective={len(selection.chunks)} body chunks, "
+            f"retained={selection.retained_ratio:.0%}, fallback={selection.fallback_used}"
+        )
+    else:
+        selection_status = "stub (no opinion text)"
     logger.info(
-        f"  Extracted {doc_id}: {status}, title={title[:50]}, "
-        f"cites {len(statute_refs)} statute refs ({statute_refs[:5]})"
+        f"  Extracted {doc_id}: {len(chunks)} total chunks, {selection_status}, "
+        f"title={title[:50]}, cites {len(statute_refs)} statute refs ({statute_refs[:5]})"
     )
     return result
 

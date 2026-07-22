@@ -89,10 +89,9 @@ def load_extracted_docs(work_bucket: str) -> list[dict]:
 def embed_chunks(doc: dict, model_id: str, dimension: int) -> dict:
     """Embed all chunks for a single document.
 
-    Case-law documents are thin citation stubs: no chunks to embed and no
-    doc-level embedding either. Skipping the doc embedding keeps them out of
-    Phase 11 semantic-edge discovery, so the agent can only reach them via
-    inbound CITES edges from statute chunks — never via vector similarity.
+    Case-law opinions with extracted text are embedded chunk-by-chunk like the
+    rest of the corpus. Cases without opinion text remain thin stubs and skip
+    both chunk and document embeddings.
     """
     doc_id = doc["doc_id"]
     chunks = doc.get("chunks", [])
