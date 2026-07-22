@@ -143,6 +143,71 @@ def _scholar_url(citation: str) -> str:
     return f"http://scholar.google.com/scholar?hl=en&as_sdt=4&as_sdts=50&as_vis=1&q={q}"
 
 
+def _slug_to_citation(slug: str) -> str:
+    """Convert a case-law slug back to a citation string.
+
+    e.g. '2023-wi-8' -> '2023 WI 8'
+         '210-wis-2d-301' -> '210 Wis. 2d 301'
+         '843-n-w-2d-39' -> '843 N.W.2d 39'
+    """
+    parts = slug.split("-")
+    # Wisconsin reporters
+    if "wi" in parts and "app" in parts:
+        idx = parts.index("wi")
+        return f"{parts[0]} WI App {parts[idx + 2]}"
+    if "wi" in parts and "app" not in parts:
+        idx = parts.index("wi")
+        return f"{parts[0]} WI {parts[idx + 1]}"
+    if "wis" in parts and "2d" in parts:
+        idx = parts.index("wis")
+        return f"{parts[0]} Wis. 2d {parts[idx + 2]}"
+    # N.W. reporters
+    if "n" in parts and "w" in parts:
+        idx = parts.index("n")
+        if idx + 1 < len(parts) and parts[idx + 1] == "w":
+            if idx + 2 < len(parts) and parts[idx + 2] in ("2d", "3d"):
+                reporter = f"N.W.{parts[idx + 2]}"
+                return f"{parts[0]} {reporter} {parts[idx + 3]}"
+    # Federal reporters
+    for reporter_key, reporter_str in [
+        (["f", "2d"], "F.2d"), (["f", "3d"], "F.3d"), (["f", "4th"], "F.4th"),
+        (["f", "supp", "2d"], "F. Supp. 2d"), (["f", "supp", "3d"], "F. Supp. 3d"),
+        (["f", "supp"], "F. Supp."), (["s", "ct"], "S. Ct."),
+        (["u", "s"], "U.S."), (["l", "ed", "2d"], "L. Ed. 2d"),
+    ]:
+        try:
+            idx = 0
+            for k in reporter_key:
+                idx = parts.index(k, idx)
+                idx += 1
+            vol = parts[0]
+            page = parts[idx]
+            return f"{vol} {reporter_str} {page}"
+        except (ValueError, IndexError):
+            continue
+    # Fallback: space-join
+    return " ".join(parts)
+
+
+def _ids_to_citations(id_file: Path) -> list[dict]:
+    """Read case IDs from file and convert to citation entries for phase 2."""
+    entries = []
+    for line in id_file.read_text().splitlines():
+        case_id = line.strip()
+        if not case_id or case_id.startswith("#"):
+            continue
+        slug = case_id.replace("case-law-", "")
+        citation = _slug_to_citation(slug)
+        entries.append({
+            "citation": citation,
+            "slug": slug,
+            "legis_url": f"https://docs.legis.wisconsin.gov/document/courts/{quote(citation)}",
+            "scholar_url": _scholar_url(citation),
+            "sources": [{"file": "orphan-scrape", "pages": []}],
+        })
+    return entries
+
+
 # ---------------------------------------------------------------------------
 # Phase 1: Extract citations from statute PDFs
 # ---------------------------------------------------------------------------
@@ -665,6 +730,11 @@ def main():
         action="store_true",
         help="After dedup, delete parallel-reporter losers from raw + work S3 buckets",
     )
+    parser.add_argument(
+        "--from-ids",
+        type=Path,
+        help="Skip phase 1; read case IDs (one per line) from file and scrape those directly",
+    )
     parser.add_argument("--profile", default="widor")
     parser.add_argument("--region", default="us-east-1")
     args = parser.parse_args()
@@ -691,22 +761,28 @@ def main():
         else {"completed": {}, "stats": {"courtlistener": 0, "scholar": 0, "stub": 0}}
     )
 
-    # --- Phase 1: Extract citations from statute PDFs ---
+    # --- Phase 1: Extract citations from statute PDFs (or read from ID file) ---
     logger.info("=" * 60)
-    logger.info("PHASE 1: Extracting citations from statute PDFs")
+    logger.info("PHASE 1: Extracting citations")
     logger.info("=" * 60)
 
-    if args.from_s3:
+    if args.from_ids:
+        citations = _ids_to_citations(args.from_ids)
+        logger.info(f"Loaded {len(citations)} case IDs from {args.from_ids}")
+    elif args.from_s3:
         raw_entries = extract_from_s3(args.bucket, s3)
+        if not raw_entries:
+            logger.error("No citations extracted. Aborting.")
+            return
+        citations = consolidate_citations(raw_entries)
+        logger.info(f"Extracted {len(citations)} unique citations from {len(raw_entries)} links")
     else:
         raw_entries = extract_from_local(args.state_laws_dir)
-
-    if not raw_entries:
-        logger.error("No citations extracted. Aborting.")
-        return
-
-    citations = consolidate_citations(raw_entries)
-    logger.info(f"Extracted {len(citations)} unique citations from {len(raw_entries)} links")
+        if not raw_entries:
+            logger.error("No citations extracted. Aborting.")
+            return
+        citations = consolidate_citations(raw_entries)
+        logger.info(f"Extracted {len(citations)} unique citations from {len(raw_entries)} links")
 
     # --- Phase 2: Enrich via CourtListener (with S3 cache) ---
     logger.info("")

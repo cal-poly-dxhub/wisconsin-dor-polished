@@ -207,11 +207,12 @@ _CASE_LAW_SUMMARY_MODEL = os.environ.get(
 )
 
 _CASE_LAW_SUMMARY_PROMPT = (
-    "Read the following Wisconsin court opinion excerpt and write a 2-3 sentence "
-    "summary of the HOLDING. State clearly: (1) who won, (2) which Wisconsin "
+    "Read the following Wisconsin court opinion and write a 2-3 sentence summary "
+    "of ALL major holdings. State clearly: (1) who won, (2) which Wisconsin "
     "statute sections were at issue, and (3) what the court decided about them. "
+    "If the case involves multiple issues, summarize the most important ones. "
     "Do not include a heading or labels — just write the sentences directly.\n\n"
-    "Opinion excerpt:\n{text}\n\n"
+    "Opinion:\n{text}\n\n"
     "Holding summary (2-3 sentences):"
 )
 
@@ -245,13 +246,22 @@ def _fetch_opinion_text(raw_bucket: str, doc_id: str, s3_key: str) -> str | None
 
 
 def _summarize_opinion(text: str) -> str:
-    """Generate a 2-3 sentence holding summary via Nova 2 Lite."""
-    prompt = _CASE_LAW_SUMMARY_PROMPT.format(text=text[:4000])
+    """Generate a 2-3 sentence holding summary via Nova 2 Lite.
+
+    Strips court-document header boilerplate (everything before ¶1) and sends
+    the full opinion text — Nova 2 Lite supports 256K context, and even the
+    longest opinions (~75K tokens) fit comfortably.
+    """
+    # Strip header: everything before the first paragraph marker
+    m = re.search(r"¶\s*1", text)
+    if m:
+        text = text[m.start():]
+    prompt = _CASE_LAW_SUMMARY_PROMPT.format(text=text)
     try:
         resp = bedrock.converse(
             modelId=_CASE_LAW_SUMMARY_MODEL,
             messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"maxTokens": 200, "temperature": 0.0},
+            inferenceConfig={"maxTokens": 300, "temperature": 0.0},
         )
         return " ".join(
             b.get("text", "").strip()
@@ -265,7 +275,7 @@ def _summarize_opinion(text: str) -> str:
 
 def _extract_statute_refs_from_text(text: str) -> list[str]:
     """Regex-extract section-level statute refs from opinion text."""
-    matches = _CASE_STATUTE_RE.findall(text[:8000])
+    matches = _CASE_STATUTE_RE.findall(text)
     return sorted({m[0] or m[1] for m in matches if m[0] or m[1]})
 
 
