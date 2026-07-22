@@ -55,6 +55,7 @@ class StageContext:
 
     # caselaw_backfill
     caselaw_backfill: list[dict] = field(default_factory=list)
+    caselaw_backfill_meta: dict[str, Any] = field(default_factory=dict)
 
     # broad_discovery
     broad_discovery: list[dict] = field(default_factory=list)

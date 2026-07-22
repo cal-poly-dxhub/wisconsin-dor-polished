@@ -61,6 +61,7 @@ ALLOWED_METADATA_KEYS = frozenset(
         "chunkIds",
         "statuteBackfill",
         "caselawBackfill",
+        "caselawBackfillMeta",
         "broadDiscovery",
         "broadDocChunks",
         "broadFullDocChunks",

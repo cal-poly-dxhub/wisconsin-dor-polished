@@ -316,6 +316,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
                 "citation": b.get("subheading", ""),
                 "summary": (b.get("text") or "")[:150],
                 "relevanceScore": b.get("relevance_score"),
+                "contentRole": b.get("content_role", ""),
             }
             for b in caselaw_backfill
         ]
@@ -352,6 +353,9 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             metadata["statuteBackfill"] = backfill_meta
         if caselaw_backfill_meta:
             metadata["caselawBackfill"] = caselaw_backfill_meta
+        caselaw_bf_meta = result.get("caselaw_backfill_meta") or {}
+        if caselaw_bf_meta:
+            metadata["caselawBackfillMeta"] = caselaw_bf_meta
         if broad_meta:
             metadata["broadDiscovery"] = broad_meta
         if broad_additive_doc_chunks:

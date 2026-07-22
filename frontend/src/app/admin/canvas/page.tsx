@@ -19,6 +19,11 @@ import { PrepareAnswerPane } from './components/prepare-answer-pane';
 import { FaqSearchPane } from './components/faq-search-pane';
 import { ThinkingPane } from './components/thinking-pane';
 import { PlaceholderPane } from './components/placeholder-pane';
+import { GetDocumentPane } from './components/get-document-pane';
+import { GetAuthorityChainPane } from './components/get-authority-chain-pane';
+import { ListFrameworkDocsPane } from './components/list-framework-docs-pane';
+import { FetchCaseOpinionPane } from './components/fetch-case-opinion-pane';
+import { ClarifyPane } from './components/clarify-pane';
 
 const queryClient = new QueryClient();
 
@@ -67,7 +72,10 @@ function vectorSearchPaneData(pane: Pane) {
       | { chunkId: string; docId: string; sourceRank: number }[]
       | undefined,
     caselawBackfill: m.caselawBackfill as
-      | { caseId: string; title: string; citation: string; summary: string }[]
+      | { caseId: string; title: string; citation: string; summary: string; relevanceScore?: number; contentRole?: string }[]
+      | undefined,
+    caselawBackfillMeta: m.caselawBackfillMeta as
+      | { stubsSearched?: string[]; candidateCount?: number; fetchSaturated?: boolean; fetchK?: number; latencyMs?: number }
       | undefined,
     refinedQuery: m.refinedQuery as string | undefined,
     broadQuery: m.broadQuery as string | undefined,
@@ -425,6 +433,46 @@ function CanvasShell() {
                       discoveryTitles: (pane.metadata.discoveryTitles as Record<string, string>) ?? {},
                       turnsUsed: (pane.metadata.turnsUsed as number) ?? 0,
                       elapsedMs: (pane.metadata.elapsedMs as number) ?? 0,
+                    }}
+                  />
+                ) : pane.toolName === 'get_document' ? (
+                  <GetDocumentPane
+                    data={{
+                      docId: (pane.metadata.docId as string) ?? pane.callSummary,
+                      status: ((pane.metadata.documentCount as number) ?? 0) > 0 ? 'ok' : 'miss',
+                      latencyMs: pane.metadata.latencyMs as number | undefined,
+                    }}
+                  />
+                ) : pane.toolName === 'get_authority_chain' ? (
+                  <GetAuthorityChainPane
+                    data={{
+                      chainLength: (pane.metadata.chainLength as number) ?? 0,
+                      latencyMs: pane.metadata.latencyMs as number | undefined,
+                      summary: pane.callSummary,
+                    }}
+                  />
+                ) : pane.toolName === 'list_framework_docs' ? (
+                  <ListFrameworkDocsPane
+                    data={{
+                      documentCount: (pane.metadata.documentCount as number) ?? 0,
+                      latencyMs: pane.metadata.latencyMs as number | undefined,
+                      summary: pane.callSummary,
+                    }}
+                  />
+                ) : pane.toolName === 'fetch_case_opinion' ? (
+                  <FetchCaseOpinionPane
+                    data={{
+                      citation: pane.callSummary,
+                      opinionChars: (pane.metadata.opinionChars as number) ?? 0,
+                      status: ((pane.metadata.opinionChars as number) ?? 0) > 0 ? 'ok' : 'miss',
+                      latencyMs: pane.metadata.latencyMs as number | undefined,
+                    }}
+                  />
+                ) : pane.toolName === 'clarify' ? (
+                  <ClarifyPane
+                    data={{
+                      summary: pane.callSummary,
+                      latencyMs: pane.metadata.latencyMs as number | undefined,
                     }}
                   />
                 ) : (

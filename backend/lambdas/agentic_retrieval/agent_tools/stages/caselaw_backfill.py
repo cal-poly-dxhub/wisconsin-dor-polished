@@ -73,6 +73,14 @@ def run(ctx: StageContext) -> StageResult:
                     caselaw_backfill = _diversify_by_case(
                         rank_result["chunks"], top_k, max_per_case
                     )
+                    latency_ms = round((time.perf_counter() - started) * 1000)
+                    ctx.caselaw_backfill_meta = {
+                        "stubsSearched": searched_stubs,
+                        "candidateCount": len(candidates),
+                        "fetchSaturated": len(candidates) >= fetch_k,
+                        "fetchK": fetch_k,
+                        "latencyMs": latency_ms,
+                    }
                     _executor._log_tool_event(
                         "vector_search_caselaw_backfill",
                         tool_name=ctx.tool_name,
@@ -88,7 +96,7 @@ def run(ctx: StageContext) -> StageResult:
                             }
                         ),
                         case_ids=[chunk.get("case_id") for chunk in caselaw_backfill],
-                        latency_ms=round((time.perf_counter() - started) * 1000),
+                        latency_ms=latency_ms,
                     )
         except Exception:  # noqa: BLE001
             logger.warning("case-law backfill failed; continuing", exc_info=True)

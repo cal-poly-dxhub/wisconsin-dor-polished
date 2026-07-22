@@ -274,5 +274,6 @@ export interface VectorSearchBaseData {
   caseLawCount?: number;
   autoEnrichedCount?: number;
   statuteBackfill?: { chunkId: string; docId: string; sourceRank: number }[];
-  caselawBackfill?: { caseId: string; title: string; citation: string; summary: string }[];
+  caselawBackfill?: { caseId: string; title: string; citation: string; summary: string; relevanceScore?: number; contentRole?: string }[];
+  caselawBackfillMeta?: { stubsSearched?: string[]; candidateCount?: number; fetchSaturated?: boolean; fetchK?: number; latencyMs?: number };
 }

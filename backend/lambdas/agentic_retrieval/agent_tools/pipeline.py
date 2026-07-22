@@ -107,6 +107,8 @@ def run_vector_search(
         result["statute_backfill"] = ctx.statute_backfill
     if ctx.caselaw_backfill:
         result["caselaw_backfill"] = ctx.caselaw_backfill
+    if ctx.caselaw_backfill_meta:
+        result["caselaw_backfill_meta"] = ctx.caselaw_backfill_meta
     if ctx.broad_discovery:
         result["broad_discovery"] = ctx.broad_discovery
     if ctx.broad_trace:

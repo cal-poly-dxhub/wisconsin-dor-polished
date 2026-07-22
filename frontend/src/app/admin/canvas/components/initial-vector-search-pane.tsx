@@ -343,13 +343,52 @@ export function InitialVectorSearchPane({ data }: { data: InitialVectorSearchDat
                 {data.caseLawCount} case law citation{data.caseLawCount === 1 ? '' : 's'} discovered
               </p>
             )}
-            {(data.caselawBackfill?.length ?? 0) > 0 && (
-              <ul className="list-inside list-disc text-xs text-neutral-500">
-                {data.caselawBackfill!.map((c) => (
-                  <li key={c.caseId}>{c.title || c.citation || c.caseId}</li>
-                ))}
-              </ul>
-            )}
+          </div>
+        </Section>
+      )}
+
+      {(data.caselawBackfill?.length ?? 0) > 0 && (
+        <Section
+          title="Case-Law Backfill"
+          subtitle="Chunk-level CITES edges from statute stubs"
+        >
+          {data.caselawBackfillMeta && (
+            <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
+              <span>
+                {data.caselawBackfillMeta.stubsSearched?.length ?? 0} stub{(data.caselawBackfillMeta.stubsSearched?.length ?? 0) === 1 ? '' : 's'} searched
+              </span>
+              <span>{data.caselawBackfillMeta.candidateCount ?? 0} candidates (fetch {data.caselawBackfillMeta.fetchK ?? 0})</span>
+              {data.caselawBackfillMeta.fetchSaturated && (
+                <span className="font-medium text-amber-600">⚠ saturated</span>
+              )}
+              {(data.caselawBackfillMeta.latencyMs ?? 0) > 0 && (
+                <span>{data.caselawBackfillMeta.latencyMs}ms</span>
+              )}
+            </div>
+          )}
+          <div className="flex flex-col gap-3">
+            {data.caselawBackfill!.map((c) => (
+              <div key={c.caseId} className="flex items-center gap-3">
+                <div style={{ width: 18, height: 18, borderRadius: '50%', backgroundColor: COLOR.statute }} title="Statute stub" />
+                <svg width="60" height="16" className="shrink-0">
+                  <line x1="0" y1="8" x2="42" y2="8" stroke={COLOR.caseLaw} strokeWidth="2" />
+                  <polygon points="42,4 50,8 42,12" fill={COLOR.caseLaw} />
+                  <text x="25" y="5" textAnchor="middle" fontSize="7" fill={COLOR.caseLaw}>CITES</text>
+                </svg>
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <div style={{ width: 18, height: 18, borderRadius: 2, backgroundColor: COLOR.caseLaw }} />
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-neutral-700">
+                      {c.title || c.citation || c.caseId}
+                    </span>
+                    <span className="flex gap-2 text-[10px] text-neutral-400">
+                      {c.contentRole && <span className="rounded bg-purple-50 px-1 text-purple-700">{c.contentRole}</span>}
+                      {c.relevanceScore != null && <span>score {c.relevanceScore.toFixed(3)}</span>}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </Section>
       )}
