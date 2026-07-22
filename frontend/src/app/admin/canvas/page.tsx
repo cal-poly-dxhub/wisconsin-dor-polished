@@ -24,6 +24,7 @@ import { GetAuthorityChainPane } from './components/get-authority-chain-pane';
 import { ListFrameworkDocsPane } from './components/list-framework-docs-pane';
 import { FetchCaseOpinionPane } from './components/fetch-case-opinion-pane';
 import { ClarifyPane } from './components/clarify-pane';
+import { TurnUsageDivider } from './components/turn-usage-divider';
 
 const queryClient = new QueryClient();
 
@@ -107,6 +108,24 @@ function buildPanes(events: FixtureTraceEvent[]): Pane[] {
           metadata: {},
         });
       }
+    }
+    if (ev.kind === 'turn_usage') {
+      panes.push({
+        id: `pane-${counter++}`,
+        toolName: '_turn_usage',
+        callSummary: '',
+        status: 'complete',
+        metadata: {
+          turn: ev.turn ?? ev.payload.turn,
+          inputTokens: ev.payload.inputTokens,
+          outputTokens: ev.payload.outputTokens,
+          cumulativeInput: ev.payload.cumulativeInput,
+          cumulativeOutput: ev.payload.cumulativeOutput,
+          cumulativeTotal: ev.payload.cumulativeTotal,
+          bedrockLatencyMs: ev.payload.bedrockLatencyMs,
+        },
+        gridSpan: 2,
+      });
     }
     // Disambiguation phase event → synthetic pane
     if (ev.kind === 'phase' && (ev.payload.phase as string) === 'generality_classified') {
@@ -340,6 +359,18 @@ function CanvasShell() {
               >
                 {pane.toolName === '_reasoning' ? (
                   <ThinkingPane text={pane.callSummary} />
+                ) : pane.toolName === '_turn_usage' ? (
+                  <TurnUsageDivider
+                    data={{
+                      turn: (pane.metadata.turn as number) ?? 0,
+                      inputTokens: (pane.metadata.inputTokens as number) ?? 0,
+                      outputTokens: (pane.metadata.outputTokens as number) ?? 0,
+                      cumulativeInput: (pane.metadata.cumulativeInput as number) ?? 0,
+                      cumulativeOutput: (pane.metadata.cumulativeOutput as number) ?? 0,
+                      cumulativeTotal: (pane.metadata.cumulativeTotal as number) ?? 0,
+                      bedrockLatencyMs: pane.metadata.bedrockLatencyMs as number | undefined,
+                    }}
+                  />
                 ) : pane.toolName === '_disambiguation' ? (
                   <DisambiguationPane
                     data={{

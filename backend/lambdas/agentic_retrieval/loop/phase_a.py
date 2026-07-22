@@ -504,6 +504,7 @@ def run_agentic_loop(
 
     tool_config = {"tools": TOOL_DEFINITIONS}
     broad_fired = [True]  # broad discovery already fired in the pre-loop vector_search
+    cumulative_usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
 
     for turn in range(MAX_TURNS):
         turn_number = turn + 1
@@ -567,6 +568,9 @@ def run_agentic_loop(
         messages.append(assistant_message)
         stop_reason = response["stopReason"]
         usage = response.get("usage", {})
+        cumulative_usage["inputTokens"] += usage.get("inputTokens", 0)
+        cumulative_usage["outputTokens"] += usage.get("outputTokens", 0)
+        cumulative_usage["totalTokens"] += usage.get("totalTokens", 0)
         asst_summary = _assistant_summary(assistant_message)
         _log(
             "agent_turn_model_response",
@@ -576,6 +580,21 @@ def run_agentic_loop(
             stop_reason=stop_reason,
             usage=usage,
             assistant=asst_summary,
+        )
+        _emit_safe(
+            ws_server,
+            trace_seq,
+            query_id=query_id,
+            kind="turn_usage",
+            turn=turn_number,
+            payload={
+                "inputTokens": usage.get("inputTokens", 0),
+                "outputTokens": usage.get("outputTokens", 0),
+                "cumulativeInput": cumulative_usage["inputTokens"],
+                "cumulativeOutput": cumulative_usage["outputTokens"],
+                "cumulativeTotal": cumulative_usage["totalTokens"],
+                "bedrockLatencyMs": converse_latency_ms,
+            },
         )
         if asst_summary["text_preview"]:
             _emit_safe(

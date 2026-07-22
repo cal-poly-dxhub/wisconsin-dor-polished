@@ -4,7 +4,7 @@
  */
 
 export interface FixtureTraceEvent {
-  kind: 'loop_start' | 'reasoning' | 'tool_call' | 'tool_result' | 'loop_complete' | 'phase';
+  kind: 'loop_start' | 'reasoning' | 'tool_call' | 'tool_result' | 'loop_complete' | 'phase' | 'turn_usage';
   turn: number | null;
   seq: number;
   timestamp: number;
