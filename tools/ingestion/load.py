@@ -448,7 +448,8 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
         "c.source_url = row.source_url, c.chunk_index = row.idx, "
         "c.s3_key = row.s3_key, c.start_page = row.start_page, "
         "c.end_page = row.end_page, c.heading = row.heading, "
-        "c.subheading = row.subheading, c.edition_year = row.edition_year",
+        "c.subheading = row.subheading, c.content_role = row.content_role, "
+        "c.edition_year = row.edition_year",
         {
             "rows": [
                 {
@@ -462,6 +463,7 @@ def _flush_phase_8_batch(client, graph_id: str, batch: list[dict]) -> int:
                     "end_page": b["end_page"],
                     "heading": b["heading"],
                     "subheading": b["subheading"],
+                    "content_role": b.get("content_role", ""),
                     "edition_year": b.get("edition_year"),
                 }
                 for b in batch
@@ -598,6 +600,7 @@ def phase_5_chunk_nodes(client, graph_id: str, documents: list[dict]):
                 "end_page": meta.get("end_page"),
                 "heading": meta.get("heading", ""),
                 "subheading": meta.get("subheading", ""),
+                "content_role": meta.get("content_role", ""),
                 "edition_year": edition_year,
                 "statute_refs": meta.get("statute_refs", []),
                 "admin_rule_refs": meta.get("admin_rule_refs", []),
