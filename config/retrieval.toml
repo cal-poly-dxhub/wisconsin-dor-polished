@@ -38,10 +38,34 @@ stage = "statute_backfill"
 model_override = false
 
 [env.CASELAW_BACKFILL_CAP]
-default = 3
+default = 5
 type = "int"
-description = "Max ranked case-law holdings surfaced via CITES traversal from statute stubs"
+description = "Max ranked case-law chunks surfaced via batched chunk-level CITES backfill"
 range = [0, 10]
+stage = "caselaw_backfill"
+model_override = false
+
+[env.CASELAW_CHUNK_FETCH_K]
+default = 200
+type = "int"
+description = "Global candidate chunk cap across all statute stubs in one case-law backfill"
+range = [0, 300]
+stage = "caselaw_backfill"
+model_override = false
+
+[env.CASELAW_CHUNK_HARD_CAP]
+default = 300
+type = "int"
+description = "Absolute ceiling for case-law chunk embeddings fetched per backfill"
+range = [0, 500]
+stage = "caselaw_backfill"
+model_override = false
+
+[env.CASELAW_CHUNK_MAX_PER_CASE]
+default = 1
+type = "int"
+description = "Initial per-case diversity cap before filling unused case-law result slots"
+range = [1, 5]
 stage = "caselaw_backfill"
 model_override = false
 

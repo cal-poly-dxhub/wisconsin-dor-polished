@@ -320,3 +320,42 @@ def test_get_chunks_text_for_docs_empty():
         client = NeptuneClient(graph_id="test-graph")
         assert client.get_chunks_text_for_docs([]) == []
         mock_neptune.execute_query.assert_not_called()
+
+
+def test_case_chunks_for_statutes_uses_one_incoming_cites_batch():
+    with patch("graph.neptune_client.boto3") as mock_boto3:
+        mock_neptune = MagicMock()
+        mock_boto3.client.return_value = mock_neptune
+        mock_neptune.execute_query.return_value = {"results": []}
+
+        from graph.neptune_client import NeptuneClient
+
+        client = NeptuneClient(graph_id="test-graph")
+        client.get_case_chunks_for_statutes_with_embeddings(
+            ["WIS-STAT-70.47", "WIS-STAT-70.32", "WIS-STAT-70.32"], limit=200
+        )
+
+        kwargs = mock_neptune.execute_query.call_args.kwargs
+        query = kwargs["queryString"]
+        parameters = kwargs["parameters"]
+        assert "UNWIND $statute_ids AS sid" in query
+        assert "<-[:CITES]-(c:Chunk)" in query
+        assert "LIMIT 200" in query
+        assert query.count("neptune.algo.vectors.get") == 1
+        assert parameters["statute_ids"] == ["WIS-STAT-70.32", "WIS-STAT-70.47"]
+
+
+def test_neighbor_case_summaries_filters_multi_chunk_cases_to_summary():
+    with patch("graph.neptune_client.boto3") as mock_boto3:
+        mock_neptune = MagicMock()
+        mock_boto3.client.return_value = mock_neptune
+        mock_neptune.execute_query.return_value = {"results": []}
+
+        from graph.neptune_client import NeptuneClient
+
+        client = NeptuneClient(graph_id="test-graph")
+        client.get_neighbor_case_summaries_with_embeddings("WIS-STAT-70.32")
+
+        query = mock_neptune.execute_query.call_args.kwargs["queryString"]
+        assert "c.content_role = 'summary_holding'" in query
+        assert "c.heading IN ['Holding', 'Holding summary']" in query

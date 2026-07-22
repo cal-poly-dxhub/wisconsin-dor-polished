@@ -394,6 +394,8 @@ class NeptuneClient:
         results = self.query(
             f"{pattern} "
             "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(cl) "
+            "WHERE c.content_role = 'summary_holding' "
+            "OR c.heading IN ['Holding', 'Holding summary'] "
             "CALL neptune.algo.vectors.get(c) YIELD embedding "
             "RETURN cl.id AS case_id, cl.title AS title, cl.citation AS citation, "
             "cl.source_url AS source_url, c.text AS summary, embedding",
@@ -401,6 +403,41 @@ class NeptuneClient:
             query_name="get_neighbor_case_summaries",
         )
         return results
+
+    def get_case_chunks_for_statutes_with_embeddings(
+        self, statute_ids: list[str], limit: int = 200
+    ) -> list[dict]:
+        """Fetch directly citing case-law chunks for multiple statute stubs.
+
+        Uses one query and one global cap. Candidate prioritization happens
+        before vector materialization so a multi-stub backfill does not issue
+        N calls or load every chunk from every neighboring case document.
+        """
+        if not statute_ids:
+            return []
+        fetch_limit = max(1, int(limit))
+        return self.query(
+            "UNWIND $statute_ids AS sid "
+            "MATCH (s:Statute {id: sid})<-[:CITES]-(c:Chunk) "
+            "MATCH (c)-[:EXTRACTED_FROM]->(cl:CaseLaw) "
+            "WITH c, cl, collect(DISTINCT sid) AS cited_stub_ids, "
+            "CASE "
+            "WHEN c.content_role CONTAINS 'analysis_holding' THEN 0 "
+            "WHEN c.content_role IN ['summary_holding', 'opening_holding'] THEN 1 "
+            "ELSE 2 END AS role_priority "
+            "ORDER BY role_priority, size(cited_stub_ids) DESC, c.chunk_index, cl.id "
+            f"LIMIT {fetch_limit} "
+            "CALL neptune.algo.vectors.get(c) YIELD embedding "
+            "RETURN c.id AS chunk_id, c.text AS text, cl.id AS case_id, "
+            "cl.id AS doc_id, cl.title AS title, cl.citation AS citation, "
+            "cl.source_url AS source_url, cl.authority_level AS authority_level, "
+            "c.heading AS heading, c.subheading AS subheading, "
+            "c.content_role AS content_role, c.chunk_index AS chunk_index, "
+            "c.start_page AS start_page, c.end_page AS end_page, "
+            "cited_stub_ids, embedding",
+            {"statute_ids": sorted(set(statute_ids))},
+            query_name="get_case_chunks_for_statutes",
+        )
 
     def get_chunk_statute_ids(self, chunk_ids: list[str]) -> list[str]:
         """Return statute IDs cited by the given chunks (via CITES edges)."""
