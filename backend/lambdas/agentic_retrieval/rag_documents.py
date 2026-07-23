@@ -86,7 +86,13 @@ def build_rag_documents(
                 doc_info = doc_infos[doc_id]
 
             if is_statute and heading:
-                title = f"Statute § {heading}"
+                # Heading is the full first line, e.g.
+                # "70.47 Board of review proceedings.  (1) TIME AND"
+                # Truncate to just the section number for the card title.
+                import re as _re
+                section_match = _re.match(r"^(\d+\.\d+(?:\(\d+\))?)", heading)
+                section_label = section_match.group(1) if section_match else heading.split()[0]
+                title = f"Statute § {section_label}"
             else:
                 title = (doc_info.get("title") if doc_info else None) or doc_id
             content_hash = hashlib.sha256(group_key.encode()).hexdigest()[:7]
