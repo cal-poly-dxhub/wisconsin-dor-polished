@@ -9,7 +9,7 @@ import { useFixtureStream } from './use-fixture-stream';
 import type { GridManifest } from './use-corpus-manifest';
 
 export interface TraceEvent {
-  kind: 'loop_start' | 'reasoning' | 'tool_call' | 'tool_result' | 'loop_complete' | 'phase';
+  kind: 'loop_start' | 'reasoning' | 'tool_call' | 'tool_result' | 'loop_complete' | 'phase' | 'turn_usage';
   turn?: number | null;
   seq: number;
   timestamp: number;
