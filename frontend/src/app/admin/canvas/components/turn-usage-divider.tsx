@@ -1,41 +1,34 @@
 'use client';
 
-interface TurnUsageData {
+interface TurnStatusBarData {
   turn: number;
-  inputTokens: number;
-  outputTokens: number;
-  cumulativeInput: number;
-  cumulativeOutput: number;
-  cumulativeTotal: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cumulativeTotal?: number;
   bedrockLatencyMs?: number;
+  label?: string;
 }
 
-export function TurnUsageDivider({ data }: { data: TurnUsageData }) {
+export function TurnStatusBar({ data }: { data: TurnStatusBarData }) {
+  const hasUsage = (data.inputTokens ?? 0) > 0 || (data.outputTokens ?? 0) > 0;
   return (
-    <div className="col-span-full flex items-center gap-3 border-t border-neutral-200 px-5 py-2">
-      <span className="text-xs font-semibold text-neutral-500">Turn {data.turn}</span>
-      <div className="h-px flex-1 bg-neutral-200" />
-      <div className="flex items-center gap-3 text-[11px] tabular-nums text-neutral-500">
-        <span>
-          <span className="text-neutral-400">↓</span>{' '}
-          <span className="font-medium text-neutral-700">{fmtK(data.inputTokens)}</span>
-        </span>
-        <span>
-          <span className="text-neutral-400">↑</span>{' '}
-          <span className="font-medium text-neutral-700">{fmtK(data.outputTokens)}</span>
-        </span>
-        <span className="text-neutral-300">|</span>
-        <span>
-          Σ <span className="font-semibold text-neutral-900">{fmtK(data.cumulativeTotal)}</span>
-          <span className="text-neutral-400"> ({fmtK(data.cumulativeInput)}↓ {fmtK(data.cumulativeOutput)}↑)</span>
-        </span>
-        {data.bedrockLatencyMs != null && data.bedrockLatencyMs > 0 && (
-          <>
-            <span className="text-neutral-300">|</span>
-            <span className="text-neutral-400">{data.bedrockLatencyMs}ms</span>
-          </>
-        )}
-      </div>
+    <div className="flex items-center gap-2 border-b border-neutral-100 bg-neutral-50 px-4 py-1.5">
+      <span className="text-[11px] font-bold uppercase tracking-wide text-neutral-500">
+        {data.label ?? `Turn ${data.turn}`}
+      </span>
+      <div className="flex-1" />
+      {hasUsage && (
+        <div className="flex items-center gap-2 text-[10px] tabular-nums text-neutral-500">
+          <span>↓{fmtK(data.inputTokens ?? 0)}</span>
+          <span>↑{fmtK(data.outputTokens ?? 0)}</span>
+          {(data.cumulativeTotal ?? 0) > 0 && (
+            <span className="font-semibold text-neutral-700">Σ{fmtK(data.cumulativeTotal!)}</span>
+          )}
+        </div>
+      )}
+      {data.bedrockLatencyMs != null && data.bedrockLatencyMs > 0 && (
+        <span className="text-[10px] tabular-nums text-neutral-400">{data.bedrockLatencyMs}ms</span>
+      )}
     </div>
   );
 }

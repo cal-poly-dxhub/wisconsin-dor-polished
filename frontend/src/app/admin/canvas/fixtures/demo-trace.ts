@@ -162,6 +162,16 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
     },
   },
 
+  // --- Turn 1 usage ---
+  {
+    kind: 'turn_usage', turn: 1, seq: ++seq, timestamp: t(2690),
+    payload: {
+      inputTokens: 2847, outputTokens: 312,
+      cumulativeInput: 2847, cumulativeOutput: 312, cumulativeTotal: 3159,
+      bedrockLatencyMs: 1842,
+    },
+  },
+
   {
     kind: 'reasoning', turn: 1, seq: ++seq, timestamp: t(2700),
     payload: {
@@ -199,6 +209,16 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
           { title: 'IAAO Standard on Mass Appraisal', relationship: 'RELATED_TO' },
         ],
       },
+    },
+  },
+
+  // --- Turn 3 usage ---
+  {
+    kind: 'turn_usage', turn: 3, seq: ++seq, timestamp: t(4150),
+    payload: {
+      inputTokens: 5120, outputTokens: 487,
+      cumulativeInput: 7967, cumulativeOutput: 799, cumulativeTotal: 8766,
+      bedrockLatencyMs: 2103,
     },
   },
 
@@ -240,7 +260,7 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
     payload: { toolName: 'get_section', summary: '"Valuation of residential property" from WPAM 2026', status: 'pending' },
   },
   {
-    kind: 'tool_result', turn: 3, seq: ++seq, timestamp: t(5700),
+    kind: 'tool_result', turn: 4, seq: ++seq, timestamp: t(5700),
     payload: {
       toolName: 'get_section', status: 'ok',
       summary: 'Got "Ch. 9 Valuation" (6 chunks)',
