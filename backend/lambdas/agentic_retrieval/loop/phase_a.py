@@ -504,7 +504,7 @@ def run_agentic_loop(
 
     tool_config = {"tools": TOOL_DEFINITIONS}
     broad_fired = [True]  # broad discovery already fired in the pre-loop vector_search
-    cumulative_usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+    cumulative_usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0}
 
     for turn in range(MAX_TURNS):
         turn_number = turn + 1
@@ -571,6 +571,8 @@ def run_agentic_loop(
         cumulative_usage["inputTokens"] += usage.get("inputTokens", 0)
         cumulative_usage["outputTokens"] += usage.get("outputTokens", 0)
         cumulative_usage["totalTokens"] += usage.get("totalTokens", 0)
+        cumulative_usage["cacheReadInputTokens"] += usage.get("cacheReadInputTokens", 0)
+        cumulative_usage["cacheWriteInputTokens"] += usage.get("cacheWriteInputTokens", 0)
         asst_summary = _assistant_summary(assistant_message)
         _log(
             "agent_turn_model_response",
@@ -590,6 +592,8 @@ def run_agentic_loop(
             payload={
                 "inputTokens": usage.get("inputTokens", 0),
                 "outputTokens": usage.get("outputTokens", 0),
+                "cacheReadInputTokens": usage.get("cacheReadInputTokens", 0),
+                "cacheWriteInputTokens": usage.get("cacheWriteInputTokens", 0),
                 "cumulativeInput": cumulative_usage["inputTokens"],
                 "cumulativeOutput": cumulative_usage["outputTokens"],
                 "cumulativeTotal": cumulative_usage["totalTokens"],

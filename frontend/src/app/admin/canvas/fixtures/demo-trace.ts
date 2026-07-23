@@ -166,8 +166,9 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
   {
     kind: 'turn_usage', turn: 1, seq: ++seq, timestamp: t(2690),
     payload: {
-      inputTokens: 2847, outputTokens: 312,
-      cumulativeInput: 2847, cumulativeOutput: 312, cumulativeTotal: 3159,
+      inputTokens: 1, outputTokens: 312,
+      cacheReadInputTokens: 28400, cacheWriteInputTokens: 3200,
+      cumulativeInput: 1, cumulativeOutput: 312, cumulativeTotal: 313,
       bedrockLatencyMs: 1842,
     },
   },
@@ -216,8 +217,9 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
   {
     kind: 'turn_usage', turn: 3, seq: ++seq, timestamp: t(4150),
     payload: {
-      inputTokens: 5120, outputTokens: 487,
-      cumulativeInput: 7967, cumulativeOutput: 799, cumulativeTotal: 8766,
+      inputTokens: 1, outputTokens: 256,
+      cacheReadInputTokens: 38500, cacheWriteInputTokens: 2100,
+      cumulativeInput: 2, cumulativeOutput: 568, cumulativeTotal: 570,
       bedrockLatencyMs: 2103,
     },
   },

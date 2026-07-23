@@ -54,6 +54,8 @@ interface TurnGroup {
   usage?: {
     inputTokens: number;
     outputTokens: number;
+    cacheReadInputTokens: number;
+    cacheWriteInputTokens: number;
     cumulativeTotal: number;
     bedrockLatencyMs?: number;
   };
@@ -159,6 +161,8 @@ function buildTurns(events: FixtureTraceEvent[]): TurnGroup[] {
       group.usage = {
         inputTokens: (ev.payload.inputTokens as number) ?? 0,
         outputTokens: (ev.payload.outputTokens as number) ?? 0,
+        cacheReadInputTokens: (ev.payload.cacheReadInputTokens as number) ?? 0,
+        cacheWriteInputTokens: (ev.payload.cacheWriteInputTokens as number) ?? 0,
         cumulativeTotal: (ev.payload.cumulativeTotal as number) ?? 0,
         bedrockLatencyMs: ev.payload.bedrockLatencyMs as number | undefined,
       };
@@ -587,6 +591,8 @@ function CanvasShell() {
                     label: turn.label,
                     inputTokens: turn.usage?.inputTokens,
                     outputTokens: turn.usage?.outputTokens,
+                    cacheReadInputTokens: turn.usage?.cacheReadInputTokens,
+                    cacheWriteInputTokens: turn.usage?.cacheWriteInputTokens,
                     cumulativeTotal: turn.usage?.cumulativeTotal,
                     bedrockLatencyMs: turn.usage?.bedrockLatencyMs,
                   }}
