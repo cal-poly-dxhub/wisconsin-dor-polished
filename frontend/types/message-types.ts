@@ -91,6 +91,7 @@ export const AgentEventKindSchema = z.enum([
   'tool_result',
   'loop_complete',
   'phase',
+  'turn_usage',
 ]);
 
 export const AgentEventSchema = z.object({

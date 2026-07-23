@@ -13,7 +13,8 @@ export interface AgentTraceEvent {
     | 'tool_call'
     | 'tool_result'
     | 'loop_complete'
-    | 'phase';
+    | 'phase'
+    | 'turn_usage';
   turn?: number | null;
   seq: number;
   timestamp: number;
