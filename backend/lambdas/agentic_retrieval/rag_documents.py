@@ -60,6 +60,7 @@ def build_rag_documents(
             chunk.get("authority_level") == 2
             or chunk.get("framework_id") == "FW-STATUTES"
             or doc_id.startswith("WIS-STAT-")
+            or doc_id.startswith("statutes-")
         )
 
         # Group by (doc_id, heading) so distinct statute sections get separate
