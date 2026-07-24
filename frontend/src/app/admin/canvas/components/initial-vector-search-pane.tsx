@@ -14,6 +14,7 @@ import {
   VectorSearchBaseData,
   backfillLabel,
   docTypeColor,
+  docTypeLabel,
   groupDocChunks,
   resolveAuthorityBreakdown,
   resolveScoreBuckets,
@@ -64,6 +65,76 @@ function ArmSection({
     <div className="border-t border-neutral-200 py-3 first:border-t-0 first:pt-0">
       <h4 className="text-xs font-bold uppercase tracking-wide text-neutral-900">{title}</h4>
       <div className="mt-2">{children}</div>
+    </div>
+  );
+}
+
+function MergedDocChunkRow({
+  docChunks,
+  additiveDocChunks,
+}: {
+  docChunks: Record<string, number>;
+  additiveDocChunks?: Record<string, number>;
+}) {
+  // Merge by doc-type label: solid count from docChunks, hatched count from additiveDocChunks
+  const byType = new Map<string, { label: string; color: string; solid: number; hatched: number }>();
+  for (const [docId, count] of Object.entries(docChunks)) {
+    const label = docTypeLabel(docId);
+    const existing = byType.get(label);
+    if (existing) {
+      existing.solid += count;
+    } else {
+      byType.set(label, { label, color: docTypeColor(docId), solid: count, hatched: 0 });
+    }
+  }
+  for (const [docId, count] of Object.entries(additiveDocChunks || {})) {
+    const label = docTypeLabel(docId);
+    const existing = byType.get(label);
+    if (existing) {
+      existing.hatched += count;
+    } else {
+      byType.set(label, { label, color: docTypeColor(docId), solid: 0, hatched: count });
+    }
+  }
+  const groups = Array.from(byType.values());
+  if (groups.length === 0) return <p className="text-sm text-neutral-400">No chunks</p>;
+
+  return (
+    <div className="flex flex-wrap gap-x-6 gap-y-3">
+      {groups.map((g) => (
+        <div key={g.label}>
+          <p className="mb-1.5 text-sm font-bold text-neutral-900">
+            {g.solid + g.hatched} {g.label}
+          </p>
+          <div className="flex flex-wrap" style={{ gap: SQUARE_GAP }}>
+            {Array.from({ length: g.solid }, (_, i) => (
+              <div
+                key={`s-${i}`}
+                style={{
+                  width: SQUARE_SIZE,
+                  height: SQUARE_SIZE,
+                  borderRadius: 2,
+                  backgroundColor: g.color,
+                }}
+              />
+            ))}
+            {Array.from({ length: g.hatched }, (_, i) => (
+              <div
+                key={`h-${i}`}
+                style={{
+                  width: SQUARE_SIZE,
+                  height: SQUARE_SIZE,
+                  borderRadius: 2,
+                  backgroundColor: g.color,
+                  backgroundImage: `repeating-linear-gradient(-45deg, transparent, transparent 3px, rgba(255,255,255,0.35) 3px, rgba(255,255,255,0.35) 6px)`,
+                  border: `2px dashed ${BROAD_ACCENT}`,
+                  boxSizing: 'border-box' as const,
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -201,14 +272,8 @@ function ArmColumn({
         />
       </ArmSection>
 
-      <ArmSection title="Chunks by source">
-        <DocChunkRow docChunks={docChunks} hatched={accent && !additiveDocChunks} />
-        {additiveDocChunks && Object.keys(additiveDocChunks).length > 0 && (
-          <div className="mt-3 border-t border-neutral-100 pt-3">
-            <p className="mb-2 text-xs font-medium text-neutral-500">Additive merge only</p>
-            <DocChunkRow docChunks={additiveDocChunks} hatched />
-          </div>
-        )}
+      <ArmSection title={additiveDocChunks && Object.keys(additiveDocChunks).length > 0 ? "Chunks by source — additive merge only" : "Chunks by source"}>
+        <MergedDocChunkRow docChunks={docChunks} additiveDocChunks={additiveDocChunks} />
       </ArmSection>
 
       <ArmSection title="Authority mix">
@@ -331,86 +396,87 @@ export function InitialVectorSearchPane({ data }: { data: InitialVectorSearchDat
         />
       </div>
 
-      {(data.targetWpamYear != null ||
-        (data.statuteBackfill?.length ?? 0) > 0 ||
-        (data.caselawBackfill?.length ?? 0) > 0 ||
-        (data.caseLawCount ?? 0) > 0) && (
-        <Section title="Enrichments (shared)">
-          <div className="space-y-2 text-sm text-neutral-600">
-            {data.targetWpamYear != null && <p>WPAM edition filter → {data.targetWpamYear}</p>}
-            {(data.caseLawCount ?? 0) > 0 && (
-              <p>
-                {data.caseLawCount} case law citation{data.caseLawCount === 1 ? '' : 's'} discovered
+      {((data.statuteBackfill?.length ?? 0) > 0 || (data.caselawBackfill?.length ?? 0) > 0) && (
+        <div className="border-t border-neutral-200 pt-5">
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_1.5fr] gap-14">
+            {/* Left: title + description */}
+            <div>
+              <h2 className="text-2xl font-bold text-neutral-900">Auto Backfill</h2>
+              <p className="mt-3 text-sm leading-6 text-neutral-900">
+                Runs on the narrow arm after diversity cap. Takes the top 3 source chunks (non-statute) and follows their citation edges to discover which statute sections they reference, resolving stubs to the actual statute text (cap 3 sections). Then takes those discovered statutes and traverses incoming citation edges from case-law chunks in one batched query (fetch 200, hard cap 300) to find opinions that interpret those statutes, ranked by cosine similarity, diversified to 1 chunk per case, returning up to 5.
               </p>
-            )}
-          </div>
-        </Section>
-      )}
-
-      {(data.caselawBackfill?.length ?? 0) > 0 && (
-        <Section
-          title="Case-Law Backfill"
-          subtitle="Chunk-level CITES edges from statute stubs"
-        >
-          {data.caselawBackfillMeta && (
-            <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
-              <span>
-                {data.caselawBackfillMeta.stubsSearched?.length ?? 0} stub{(data.caselawBackfillMeta.stubsSearched?.length ?? 0) === 1 ? '' : 's'} searched
-              </span>
-              <span>{data.caselawBackfillMeta.candidateCount ?? 0} candidates (fetch {data.caselawBackfillMeta.fetchK ?? 0})</span>
-              {data.caselawBackfillMeta.fetchSaturated && (
-                <span className="font-medium text-amber-600">⚠ saturated</span>
-              )}
-              {(data.caselawBackfillMeta.latencyMs ?? 0) > 0 && (
-                <span>{data.caselawBackfillMeta.latencyMs}ms</span>
-              )}
             </div>
-          )}
-          <div className="flex flex-col gap-3">
-            {data.caselawBackfill!.map((c) => (
-              <div key={c.caseId} className="flex items-center gap-3">
-                <div style={{ width: 18, height: 18, borderRadius: '50%', backgroundColor: COLOR.statute }} title="Statute stub" />
-                <svg width="60" height="16" className="shrink-0">
-                  <line x1="0" y1="8" x2="42" y2="8" stroke={COLOR.caseLaw} strokeWidth="2" />
-                  <polygon points="42,4 50,8 42,12" fill={COLOR.caseLaw} />
-                  <text x="25" y="5" textAnchor="middle" fontSize="7" fill={COLOR.caseLaw}>CITES</text>
-                </svg>
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <div style={{ width: 18, height: 18, borderRadius: 2, backgroundColor: COLOR.caseLaw }} />
-                  <div className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-neutral-700">
-                      {c.title || c.citation || c.caseId}
-                    </span>
-                    <span className="flex gap-2 text-[10px] text-neutral-400">
-                      {c.contentRole && <span className="rounded bg-purple-50 px-1 text-purple-700">{c.contentRole}</span>}
-                      {c.relevanceScore != null && <span>score {c.relevanceScore.toFixed(3)}</span>}
-                    </span>
+
+            {/* Right: backfill results stacked */}
+            <div className="flex flex-col gap-4">
+              {(data.statuteBackfill?.length ?? 0) > 0 && (
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900">Statute Backfill</h3>
+                  <p className="mt-0.5 text-sm text-neutral-500">Follow CITES edges from top chunks</p>
+                  <div className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-px bg-neutral-200 rounded-md overflow-hidden border border-neutral-200">
+                    {data.statuteBackfill!.map((b) => (
+                      <div key={b.chunkId} className="bg-white px-3 py-3 flex items-center gap-2.5">
+                        <div style={{ width: 16, height: 16, borderRadius: '50%', backgroundColor: COLOR.statute, flexShrink: 0 }} />
+                        <div className="min-w-0">
+                          <span className="text-sm font-medium text-neutral-800 block">{backfillLabel(b)}</span>
+                          <span className="text-xs text-neutral-400">from rank {b.sourceRank} chunk</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
+              )}
 
-      {(data.statuteBackfill?.length ?? 0) > 0 && (
-        <Section title="Auto-Backfill" subtitle="Follow CITES edges to statutes">
-          <div className="flex flex-col gap-3">
-            {data.statuteBackfill!.map((b) => (
-              <div key={b.chunkId} className="flex items-center gap-3">
-                <div style={{ width: 20, height: 20, borderRadius: 2, backgroundColor: COLOR.wpam }} />
-                <svg width="100" height="16" className="shrink-0">
-                  <line x1="0" y1="8" x2="80" y2="8" stroke={COLOR.wpam} strokeWidth="2" />
-                  <polygon points="80,4 88,8 80,12" fill={COLOR.wpam} />
-                </svg>
-                <div className="flex items-center gap-2">
-                  <div style={{ width: 18, height: 18, borderRadius: '50%', backgroundColor: COLOR.statute }} />
-                  <span className="text-sm text-neutral-700">{backfillLabel(b.chunkId)}</span>
+              {(data.caselawBackfill?.length ?? 0) > 0 && (
+                <div>
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <h3 className="text-base font-bold text-neutral-900">Case-Law Backfill</h3>
+                    {data.caselawBackfillMeta && (
+                      <span className="rounded-full border border-neutral-300 bg-neutral-50 px-2.5 py-0.5 text-xs font-medium text-neutral-600">
+                        Fetched {data.caselawBackfillMeta.candidateCount ?? 0} candidates
+                      </span>
+                    )}
+                    {data.caselawBackfillMeta?.latencyMs != null && data.caselawBackfillMeta.latencyMs > 0 && (
+                      <span className="text-lg font-normal text-neutral-400">{data.caselawBackfillMeta.latencyMs}ms</span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-sm text-neutral-500">
+                    Found via {data.caselawBackfillMeta?.stubsSearched?.map(s => s.replace('WIS-STAT-', '§ ')).join(', ') ?? 'statute stubs'}
+                  </p>
+                  <div className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-px bg-neutral-200 rounded-md overflow-hidden border border-neutral-200">
+                    {data.caselawBackfill!.map((c, i) => (
+                      <div key={`${c.caseId}-${i}`} className="bg-white px-3 py-3 flex flex-col gap-1.5">
+                        <span className="text-sm font-medium text-neutral-800 line-clamp-2 leading-snug">
+                          {c.title || c.citation || c.caseId}
+                        </span>
+                        <span className="text-xs text-neutral-500 flex items-center gap-1 flex-wrap">
+                          <span>cites</span>
+                          {c.citedStubs?.map((s, j) => (
+                            <span key={j} className="inline-flex items-center gap-0.5">
+                              <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: COLOR.statute, display: 'inline-block' }} />
+                              <span>{s.replace('WIS-STAT-', '§ ')}</span>
+                            </span>
+                          )) || <span>statute</span>}
+                        </span>
+                        {c.relevanceScore != null && (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <div className="w-10 h-1 rounded-full bg-neutral-200 overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-neutral-600"
+                                style={{ width: `${Math.max(0, Math.min(1, c.relevanceScore)) * 100}%` }}
+                              />
+                            </div>
+                            <span className="text-xs tabular-nums text-neutral-400">{c.relevanceScore.toFixed(2)}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )}
+            </div>
           </div>
-        </Section>
+        </div>
       )}
     </div>
   );

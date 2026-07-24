@@ -59,10 +59,16 @@ export function authorityMeta(level: string): { label: string; color: string } {
   return AUTHORITY_LABELS[level] ?? { label: `Level ${level}`, color: COLOR.chunk };
 }
 
-export function backfillLabel(chunkId: string): string {
-  const match = chunkId.match(/statutes-(\d+)_chunk_(\d+)/);
-  if (match) return `Statute-${match[1]}.${match[2]}`;
-  return chunkId.replace(/_chunk_\d+$/, '');
+export function backfillLabel(item: { chunkId: string; heading?: string }): string {
+  if (item.heading) {
+    // heading is like "70.32 Real estate, how valued..." — extract just the section number
+    const match = item.heading.match(/^(\d+\.\d+(?:\(\d+\))?)/);
+    if (match) return `§ ${match[1]}`;
+    return item.heading.split(' ')[0];
+  }
+  const docId = item.chunkId.replace(/_chunk_\d+$/, '');
+  if (docId.startsWith('statutes-')) return `§ Ch. ${docId.replace('statutes-', '')}`;
+  return docId;
 }
 
 export function groupDocChunks(docChunks: Record<string, number>) {
@@ -273,7 +279,7 @@ export interface VectorSearchBaseData {
   targetWpamYear?: number;
   caseLawCount?: number;
   autoEnrichedCount?: number;
-  statuteBackfill?: { chunkId: string; docId: string; sourceRank: number }[];
-  caselawBackfill?: { caseId: string; title: string; citation: string; summary: string; relevanceScore?: number; contentRole?: string }[];
+  statuteBackfill?: { chunkId: string; docId: string; sourceRank: number; heading?: string }[];
+  caselawBackfill?: { caseId: string; title: string; citation: string; summary: string; relevanceScore?: number; contentRole?: string; citedStubs?: string[] }[];
   caselawBackfillMeta?: { stubsSearched?: string[]; candidateCount?: number; fetchSaturated?: boolean; fetchK?: number; latencyMs?: number };
 }

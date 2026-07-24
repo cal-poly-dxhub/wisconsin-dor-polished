@@ -90,7 +90,7 @@ function vectorSearchPaneData(pane: ToolPane) {
       | { chunkId: string; docId: string; sourceRank: number }[]
       | undefined,
     caselawBackfill: m.caselawBackfill as
-      | { caseId: string; title: string; citation: string; summary: string; relevanceScore?: number; contentRole?: string }[]
+      | { caseId: string; title: string; citation: string; summary: string; relevanceScore?: number; contentRole?: string; citedStubs?: string[] }[]
       | undefined,
     caselawBackfillMeta: m.caselawBackfillMeta as
       | { stubsSearched?: string[]; candidateCount?: number; fetchSaturated?: boolean; fetchK?: number; latencyMs?: number }
@@ -431,6 +431,85 @@ function renderToolPane(pane: ToolPane, sendQuery: (q: string) => void) {
   );
 }
 
+function CollapsibleDisambiguation({ turn, passed, sendQuery }: { turn: TurnGroup; passed: boolean; sendQuery: (q: string) => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-neutral-200">
+      <button
+        type="button"
+        onClick={() => setOpen(prev => !prev)}
+        className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-neutral-50 transition-colors cursor-pointer"
+      >
+        <span className={`text-xs font-bold uppercase tracking-wide ${passed ? 'text-green-700' : 'text-red-700'}`}>
+          {passed ? 'Passed Disambiguation Classifier' : 'Failed Disambiguation Classifier'}
+        </span>
+        <div className="flex-1" />
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          className={`transition-transform duration-200 text-neutral-400 ${open ? 'rotate-90' : ''}`}
+        >
+          <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+      {open && (
+        <div className="border-t border-neutral-100 divide-y divide-neutral-100">
+          {turn.panes.map((pane) => (
+            <div key={pane.id}>{renderToolPane(pane, sendQuery)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CollapsibleFaqTurn({ turn, sendQuery }: { turn: TurnGroup; sendQuery: (q: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const faqPane = turn.panes.find(p => p.toolName === 'faq_search');
+  const topScore = (faqPane?.metadata.topScore as number) ?? 0;
+  const faqCount = (faqPane?.metadata.faqCount as number) ?? 0;
+  const latencyMs = (faqPane?.metadata.latencyMs as number) ?? 0;
+  const threshold = (faqPane?.metadata.faqScoreThreshold as number) ?? 0.7;
+  const matched = topScore >= threshold;
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-neutral-200">
+      <button
+        type="button"
+        onClick={() => setOpen(prev => !prev)}
+        className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-neutral-50 transition-colors cursor-pointer"
+      >
+        <span className="text-xs font-bold uppercase tracking-wide text-neutral-500">FAQ Search</span>
+        <span className={`text-xs font-medium ${matched ? 'text-green-700' : 'text-neutral-400'}`}>
+          {matched ? `Match found · top ${topScore.toFixed(2)}` : `No match · top ${topScore.toFixed(2)}`}
+        </span>
+        <span className="text-xs text-neutral-300">{faqCount} result{faqCount === 1 ? '' : 's'}</span>
+        {latencyMs > 0 && <span className="text-xs text-neutral-300">{latencyMs}ms</span>}
+        <div className="flex-1" />
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          className={`transition-transform duration-200 text-neutral-400 ${open ? 'rotate-90' : ''}`}
+        >
+          <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+      {open && (
+        <div className="border-t border-neutral-100 divide-y divide-neutral-100">
+          {turn.panes.map((pane) => (
+            <div key={pane.id}>{renderToolPane(pane, sendQuery)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CanvasPage() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -561,16 +640,74 @@ function CanvasShell() {
         </div>
       </div>
 
-      {/* Turn-grouped pane grid */}
+      {/* Turn-grouped pane layout */}
       <LayoutGroup>
+        {/* Pre-grid: Disambiguation as collapsible full-width row */}
+        <div className="px-4 pt-2">
+          <AnimatePresence initial={false}>
+            {turns
+              .filter((turn) => turn.panes.some(p => p.toolName === '_disambiguation'))
+              .map((turn) => {
+                const pane = turn.panes.find(p => p.toolName === '_disambiguation');
+                const passed = (pane?.metadata.result as string) !== 'disambiguate';
+                return (
+                  <motion.div
+                    key={turn.id}
+                    layout="position"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{
+                      layout: { duration: 0.4, ease: [0.4, 0, 0.2, 1] },
+                      opacity: { duration: 0.35, delay: 0.15 },
+                    }}
+                    className="mb-2"
+                  >
+                    <CollapsibleDisambiguation turn={turn} passed={passed} sendQuery={sendQuery} />
+                  </motion.div>
+                );
+              })}
+          </AnimatePresence>
+        </div>
+
+        {/* Pre-grid: FAQ Search as collapsible full-width row */}
+        <div className="px-4">
+          <AnimatePresence initial={false}>
+            {turns
+              .filter((turn) => turn.panes.some(p => p.toolName === 'faq_search'))
+              .map((turn) => {
+                const faqPanes = turn.panes.filter(p => p.toolName === 'faq_search');
+                const faqTurn: TurnGroup = { ...turn, panes: faqPanes };
+                return (
+                  <motion.div
+                    key={`faq-${turn.id}`}
+                    layout="position"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{
+                      layout: { duration: 0.4, ease: [0.4, 0, 0.2, 1] },
+                      opacity: { duration: 0.35, delay: 0.15 },
+                    }}
+                    className="mb-2"
+                  >
+                    <CollapsibleFaqTurn turn={faqTurn} sendQuery={sendQuery} />
+                  </motion.div>
+                );
+              })}
+          </AnimatePresence>
+        </div>
+
+        {/* Grid: everything else (with faq_search panes stripped out) */}
         <div
-          className="pt-2 px-4 pb-8 grid gap-4"
+          className="px-4 pb-8 grid gap-4"
           style={{
             gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
           }}
         >
           <AnimatePresence initial={false}>
-            {turns.map((turn) => (
+            {turns
+              .map((turn) => ({ ...turn, panes: turn.panes.filter(p => p.toolName !== 'faq_search' && p.toolName !== '_disambiguation') }))
+              .filter((turn) => turn.panes.length > 0)
+              .map((turn) => (
               <motion.div
                 key={turn.id}
                 layout="position"
@@ -581,7 +718,7 @@ function CanvasShell() {
                   opacity: { duration: 0.35, delay: 0.15 },
                 }}
                 className={`overflow-hidden rounded-lg border border-neutral-200 ${
-                  turn.isWide ? 'col-span-2' : ''
+                  turn.isWide ? 'col-span-3' : ''
                 }`}
               >
                 {/* Status bar */}

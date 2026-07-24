@@ -151,7 +151,7 @@ export function VectorSearchPane({ data }: { data: VectorSearchBaseData }) {
                 </svg>
                 <div className="flex items-center gap-2">
                   <div style={{ width: 18, height: 18, borderRadius: '50%', backgroundColor: COLOR.statute }} />
-                  <span className="text-sm text-neutral-700">{backfillLabel(b.chunkId)}</span>
+                  <span className="text-sm text-neutral-700">{backfillLabel(b)}</span>
                 </div>
               </div>
             ))}
