@@ -324,10 +324,21 @@ export function InlineSources({ items, streamingComplete, citationsByDoc }: { it
             if (item.type === 'document') {
               const doc = item.data as Document;
               const rawId = doc.documentId.replace(/-[a-f0-9]{7}$/, '');
-              const citations = citationsByDoc?.get(rawId);
+              let citations = citationsByDoc?.get(rawId);
+              // Statute sections share a rawId (e.g. "statutes-70") but are
+              // split into per-section cards with distinct page ranges. Filter
+              // citations to only those within this card's page range.
+              if (citations && doc.startPage != null && doc.endPage != null && rawId.startsWith('statutes-')) {
+                citations = citations.filter(c => c.page >= doc.startPage! && c.page <= doc.endPage!);
+              }
+              // Suppress statute section cards that received zero inline citations
+              // after page-range filtering — they were backfilled but never referenced in prose.
+              if (rawId.startsWith('statutes-') && (!citations || citations.length === 0)) {
+                return null;
+              }
               return (
                 <div key={key}>
-                  <DocumentCard document={doc} citations={citations} />
+                  <DocumentCard document={doc} citations={citations?.length ? citations : undefined} />
                 </div>
               );
             }
