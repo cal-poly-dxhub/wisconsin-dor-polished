@@ -46,8 +46,8 @@ TOOL_DEFINITIONS = [
                         },
                         "top_k": {
                             "type": "integer",
-                            "description": "Number of results to return (default: 15, max: 25)",
-                            "default": 15,
+                            "description": "Number of results to return (default: 10, max: 25)",
+                            "default": 10,
                         },
                     },
                     "required": ["query"],

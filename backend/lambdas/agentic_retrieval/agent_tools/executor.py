@@ -414,7 +414,7 @@ def execute_tool(
         from agent_tools import pipeline as _pipeline
 
         raw_query = tool_input["query"]
-        top_k = min(tool_input.get("top_k", 15), 25)
+        top_k = min(tool_input.get("top_k", 10), 25)
         return _pipeline.run_vector_search(
             query=raw_query,
             neptune=neptune,

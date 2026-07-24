@@ -111,7 +111,7 @@ def test_vector_search_top_k_documented(config):
     accidental removal."""
     assert "vector_search" in config["tool_params"]
     assert "top_k" in config["tool_params"]["vector_search"]
-    assert config["tool_params"]["vector_search"]["top_k"]["default"] == 15
+    assert config["tool_params"]["vector_search"]["top_k"]["default"] == 10
     assert config["tool_params"]["vector_search"]["top_k"]["max"] == 25
 
 

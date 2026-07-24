@@ -78,11 +78,35 @@ stage = "broad_discovery"
 model_override = false
 
 [env.DIVERSITY_CAP_PER_DOC]
-default = 5
+default = 3
 type = "int"
 description = "Max chunks per document in vector_search results"
 range = [1, 25]
 stage = "diversity_cap"
+model_override = false
+
+[env.AUTHORITY_QUOTA_STATUTE]
+default = 3
+type = "int"
+description = "Minimum reserved vector_search slots for statutes/constitution (authority 1-2)"
+range = [0, 10]
+stage = "authority_quota"
+model_override = false
+
+[env.AUTHORITY_QUOTA_WPAM]
+default = 2
+type = "int"
+description = "Minimum reserved vector_search slots for WPAM (authority 5)"
+range = [0, 10]
+stage = "authority_quota"
+model_override = false
+
+[env.AUTHORITY_QUOTA_GUIDES]
+default = 2
+type = "int"
+description = "Minimum reserved vector_search slots for FAQs/gov-pubs/guides (authority 6-7)"
+range = [0, 10]
+stage = "authority_quota"
 model_override = false
 
 [env.ENRICH_CAP_PER_DOC]
@@ -280,7 +304,7 @@ model_override = false
 # ---------------------------------------------------------------------------
 
 [tool_params.vector_search.top_k]
-default = 15
+default = 10
 max = 25
 description = "Number of chunks returned to the model. Model can pass lower values."
 

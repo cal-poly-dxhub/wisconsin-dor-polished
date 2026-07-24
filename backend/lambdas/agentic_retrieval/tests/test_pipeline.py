@@ -31,6 +31,7 @@ def test_vector_search_stages_order_matches_original_monolith():
         "neptune_search",
         "wpam_dedup",
         "diversity_cap",
+        "authority_quota",
         "authority_tiebreak",
         "auto_enrichment",
         "citation_extraction",
