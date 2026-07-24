@@ -304,6 +304,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
                 "chunkId": b.get("chunk_id"),
                 "docId": b.get("doc_id"),
                 "sourceRank": b.get("cited_by_source_rank"),
+                "heading": b.get("heading", ""),
             }
             for b in statute_backfill
             if b.get("chunk_id")
@@ -317,6 +318,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
                 "summary": (b.get("text") or "")[:150],
                 "relevanceScore": b.get("relevance_score"),
                 "contentRole": b.get("content_role", ""),
+                "citedStubs": b.get("cited_stub_ids") or [],
             }
             for b in caselaw_backfill
         ]

@@ -77,6 +77,17 @@ def build_rag_documents(
                         text=chunk_text[:_SNIPPET_MAX_CHARS],
                     )
                 )
+        elif doc_id.startswith("case-law-") and chunk_text:
+            # Case-law chunks have no page numbers; use chunk_index as key
+            # and the heading (content role) as the snippet label.
+            idx = chunk.get("chunk_index", 0) or 0
+            snippets = snippets_by_doc.setdefault(group_key, [])
+            if not any(s.page == idx for s in snippets):
+                heading_label = chunk.get("heading") or chunk.get("content_role") or ""
+                snippet_text = heading_label if heading_label else chunk_text[:_SNIPPET_MAX_CHARS]
+                snippets.append(
+                    ChunkSnippet(page=idx, text=snippet_text[:_SNIPPET_MAX_CHARS])
+                )
 
         if group_key not in docs_by_id:
             if doc_id not in doc_infos:

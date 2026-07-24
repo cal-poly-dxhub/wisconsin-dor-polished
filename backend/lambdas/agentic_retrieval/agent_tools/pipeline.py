@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 from agent_tools.stages import (
+    authority_quota,
     authority_tiebreak,
     auto_enrichment,
     auto_refine,
@@ -28,6 +29,7 @@ VECTOR_SEARCH_STAGES = [
     neptune_search,
     wpam_dedup,
     diversity_cap,
+    authority_quota,
     authority_tiebreak,
     auto_enrichment,
     citation_extraction,

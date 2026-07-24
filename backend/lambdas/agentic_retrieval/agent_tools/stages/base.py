@@ -24,7 +24,7 @@ class StageContext:
     neptune: Any
     chat_history: list[dict[str, str]] | None = None
     original_user_query: str | None = None
-    top_k: int = 15
+    top_k: int = 10
     tool_name: str = "vector_search"
     started: float = 0.0
 
