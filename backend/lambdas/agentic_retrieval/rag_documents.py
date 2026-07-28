@@ -112,10 +112,16 @@ def build_rag_documents(
             gov_url = raw_url if raw_url.startswith(("http://", "https://")) else None
             s3_key = chunk.get("s3_key") or (doc_info or {}).get("s3_key")
 
+            is_case_law = doc_id.startswith("case-law-")
+            if is_case_law and doc_info and doc_info.get("summary"):
+                card_content = doc_info["summary"]
+            else:
+                card_content = chunk_text
+
             docs_by_id[group_key] = RAGDocument(
                 document_id=f"{doc_id}-{content_hash}",
                 title=title,
-                content=chunk_text,
+                content=card_content,
                 source=label,
                 source_url=gov_url,
                 s3_key=s3_key,
