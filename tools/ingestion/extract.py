@@ -298,9 +298,9 @@ def process_case_law_document(
     citation = metadata.get("citation", "")
 
     meta_case_name = metadata.get("case_name", "").strip()
-    if meta_case_name and citation:
+    if meta_case_name and citation and meta_case_name != citation:
         title = f"{meta_case_name}, {citation}"
-    elif meta_case_name:
+    elif meta_case_name and not citation:
         title = meta_case_name
     elif citation:
         title = citation

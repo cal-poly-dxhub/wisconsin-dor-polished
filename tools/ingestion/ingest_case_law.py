@@ -329,6 +329,43 @@ def consolidate_citations(raw_entries: list[dict]) -> list[dict]:
 # Phase 2: CourtListener enrichment
 # ---------------------------------------------------------------------------
 
+_CL_URL_SLUG_RE = re.compile(r"/opinion/\d+/([^/]+)/")
+_SLUG_STOP_WORDS = {"of", "the", "in", "re", "ex", "rel", "v", "vs", "a", "an", "and", "for"}
+_SLUG_ABBREVS = {"inc": "Inc.", "llc": "LLC", "lp": "LP", "co": "Co.", "corp": "Corp."}
+
+
+def _case_name_from_url(source_url: str) -> str:
+    """Derive a case name from a CourtListener opinion URL slug.
+
+    E.g. '/opinion/10601552/childrens-hospital-of-wisconsin-inc-v-city-of-wauwatosa/'
+    → "Childrens Hospital of Wisconsin, Inc. v. City of Wauwatosa"
+    """
+    m = _CL_URL_SLUG_RE.search(source_url)
+    if not m:
+        return ""
+    slug = m.group(1)
+    parts = slug.split("-")
+
+    try:
+        v_idx = parts.index("v")
+    except ValueError:
+        return slug.replace("-", " ").title()
+
+    def titleize(words: list[str]) -> str:
+        result = []
+        for w in words:
+            if w in _SLUG_ABBREVS:
+                result.append(_SLUG_ABBREVS[w])
+            elif w in _SLUG_STOP_WORDS:
+                result.append(w)
+            else:
+                result.append(w.capitalize())
+        return " ".join(result)
+
+    plaintiff = titleize(parts[:v_idx])
+    defendant = titleize(parts[v_idx + 1:])
+    return f"{plaintiff} v. {defendant}"
+
 
 def search_courtlistener(citation: str, session: requests.Session) -> dict | None:
     """Search CourtListener for a citation. Returns enrichment dict or None."""
@@ -376,9 +413,14 @@ def search_courtlistener(citation: str, session: requests.Session) -> dict | Non
     if not opinion_id and opinions:
         opinion_id = opinions[0]["id"]
 
+    source_url = f"https://www.courtlistener.com{result['absolute_url']}"
+    case_name = result.get("caseName") or result.get("caseNameFull") or ""
+    if not case_name:
+        case_name = _case_name_from_url(source_url)
+
     return {
-        "case_name": result.get("caseName") or result.get("caseNameFull") or "",
-        "source_url": f"https://www.courtlistener.com{result['absolute_url']}",
+        "case_name": case_name,
+        "source_url": source_url,
         "cluster_id": result.get("cluster_id") or result.get("id") or "",
         "opinion_id": opinion_id,
         "all_citations": result.get("citation", []),
@@ -617,10 +659,15 @@ def upload_case(
         content_type = "text/plain"
         ext = ".txt"
     else:
+        stub_case_name = entry.get("case_name") or ""
+        if not stub_case_name or stub_case_name == citation:
+            stub_case_name = _case_name_from_url(
+                entry.get("source_url") or ""
+            ) or citation
         content = json.dumps(
             {
                 "citation": citation,
-                "case_name": entry.get("case_name") or citation,
+                "case_name": stub_case_name,
                 "note": "Full opinion text not available. See source_url or scholar_url.",
                 "scholar_url": entry["scholar_url"],
             },
@@ -634,6 +681,11 @@ def upload_case(
 
     s3_client.put_object(Bucket=bucket, Key=doc_key, Body=content, ContentType=content_type)
 
+    resolved_source_url = entry.get("source_url") or entry["legis_url"]
+    resolved_case_name = entry.get("case_name") or ""
+    if not resolved_case_name or resolved_case_name == citation:
+        resolved_case_name = _case_name_from_url(resolved_source_url) or citation
+
     metadata = {
         "metadataAttributes": {
             "doc_id": doc_id,
@@ -642,8 +694,8 @@ def upload_case(
             "authority_level": "3",
             "category": "case_law",
             "citation": citation,
-            "case_name": entry.get("case_name") or citation,
-            "source_url": entry.get("source_url") or entry["legis_url"],
+            "case_name": resolved_case_name,
+            "source_url": resolved_source_url,
             "legis_url": entry["legis_url"],
             "scholar_url": entry["scholar_url"],
             "citing_statutes": json.dumps(entry["sources"]),
