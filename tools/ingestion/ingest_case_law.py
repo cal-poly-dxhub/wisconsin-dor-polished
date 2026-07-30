@@ -565,10 +565,96 @@ def load_extracted_cache(work_bucket: str, s3_client) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _source_page_fingerprint(entry: dict) -> set[tuple[str, int]]:
+    """Return {(file, page), ...} for an entry's statute sources."""
+    fps = set()
+    for src in entry.get("sources", []):
+        for page in src.get("pages", []):
+            fps.add((src["file"], page))
+    return fps
+
+
+_WIS_REPORTERS = {"wis-2d", "wi-app", "wi"}
+_NW_REPORTERS = {"n-w-2d", "n-w-3d"}
+
+
+def _is_wis_reporter(slug: str) -> bool:
+    return _reporter_for_slug(slug) in _WIS_REPORTERS
+
+
+def _is_nw_reporter(slug: str) -> bool:
+    return _reporter_for_slug(slug) in _NW_REPORTERS
+
+
+def _deduplicate_by_page_proximity(no_cluster: list[dict]) -> list[dict]:
+    """Deduplicate citations without cluster_id using shared statute source pages.
+
+    Parallel reporters (e.g. 45 Wis. 2d 683 and 173 N.W.2d 627) for the same
+    case always appear as adjacent hyperlinks on the same statute PDF page.
+
+    Strategy: group entries by their exact source-page fingerprint (frozenset of
+    all (file, page) pairs). Entries with identical fingerprints AND complementary
+    reporter types (one Wis., one N.W.) are merged. This avoids over-merging
+    unrelated cases that happen to share a single page.
+    """
+    if not no_cluster:
+        return []
+
+    # Group by exact source-page fingerprint
+    by_fingerprint = defaultdict(list)
+    for entry in no_cluster:
+        fp = frozenset(_source_page_fingerprint(entry))
+        by_fingerprint[fp].append(entry)
+
+    kept = []
+    total_dupes = 0
+
+    for _fp, group in by_fingerprint.items():
+        if len(group) == 1:
+            kept.append(group[0])
+            continue
+
+        # Check if group has complementary reporter types
+        wis_entries = [e for e in group if _is_wis_reporter(e["slug"])]
+        nw_entries = [e for e in group if _is_nw_reporter(e["slug"])]
+
+        if wis_entries and nw_entries:
+            # Merge: keep highest-priority reporter as winner
+            group.sort(key=lambda e: _reporter_priority(e["slug"]))
+            winner = group[0]
+
+            all_sources = defaultdict(set)
+            alternate_citations = []
+            for entry in group:
+                for src in entry["sources"]:
+                    all_sources[src["file"]].update(src["pages"])
+                if entry["citation"] != winner["citation"]:
+                    alternate_citations.append(entry["citation"])
+
+            winner["sources"] = [
+                {"file": f, "pages": sorted(pages)} for f, pages in sorted(all_sources.items())
+            ]
+            if alternate_citations:
+                winner["alternate_citations"] = alternate_citations
+
+            kept.append(winner)
+            total_dupes += len(group) - 1
+        else:
+            # Same fingerprint but same reporter type — different cases that
+            # happen to be cited on all the same pages. Keep all.
+            kept.extend(group)
+
+    if total_dupes:
+        logger.info(f"  Page-proximity dedup: {total_dupes} additional duplicates removed")
+    return kept
+
+
 def deduplicate_by_cluster(enriched: list[dict]) -> list[dict]:
     """Group citations by CourtListener cluster_id OR source_url, keep highest-priority reporter.
 
-    Citations without a cluster_id or source_url (CL misses) are kept as-is.
+    Citations without a cluster_id or source_url are further deduplicated by
+    page proximity: parallel reporters that co-occur on the same statute PDF
+    page are merged.
     """
     by_cluster = defaultdict(list)
     no_cluster = []
@@ -607,9 +693,51 @@ def deduplicate_by_cluster(enriched: list[dict]) -> list[dict]:
         kept.append(winner)
         total_dupes += len(group) - 1
 
-    kept.extend(no_cluster)
+    # Second pass: check if any no_cluster entries are parallel reporters of
+    # cluster-based winners (one side hit CL, the other didn't).
+    # Match by exact source-page fingerprint to avoid false positives.
+    if no_cluster and kept:
+        winner_by_fingerprint = defaultdict(list)
+        for winner in kept:
+            fp = frozenset(_source_page_fingerprint(winner))
+            if fp:
+                winner_by_fingerprint[fp].append(winner)
+
+        still_unmatched = []
+        cross_dupes = 0
+        for entry in no_cluster:
+            entry_fp = frozenset(_source_page_fingerprint(entry))
+            matched_winner = None
+            for candidate in winner_by_fingerprint.get(entry_fp, []):
+                if (_is_nw_reporter(entry["slug"]) and _is_wis_reporter(candidate["slug"])) or \
+                   (_is_wis_reporter(entry["slug"]) and _is_nw_reporter(candidate["slug"])):
+                    matched_winner = candidate
+                    break
+
+            if matched_winner:
+                matched_winner.setdefault("alternate_citations", []).append(entry["citation"])
+                for src in entry["sources"]:
+                    existing = next(
+                        (s for s in matched_winner["sources"] if s["file"] == src["file"]), None
+                    )
+                    if existing:
+                        existing["pages"] = sorted(set(existing["pages"]) | set(src["pages"]))
+                    else:
+                        matched_winner["sources"].append(src)
+                cross_dupes += 1
+            else:
+                still_unmatched.append(entry)
+
+        if cross_dupes:
+            logger.info(f"  Cross dedup: {cross_dupes} no-cluster entries matched to CL winners")
+        no_cluster = still_unmatched
+
+    # Third pass: deduplicate remaining CL misses by page proximity among themselves
+    kept_from_no_cluster = _deduplicate_by_page_proximity(no_cluster)
+    kept.extend(kept_from_no_cluster)
+
     if total_dupes:
-        logger.info(f"Dedup: {total_dupes} parallel-reporter duplicates removed")
+        logger.info(f"Dedup: {total_dupes} parallel-reporter duplicates removed (cluster/URL)")
     return kept
 
 

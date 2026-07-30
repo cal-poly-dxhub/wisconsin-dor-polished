@@ -712,6 +712,105 @@ def phase_7_stub_resolution(client, graph_id: str):
 
     logger.info(f"  Wired {edges_created} DEFINED_BY edges for {resolved_count}/{len(parsed)} stubs")
 
+    # --- AdminRule stub resolution ---
+    # Same pattern: normalize dirty stub IDs to section level, match against
+    # admin-rule chunk headings. Stubs like ADMIN-Tax-18.05(1)(a) normalize to
+    # "Tax 18.05" which matches the chunk heading.
+    logger.info("  Resolving AdminRule stubs...")
+
+    ar_result = execute_query(
+        client, graph_id, "MATCH (r:AdminRule) WHERE r.stub = true RETURN r.id AS id"
+    )
+    ar_stubs = ar_result.get("results", [])
+    logger.info(f"  {len(ar_stubs)} AdminRule stubs found")
+
+    def _normalize_admin_stub(stub_id: str) -> tuple[str, str] | None:
+        """Parse ADMIN-Tax-18.05(1)(a) → (doc_id='admin_rules-tax-18', section='Tax 18.05')."""
+        m = re.match(r"ADMIN-(.+)", stub_id)
+        if not m:
+            return None
+        raw = m.group(1)
+        # Fix OCR: lowercase L → 1 in subsection refs
+        raw = raw.replace("(l)", "(1)")
+        # Normalize embedded newlines/spaces → hyphen (preserves Tax-18 structure)
+        raw = re.sub(r"[\n\r]+", "-", raw)
+        # Strip trailing punctuation artifacts
+        raw = raw.rstrip(".)],;:")
+        raw = raw.strip()
+        # Collapse double hyphens from newline fix
+        raw = re.sub(r"-+", "-", raw)
+        # Extract section: "Tax-18.05(1)(a)" → "Tax-18.05"
+        section_match = re.match(r"(Tax-\d+\.\d+)", raw)
+        if not section_match:
+            # Try chapter-only: "Tax-18" — skip, no section to resolve
+            return None
+        section_slug = section_match.group(1)  # "Tax-18.05"
+        # Derive doc_id: "Tax-18.05" → chapter "tax-18" → "admin_rules-tax-18"
+        chapter_match = re.match(r"Tax-(\d+)", section_slug)
+        if not chapter_match:
+            return None
+        chapter_num = chapter_match.group(1)
+        doc_id = f"admin_rules-tax-{chapter_num}"
+        # Heading format in chunks: "Tax 18.05" (space, not hyphen)
+        heading_section = section_slug.replace("-", " ")  # "Tax 18.05"
+        return doc_id, heading_section
+
+    ar_parsed = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for stub in ar_stubs:
+        result_pair = _normalize_admin_stub(stub["id"])
+        if not result_pair:
+            continue
+        doc_id, section = result_pair
+        # Dedup: multiple dirty stubs (18.05(1)(a), 18.05(1)(b)) normalize to same section
+        key = (stub["id"], doc_id, section)
+        if (doc_id, section) not in seen_pairs:
+            seen_pairs.add((doc_id, section))
+        ar_parsed.append({
+            "stub_id": stub["id"],
+            "doc_id": doc_id,
+            "section": section,
+        })
+
+    if not ar_parsed:
+        logger.info("  No AdminRule section-level stubs to resolve")
+    else:
+        logger.info(f"  {len(ar_parsed)} AdminRule stubs to resolve (from {len(ar_stubs)} total)")
+
+        # Group by doc
+        ar_by_doc: dict[str, list[dict]] = {}
+        for entry in ar_parsed:
+            ar_by_doc.setdefault(entry["doc_id"], []).append(entry)
+
+        ar_pairs: list[dict] = []
+        for doc_id, entries in ar_by_doc.items():
+            for entry in entries:
+                result = execute_query(
+                    client,
+                    graph_id,
+                    "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: $doc_id}) "
+                    "WHERE c.heading STARTS WITH $section "
+                    "RETURN c.id AS chunk_id",
+                    {"doc_id": doc_id, "section": entry["section"]},
+                )
+                for row in result.get("results", []):
+                    ar_pairs.append({"stub_id": entry["stub_id"], "chunk_id": row["chunk_id"]})
+
+        ar_resolved = len({p["stub_id"] for p in ar_pairs})
+
+        for start in range(0, len(ar_pairs), flush_cap):
+            batch = ar_pairs[start : start + flush_cap]
+            execute_query(
+                client,
+                graph_id,
+                "UNWIND $rows AS row "
+                "MATCH (r:AdminRule {id: row.stub_id}), (c:Chunk {id: row.chunk_id}) "
+                "MERGE (r)-[:DEFINED_BY]->(c)",
+                {"rows": batch},
+            )
+
+        logger.info(f"  Wired {len(ar_pairs)} DEFINED_BY edges for {ar_resolved}/{len(ar_parsed)} AdminRule stubs")
+
 
 PHASE_8_WORKERS = 8
 
