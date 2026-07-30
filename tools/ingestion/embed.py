@@ -216,6 +216,20 @@ def main():
 
     logger.info(f"Embedding complete: {embedded_count}/{total_chunks} chunks embedded")
 
+    # GC: delete embedded files not present in the extracted set.
+    # The extracted/ prefix is the authoritative document set; anything in
+    # embedded/ that doesn't have a matching extracted/ record is stale.
+    extracted_ids = {d["doc_id"] for d in load_extracted_docs(args.work_bucket)}
+    embedded_ids = list_already_embedded(args.work_bucket)
+    stale_ids = embedded_ids - extracted_ids
+    if stale_ids:
+        logger.info(f"GC: removing {len(stale_ids)} stale embedded files (not in extracted set)")
+        for doc_id in sorted(stale_ids):
+            s3.delete_object(Bucket=args.work_bucket, Key=f"embedded/{doc_id}.json")
+        logger.info(f"GC: deleted {len(stale_ids)} stale embedded files")
+    else:
+        logger.info("GC: no stale embedded files found")
+
 
 if __name__ == "__main__":
     main()

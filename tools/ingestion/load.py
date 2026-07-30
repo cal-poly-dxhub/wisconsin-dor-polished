@@ -855,7 +855,7 @@ def phase_8_vector_upserts(client, graph_id: str, documents: list[dict]):
     logger.info(f"  Upserted {total} chunk vectors")
 
 
-def phase_9_cleanup(client, graph_id: str, documents: list[dict] | None = None):
+def phase_9_cleanup(client, graph_id: str, work_bucket: str, documents: list[dict] | None = None):
     """Garbage-collect orphan nodes left over from prior loads.
 
     Three specific classes:
@@ -913,41 +913,46 @@ def phase_9_cleanup(client, graph_id: str, documents: list[dict] | None = None):
     deleted_topics = topic_orphans.get("results", [{}])[0].get("deleted", 0)
     logger.info(f"  Deleted {deleted_topics} orphan Topic nodes (no incoming COVERS_TOPIC)")
 
-    # Stale CaseLaw nodes: parallel-reporter duplicates whose extracted cache
-    # was removed by --clean-losers or dedup. Delete any CaseLaw node not in
-    # the current document set being loaded.
-    if documents:
-        current_case_ids = {
-            d["doc_id"] for d in documents if d.get("doc_type") == "case_law"
-        }
-        if current_case_ids:
-            all_graph_cases = execute_query(
-                client, graph_id,
-                "MATCH (c:CaseLaw) RETURN c.id AS id",
+    # Stale CaseLaw nodes: compare graph against the extracted/ prefix in S3
+    # (the authoritative document set), not against what was loaded this run.
+    # This makes GC self-healing regardless of which subset was loaded.
+    extracted_case_ids = set()
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=work_bucket, Prefix="extracted/case-law-"):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if key.endswith(".json"):
+                doc_id = key.removeprefix("extracted/").removesuffix(".json")
+                extracted_case_ids.add(doc_id)
+
+    if extracted_case_ids:
+        all_graph_cases = execute_query(
+            client, graph_id,
+            "MATCH (c:CaseLaw) RETURN c.id AS id",
+        )
+        graph_case_ids = {r["id"] for r in all_graph_cases.get("results", [])}
+        stale_ids = sorted(graph_case_ids - extracted_case_ids)
+        if stale_ids:
+            logger.info(
+                f"  Found {len(stale_ids)} stale CaseLaw nodes "
+                f"(in graph but not in extracted/ set of {len(extracted_case_ids)})"
             )
-            graph_case_ids = {r["id"] for r in all_graph_cases.get("results", [])}
-            stale_ids = sorted(graph_case_ids - current_case_ids)
-            if stale_ids:
-                logger.info(
-                    f"  Found {len(stale_ids)} stale CaseLaw nodes "
-                    f"(in graph but not in current extracted set of {len(current_case_ids)})"
+            batch_size = 100
+            total_deleted = 0
+            for i in range(0, len(stale_ids), batch_size):
+                batch = stale_ids[i : i + batch_size]
+                result = execute_query(
+                    client, graph_id,
+                    "UNWIND $ids AS cid "
+                    "MATCH (c:CaseLaw {id: cid}) "
+                    "DETACH DELETE c "
+                    "RETURN count(c) AS deleted",
+                    {"ids": batch},
                 )
-                batch_size = 100
-                total_deleted = 0
-                for i in range(0, len(stale_ids), batch_size):
-                    batch = stale_ids[i : i + batch_size]
-                    result = execute_query(
-                        client, graph_id,
-                        "UNWIND $ids AS cid "
-                        "MATCH (c:CaseLaw {id: cid}) "
-                        "DETACH DELETE c "
-                        "RETURN count(c) AS deleted",
-                        {"ids": batch},
-                    )
-                    total_deleted += result.get("results", [{}])[0].get("deleted", 0)
-                logger.info(f"  Purged {total_deleted} stale CaseLaw nodes")
-            else:
-                logger.info("  No stale CaseLaw nodes found")
+                total_deleted += result.get("results", [{}])[0].get("deleted", 0)
+            logger.info(f"  Purged {total_deleted} stale CaseLaw nodes")
+        else:
+            logger.info("  No stale CaseLaw nodes found")
 
 
 def main():
@@ -989,7 +994,7 @@ def main():
         (6, "Case Law CITES", lambda: phase_6_case_law_cites(client, graph_id, documents)),
         (7, "Stub Resolution", lambda: phase_7_stub_resolution(client, graph_id)),
         (8, "Vector Upserts", lambda: phase_8_vector_upserts(client, graph_id, documents)),
-        (9, "Orphan Cleanup", lambda: phase_9_cleanup(client, graph_id, documents)),
+        (9, "Orphan Cleanup", lambda: phase_9_cleanup(client, graph_id, args.work_bucket, documents)),
     ]
 
     for phase_num, name, fn in phases:
