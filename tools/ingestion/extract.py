@@ -667,7 +667,7 @@ def main():
             doc_id = doc["doc_id"]
             ext_key = f"extracted/{doc_id}.json"
             try:
-                raw_head = s3.head_object(Bucket=args.raw_bucket, Key=doc["s3_key"])
+                raw_head = s3.head_object(Bucket=args.raw_bucket, Key=doc["key"])
                 ext_head = s3.head_object(Bucket=args.work_bucket, Key=ext_key)
                 if raw_head["LastModified"] > ext_head["LastModified"]:
                     stale.append(doc)
