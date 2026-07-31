@@ -1,5 +1,5 @@
 """Sanity checks for config/retrieval.toml — the source of truth for
-agentic_retrieval env vars (see docs/spec-retrieval-pipeline-refactor.md).
+agentic_retrieval env vars.
 
 These tests parse the real repo-root config/retrieval.toml (not a fixture)
 so a malformed edit to the file fails CI immediately.

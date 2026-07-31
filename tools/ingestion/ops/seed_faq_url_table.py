@@ -5,7 +5,8 @@ upserts one item per normalized question into the DynamoDB table. Idempotent:
 re-running overwrites items in place.
 
 Usage:
-    AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> python tools/ingestion/ops/seed_faq_url_table.py \
+    AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> \
+        python tools/ingestion/ops/seed_faq_url_table.py \
         --table <FaqUrlTableName> --faqs documents/faqs.json
     # --dry-run prints counts without writing.
 

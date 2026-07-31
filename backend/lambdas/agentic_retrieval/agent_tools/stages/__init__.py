@@ -2,5 +2,5 @@
 
 Each module exposes ``run(ctx: StageContext) -> StageResult``. See
 agent_tools/pipeline.py for how they are wired together and
-docs/spec-retrieval-pipeline-refactor.md for the design rationale.
+docs/auto-backfill.md for the stage-by-stage description.
 """
