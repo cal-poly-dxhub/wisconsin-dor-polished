@@ -21,7 +21,7 @@ Usage:
         --graph-id g-ndvl4j73v4
     # add --apply to actually delete
 
-    AWS_PROFILE=widor AWS_REGION=us-east-1 python \\
+    AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 python \\
         tools/ingestion/ops/delete_semantic_edges.py --graph-id g-ndvl4j73v4 --apply
 """
 

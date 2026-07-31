@@ -16,8 +16,8 @@ bun run deploy                 # bundle + cdk deploy (uses --profile and region 
 
 # CDK must be run from infra/:
 cd infra
-AWS_PROFILE=widor AWS_REGION=us-east-1 cdk diff -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG
-AWS_PROFILE=widor AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk diff -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
 ```
 
 ### Testing
@@ -45,7 +45,7 @@ bun dev                        # local dev server (Next.js + Turbopack)
 ```bash
 # First-time: deploy infra + build/push Docker image
 cd infra
-AWS_PROFILE=widor AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
 cd ../tools/ingestion/docker
 ./build_and_push.sh              # builds container image and pushes to ECR
 
@@ -71,7 +71,7 @@ cd ../tools/ingestion/docker
 # Extraction cache:    s3://{work-bucket}/extracted/{doc_id}.json
 
 # Monitor logs:
-aws logs tail /ecs/wis-dor-ingestion --follow --profile widor --region us-east-1
+aws logs tail /ecs/wis-dor-ingestion --follow --profile <your-profile> --region us-east-1
 ```
 
 ### Scraping & Content Refresh
@@ -81,15 +81,15 @@ aws logs tail /ecs/wis-dor-ingestion --follow --profile widor --region us-east-1
 # against S3, and only uploads changed documents.
 
 # Dry run — see what changed without modifying anything:
-AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/ingestion/scrape_documents.py \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python tools/ingestion/scrape_documents.py \
   --bucket wis-raw-bucket-c8e69250 --dry-run
 
 # Scrape specific categories:
-AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/ingestion/scrape_documents.py \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python tools/ingestion/scrape_documents.py \
   --bucket wis-raw-bucket-c8e69250 --category statutes --category admin_rules
 
 # Force re-upload even if content matches:
-AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/ingestion/scrape_documents.py \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python tools/ingestion/scrape_documents.py \
   --bucket wis-raw-bucket-c8e69250 --force
 
 # Annual refresh workflow (scrape changed → extract stale → embed → load):
@@ -99,7 +99,7 @@ uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e692
 ./tools/ingestion/scripts/run_fargate.sh load
 
 # Case law (separate path — discovered from statute PDF hyperlinks, not manifest):
-AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/ingestion/ingest_case_law.py \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python tools/ingestion/ingest_case_law.py \
   --bucket wis-raw-bucket-c8e69250 --from-s3 --resume
 ```
 
@@ -109,16 +109,16 @@ AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python tools/ingestion/ingest_case
 export CERT=$(.venv/bin/python3 -c "import certifi; print(certifi.where())")
 
 # Extract + classify (PyMuPDF first, Textract fallback, LLM classification)
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.ingestion.extract \
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> uv run python -m tools.ingestion.extract \
   --raw-bucket wis-raw-bucket-c8e69250 --work-bucket wis-work-bucket-c8e69250 \
   --config tools/ingestion/config/ingest_config.yaml --max-workers 3
 
 # Embed chunks with Titan Embed v2
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.ingestion.embed \
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> uv run python -m tools.ingestion.embed \
   --work-bucket wis-work-bucket-c8e69250 --config tools/ingestion/config/ingest_config.yaml
 
 # Load into Neptune graph (9 sub-phases)
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=widor uv run python -m tools.ingestion.load \
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> uv run python -m tools.ingestion.load \
   --work-bucket wis-work-bucket-c8e69250 --graph-id g-ndvl4j73v4 \
   --config tools/ingestion/config/ingest_config.yaml
 
@@ -229,12 +229,12 @@ The **ChatHistoryTable** stores every user query and bot response. When the user
 **CLI examples:**
 ```bash
 # Get all items (full scan):
-AWS_PROFILE=widor AWS_REGION=us-east-1 aws dynamodb scan \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws dynamodb scan \
   --table-name "WisconsinBotGraphRAG-WisconsinSessionsStackNestedStackWisconsinSessionsStackNestedStac-1P3H46X50M51H-ChatHistoryTableA22BA13C-GTH2UH9SGD0W" \
   --output json > /tmp/chat_history.json
 
 # Filter to recent items (e.g. last week):
-AWS_PROFILE=widor AWS_REGION=us-east-1 aws dynamodb scan \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws dynamodb scan \
   --table-name "WisconsinBotGraphRAG-WisconsinSessionsStackNestedStackWisconsinSessionsStackNestedStac-1P3H46X50M51H-ChatHistoryTableA22BA13C-GTH2UH9SGD0W" \
   --filter-expression "#ts >= :cutoff" \
   --expression-attribute-names '{"#ts": "timestamp"}' \
@@ -242,7 +242,7 @@ AWS_PROFILE=widor AWS_REGION=us-east-1 aws dynamodb scan \
   --output json
 
 # Get items with thumbs-down feedback:
-AWS_PROFILE=widor AWS_REGION=us-east-1 aws dynamodb scan \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws dynamodb scan \
   --table-name "WisconsinBotGraphRAG-WisconsinSessionsStackNestedStackWisconsinSessionsStackNestedStac-1P3H46X50M51H-ChatHistoryTableA22BA13C-GTH2UH9SGD0W" \
   --filter-expression "thumbUp = :val" \
   --expression-attribute-values '{":val": {"BOOL": false}}' \
@@ -259,7 +259,7 @@ When the user provides a **queryId** (UUID), follow this two-step process to get
 
 **Step 1 — Get chat history from DynamoDB (instant, O(1) lookup by partition key):**
 ```bash
-AWS_PROFILE=widor AWS_REGION=us-east-1 aws dynamodb get-item \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws dynamodb get-item \
   --table-name "WisconsinBotGraphRAG-WisconsinSessionsStackNestedStackWisconsinSessionsStackNestedStac-1P3H46X50M51H-ChatHistoryTableA22BA13C-GTH2UH9SGD0W" \
   --key '{"queryId": {"S": "<QUERY_ID>"}}' \
   --output json
@@ -278,7 +278,7 @@ Lambda reuses log streams within the same execution environment. The most recent
 
 ```bash
 # 1. List recent streams:
-AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs describe-log-streams \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws logs describe-log-streams \
   --log-group-name "/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf" \
   --order-by LastEventTime --descending --limit 5 \
   --output json | jq '.logStreams[] | {name: .logStreamName, lastEvent: (.lastEventTimestamp / 1000 | todate)}'
@@ -286,7 +286,7 @@ AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs describe-log-streams \
 # 2. Fetch events from the stream and grep for queryId:
 #    Use a start-time ~90s before the DynamoDB timestamp to catch Phase A start.
 #    Example: if DynamoDB says 04:03:18, compute epoch for 04:01:45.
-AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs get-log-events \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws logs get-log-events \
   --log-group-name "/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf" \
   --log-stream-name '<STREAM_NAME>' \
   --start-time <EPOCH_MS_MINUS_90s> \
@@ -302,7 +302,7 @@ python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('202
 **Fallback — filter-log-events (slower, but no stream guessing):**
 ```bash
 # Compute EPOCH_MS from the DynamoDB timestamp, then search a wide window BEFORE it:
-AWS_PROFILE=widor AWS_REGION=us-east-1 aws logs filter-log-events \
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws logs filter-log-events \
   --log-group-name "/aws/lambda/WisconsinBotGraphRAG-Wisc-AgenticRetrievalFunction-AsC0c2SWW4Hf" \
   --start-time $((EPOCH_MS - 90000)) --end-time $((EPOCH_MS + 5000)) \
   --filter-pattern "<QUERY_ID>" \
@@ -337,7 +337,7 @@ All LLM prompts are externalized to `config/model_configs.toml` and loaded from 
 **Iteration workflow:**
 ```bash
 # Edit the prompt in the TOML, then push to DynamoDB without a full deploy:
-AWS_PROFILE=widor AWS_REGION=us-east-1 python tools/upload_model_configs.py --only agenticRetrieval
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 python tools/upload_model_configs.py --only agenticRetrieval
 ```
 
 **Convention:** When committing changes to `config/model_configs.toml`, always run `tools/upload_model_configs.py` afterward so DynamoDB matches git. `cdk deploy` does NOT write prompt content to DynamoDB — only the upload script does. `cdk deploy` is only needed when the infra itself changes (new env vars, table permissions, etc.).
@@ -345,5 +345,5 @@ AWS_PROFILE=widor AWS_REGION=us-east-1 python tools/upload_model_configs.py --on
 ## Deployment
 
 - **us-east-1** — GraphRAG production stack (`WisconsinBotGraphRAG`). All GraphRAG development deploys here.
-- Always use `--profile widor` for AWS commands.
+- **AWS profile** — commands throughout this doc use `<your-profile>` as a placeholder. Substitute the name of your own AWS CLI/SSO profile (the one with access to this account), or export `AWS_PROFILE` once so you can drop the flag. The ingestion shell scripts and Python CLIs read `AWS_PROFILE` and otherwise fall back to the CLI's `default` profile.
 - Run `cdk diff` before every deploy to verify only additive changes.

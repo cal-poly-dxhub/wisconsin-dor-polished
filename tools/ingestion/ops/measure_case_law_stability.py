@@ -15,7 +15,7 @@ adherence — fixable deterministically), vs (b) cases not reaching context at
 all (discovery recall — a cap-tuning question). Run BEFORE deciding which.
 
 Usage:
-    AWS_PROFILE=widor AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1 \\
+    AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1 \\
       NEPTUNE_GRAPH_ID=g-ndvl4j73v4 FAQ_KNOWLEDGE_BASE_ID=Y7SQRR3LHO \\
       RAW_BUCKET=wis-raw-bucket-c8e69250 AGENTIC_MODEL_ID=us.anthropic.claude-sonnet-4-6 \\
       MODEL_CONFIG_TABLE_NAME=... FAQ_URL_TABLE_NAME=... LOG_LEVEL=WARNING \\

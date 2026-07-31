@@ -5,8 +5,11 @@ set -euo pipefail
 # (us-east-1) and triggers a Bedrock KB ingestion job.
 #
 # Usage: ./tools/ingestion/scripts/sync_faq_bucket.sh [--profile PROFILE] [--stack-name STACK_NAME]
+#
+# AWS profile: honors AWS_PROFILE (or --profile), falls back to the CLI's
+# "default" profile.
 
-PROFILE="${AWS_PROFILE:-wisco}"
+PROFILE="${AWS_PROFILE:-default}"
 STACK_NAME="WisconsinBotGraphRAG"
 SOURCE_BUCKET="wis-faq-bucket"
 SOURCE_REGION="us-west-2"

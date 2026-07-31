@@ -21,7 +21,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROFILE="${AWS_PROFILE:-widor}"
+# AWS profile: honors AWS_PROFILE, falls back to the CLI's "default" profile.
+PROFILE="${AWS_PROFILE:-default}"
 REGION="${AWS_REGION:-us-east-1}"
 STACK_NAME="${STACK_NAME:-WisconsinBotGraphRAG}"
 

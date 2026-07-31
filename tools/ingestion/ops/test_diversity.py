@@ -5,11 +5,11 @@ Runs real queries against the live Neptune graph and Bedrock embeddings.
 No deployment needed — uses your local AWS credentials.
 
 Usage:
-    export AWS_REGION=us-east-1 AWS_PROFILE=widor
+    export AWS_REGION=us-east-1 AWS_PROFILE=<your-profile>
     # If on macOS with Python 3.13+:
     export AWS_CA_BUNDLE=$(python3 -c "import certifi; print(certifi.where())")
 
-    cd /Users/sac/Work/DxHub/wisconsin-dor-polished
+    # Run from the repo root:
     python tools/ingestion/ops/test_diversity.py
 
     # Run a single query:

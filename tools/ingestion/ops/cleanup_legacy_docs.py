@@ -26,7 +26,7 @@ This script:
    deletions/backfills.
 
 Usage:
-    AWS_PROFILE=widor AWS_REGION=us-east-1 uv run python \
+    AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python \
         tools/ingestion/ops/cleanup_legacy_docs.py --graph-id g-ndvl4j73v4 [--apply]
 """
 

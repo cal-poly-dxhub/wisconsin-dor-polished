@@ -915,8 +915,12 @@ def main():
         type=Path,
         help="Skip phase 1; read case IDs (one per line) from file and scrape those directly",
     )
-    parser.add_argument("--profile", default="widor")
-    parser.add_argument("--region", default="us-east-1")
+    parser.add_argument(
+        "--profile",
+        default=os.environ.get("AWS_PROFILE", "default"),
+        help="AWS profile (defaults to $AWS_PROFILE, else the CLI 'default' profile)",
+    )
+    parser.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
     args = parser.parse_args()
 
     token = os.environ.get("COURTLISTENER_TOKEN", "")
