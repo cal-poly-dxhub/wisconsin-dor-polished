@@ -12,10 +12,10 @@
     "pytest": "uv run pytest",
     "test": "bun run --elide-lines=0 --filter='*' test",
     "deploy": "bun run bundle && bun run --elide-lines=0 --filter='infra' deploy",
-    "first-time": "uv run scripts/upload_model_configs.py && uv run scripts/sync_destination.py",
+    "first-time": "uv run python tools/upload_model_configs.py && bash tools/ingestion/scripts/sync_faq_bucket.sh",
     "destroy": "bun run --elide-lines=0 --filter='infra' destroy",
     "bundle": "uv run tools/bundle.py",
-    "stream": "bash scripts/stream_logs.sh"
+    "stream": "sh -c 'aws logs tail /aws/lambda/$1 --follow' --"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.0",

@@ -93,15 +93,19 @@ A property tax Q&A assistant for the Wisconsin Department of Revenue (DOR). User
 ├── frontend/             # Next.js application (CloudFront-served)
 ├── infra/                # CDK stacks (TypeScript)
 │   ├── bin/              # CDK app entry point (wisconsin-app.ts)
-│   └── stacks/           # sessions, graphrag, graphrag-messages, webapp,
-│                         #   ingestion, lambda-layers, cloudwatch-iam
+│   ├── lib/              # shared helpers (retrieval-config.ts)
+│   └── stacks/           # stack (root), sessions, graphrag, graphrag-messages,
+│                         #   webapp, ingestion, lambda-layers, cloudwatch-iam
 ├── tools/                # Ingestion pipeline + build tooling
-│   ├── ingestion/        # scrape, extract, embed, load, case law, config, Docker
+│   ├── ingestion/        # scrape, extract, embed, load, case law
+│   │   ├── chunking/     # PDF extraction + chunking library
+│   │   ├── config/       # ingest_config.yaml + document_manifest.yaml
+│   │   ├── ops/          # one-shot maintenance scripts
+│   │   ├── scripts/      # Fargate run wrappers + FAQ sync
+│   │   └── docker/       # ingestion container image
 │   ├── bundle.py         # Lambda bundling script
 │   └── upload_model_configs.py  # push prompts to DynamoDB
-├── pdf_chunking/         # PDF extraction + chunking library (used by ingestion)
 ├── config/               # Shared config (model prompts, inference params)
-├── archive/              # Retired scripts + seed data (pre-GraphRAG)
 ├── docs/                 # Engineering documentation
 └── bundles.toml          # Lambda bundling manifest
 ```
@@ -179,15 +183,15 @@ WisconsinBotStack.CognitoUserPoolClientId -> NEXT_PUBLIC_USER_POOL_CLIENT_ID
 
 The Neptune Analytics graph stores the full Wisconsin property tax knowledge base:
 
-- **Node types:** Framework, Document, Chunk (with vector embeddings), Topic
+- **Node types:** Framework, Document (carrying doc-type labels like `Statute`, `CaseLaw`, `AssessmentManual`), Chunk (with vector embeddings), Topic
 - **Authority hierarchy:** 9 levels of legal precedence from Constitution down to USPAP standards
-- **Edge types:** `CITES`, `IMPLEMENTS`, `PART_OF`, `BELONGS_TO`, `EXTRACTED_FROM`, `COVERS_TOPIC`, `RELATED_TO`, `SUPPLEMENTS`, `SUPERSEDES`, `CONFLICTS_WITH`
+- **Edge types:** `CITES`, `IMPLEMENTS`, `PART_OF`, `BELONGS_TO`, `HAS_SUBSECTION`, `EXTRACTED_FROM`, `DEFINED_BY`, `DERIVED_FROM`, `COVERS_TOPIC`
 - **Embeddings:** Amazon Titan Embed Text V2 (1024 dimensions)
 
-Documents are ingested via a multi-phase pipeline (see `CLAUDE.md` for full ingestion commands):
+Documents are ingested via a multi-phase pipeline (see `CLAUDE.md` for full ingestion commands, and `docs/` for details):
 1. Upload PDFs to S3
-2. Extract + classify (PyMuPDF with Textract fallback)
+2. Extract + classify (PyMuPDF with Textract fallback) — see `docs/chunk-quality-controls.md`
 3. Embed chunks with Titan
-4. Load into Neptune graph (11 sub-phases including semantic relationship classification)
+4. Load into Neptune graph (9 sub-phases: scaffold → document nodes → statute hierarchy → hierarchy links → chunk nodes → case-law CITES → stub resolution → vector upserts → orphan cleanup)
 
 
