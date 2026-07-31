@@ -14,7 +14,7 @@ This script:
 3. Deletes orphan chunks (those beyond the expected range).
 
 Usage:
-    AWS_PROFILE=widor AWS_REGION=us-east-1 python tools/ingestion/ops/cleanup_orphan_chunks.py \
+    AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 python tools/ingestion/ops/cleanup_orphan_chunks.py \
         --work-bucket wis-work-bucket-c8e69250 \
         --graph-id g-ndvl4j73v4 \
         [--dry-run]

@@ -313,7 +313,7 @@ __marimo__/
 tools/ingestion/.ingest-case-law-progress.json
 
 # Graph-regression harness output (reproducible via run_graph_regression.py /
-# measure_case_law_stability.py — see docs/phase-9-removal-spec.md §7)
+# measure_case_law_stability.py)
 tools/ingestion/ops/graph_regression_baseline.json
 tools/ingestion/ops/graph_regression_after.json
 tools/ingestion/ops/case_law_stability.json

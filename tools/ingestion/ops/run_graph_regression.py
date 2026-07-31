@@ -8,17 +8,17 @@ non-streaming Phase B answer generation), then grades each answer on:
   2. Key-fact presence — must_contain regexes matched in the answer text.
   3. No hallucinated case citations — every cited `case-law-*` id exists in the graph.
 
-Built for the Phase 9 (LLM semantic edges) removal (docs/phase-9-removal-spec.md
-§7), but reusable as a general graph-regression gate.
+Originally built to guard the removal of the LLM semantic-edge load phase, but
+reusable as a general graph-regression gate.
 
 Two-run workflow:
 
     # 1. BEFORE any graph mutation — capture the baseline against production:
-    AWS_PROFILE=widor AWS_REGION=us-east-1 \\
+    AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 \\
       python tools/ingestion/ops/run_graph_regression.py --mode baseline
 
     # 2. AFTER deleting semantic edges + deploying:
-    AWS_PROFILE=widor AWS_REGION=us-east-1 \\
+    AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 \\
       python tools/ingestion/ops/run_graph_regression.py --mode after
 
     # 3. Compare the two runs:

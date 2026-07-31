@@ -4,16 +4,16 @@ Upload model configurations from config/model_configs.toml to DynamoDB.
 
 Usage:
   # Upload all configs (auto-discovers table name from CDK stack):
-  AWS_PROFILE=widor AWS_REGION=us-east-1 python tools/upload_model_configs.py
+  AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 python tools/upload_model_configs.py
 
   # Upload with explicit table name:
-  AWS_PROFILE=widor AWS_REGION=us-east-1 python tools/upload_model_configs.py --table-name MyTable
+  AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 python tools/upload_model_configs.py --table-name MyTable
 
   # Dry run (validate only, no upload):
   python tools/upload_model_configs.py --dry-run
 
   # Upload a single config entry:
-  AWS_PROFILE=widor AWS_REGION=us-east-1 python tools/upload_model_configs.py --only agenticRetrieval
+  AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 python tools/upload_model_configs.py --only agenticRetrieval
 """
 
 import argparse

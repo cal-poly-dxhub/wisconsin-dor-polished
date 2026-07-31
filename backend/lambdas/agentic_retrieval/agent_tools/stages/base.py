@@ -4,7 +4,7 @@ Each stage is a module exposing a single ``run(ctx: StageContext) ->
 StageResult`` function. Stages mutate ``ctx`` in place (accumulating state)
 and return a ``StageResult`` carrying an optional CloudWatch trace event for
 the pipeline runner to log. See agent_tools/pipeline.py for the runner and
-docs/spec-retrieval-pipeline-refactor.md for the design.
+docs/auto-backfill.md for the stage-by-stage description.
 """
 
 from dataclasses import dataclass, field

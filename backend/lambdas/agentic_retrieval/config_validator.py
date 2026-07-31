@@ -3,8 +3,7 @@
 Validates that any environment variable actually present in the Lambda's
 environment matches the type/range documented in retrieval.toml. Vars that
 are simply absent are left alone — each module's own hardcoded default
-applies exactly as it did before this file existed (see
-docs/spec-retrieval-pipeline-refactor.md, "Backward compatible").
+applies exactly as it did before this file existed (backward compatible).
 
 This module is intentionally forgiving:
   - If retrieval.toml is missing (e.g. a partial deploy that hasn't picked

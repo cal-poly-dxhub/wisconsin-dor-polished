@@ -1,9 +1,8 @@
 """Pipeline runner for vector_search's composable stages.
 
-Wires the stage modules in ``agent_tools/stages/`` together in the exact
-order the original monolithic ``vector_search`` branch of executor.py ran
-them, and assembles the same result dict shape. See
-docs/spec-retrieval-pipeline-refactor.md for the design.
+Wires the stage modules in ``agent_tools/stages/`` together in order and
+assembles the model-facing result dict. See docs/auto-backfill.md for the
+stage-by-stage description.
 """
 
 import time

@@ -1,10 +1,14 @@
 """Stage: internal-only graph neighbor enrichment for the top parent docs.
 
 Fetches graph neighbors for the top-3 distinct parent doc_ids among the
-current chunks. This is an INTERNAL-ONLY signal: it powers the deterministic
-case-law discovery stages (citation_extraction, caselaw_backfill) that read
-``ctx.graph_context.values()`` but is NOT returned to the model. See
-docs/direction-1-auto-enrichment-spec.md (Option A) for the rationale.
+current chunks and stores them in ``ctx.graph_context``. This output is
+INTERNAL-ONLY: it is NOT returned to the model (surfacing it floods the tool
+result with low-cite-rate neighbor stubs).
+
+NOTE: ``ctx.graph_context`` is currently consumed only for log counts in
+pipeline.py — the downstream case-law stages (citation_extraction,
+caselaw_backfill) read ``ctx.chunks`` / ``ctx.statute_backfill``, not the
+enrichment output. See docs/auto-backfill.md.
 """
 
 import logging

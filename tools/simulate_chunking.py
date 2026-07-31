@@ -25,7 +25,7 @@ Usage:
     uv run tools/simulate_chunking.py statutes-70 --output-dir /tmp/chunks
 
 Environment:
-    AWS_PROFILE  (default: widor)
+    AWS_PROFILE  (optional; uses boto3's default credential resolution)
     AWS_REGION   (default: us-east-1)
 """
 

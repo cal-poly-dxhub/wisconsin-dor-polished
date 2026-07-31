@@ -5,13 +5,14 @@ upserts one item per normalized question into the DynamoDB table. Idempotent:
 re-running overwrites items in place.
 
 Usage:
-    AWS_REGION=us-east-1 AWS_PROFILE=wisco python tools/ingestion/ops/seed_faq_url_table.py \
+    AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> \
+        python tools/ingestion/ops/seed_faq_url_table.py \
         --table <FaqUrlTableName> --faqs documents/faqs.json
     # --dry-run prints counts without writing.
 
 Find the table name from stack outputs:
     aws cloudformation describe-stacks --stack-name WisconsinBotGraphRAG \
-        --profile wisco --region us-east-1 \
+        --profile <your-profile> --region us-east-1 \
         --query "Stacks[0].Outputs[?contains(OutputKey,'FaqUrlTable')].OutputValue" --output text
 """
 

@@ -4,9 +4,8 @@ import * as TOML from '@iarna/toml';
 
 /**
  * Reads config/retrieval.toml (the source of truth for agentic_retrieval
- * Lambda env vars — see docs/spec-retrieval-pipeline-refactor.md) and
- * exposes its [env.*] defaults as a plain string map for CDK to use when
- * building a Lambda's environment block.
+ * Lambda env vars) and exposes its [env.*] defaults as a plain string map
+ * for CDK to use when building a Lambda's environment block.
  *
  * This module only supplies *defaults*. Values passed explicitly by the
  * caller (e.g. table names, callback URLs resolved from other stacks'
