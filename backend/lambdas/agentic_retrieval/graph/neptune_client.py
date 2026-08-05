@@ -18,6 +18,33 @@ LOG_NEPTUNE_QUERY_TEXT = os.environ.get("LOG_NEPTUNE_QUERY_TEXT", "true").lower(
 LOG_MAX_QUERY_CHARS = int(os.environ.get("LOG_MAX_QUERY_CHARS", "1000"))
 
 
+# Curly quotes and dashes the source PDFs carry into stored headings but that
+# an LLM normalizes to ASCII when reproducing a heading from memory. Mapped 1:1.
+_HEADING_TYPOGRAPHY = {
+    "‘": "'",  # left single quote
+    "’": "'",  # right single quote (the § 70.27 apostrophe bug)
+    "“": '"',  # left double quote
+    "”": '"',  # right double quote
+    "–": "-",  # en dash
+    "—": "-",  # em dash
+}
+_HEADING_TRANS = str.maketrans(_HEADING_TYPOGRAPHY)
+
+
+def _normalize_heading(value: str) -> str:
+    """Fold heading typography to a canonical ASCII form for fuzzy matching.
+
+    Stored headings preserve the source PDF's curly quotes, en/em dashes, tabs
+    (U+0009), and thin spaces (U+2009). A model targeting `get_section` types
+    ASCII quotes/hyphens and single spaces, so exact equality misses. Used only
+    on the fallback path — exact match is always tried first.
+    """
+    if not value:
+        return ""
+    # Collapse every whitespace run (tab, thin space, repeats) to one space.
+    return re.sub(r"\s+", " ", value.translate(_HEADING_TRANS)).strip()
+
+
 def _compact_cypher(cypher: str) -> str:
     """Make OpenCypher safe and small enough for logs.
 
@@ -344,6 +371,44 @@ class NeptuneClient:
         )
         return results
 
+    def _resolve_heading(self, doc_id: str, heading: str) -> str | None:
+        """Map a model-supplied heading to the exact stored heading.
+
+        The model reproduces headings from memory and folds curly quotes/dashes
+        to ASCII and whitespace runs to single spaces, so an exact `c.heading =`
+        match misses (see § 70.27's curly apostrophe). Compare on the normalized
+        form and, on a tie-free miss, accept a stored heading whose normalized
+        form starts with the normalized input (the model typed a shorter title).
+        Returns the stored heading verbatim, or None if nothing matches.
+        """
+        target = _normalize_heading(heading)
+        if not target:
+            return None
+        sections = self.list_document_sections(doc_id)
+        prefix_match: str | None = None
+        resolved: str | None = None
+        match_kind = "none"
+        for section in sections:
+            stored = section.get("heading") or ""
+            normalized = _normalize_heading(stored)
+            if normalized == target:
+                resolved, match_kind = stored, "normalized"  # always preferred
+                break
+            if prefix_match is None and normalized.startswith(target):
+                prefix_match = stored  # first-in-document prefix hit; keep looking for exact
+        if resolved is None and prefix_match is not None:
+            resolved, match_kind = prefix_match, "prefix"
+        _log_neptune_event(
+            "get_section_heading_resolved",
+            query_name="resolve_heading",
+            doc_id=doc_id,
+            requested_heading=heading,
+            resolved_heading=resolved,
+            match_kind=match_kind,
+            section_count=len(sections),
+        )
+        return resolved
+
     def get_section_chunks(self, doc_id: str, heading: str) -> list[dict]:
         """Get all chunks for a specific section (heading) within a document."""
         results = self.query(
@@ -358,6 +423,10 @@ class NeptuneClient:
             {"doc_id": doc_id, "heading": heading},
             query_name="get_section_chunks",
         )
+        if not results:
+            resolved = self._resolve_heading(doc_id, heading)
+            if resolved and resolved != heading:
+                return self.get_section_chunks(doc_id, resolved)
         return results
 
     def get_section_chunks_with_embeddings(self, doc_id: str, heading: str) -> list[dict]:
@@ -375,6 +444,10 @@ class NeptuneClient:
             {"doc_id": doc_id, "heading": heading},
             query_name="get_section_chunks_with_embeddings",
         )
+        if not results:
+            resolved = self._resolve_heading(doc_id, heading)
+            if resolved and resolved != heading:
+                return self.get_section_chunks_with_embeddings(doc_id, resolved)
         return results
 
     def get_neighbor_case_summaries_with_embeddings(

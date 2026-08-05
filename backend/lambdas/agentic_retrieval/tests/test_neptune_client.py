@@ -345,6 +345,82 @@ def test_case_chunks_for_statutes_uses_one_incoming_cites_batch():
         assert parameters["statute_ids"] == ["WIS-STAT-70.32", "WIS-STAT-70.47"]
 
 
+def test_normalize_heading_folds_typography_and_whitespace():
+    """_normalize_heading maps curly quotes/dashes to ASCII and collapses
+    tabs, thin spaces, and repeats to single spaces."""
+    from graph.neptune_client import _normalize_heading
+
+    stored = "70.27 Assessor’s plat.  (1) WHO MAY ORDER.  Whenever"
+    typed = "70.27 Assessor's plat. (1) WHO MAY ORDER. Whenever"
+    assert _normalize_heading(stored) == _normalize_heading(typed)
+
+    # en dash, curly double quotes, tab, and thin space all fold to ASCII/space.
+    assert _normalize_heading("opening_holding ¶1–¶2") == "opening_holding ¶1-¶2"
+    assert _normalize_heading("73.10 (1) “department”") == '73.10 (1) "department"'
+    assert _normalize_heading("D.\t The meander line") == "D. The meander line"
+    assert _normalize_heading("II. Tech /Appraiser") == "II. Tech /Appraiser"
+    assert _normalize_heading("") == ""
+
+
+def _mock_client_returning(*result_batches):
+    """Build a NeptuneClient whose execute_query returns each batch in turn."""
+    from graph.neptune_client import NeptuneClient
+
+    client = NeptuneClient(graph_id="test-graph")
+    client.client = MagicMock()
+    client.client.execute_query.side_effect = [{"results": batch} for batch in result_batches]
+    return client
+
+
+def test_get_section_chunks_falls_back_on_curly_apostrophe():
+    """A straight-apostrophe heading misses exact match, then resolves to the
+    stored curly-apostrophe heading via list_sections and re-queries."""
+    with patch("graph.neptune_client.boto3"):
+        stored = "70.27 Assessor’s plat.  (1) WHO MAY ORDER.  Whenever"
+        client = _mock_client_returning(
+            [],  # exact match on the straight-apostrophe input misses
+            [{"heading": stored, "chunk_count": 6}],  # list_document_sections
+            [{"chunk_id": "statutes-70_c1", "heading": stored}],  # re-query on resolved
+        )
+
+        results = client.get_section_chunks(
+            "statutes-70", "70.27 Assessor's plat. (1) WHO MAY ORDER. Whenever"
+        )
+
+        assert len(results) == 1
+        assert results[0]["chunk_id"] == "statutes-70_c1"
+        # Third call re-queried with the exact stored heading.
+        third_params = client.client.execute_query.call_args_list[2].kwargs["parameters"]
+        assert third_params["heading"] == stored
+
+
+def test_get_section_chunks_no_fallback_query_on_exact_hit():
+    """When the exact heading matches, no list_sections/resolve query fires."""
+    with patch("graph.neptune_client.boto3"):
+        client = _mock_client_returning(
+            [{"chunk_id": "statutes-70_c1", "heading": "70.11 Property exempted"}],
+        )
+
+        results = client.get_section_chunks("statutes-70", "70.11 Property exempted")
+
+        assert len(results) == 1
+        assert client.client.execute_query.call_count == 1  # no fallback
+
+
+def test_get_section_chunks_returns_empty_when_unresolvable():
+    """A heading that matches nothing (even normalized) yields empty, not a loop."""
+    with patch("graph.neptune_client.boto3"):
+        client = _mock_client_returning(
+            [],  # exact miss
+            [{"heading": "70.11 Property exempted", "chunk_count": 28}],  # list_sections, no match
+        )
+
+        results = client.get_section_chunks("statutes-70", "99.99 Nonexistent section")
+
+        assert results == []
+        assert client.client.execute_query.call_count == 2  # exact + list, no re-query
+
+
 def test_neighbor_case_summaries_filters_multi_chunk_cases_to_summary():
     with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
