@@ -28,6 +28,7 @@ import {
 import { useSessionsList, useDeleteSession, useRenameSession } from '@/hooks/api/chat';
 import { getSessionHistory } from '@/api/chat-api';
 import { useChatStore } from '@/stores/chat-store';
+import { useFeedbackStore } from '@/stores/feedback-store';
 import { formatDistanceToNow } from 'date-fns';
 import { SettingsModal } from '@/components/settings/settings-modal';
 
@@ -85,7 +86,18 @@ export function SessionsSidebar() {
     }
   }, [renameModal]);
 
+  // Annotation mode locks navigation so the user stays focused on the response
+  // being annotated. Returns true if navigation should be blocked.
+  const blockedByAnnotation = (): boolean => {
+    if (useFeedbackStore.getState().annotatingQueryId !== null) {
+      toast.info('Finish or exit annotation mode first');
+      return true;
+    }
+    return false;
+  };
+
   const handleNewChat = () => {
+    if (blockedByAnnotation()) return;
     if (currentSessionId) {
       stashSession(currentSessionId);
     }
@@ -122,6 +134,7 @@ export function SessionsSidebar() {
 
   const handleSessionSelect = async (sessionId: string) => {
     if (sessionId === currentSessionId) return;
+    if (blockedByAnnotation()) return;
 
     // Stash current session's in-memory state before switching
     if (currentSessionId) {
