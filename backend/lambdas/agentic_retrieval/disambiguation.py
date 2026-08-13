@@ -1,10 +1,14 @@
-"""Pre-loop disambiguation for generic property assessment queries.
+"""Pre-loop query classification for the property assessment chatbot.
 
 When enabled (ENABLE_DISAMBIGUATION=true), this module classifies incoming
-queries before the agentic loop starts. If the query is a generic property
-assessment question where the answer depends on property classification,
-the Lambda short-circuits and returns a canned clarification question
-instead of entering the tool loop.
+queries before the agentic loop starts and returns one of three verdicts:
+
+- OUT_OF_SCOPE — the question is not about Wisconsin property tax at all.
+  The Lambda short-circuits with a canned refusal and NO retrieval.
+- DISAMBIGUATE — a generic property assessment question whose answer depends
+  on property classification. The Lambda short-circuits with a canned
+  clarification question + property-type choices.
+- PROCEED — an in-scope, answerable question. The agentic loop runs normally.
 
 On the user's follow-up reply, chat history contains the clarification
 exchange and the agent proceeds with targeted retrieval.
@@ -24,6 +28,11 @@ CLASSIFIER_MODEL_ID = os.environ.get(
     "DISAMBIGUATION_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 )
 
+# Verdicts returned by classify_query().
+VERDICT_OUT_OF_SCOPE = "OUT_OF_SCOPE"
+VERDICT_DISAMBIGUATE = "DISAMBIGUATE"
+VERDICT_PROCEED = "PROCEED"
+
 PROPERTY_TYPE_CHOICES = [
     "Residential",
     "Commercial",
@@ -42,36 +51,54 @@ CLARIFICATION_QUESTION = (
     "Please select an option below, or describe your property type."
 )
 
+OUT_OF_SCOPE_MESSAGE = (
+    "That question is outside the scope of what I can help with. I'm the "
+    "**Wisconsin Department of Revenue property tax assistant** — my knowledge "
+    "is limited to Wisconsin property assessment, taxation, statutes, "
+    "administrative rules, exemptions, and related procedures.\n\n"
+    "If you have a question about **Wisconsin property taxes** — how property "
+    "is assessed, how to appeal an assessment, exemptions and credits, or "
+    "agricultural, residential, commercial, and manufacturing valuation — "
+    "I'm happy to help! 😊"
+)
+
 _CLASSIFIER_PROMPT = """\
 You are a query classifier for the Wisconsin Department of Revenue property tax chatbot.
 
-Determine whether the user's question is a GENERIC property assessment or tax question where the answer would differ materially depending on the property classification (residential, commercial, manufacturing, agricultural, etc.).
+Classify the user's question into exactly ONE of three categories.
 
-Answer "DISAMBIGUATE" ONLY when ALL of these are true:
-1. The question is about property assessment, valuation, taxation, exemptions, or any other property tax topic
-2. The question does NOT specify a property type or classification
-3. The answer would be materially different for different property types (e.g., different statutes, different manuals, different procedures, different exemption rules apply)
+OUT_OF_SCOPE — The question is NOT about Wisconsin property tax, assessment, valuation, taxation, exemptions, or any related Wisconsin Department of Revenue topic. Examples: general knowledge, science, weather, math, coding, current events, other states' or federal income taxes, personal or legal advice unrelated to property tax, or casual chit-chat.
 
-Answer "PROCEED" when ANY of these are true:
+DISAMBIGUATE — The question IS about Wisconsin property assessment or taxation, but does NOT specify a property type or classification, AND the answer would differ materially depending on the property classification (residential, commercial, manufacturing, agricultural, etc.) — e.g., different statutes, manuals, procedures, or exemption rules apply.
+
+PROCEED — Any other in-scope question. Answer PROCEED when ANY of these are true:
 - The question names a specific property type (residential, manufacturing, agricultural, etc.)
-- The question is about a topic that has the same answer regardless of property type (e.g., Board of Review procedures, assessment dates, general rights)
+- The topic has the same answer regardless of property type (e.g., Board of Review procedures, assessment dates, general rights)
 - The question is about an ownership category or exemption class (Native American/tribal, religious/church, government, nonprofit, veteran) — these depend on ownership or legal status, not property classification
 - The question references a specific statute, form, or document
-- The question is not about property assessment at all (out of scope)
 - The question is a follow-up to a previous conversation
 
-Respond with ONLY "DISAMBIGUATE" or "PROCEED" — nothing else."""
+Decision order:
+1. If the question is not about Wisconsin property tax at all → OUT_OF_SCOPE.
+2. Otherwise, if it needs a property type to answer well → DISAMBIGUATE.
+3. Otherwise → PROCEED.
+
+Respond with ONLY one word: OUT_OF_SCOPE, DISAMBIGUATE, or PROCEED — nothing else."""
 
 
-def should_disambiguate(query: str, chat_history: list[dict]) -> bool:
-    """Return True if the query should trigger the canned clarification.
+def classify_query(query: str, chat_history: list[dict]) -> str:
+    """Classify a query as OUT_OF_SCOPE, DISAMBIGUATE, or PROCEED.
 
-    Skips disambiguation when:
-    - Chat history exists (user already in a conversation — context available)
-    - The query itself mentions a property type
+    Fail-open: any error (or a mid-conversation follow-up) returns PROCEED so
+    the agentic loop still runs. Local keyword checks short-circuit to PROCEED
+    when the query already names a property type or ownership class — those are
+    unambiguously in scope and specific, so no LLM call is needed.
     """
+    # Never short-circuit a follow-up: chat history carries the context the
+    # agent needs, and the classifier can't see whether the prior turn was
+    # already in scope.
     if chat_history:
-        return False
+        return VERDICT_PROCEED
 
     q = query.lower()
     type_keywords = [
@@ -105,27 +132,31 @@ def should_disambiguate(query: str, chat_history: list[dict]) -> bool:
         "veteran",
     ]
     if any(kw in q for kw in type_keywords):
-        return False
+        return VERDICT_PROCEED
     if any(kw in q for kw in ownership_keywords):
-        return False
+        return VERDICT_PROCEED
 
     try:
         response = _bedrock.converse(
             modelId=CLASSIFIER_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": query}]}],
             system=[{"text": _CLASSIFIER_PROMPT}],
-            inferenceConfig={"maxTokens": 10, "temperature": 0.0},
+            inferenceConfig={"maxTokens": 16, "temperature": 0.0},
         )
-        output = response["output"]["message"]["content"][0]["text"].strip()
-        result = "DISAMBIGUATE" in output.upper()
-        logger.info(
-            f"Disambiguation classifier: query='{query[:80]}' → {output} "
-            f"(result={'disambiguate' if result else 'proceed'})"
-        )
-        return result
+        output = response["output"]["message"]["content"][0]["text"].strip().upper()
+        # Check OUT_OF_SCOPE first — it is the most specific and must win over a
+        # stray substring match. Anything unrecognized falls through to PROCEED.
+        if "OUT_OF_SCOPE" in output or "OUT OF SCOPE" in output:
+            verdict = VERDICT_OUT_OF_SCOPE
+        elif "DISAMBIGUATE" in output:
+            verdict = VERDICT_DISAMBIGUATE
+        else:
+            verdict = VERDICT_PROCEED
+        logger.info(f"Query classifier: query='{query[:80]}' → raw='{output}' verdict={verdict}")
+        return verdict
     except Exception:  # noqa: BLE001
         logger.warning(
-            "Disambiguation classifier failed; proceeding with agentic loop",
+            "Query classifier failed; proceeding with agentic loop",
             exc_info=True,
         )
-        return False
+        return VERDICT_PROCEED
