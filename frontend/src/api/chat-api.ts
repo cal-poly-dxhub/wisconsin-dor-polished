@@ -21,10 +21,45 @@ const SendMessageResponse = z.object({
   message: z.string(),
   queryId: z.string().uuid(),
 });
+// Structured feedback captured by the feedback modal. Mirrors the backend
+// RichFeedback model (step_function_types/models.py) and the frontend
+// FeedbackDraft store shape (minus transient/queryId fields).
+const RichSubsection = z.object({
+  answer: z.enum(['yes', 'no']).nullable(),
+  comment: z.string(),
+});
+const RichSourceNote = z.object({
+  id: z.string(),
+  sourceId: z.string(),
+  citedFully: z.string(),
+  missedDetail: z.string(),
+  comment: z.string(),
+});
+const RichAnnotation = z.object({
+  id: z.string(),
+  startOffset: z.number(),
+  endOffset: z.number(),
+  quote: z.string(),
+  comment: z.string(),
+});
+const RichFeedback = z.object({
+  rating: z.enum(['up', 'mid', 'down']).nullable(),
+  positiveComment: z.string(),
+  response: z.record(RichSubsection),
+  sourcesOk: z.enum(['yes', 'no']).nullable(),
+  sourceNotes: z.array(RichSourceNote),
+  linksWork: z.enum(['yes', 'no']).nullable(),
+  brokenLinkIds: z.array(z.string()),
+  brokenLinksReason: z.string(),
+  annotations: z.array(RichAnnotation),
+  speedTimely: z.enum(['yes', 'no']).nullable(),
+  speedComment: z.string(),
+});
 const FeedbackRequest = z.object({
   queryId: z.string().uuid(),
   thumbUp: z.boolean(),
   feedback: z.string().optional(),
+  richFeedback: RichFeedback.optional(),
 });
 const FeedbackResponse = z.object({
   message: z.string(),

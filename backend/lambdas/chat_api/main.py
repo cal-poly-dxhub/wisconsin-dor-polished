@@ -14,7 +14,7 @@ from aws_lambda_powertools.event_handler.api_gateway import (
     Router,
 )
 from aws_lambda_powertools.utilities.typing import LambdaContext
-from boto3.dynamodb.types import TypeDeserializer
+from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from botocore.exceptions import ClientError
 from chat_api_errors import (
     ChatAPIError,
@@ -363,16 +363,34 @@ def delete_session_handler(session_id: str) -> dict[str, Any]:
 
 
 def update_query_feedback(session_id: str, feedback_request: FeedbackRequest):
-    """Update the DynamoDB entry for a particular query's feedback."""
+    """Update the DynamoDB entry for a particular query's feedback.
+
+    `thumbUp` (BOOL) and `feedback` (S) stay as the canonical scalar fields the
+    admin activity GSI filters and summarizes on. When the richer feedback modal
+    submits a structured payload, it rides along in a `richFeedback` map (surfaced
+    only via the per-query detail endpoint, not the list GSI).
+    """
     try:
+        update_expr = "SET thumbUp = :thumbUp, feedback = :feedback"
+        expr_values: dict[str, Any] = {
+            ":thumbUp": {"BOOL": feedback_request.thumb_up},
+            ":feedback": {"S": feedback_request.feedback or ""},
+        }
+
+        if feedback_request.rich_feedback is not None:
+            # Serialize via Pydantic (camelCase aliases), then to DynamoDB's
+            # attribute-value shape. TypeSerializer produces the {"M": {...}}
+            # wrapper for the whole map.
+            rich_json = feedback_request.rich_feedback.model_dump(by_alias=True)
+            update_expr += ", richFeedback = :richFeedback, feedbackSubmittedAt = :submittedAt"
+            expr_values[":richFeedback"] = TypeSerializer().serialize(rich_json)
+            expr_values[":submittedAt"] = {"S": datetime.now(UTC).isoformat()}
+
         dynamodb.update_item(
             TableName=message_table_name,
             Key={"queryId": {"S": feedback_request.query_id}},
-            UpdateExpression="SET thumbUp = :thumbUp, feedback = :feedback",
-            ExpressionAttributeValues={
-                ":thumbUp": {"BOOL": feedback_request.thumb_up},
-                ":feedback": {"S": feedback_request.feedback or ""},
-            },
+            UpdateExpression=update_expr,
+            ExpressionAttributeValues=expr_values,
         )
     except Exception as e:
         logger.error(f"Failed to update query feedback in DynamoDB: {e}")
@@ -628,6 +646,8 @@ def activity_detail_handler(query_id: str) -> dict[str, Any]:
             "timestamp": deserialized.get("timestamp", ""),
             "thumbUp": deserialized.get("thumbUp"),
             "feedback": deserialized.get("feedback"),
+            "richFeedback": deserialized.get("richFeedback"),
+            "feedbackSubmittedAt": deserialized.get("feedbackSubmittedAt"),
             "trace": trace,
             "email": email_by_session.get(sid),
         }

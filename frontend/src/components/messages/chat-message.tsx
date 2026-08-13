@@ -1,10 +1,9 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Info, ThumbsUp, ThumbsDown, FileText, Network } from 'lucide-react';
-import { toast } from 'sonner';
-import { useAssignFeedback } from '@/hooks/api/chat';
+import { Info, MessageSquarePlus, FileText, Network } from 'lucide-react';
 import { useChatStore } from '@/stores/chat-store';
+import { useFeedbackStore, hasDraftContent } from '@/stores/feedback-store';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DocumentCard, type Document } from '../documents/document-card/document-card';
@@ -22,7 +21,8 @@ import { formatTraceMetadata } from './trace-metadata';
 import { Button } from '../ui/button';
 import { ButtonGroup } from '../ui/button-group';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
-import { FeedbackModal } from './feedback-modal';
+import { FeedbackModal } from './feedback/feedback-modal';
+import { AnnotationController } from './feedback/annotation-controller';
 import { RetrievalModal } from './retrieval-modal';
 import { ChoiceChips } from './choice-chips';
 
@@ -290,8 +290,10 @@ export function StreamResponse({
 
 export function InlineSources({ items, streamingComplete, citationsByDoc }: { items: ResourceItem[]; streamingComplete?: boolean; citationsByDoc?: Map<string, InlineCitation[]> }) {
   const [open, setOpen] = useState(true);
+  // Hide sources while annotating — zen mode focuses on just the markdown.
+  const annotationActive = useFeedbackStore(s => s.annotatingQueryId !== null);
 
-  if (!items.length || !streamingComplete) return null;
+  if (!items.length || !streamingComplete || annotationActive) return null;
 
   const docCount = items.filter(i => i.type === 'document').length;
   const faqCount = items.filter(i => i.type === 'faq').length;
@@ -403,38 +405,18 @@ function MessageOptionsBar({
   onOpenRetrieval,
 }: MessageOptionsBarProps) {
   const [infoOpen, setInfoOpen] = useState(false);
-  const [feedbackModal, setFeedbackModal] = useState<'up' | 'down' | null>(null);
-  const [submittedRating, setSubmittedRating] = useState<'up' | 'down' | null>(null);
-  const assignFeedback = useAssignFeedback();
+  const openFeedback = useFeedbackStore(s => s.openModal);
+  const submittedAt = useFeedbackStore(s => s.drafts[queryId]?.submittedAt);
+  const hasDraft = useFeedbackStore(s => hasDraftContent(s.drafts[queryId]));
+  const annotationActive = useFeedbackStore(s => s.annotatingQueryId !== null);
+  // A started-but-unsubmitted draft gets a dot indicator.
+  const isUnsavedDraft = hasDraft && !submittedAt;
   const devMode = useDevTrace();
   const hasTrace = useChatStore(s => (s.queries[queryId]?.agentTrace?.length ?? 0) > 0);
 
-  const sessionId = useChatStore(state => state.sessionId);
-
-  const handleFeedback = (thumbUp: boolean, feedback?: string) => {
-    if (!sessionId) return;
-
-    assignFeedback.mutate(
-      { sessionId: sessionId!, payload: { queryId, thumbUp, feedback } },
-      {
-        onSuccess: () => {
-          setSubmittedRating(thumbUp ? 'up' : 'down');
-          toast.success('Feedback submitted', {
-            style: { borderColor: '#10b981', background: '#0f2a1f' },
-          });
-        },
-        onError: () => {
-          toast.error('Failed to submit feedback', {
-            style: { borderColor: '#ef4444', background: '#2a0f0f' },
-          });
-        },
-      }
-    );
-  };
-
   return (
     <AnimatePresence initial={false}>
-      {streamingComplete && (
+      {streamingComplete && !annotationActive && (
         <motion.div
           initial={{ filter: 'blur(8px)', opacity: 0 }}
           animate={{ filter: 'blur(0px)', opacity: 1 }}
@@ -484,34 +466,22 @@ function MessageOptionsBar({
               </Button>
             )}
           </ButtonGroup>
-          <ButtonGroup>
-            <Button
-              variant={submittedRating === 'up' ? 'default' : 'outline'}
-              size="icon"
-              className={`cursor-pointer ${submittedRating === 'up' ? 'bg-emerald-900 hover:bg-emerald-800 border-emerald-400 text-white' : ''}`}
-              aria-label="Thumbs Up"
-              onClick={() => setFeedbackModal('up')}
-            >
-              <ThumbsUp className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={submittedRating === 'down' ? 'default' : 'outline'}
-              size="icon"
-              className={`cursor-pointer ${submittedRating === 'down' ? 'bg-red-900 hover:bg-red-800 border-red-400 text-white' : ''}`}
-              aria-label="Thumbs Down"
-              onClick={() => setFeedbackModal('down')}
-            >
-              <ThumbsDown className="h-4 w-4" />
-            </Button>
-          </ButtonGroup>
+          <Button
+            variant="outline"
+            className={`h-9 cursor-pointer ${submittedAt ? 'border-emerald-400/60 text-emerald-500' : ''}`}
+            onClick={() => openFeedback(queryId)}
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+            {submittedAt ? 'Edit feedback' : isUnsavedDraft ? 'Resume feedback' : 'Give feedback'}
+            {isUnsavedDraft && (
+              <span
+                className="ml-0.5 h-1.5 w-1.5 rounded-full bg-amber-500"
+                aria-label="Unsaved draft"
+              />
+            )}
+          </Button>
 
-          <FeedbackModal
-            open={feedbackModal !== null}
-            onOpenChange={(open) => { if (!open) setFeedbackModal(null); }}
-            type={feedbackModal ?? 'up'}
-            onSubmit={(feedback) => handleFeedback(feedbackModal === 'up', feedback)}
-            items={items}
-          />
+          <FeedbackModal queryId={queryId} items={items} />
         </motion.div>
       )}
     </AnimatePresence>
@@ -577,6 +547,11 @@ export function ChatMessage({
   const devTrace = useDevTrace();
   const choices = useChatStore(s => s.queries[queryId]?.choices);
   const [retrievalModalOpen, setRetrievalModalOpen] = useState(false);
+  const isAnnotatingThis = useFeedbackStore(s => s.annotatingQueryId === queryId);
+  const annotationActive = useFeedbackStore(s => s.annotatingQueryId !== null);
+  // Zen mode: while annotating one message, hide every other message and strip
+  // this message's chrome (query bubble, thinking trace) down to the markdown.
+  const zenHidden = annotationActive && !isAnnotatingThis;
 
   const steps = useMemo<TraceStep[]>(() => {
     if (!agentTrace || agentTrace.length === 0) {
@@ -663,8 +638,8 @@ export function ChatMessage({
   }, [response, streamingComplete, items, docUrls, docTones, citationsByDoc]);
 
   const containerClassName = useMemo(
-    () => `font-sans ${className || ''}`,
-    [className]
+    () => `font-sans ${isAnnotatingThis ? 'annotate-active' : ''} ${className || ''}`,
+    [className, isAnnotatingThis]
   );
 
   const messageContentClassName = useMemo(() => `mb-3`, []);
@@ -675,19 +650,22 @@ export function ChatMessage({
       className={containerClassName}
       data-message-observe
       data-message-id={queryId}
+      style={zenHidden ? { display: 'none' } : undefined}
     >
       {/* Message Content */}
       <div>
         <div className={messageContentClassName}>
-          {/* User Query - right-aligned bubble */}
-          <div className="flex justify-end mb-4">
-            <p className="chat-query rounded-2xl bg-muted px-4 py-2.5 text-sm inline-block max-w-[80%]">
-              {query}
-            </p>
-          </div>
+          {/* User Query - right-aligned bubble (hidden in zen/annotation mode) */}
+          {!isAnnotatingThis && (
+            <div className="flex justify-end mb-4">
+              <p className="chat-query rounded-2xl bg-muted px-4 py-2.5 text-sm inline-block max-w-[80%]">
+                {query}
+              </p>
+            </div>
+          )}
 
           {/* Thinking label with collapsible steps */}
-          {showThinkingLabel && (
+          {showThinkingLabel && !isAnnotatingThis && (
             <div className="mb-4" style={{ fontSize: 'clamp(0.9rem, 1vw + 0.5rem, 1.05rem)' }}>
               <button
                 onClick={
@@ -806,6 +784,7 @@ export function ChatMessage({
         </div>
       </div>
       <RetrievalModal queryId={queryId} open={retrievalModalOpen} onClose={() => setRetrievalModalOpen(false)} />
+      <AnnotationController queryId={queryId} containerRef={messageRef} />
     </div>
   );
 }

@@ -19,6 +19,7 @@ with patch.dict(os.environ, {"SESSIONS_TABLE_NAME": "test-sessions-table", "LOG_
     from main import (
         activity_handler,
         create_session_handler,
+        feedback_handler,
         handler,
         send_message_handler,
     )
@@ -462,3 +463,83 @@ def test_activity_list_falls_back_during_index_rollout(mock_dynamodb):
     assert mock_dynamodb.query.call_count == 2
     assert mock_dynamodb.query.call_args_list[0].kwargs["IndexName"] == "activityIndexV2"
     assert mock_dynamodb.query.call_args_list[1].kwargs["IndexName"] == "timestampIndex"
+
+
+@patch_dynamodb()
+def test_feedback_legacy_payload_writes_only_scalars(mock_dynamodb):
+    """A plain thumbUp/feedback payload must not write richFeedback."""
+    mock_dynamodb.get_item.return_value = {"Item": {"sessionId": {"S": "s-1"}}}
+    _set_current_event(
+        json_body={"queryId": "q-1", "thumbUp": True, "feedback": "great"}
+    )
+
+    response = feedback_handler("s-1")
+
+    assert response["statusCode"] == 200
+    update_kwargs = mock_dynamodb.update_item.call_args.kwargs
+    assert update_kwargs["UpdateExpression"] == "SET thumbUp = :thumbUp, feedback = :feedback"
+    values = update_kwargs["ExpressionAttributeValues"]
+    assert values[":thumbUp"] == {"BOOL": True}
+    assert values[":feedback"] == {"S": "great"}
+    assert ":richFeedback" not in values
+
+
+@patch_dynamodb()
+def test_feedback_rich_payload_writes_derived_thumb_and_map(mock_dynamodb):
+    """A rich payload derives thumbUp from rating and stores a richFeedback map."""
+    mock_dynamodb.get_item.return_value = {"Item": {"sessionId": {"S": "s-1"}}}
+    _set_current_event(
+        json_body={
+            "queryId": "q-2",
+            "thumbUp": False,  # mid → false, sent by the client
+            "richFeedback": {
+                "rating": "mid",
+                "positiveComment": "",
+                "response": {"relevance": {"answer": "no", "comment": "off topic"}},
+                "sourcesOk": "no",
+                "sourceNotes": [
+                    {
+                        "id": "n1",
+                        "sourceId": "doc-x",
+                        "citedFully": "no",
+                        "missedDetail": "stat 70.32",
+                        "comment": "",
+                    }
+                ],
+                "linksWork": "yes",
+                "brokenLinkIds": [],
+                "brokenLinksReason": "",
+                "annotations": [
+                    {
+                        "id": "a1",
+                        "startOffset": 10,
+                        "endOffset": 20,
+                        "quote": "dark store",
+                        "comment": "wrong",
+                    }
+                ],
+                "speedTimely": "no",
+                "speedComment": "took 100s",
+            },
+        }
+    )
+
+    response = feedback_handler("s-1")
+
+    assert response["statusCode"] == 200
+    update_kwargs = mock_dynamodb.update_item.call_args.kwargs
+    assert "richFeedback = :richFeedback" in update_kwargs["UpdateExpression"]
+    assert "feedbackSubmittedAt = :submittedAt" in update_kwargs["UpdateExpression"]
+    values = update_kwargs["ExpressionAttributeValues"]
+    assert values[":thumbUp"] == {"BOOL": False}
+    # richFeedback is a DynamoDB map with camelCase keys preserved.
+    rich = values[":richFeedback"]
+    assert "M" in rich
+    rich_map = rich["M"]
+    assert rich_map["rating"] == {"S": "mid"}
+    assert "sourceNotes" in rich_map and "speedTimely" in rich_map
+    # Nested list of maps survives serialization.
+    note = rich_map["sourceNotes"]["L"][0]["M"]
+    assert note["missedDetail"] == {"S": "stat 70.32"}
+    annotation = rich_map["annotations"]["L"][0]["M"]
+    assert annotation["startOffset"] == {"N": "10"}

@@ -4,7 +4,9 @@ import { ChatContainer } from '@/components/messages/chat-container';
 import { ChatInput } from '@/components/messages/chat-input';
 import { ChatSkeleton } from '@/components/messages/chat-skeleton';
 import { SessionsSidebar } from '@/components/layout/sessions-sidebar';
+import { AnnotationModeChrome } from '@/components/messages/feedback/annotation-mode-chrome';
 import { useChatStore } from '@/stores/chat-store';
+import { useFeedbackStore } from '@/stores/feedback-store';
 import { useWebSocketChat } from '@/hooks/use-websocket-chat';
 import { useSessionResume } from '@/hooks/use-session-resume';
 import { useSessionUrlSync } from '@/hooks/use-session-url-sync';
@@ -39,12 +41,15 @@ function AppShell() {
   const queryOrder = useChatStore(state => state.queryOrder);
   const isEmpty = queryOrder.length === 0;
   const { sendMessage } = useWebSocketChat(stableConfig);
+  // Zen annotation mode: collapse the sidebar and hide the chat input so the
+  // whole viewport is just the response being annotated.
+  const annotating = useFeedbackStore(state => state.annotatingQueryId !== null);
 
   return (
     <>
       <GradientBackground />
       <div className="flex h-screen w-screen overflow-hidden">
-        <SessionsSidebar />
+        {!annotating && <SessionsSidebar />}
 
         <div className="flex min-w-0 flex-1" style={{ contain: 'layout paint' }}>
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -72,17 +77,20 @@ function AppShell() {
                 <div className="min-h-0 flex-1">
                   <ChatContainer onSendMessage={sendMessage} />
                 </div>
-                <div className="pointer-events-none absolute inset-x-0 bottom-0">
-                  <ChatInput
-                    placeholder="Ask a Wisconsin tax or revenue question..."
-                    onSendMessage={sendMessage}
-                  />
-                </div>
+                {!annotating && (
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0">
+                    <ChatInput
+                      placeholder="Ask a Wisconsin tax or revenue question..."
+                      onSendMessage={sendMessage}
+                    />
+                  </div>
+                )}
               </>
             )}
           </div>
         </div>
       </div>
+      <AnnotationModeChrome />
       <Toaster />
     </>
   );

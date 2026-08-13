@@ -308,3 +308,34 @@
   }
 }
 
+/* Feedback annotation highlights use the CSS Custom Highlight API via
+ * ::highlight(feedback-annotation). That pseudo-element is injected at runtime
+ * (ensureHighlightStyle in feedback/annotation-controller.tsx) because the
+ * build's CSS parser (Lightning CSS) does not recognize it as a valid selector. */
+
+/* Annotation mode: pulsing blue inset border around the viewport */
+.annotate-inset {
+  box-shadow:
+    inset 0 0 0 6px rgba(59, 130, 246, 0.85),
+    inset 0 0 28px 6px rgba(59, 130, 246, 0.28);
+  animation: annotate-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes annotate-pulse {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 0 6px rgba(59, 130, 246, 0.55),
+      inset 0 0 20px 4px rgba(59, 130, 246, 0.18);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 6px rgba(59, 130, 246, 0.95),
+      inset 0 0 32px 8px rgba(59, 130, 246, 0.35);
+  }
+}
+
+/* While annotating, the response text should invite selection */
+.annotate-active .markdown-container {
+  cursor: text;
+}
+
