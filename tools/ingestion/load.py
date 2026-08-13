@@ -112,6 +112,44 @@ def load_embedded_docs(work_bucket: str) -> list[dict]:
     return docs
 
 
+def dedup_case_law_docs(documents: list[dict]) -> list[dict]:
+    """Collapse parallel-citation duplicate case-law docs before loading.
+
+    The same opinion can appear in the embedded/ cache under multiple reporter
+    citations (e.g. '405 Wis. 2d 616' and '2023 WI 8' / '985 N.W.2d 69'), all
+    sharing one CourtListener source_url. ``ingest_case_law.py`` dedups these
+    before raw upload, but stale cache entries from older runs can survive and
+    reintroduce duplicates. Collapse them here — keyed on source_url, keeping
+    the highest-priority reporter — so no phase ever loads a duplicate opinion.
+    """
+    from tools.ingestion.ingest_case_law import _reporter_priority
+
+    by_url: dict[str, list[dict]] = {}
+    passthrough: list[dict] = []
+    for doc in documents:
+        url = doc.get("source_url", "")
+        if doc.get("doc_type") == "case_law" and url:
+            by_url.setdefault(url, []).append(doc)
+        else:
+            passthrough.append(doc)
+
+    kept: list[dict] = []
+    dropped = 0
+    for group in by_url.values():
+        if len(group) == 1:
+            kept.append(group[0])
+            continue
+        group.sort(key=lambda d: _reporter_priority(d.get("doc_id", "").replace("case-law-", "")))
+        kept.append(group[0])
+        dropped += len(group) - 1
+        losers = [d.get("doc_id") for d in group[1:]]
+        logger.info(f"  Dedup case law: keep {group[0].get('doc_id')} <- drop {losers}")
+
+    if dropped:
+        logger.info(f"Case-law dedup: dropped {dropped} parallel-citation duplicate(s)")
+    return passthrough + kept
+
+
 def phase_1_scaffold(client, graph_id: str, config: dict):
     logger.info("Phase 1: Creating framework scaffold...")
 
@@ -945,8 +983,12 @@ def phase_9_cleanup(client, graph_id: str, work_bucket: str, documents: list[dic
                     client, graph_id,
                     "UNWIND $ids AS cid "
                     "MATCH (c:CaseLaw {id: cid}) "
-                    "DETACH DELETE c "
-                    "RETURN count(c) AS deleted",
+                    # Delete the node's chunks too — a bare DETACH DELETE on the
+                    # doc node leaves its Chunk nodes parentless, and orphan
+                    # chunks stay vector-searchable with no citation card.
+                    "OPTIONAL MATCH (ch:Chunk)-[:EXTRACTED_FROM]->(c) "
+                    "DETACH DELETE ch, c "
+                    "RETURN count(DISTINCT c) AS deleted",
                     {"ids": batch},
                 )
                 total_deleted += result.get("results", [{}])[0].get("deleted", 0)
@@ -979,6 +1021,8 @@ def main():
     client, graph_id = get_neptune_client(args.graph_id)
     documents = load_embedded_docs(args.work_bucket)
     logger.info(f"Loaded {len(documents)} documents for graph loading")
+
+    documents = dedup_case_law_docs(documents)
 
     if args.source_filter:
         before = len(documents)

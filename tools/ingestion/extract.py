@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from tools.ingestion.chunking.case_law import select_and_chunk
 from tools.ingestion.chunking.pdfChunker import process_pdf_from_s3
+from tools.ingestion.ingest_case_law import _case_name_from_url
 from tools.ingestion.lib.case_annotations import extract_section_for_page
 
 # Local mirror of the statute PDFs the case-law metadata references.
@@ -298,6 +299,13 @@ def process_case_law_document(
     citation = metadata.get("citation", "")
 
     meta_case_name = metadata.get("case_name", "").strip()
+    # Fall back to the case name embedded in the CourtListener URL slug when
+    # metadata has no resolved case_name. Without this, a title degrades to a
+    # bare citation (e.g. "405 Wis. 2d 616"), which renders a nameless card.
+    if not meta_case_name:
+        url_name = _case_name_from_url(metadata.get("source_url", "") or "")
+        if url_name and url_name != citation:
+            meta_case_name = url_name
     if meta_case_name and citation and meta_case_name != citation:
         title = f"{meta_case_name}, {citation}"
     elif meta_case_name and not citation:
