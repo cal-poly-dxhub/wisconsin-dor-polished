@@ -9,6 +9,7 @@ export interface AnimatedMarkdownProps {
   animate: boolean;
   animationDuration?: string;
   docUrls?: Record<string, string>;
+  docTones?: Record<string, SourceTone>;
 }
 
 const WORD_SPLIT = /(\s+)/;
@@ -52,8 +53,31 @@ function splitAnimated(
 }
 
 
-type SourceTone = 'statute' | 'case-law' | 'admin-rule' | 'wpam' | 'faq' | 'gov-pub' | 'iaao' | 'uspap' | 'default';
+export type SourceTone = 'statute' | 'case-law' | 'admin-rule' | 'wpam' | 'faq' | 'gov-pub' | 'iaao' | 'uspap' | 'default';
 
+// Authority level → tone. This is the deterministic classification: the
+// backend already assigns every document an authority tier (1–9), which maps
+// 1:1 to a source tone. Prefer this over classifySource() text-guessing.
+// (Level 1 = Constitution has no dedicated tone yet → falls back.)
+const AUTHORITY_TONE: Record<number, SourceTone> = {
+  2: 'statute',
+  3: 'case-law',
+  4: 'admin-rule',
+  5: 'wpam',
+  6: 'faq',
+  7: 'gov-pub',
+  8: 'iaao',
+  9: 'uspap',
+};
+
+export function toneForAuthorityLevel(level?: number): SourceTone | undefined {
+  if (level == null) return undefined;
+  return AUTHORITY_TONE[level];
+}
+
+// Heuristic fallback for links whose doc_id we can't map to a source card
+// (e.g. synthetic statute-fallback URLs or raw external hrefs). Ambiguous by
+// nature — only used when the deterministic authority-level tone is absent.
 function classifySource(text: string, href?: string): SourceTone {
   const t = text.toLowerCase();
   const h = (href ?? '').toLowerCase();
@@ -78,9 +102,7 @@ function extractText(node: React.ReactNode): string {
   return '';
 }
 
-function SourceLink({ href, children }: { href: string; children: React.ReactNode }) {
-  const text = extractText(children);
-  const tone = classifySource(text, href);
+function SourceLink({ href, tone, children }: { href: string; tone: SourceTone; children: React.ReactNode }) {
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" className={`source-link source-link--${tone}`}>
       {children}
@@ -93,6 +115,31 @@ function SourceLink({ href, children }: { href: string; children: React.ReactNod
 
 const DOC_HREF_PREFIX = 'doc:';
 const STATUTE_DOC_RE = /^statutes-(\d+[A-Za-z]*)$/;
+
+// Extract the bare doc_id from a `doc:<id>#page=N` href (no page fragment → whole rest).
+function docIdFromHref(href: string | undefined): string | undefined {
+  if (!href || !href.startsWith(DOC_HREF_PREFIX)) return undefined;
+  const rest = href.slice(DOC_HREF_PREFIX.length);
+  const hashIdx = rest.indexOf('#page=');
+  return hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
+}
+
+// Resolve a link's source tone. Prefer the deterministic authority-level tone
+// keyed by doc_id (docTones, built from the source cards the backend sent);
+// fall back to text/href heuristics only when the doc isn't a known card.
+function resolveTone(
+  href: string | undefined,
+  children: React.ReactNode,
+  resolvedHref: string,
+  docTones?: Record<string, SourceTone>
+): SourceTone {
+  const docId = docIdFromHref(href);
+  if (docId && docTones) {
+    const tone = docTones[docId];
+    if (tone) return tone;
+  }
+  return classifySource(extractText(children), resolvedHref);
+}
 
 function resolveHref(href: string | undefined, docUrls?: Record<string, string>): string | undefined {
   if (!href) return href;
@@ -124,6 +171,7 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
   animate,
   animationDuration = '1s',
   docUrls,
+  docTones,
 }: AnimatedMarkdownProps) {
   const components = useMemo<Components>(() => {
     if (!animate) {
@@ -131,7 +179,8 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
         a: ({ children, href }) => {
           const resolved = resolveHref(href, docUrls);
           if (!resolved) return <span>{children}</span>;
-          return <SourceLink href={resolved}>{children}</SourceLink>;
+          const tone = resolveTone(href, children, resolved, docTones);
+          return <SourceLink href={resolved} tone={tone}>{children}</SourceLink>;
         },
       };
     }
@@ -156,7 +205,8 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
       a: ({ children, href }) => {
         const resolved = resolveHref(href, docUrls);
         if (!resolved) return <span>{children}</span>;
-        return <SourceLink href={resolved}>{children}</SourceLink>;
+        const tone = resolveTone(href, children, resolved, docTones);
+        return <SourceLink href={resolved} tone={tone}>{children}</SourceLink>;
       },
       blockquote: ({ children, ...props }) => (
         <blockquote {...props}>{wrap(children, 'bq')}</blockquote>
@@ -178,7 +228,7 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
         </div>
       ),
     };
-  }, [animate, animationDuration, docUrls]);
+  }, [animate, animationDuration, docUrls, docTones]);
 
   return (
     <ReactMarkdown

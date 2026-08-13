@@ -17,7 +17,7 @@ import type { AgentTraceEvent, ResourceItem, FAQ } from '@/stores/types';
 import type { QueryStatus } from '@/stores/types';
 
 import './chat-message.css';
-import AnimatedMarkdown from './animated-markdown';
+import AnimatedMarkdown, { type SourceTone, toneForAuthorityLevel } from './animated-markdown';
 import { formatTraceMetadata } from './trace-metadata';
 import { Button } from '../ui/button';
 import { ButtonGroup } from '../ui/button-group';
@@ -237,6 +237,7 @@ interface StreamResponseProps {
   className?: string;
   streamingComplete?: boolean;
   docUrls?: Record<string, string>;
+  docTones?: Record<string, SourceTone>;
 }
 
 
@@ -257,6 +258,7 @@ export function StreamResponse({
   className,
   streamingComplete,
   docUrls,
+  docTones,
 }: StreamResponseProps) {
   // Latch animate to its initial value. If the message was streaming when
   // this component mounted, keep animate=true forever — the per-word spans
@@ -279,6 +281,7 @@ export function StreamResponse({
           animate={animate}
           animationDuration="0.6s"
           docUrls={docUrls}
+          docTones={docTones}
         />
       </div>
     </div>
@@ -596,10 +599,18 @@ export function ChatMessage({
   }, [agentTrace, devTrace, hasResources, items, isStreaming, streamingComplete, isThinking]);
 
   const [docUrls, setDocUrls] = useState<Record<string, string>>({});
+  // doc_id → source tone, derived from each card's authorityLevel. Lets inline
+  // links be colored by what the document actually IS (the backend's authority
+  // tier) instead of guessing from the surrounding prose. Same keying as docUrls.
+  const [docTones, setDocTones] = useState<Record<string, SourceTone>>({});
   useEffect(() => {
     let cancelled = false;
     async function build() {
       const map: Record<string, string> = {};
+      const tones: Record<string, SourceTone> = {};
+      const setBoth = (id: string, tone: SourceTone | undefined) => {
+        if (tone) tones[id] = tone;
+      };
       for (const item of items ?? []) {
         if (item.type === 'document') {
           const doc = item.data as Document;
@@ -608,21 +619,28 @@ export function ChatMessage({
           if (target) {
             url = appendPageFragment(target.url, doc.startPage);
           }
+          const tone = toneForAuthorityLevel(doc.authorityLevel);
+          // Key by full documentId AND raw doc_id (strip trailing -<7char hash>)
+          // so inline citations written as doc:<raw-id> resolve correctly.
+          const rawId = doc.documentId.replace(/-[a-f0-9]{7}$/, '');
           if (url) {
             map[doc.documentId] = url;
-            // Also key by raw doc_id (strip the trailing -<7char hash>)
-            // so inline citations written as doc:<raw-id> resolve correctly.
-            const rawId = doc.documentId.replace(/-[a-f0-9]{7}$/, '');
             if (rawId !== doc.documentId) map[rawId] = url;
           }
+          setBoth(doc.documentId, tone);
+          if (rawId !== doc.documentId) setBoth(rawId, tone);
         } else if (item.type === 'faq') {
           const faq = item.data as FAQ;
           if (faq.sourceUrl) {
             map[faq.faqId] = faq.sourceUrl;
           }
+          tones[faq.faqId] = 'faq';
         }
       }
-      if (!cancelled) setDocUrls(map);
+      if (!cancelled) {
+        setDocUrls(map);
+        setDocTones(tones);
+      }
     }
     build();
     return () => { cancelled = true; };
@@ -638,11 +656,11 @@ export function ChatMessage({
 
     return (
       <div className="chat-response-aligned">
-        <StreamResponse content={response} streamingComplete={streamingComplete} docUrls={docUrls} />
+        <StreamResponse content={response} streamingComplete={streamingComplete} docUrls={docUrls} docTones={docTones} />
         <InlineSources items={items ?? []} streamingComplete={streamingComplete} citationsByDoc={citationsByDoc} />
       </div>
     );
-  }, [response, streamingComplete, items, docUrls, citationsByDoc]);
+  }, [response, streamingComplete, items, docUrls, docTones, citationsByDoc]);
 
   const containerClassName = useMemo(
     () => `font-sans ${className || ''}`,
