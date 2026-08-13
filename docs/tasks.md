@@ -12,6 +12,7 @@
 | 47 | Route case-law / flat-structure docs straight to search_document (skip list_sections/get_section) | — |
 | 48 | Investigate WPAM get_section gap — agents re-search doc-globally after get_section on same chapter | — |
 | 49 | Validate Scholar-fetched opinion matches requested citation (prevent citation→text mis-assignment) | 2f57489d |
+| 50 | Rich feedback phase 2 — render richFeedback in the admin activity dashboard | — |
 
 ## Done
 
@@ -249,6 +250,31 @@ From 18 lines to ~6 lines.
 **Key files:**
 - `tools/ingestion/ops/purge_corrupt_case_law.py` — one-time purge (hand-verified list; extend if more surface)
 - `tools/ingestion/ingest_case_law.py` — `fetch_scholar_opinion` / `upload_case` citation-match guard
+
+---
+
+### Task 50: Rich feedback phase 2 — render richFeedback in the admin activity dashboard
+
+**Context:** Phase 1 (shipped, deployed 2026-08-13, PR #17) replaced thumbs up/down with a structured feedback modal + annotation mode. Submit now POSTs to `POST /session/{id}/feedback` writing the scalar `thumbUp` (derived from rating: up→true, mid/down→false) **plus** a nested `richFeedback` map + `feedbackSubmittedAt` onto the ChatHistoryTable row. Confirmed live: a real submission stored the full nested structure (rating, per-question yes/no + comments, source notes, broken-link picker, annotations with offsets, speed).
+
+**What's already wired (no work needed):**
+- Write path — `update_query_feedback` (`backend/lambdas/chat_api/main.py`) conditionally writes `richFeedback` (via `TypeSerializer`) + `feedbackSubmittedAt`.
+- Read path — `activity_detail_handler` (`GET /admin/activity/<id>`) already **returns** `richFeedback` + `feedbackSubmittedAt` (auto-deserialized). The detail API is done.
+- Shared contract — backend `RichFeedback` Pydantic model (`backend/layers/step_function_types/models.py`) mirrors the frontend Zod schema (`frontend/src/api/chat-api.ts`) and the store shape (`frontend/src/stores/feedback-store.ts`).
+- The admin GSI/list filters (up/down/rated/unrated) are unchanged and still work — they run on `thumbUp` only. **Do not** move the up/down signal out of the scalar `thumbUp` or the list filters + stat tiles break (would force a GSI rebuild).
+
+**What's left (frontend-only, no backend/infra):** the admin activity **detail drawer** receives `richFeedback` in the API response but ignores it. Render the structured breakdown when present, degrading gracefully for legacy rows that only have `thumbUp`/`feedback`.
+1. Extend the activity types in `frontend/src/hooks/use-activity-data.ts` (`ActivityItem`) with an optional `richFeedback` + `feedbackSubmittedAt`, mirroring the `RichFeedback` Zod shape.
+2. Render it in `frontend/src/app/admin/activity/_components/activity-detail.tsx` — overall rating, the three Response yes/nos + comments, source notes (which source, cited-fully, missed detail), broken links + reason, annotations (quote + comment, ideally anchored/quoted against the answer), speed. Fall back to the existing `thumbUp`/`feedback` display when `richFeedback` is absent.
+3. Optional list-view nicety: the list only projects `thumbUp`/`feedback` via the GSI, so a per-row rich summary needs either a `get_item` per row or a purpose-built projected summary attribute — defer that decision to this task; the minimum is the detail drawer.
+
+**Validation:** open `/admin/activity`, find the seeded submission (queryId `83585f11-3677-40ed-9795-bb7b0c23a1d6`), confirm the detail drawer renders rating=mid, sourcesOk=no with the source note, the annotation, speed=timely, etc.; confirm an old thumbs-only row still renders without error.
+
+**Key files:**
+- `frontend/src/hooks/use-activity-data.ts` — activity types
+- `frontend/src/app/admin/activity/_components/activity-detail.tsx` — detail rendering
+- `frontend/src/api/chat-api.ts` — reuse the `RichFeedback` Zod schema for the activity response
+- (reference) `backend/lambdas/chat_api/main.py` `activity_detail_handler` — already returns the field
 
 ---
 

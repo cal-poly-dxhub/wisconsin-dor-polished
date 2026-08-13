@@ -216,7 +216,9 @@ def run_agentic_loop(
             payload={
                 "toolName": "auto_refine",
                 "status": refine_status,
-                "summary": f'Refined to "{refined[:80]}"' if refined != query else "No refinement needed",
+                "summary": f'Refined to "{refined[:80]}"'
+                if refined != query
+                else "No refinement needed",
                 "docIds": [],
                 "docTitles": [],
                 "metadata": refine_meta,
@@ -468,9 +470,7 @@ def run_agentic_loop(
                     {
                         "toolResult": {
                             "toolUseId": vs_tool_use_id,
-                            "content": [
-                                {"json": _compact_for_model(vs_result, "vector_search")}
-                            ],
+                            "content": [{"json": _compact_for_model(vs_result, "vector_search")}],
                         }
                     },
                 ],
@@ -504,7 +504,13 @@ def run_agentic_loop(
 
     tool_config = {"tools": TOOL_DEFINITIONS}
     broad_fired = [True]  # broad discovery already fired in the pre-loop vector_search
-    cumulative_usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0, "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0}
+    cumulative_usage = {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0,
+        "cacheReadInputTokens": 0,
+        "cacheWriteInputTokens": 0,
+    }
 
     for turn in range(MAX_TURNS):
         turn_number = turn + 1
@@ -627,13 +633,17 @@ def run_agentic_loop(
                 answer_chars=len(fallback_answer),
             )
             # Model responded with text instead of calling prepare_answer.
-            # Treat the text as a fallback answer.
+            # Treat the text as a fallback answer, and cite NOTHING: the model
+            # deliberately declined to select sources (out-of-scope refusal,
+            # general-knowledge reply, or a clarifying question), so attaching
+            # every doc the pre-loop seed discovered would show spurious cards.
             _log(
                 "agent_loop_complete",
                 **trace_context,
                 terminal_reason="assistant_text_fallback",
                 elapsed_ms=round((time.perf_counter() - loop_started) * 1000),
                 answer_chars=len(fallback_answer),
+                cited_doc_count=0,
                 discovered_doc_count=len(all_doc_ids),
                 discovery=discovery_summary(discovery),
             )
@@ -642,8 +652,8 @@ def run_agentic_loop(
                 terminalReason="assistant_text_fallback",
                 turnsUsed=turn_number,
                 elapsedMs=round((time.perf_counter() - loop_started) * 1000),
-                citedDocCount=len(all_doc_ids),
-                citedDocIds=list(all_doc_ids)[:20],
+                citedDocCount=0,
+                citedDocIds=[],
                 discovery=discovery_summary(discovery),
             )
             _emit_safe(
@@ -655,12 +665,12 @@ def run_agentic_loop(
                     "terminalReason": "assistant_text_fallback",
                     "turnsUsed": turn_number,
                     "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
-                    "citedDocCount": len(all_doc_ids),
+                    "citedDocCount": 0,
                     "discoveryCounts": discovery_summary(discovery),
                 },
             )
             return AgentLoopResult(
-                cited_doc_ids=list(all_doc_ids),
+                cited_doc_ids=[],
                 all_chunks=all_chunks,
                 all_doc_ids=all_doc_ids,
                 discovery=discovery,
@@ -709,10 +719,14 @@ def run_agentic_loop(
             tool_started = time.perf_counter()
             # Only pass original_user_query on the first vector_search call
             # so broad discovery fires once, not on every subsequent search.
-            _pass_original = query if (tool_name == "vector_search" and not broad_fired[0]) else None
+            _pass_original = (
+                query if (tool_name == "vector_search" and not broad_fired[0]) else None
+            )
             try:
                 result = execute_tool(
-                    tool_name, tool_input, neptune,
+                    tool_name,
+                    tool_input,
+                    neptune,
                     chat_history=chat_history,
                     original_user_query=_pass_original,
                 )

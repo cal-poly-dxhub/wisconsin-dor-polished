@@ -408,3 +408,104 @@ class TestHandler:
 
         kwargs = handler.run_agentic_loop.call_args.kwargs
         assert kwargs["ws_server"] is None
+
+
+class TestPreLoopClassification:
+    """Handler short-circuit behavior for the pre-loop query classifier."""
+
+    def _setup(self, fresh_modules, monkeypatch, verdict):
+        handler, disambiguation = fresh_modules(
+            "handler", "disambiguation", env={"ENABLE_DISAMBIGUATION": "true"}
+        )
+        # Sanity: the env flag must have been read at import time.
+        assert handler.ENABLE_DISAMBIGUATION is True
+        monkeypatch.setattr(disambiguation, "classify_query", lambda q, h: verdict)
+
+        mock_ws = MagicMock()
+        monkeypatch.setattr(
+            handler, "get_ws_connection_from_session", MagicMock(return_value=mock_ws)
+        )
+        monkeypatch.setattr(handler, "get_chat_history", lambda sid: [])
+        saved = {}
+        monkeypatch.setattr(
+            handler, "save_chat_history", lambda *a, **kw: saved.update({"args": a})
+        )
+        finalize = MagicMock()
+        monkeypatch.setattr(handler, "send_resources_and_finalize", finalize)
+        monkeypatch.setattr(handler.asyncio, "run", lambda coro: coro.close())
+        run_loop = MagicMock()
+        monkeypatch.setattr(handler, "run_agentic_loop", run_loop)
+        return handler, disambiguation, mock_ws, finalize, run_loop, saved
+
+    def test_out_of_scope_refuses_without_sources_or_choices(self, fresh_modules, monkeypatch):
+        handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(
+            fresh_modules, monkeypatch, "OUT_OF_SCOPE"
+        )
+        ctx = SimpleNamespace(aws_request_id="r-1")
+        result = handler.handler(
+            {"query": "What color is the sky?", "query_id": "q-1", "session_id": "s-1"}, ctx
+        )
+
+        assert result == {"successful": True}
+        # The agentic loop never ran — refusal short-circuited before it.
+        run_loop.assert_not_called()
+        # Finalized with the canned refusal and NO documents.
+        finalize.assert_called_once()
+        args, kwargs = finalize.call_args
+        assert kwargs.get("rag_documents", args[3] if len(args) > 3 else None) == []
+        assert disambiguation.OUT_OF_SCOPE_MESSAGE in (args[2], kwargs.get("answer", ""))
+        # No property-type choices for an out-of-scope refusal.
+        assert mock_ws.client.post_to_connection.call_count == 0
+        # Refusal answer persisted to chat history.
+        assert disambiguation.OUT_OF_SCOPE_MESSAGE in saved["args"]
+
+    def test_disambiguate_sends_choices_without_sources(self, fresh_modules, monkeypatch):
+        handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(
+            fresh_modules, monkeypatch, "DISAMBIGUATE"
+        )
+        ctx = SimpleNamespace(aws_request_id="r-1")
+        result = handler.handler(
+            {"query": "How is my property assessed?", "query_id": "q-1", "session_id": "s-1"},
+            ctx,
+        )
+
+        assert result == {"successful": True}
+        run_loop.assert_not_called()
+        finalize.assert_called_once()
+        args, kwargs = finalize.call_args
+        assert kwargs.get("rag_documents", args[3] if len(args) > 3 else None) == []
+        # Disambiguation offers property-type choices over the WebSocket.
+        assert mock_ws.client.post_to_connection.call_count == 1
+
+    def test_proceed_runs_the_loop(self, fresh_modules, monkeypatch):
+        handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(
+            fresh_modules, monkeypatch, "PROCEED"
+        )
+        # run_agentic_loop must return a usable result for the normal path.
+        run_loop.return_value = SimpleNamespace(
+            fallback_answer="ans",
+            cited_doc_ids=[],
+            all_chunks=[],
+            all_doc_ids=set(),
+            discovery={},
+            fetched_opinions={},
+            high_confidence_faq=None,
+            faq_entries=[],
+            trace_log=[],
+            connection_alive=True,
+            answer_plan="",
+        )
+        monkeypatch.setattr(handler, "build_rag_documents", lambda *a, **kw: [])
+        monkeypatch.setattr(handler, "build_cited_faq_resource", lambda *a, **kw: None)
+
+        ctx = SimpleNamespace(aws_request_id="r-1")
+        handler.handler(
+            {
+                "query": "When does the Board of Review meet?",
+                "query_id": "q-1",
+                "session_id": "s-1",
+            },
+            ctx,
+        )
+        # PROCEED does not short-circuit — the agentic loop runs.
+        run_loop.assert_called_once()

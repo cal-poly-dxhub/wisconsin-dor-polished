@@ -106,16 +106,25 @@ def handler(event: dict, context) -> dict[str, Any]:
                 },
             )
 
-        # Pre-loop disambiguation: if enabled, check whether the query is
-        # a generic property assessment question that needs classification.
+        # Pre-loop query classification: if enabled, check whether the query
+        # is out of scope (refuse) or a generic property assessment question
+        # that needs a property type (clarify). Either verdict short-circuits
+        # before the agentic loop, so no retrieval runs and no sources attach.
         if ENABLE_DISAMBIGUATION:
             from disambiguation import (
                 CLARIFICATION_QUESTION,
+                OUT_OF_SCOPE_MESSAGE,
                 PROPERTY_TYPE_CHOICES,
-                should_disambiguate,
+                VERDICT_DISAMBIGUATE,
+                VERDICT_OUT_OF_SCOPE,
+                classify_query,
             )
 
-            needs_disambiguation = should_disambiguate(user_query.query, chat_history)
+            verdict = classify_query(user_query.query, chat_history)
+            _phase_label = {
+                VERDICT_OUT_OF_SCOPE: "Query is outside property tax scope",
+                VERDICT_DISAMBIGUATE: "Query needs clarification on property type",
+            }.get(verdict, "Query is specific enough to proceed")
             _emit(
                 ws_server,
                 trace_seq,
@@ -123,22 +132,22 @@ def handler(event: dict, context) -> dict[str, Any]:
                 kind="phase",
                 payload={
                     "phase": "generality_classified",
-                    "label": "Query needs clarification on property type"
-                    if needs_disambiguation
-                    else "Query is specific enough to proceed",
-                    "result": "disambiguate" if needs_disambiguation else "proceed",
+                    "label": _phase_label,
+                    "result": verdict.lower(),
                 },
             )
 
-            if needs_disambiguation:
+            if verdict in (VERDICT_OUT_OF_SCOPE, VERDICT_DISAMBIGUATE):
+                is_disambiguate = verdict == VERDICT_DISAMBIGUATE
                 _log(
                     "disambiguation_short_circuit",
                     request_id=request_id,
                     query_id=user_query.query_id,
                     session_id=user_query.session_id,
+                    verdict=verdict,
                     **_query_fields(user_query.query),
                 )
-                answer = CLARIFICATION_QUESTION
+                answer = CLARIFICATION_QUESTION if is_disambiguate else OUT_OF_SCOPE_MESSAGE
                 if ws_server:
                     send_resources_and_finalize(
                         ws_server,
@@ -147,16 +156,19 @@ def handler(event: dict, context) -> dict[str, Any]:
                         rag_documents=[],
                         faq_resource=None,
                     )
-                    choices_msg = ChoicesMessage(
-                        query_id=user_query.query_id,
-                        content=ChoicesContent(choices=PROPERTY_TYPE_CHOICES),
-                    )
-                    data = json.dumps(
-                        {"streamId": "choices", "body": choices_msg.model_dump(by_alias=True)}
-                    )
-                    ws_server.client.post_to_connection(
-                        ConnectionId=ws_server.connection_id, Data=data
-                    )
+                    # Only the disambiguation verdict offers property-type
+                    # choices; an out-of-scope refusal has no follow-up options.
+                    if is_disambiguate:
+                        choices_msg = ChoicesMessage(
+                            query_id=user_query.query_id,
+                            content=ChoicesContent(choices=PROPERTY_TYPE_CHOICES),
+                        )
+                        data = json.dumps(
+                            {"streamId": "choices", "body": choices_msg.model_dump(by_alias=True)}
+                        )
+                        ws_server.client.post_to_connection(
+                            ConnectionId=ws_server.connection_id, Data=data
+                        )
                 save_chat_history(
                     session_id,
                     user_query.query_id,
@@ -180,16 +192,27 @@ def handler(event: dict, context) -> dict[str, Any]:
         if result.fallback_answer is not None:
             # Edge case: clarify tool, turn budget exhausted, or model responded
             # with text instead of calling prepare_answer. No Phase B needed.
+            # Attach only the docs the loop actually cited: clarify and the
+            # text-fallback path return an empty cited set (no cards), while
+            # turn_budget_exhausted returns all discovered docs (show what it
+            # found). Building from cited_doc_ids honors both without dumping
+            # the pre-loop seed onto a refusal or clarifying question.
             answer = result.fallback_answer
+            fallback_cited = set(result.cited_doc_ids)
+            fallback_chunks = [c for c in result.all_chunks if c.get("doc_id") in fallback_cited]
+            fallback_discovery = {k: v for k, v in result.discovery.items() if k in fallback_cited}
+            fallback_opinions = {
+                k: v for k, v in result.fetched_opinions.items() if k in fallback_cited
+            }
             rag_documents = build_rag_documents(
-                result.all_chunks,
-                result.all_doc_ids,
-                result.discovery,
-                result.fetched_opinions,
+                fallback_chunks,
+                fallback_cited,
+                fallback_discovery,
+                fallback_opinions,
                 neptune_client=neptune,
             )
             faq_resource = result.high_confidence_faq or build_cited_faq_resource(
-                result.faq_entries, result.all_doc_ids
+                result.faq_entries, fallback_cited
             )
 
             _log(
@@ -281,21 +304,29 @@ def handler(event: dict, context) -> dict[str, Any]:
             answer = ""  # Will be populated by streaming or fallback
             if ws_server and result.connection_alive:
                 ws_connection_alive = [result.connection_alive]
-                try:
-                    # 2. Send resource cards over WebSocket
-                    send_resources(ws_server, user_query.query_id, rag_documents, faq_resource)
 
-                    # 3. Stream answer (Phase B)
-                    answer_context = build_answer_context(
-                        user_query.query,
-                        cited_chunks,
-                        cited,
-                        cited_discovery,
-                        cited_opinions,
-                        result.answer_plan,
-                        chat_history=chat_history,
-                        neptune_client=neptune,
+                # 2. Send resource cards (non-fatal if connection is already gone)
+                try:
+                    send_resources(ws_server, user_query.query_id, rag_documents, faq_resource)
+                except Exception as res_exc:
+                    logger.warning(
+                        "send_resources failed (connection likely gone) | exc=%s",
+                        res_exc,
                     )
+                    ws_connection_alive[0] = False
+
+                # 3. Stream answer (Phase B) — handles dead connections internally
+                answer_context = build_answer_context(
+                    user_query.query,
+                    cited_chunks,
+                    cited,
+                    cited_discovery,
+                    cited_opinions,
+                    result.answer_plan,
+                    chat_history=chat_history,
+                    neptune_client=neptune,
+                )
+                try:
                     answer = stream_answer(
                         ws_server,
                         user_query.query_id,
@@ -313,17 +344,6 @@ def handler(event: dict, context) -> dict[str, Any]:
                     )
                     if not answer:
                         try:
-                            if not answer_context:
-                                answer_context = build_answer_context(
-                                    user_query.query,
-                                    cited_chunks,
-                                    cited,
-                                    cited_discovery,
-                                    cited_opinions,
-                                    result.answer_plan,
-                                    chat_history=chat_history,
-                                    neptune_client=neptune,
-                                )
                             response = bedrock.converse(
                                 modelId=AGENTIC_MODEL_ID,
                                 messages=[{"role": "user", "content": [{"text": answer_context}]}],
@@ -342,7 +362,9 @@ def handler(event: dict, context) -> dict[str, Any]:
                                 "Phase B fallback: generated answer via non-streaming converse()"
                             )
                         except Exception as fallback_exc:
-                            logger.error(f"Phase B non-streaming fallback failed: {fallback_exc}")
+                            logger.error(
+                                f"Phase B non-streaming fallback failed: {fallback_exc}"
+                            )
                             answer = "(Answer generation failed — please retry)"
             else:
                 # No WebSocket — generate answer without streaming for DB save
