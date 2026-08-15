@@ -196,6 +196,15 @@ Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM 
 
 PyMuPDF-first extraction with Textract fallback. `pdfChunker.py` routes by source type (`CHUNKER_BY_SOURCE` dict) to strategy-specific chunking (statute, wpam, general). Each chunk gets `start_page`/`end_page` metadata for citation linking. Quality gate in `pymupdf_extractor.py` (`extraction_looks_good()`) triggers Textract fallback.
 
+### TID Worksheet Tool (`.xlsx` — separate from the graph)
+
+The 4 TID base-value workbooks on the master list (`tidbase`, `tidsub`, `decrement`, `tidbase-ppremoval`) are Excel *data-entry forms*, not PDFs, so they never enter the Neptune graph. Instead they are served to the agent through a dedicated retrieval-side tool pair — chosen over graph ingestion because the forms are re-issued annually, embed poorly as flattened grids, and need exact line/column lookup.
+
+- **Offline extractor** (`tools/ingestion/worksheets/extract_worksheets.py`): openpyxl parses each `.xlsx` into a structured JSON sidecar (labels / formulas / instructions per *visible* sheet), dropping the hidden `CoMuniData` lookup sheet and formula plumbing (`=SUM`, `VLOOKUP`, cross-sheet refs). Writes `s3://{raw-bucket}/worksheets/{worksheet_id}.json`. Run at the annual refresh (see command under Scraping & Content Refresh) — a lightweight local step, NOT a Fargate phase.
+- **Retrieval tools** (`backend/lambdas/agentic_retrieval/worksheets.py` + `list_worksheets` / `get_worksheet` in `agent_tools/`): read the sidecars with per-container caching, mirroring the `list_sections` / `get_section` idiom. Formulas are **described, never evaluated** — the agent presents the method and lets the user apply their own numbers (no computed-dollar liability). Registry of available worksheets lives in `WORKSHEET_REGISTRY`.
+- **Answer pattern** (see the TID WORKSHEETS section of the `agenticRetrieval` prompt): stitch the worksheet skeleton with the already-ingested narrative rules in the instruction PDFs (`form_instructions-*`) and `tif-manual`. Cite the worksheet by its `worksheet_id`.
+- Reuses the existing raw-bucket read grant — no IAM/CDK change to add a worksheet. Scope: TID base-value work only; does NOT cover the levy limit worksheet, TID net-new-construction, or the TID Annual Report.
+
 ### Citation Support
 
 Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeline. Citation cards link to each document's public `source_url` (docs.legis.wisconsin.gov, revenue.wi.gov, iaao.org, ...) with `#page=N` fragments for direct PDF page links; no presigned URLs are generated. Case law is metadata stubs with Google Scholar links (no full opinion text).
