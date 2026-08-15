@@ -380,6 +380,58 @@ TOOL_DEFINITIONS = [
     },
     {
         "toolSpec": {
+            "name": "list_worksheets",
+            "description": (
+                "List the DOR Excel worksheets whose structure is available "
+                "for lookup. These are the Tax Incremental District (TID) "
+                "base-value and redetermination workbooks. Use this when a "
+                "user asks how to complete a TID worksheet, which form or "
+                "sheet to use, what a specific column or line captures, or how "
+                "a TID base value / decrement is determined. Returns each "
+                "worksheet_id with its title and the sheets it contains."
+            ),
+            "inputSchema": {"json": {"type": "object", "properties": {}}},
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "get_worksheet",
+            "description": (
+                "Retrieve the structured contents of one DOR TID worksheet: "
+                "its field/column labels, the calculation formulas it applies "
+                "(described, not computed), and the preparer instructions "
+                "printed on each sheet. Use after list_worksheets to explain "
+                "how to complete a worksheet or how a value is derived. Pair "
+                "the returned structure with the matching instruction PDF "
+                "(form_instructions-* / tif-manual) for the narrative rules. "
+                "Cite the worksheet by its worksheet_id."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "worksheet_id": {
+                            "type": "string",
+                            "description": (
+                                "The worksheet ID from list_worksheets "
+                                "(e.g., 'worksheets-decrement')."
+                            ),
+                        },
+                        "sheet": {
+                            "type": "string",
+                            "description": (
+                                "Optional. Return only this sheet/tab (e.g., "
+                                "'PE-608 (local RE)'). Omit to return all sheets."
+                            ),
+                        },
+                    },
+                    "required": ["worksheet_id"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
             "name": "prepare_answer",
             "description": (
                 "Signal that research is complete and you are ready to write "

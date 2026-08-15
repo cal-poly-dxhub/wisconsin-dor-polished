@@ -14,6 +14,8 @@ from typing import Any
 import boto3
 from case_law import fetch_case_opinion
 from graph.neptune_client import NeptuneClient
+from worksheets import get_worksheet as load_worksheet
+from worksheets import list_worksheets as list_worksheet_registry
 from wpam_dedup import dedupe_wpam_chunks
 
 # Regex patterns for Wisconsin case citations.
@@ -722,6 +724,36 @@ def execute_tool(
             citation=citation,
             raw_key=result.get("raw_key", ""),
             opinion_chars=len(result.get("text", "")),
+            latency_ms=round((time.perf_counter() - started) * 1000),
+        )
+        return result
+
+    elif tool_name == "list_worksheets":
+        worksheets = list_worksheet_registry()
+        _log_tool_event(
+            "list_worksheets_complete",
+            tool_name=tool_name,
+            worksheet_count=len(worksheets),
+            latency_ms=round((time.perf_counter() - started) * 1000),
+        )
+        return {"worksheets": worksheets}
+
+    elif tool_name == "get_worksheet":
+        worksheet_id = tool_input.get("worksheet_id", "")
+        if not worksheet_id:
+            return {"error": "worksheet_id is required"}
+        result = load_worksheet(
+            worksheet_id,
+            raw_bucket=RAW_BUCKET,
+            sheet=tool_input.get("sheet"),
+        )
+        _log_tool_event(
+            "get_worksheet_complete",
+            tool_name=tool_name,
+            worksheet_id=worksheet_id,
+            sheet=tool_input.get("sheet"),
+            sheet_count=len(result.get("sheets", [])) if "sheets" in result else 0,
+            has_error=bool(result.get("error")),
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
         return result
