@@ -608,6 +608,29 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         status = "terminal"
         metadata = {"citedDocCount": len(cited), "hasPlan": bool(result.get("answer_plan"))}
 
+    elif tool_name == "list_worksheets":
+        worksheets = result.get("worksheets", [])
+        n = len(worksheets)
+        summary_text = f"Listed {n} {'worksheet' if n == 1 else 'worksheets'}"
+        metadata = {"worksheetCount": n}
+
+    elif tool_name == "get_worksheet":
+        worksheet_id = result.get("worksheet_id", "")
+        sheets = result.get("sheets", [])
+        if result.get("error"):
+            status = "miss"
+            summary_text = result["error"][:80]
+            metadata = {"worksheetId": worksheet_id}
+        else:
+            title = result.get("title") or worksheet_id
+            n = len(sheets)
+            summary_text = f"Got {title} ({n} {'sheet' if n == 1 else 'sheets'})"
+            metadata = {
+                "worksheetId": worksheet_id,
+                "sheetCount": n,
+                "sheetNames": [s.get("sheet") for s in sheets][:12],
+            }
+
     else:
         summary_text = f"{tool_name} complete"
 

@@ -98,6 +98,14 @@ uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e692
 ./tools/ingestion/scripts/run_fargate.sh embed
 ./tools/ingestion/scripts/run_fargate.sh load
 
+# TID worksheets (.xlsx → structured JSON sidecars for the get_worksheet tool):
+# Separate lightweight local step — NOT part of the Fargate extract/embed/load phases.
+# Re-run whenever the TID .xlsx forms change (typically the annual refresh).
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run --with openpyxl python \
+  -m tools.ingestion.worksheets.extract_worksheets --raw-bucket wis-raw-bucket-c8e69250
+# Writes s3://{raw-bucket}/worksheets/{worksheet_id}.json. The agentic_retrieval
+# list_worksheets / get_worksheet tools read these (formulas described, never evaluated).
+
 # Case law (separate path — discovered from statute PDF hyperlinks, not manifest):
 AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python tools/ingestion/ingest_case_law.py \
   --bucket wis-raw-bucket-c8e69250 --from-s3 --resume

@@ -192,6 +192,14 @@ categories:
       - https://www.revenue.wi.gov/DORForms/pe-605af.pdf
       - https://www.revenue.wi.gov/DORForms/pe-605bf.pdf
       - https://www.revenue.wi.gov/DORForms/pe-605tf.pdf
+      # TIF base-value worksheets (.xlsx) — NOT scraped/PDF-extracted here.
+      # These are handled by tools/ingestion/worksheets/extract_worksheets.py, which
+      # emits structured JSON sidecars to s3://{raw-bucket}/worksheets/ for the
+      # agentic_retrieval get_worksheet tool. Listed here only for traceability:
+      #   https://www.revenue.wi.gov/DORForms/tidbase.xlsx
+      #   https://www.revenue.wi.gov/DORForms/tidsub.xlsx
+      #   https://www.revenue.wi.gov/DORForms/decrement.xlsx
+      #   https://www.revenue.wi.gov/DORForms/tidbase-ppremoval.xlsx
       # EQ
       - https://www.revenue.wi.gov/DORForms/mar-inst.pdf
       - https://www.revenue.wi.gov/Documents/PAD-registration-inst.pdf
