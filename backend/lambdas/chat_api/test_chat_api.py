@@ -196,6 +196,41 @@ def test_send_message_success(mock_dynamodb, mock_eventbridge):
     assert response["headers"]["Content-Type"] == "application/json"
 
 
+@patch_eventbridge()
+@patch_dynamodb()
+def test_send_message_writes_pending_row(mock_dynamodb, mock_eventbridge):
+    """send_message_handler persists a pending message row before the event.
+
+    A page reload immediately after send must be able to restore the in-flight
+    query, so the row (query text, empty answer) is written synchronously,
+    keyed by the same queryId returned to the caller and later overwritten by
+    the async worker.
+    """
+    mock_dynamodb.get_item.return_value = {"Item": {"sessionId": {"S": "test-session-id"}}}
+    mock_eventbridge.put_events.return_value = {"FailedEntryCount": 0, "Entries": []}
+    _set_current_event(json_body={"message": "How is my home assessed?"})
+
+    response = send_message_handler("test-session-id")
+
+    assert response["statusCode"] == 200
+    query_id = json.loads(response["body"])["queryId"]
+
+    # The pending row is the only write to the messages table.
+    pending_puts = [
+        c
+        for c in mock_dynamodb.put_item.call_args_list
+        if c.kwargs.get("TableName") == "test-messages"
+    ]
+    assert len(pending_puts) == 1
+    item = pending_puts[0].kwargs["Item"]
+    assert item["queryId"] == {"S": query_id}
+    assert item["sessionId"] == {"S": "test-session-id"}
+    assert item["query"] == {"S": "How is my home assessed?"}
+    assert item["answer"] == {"S": ""}
+    assert item["gsi1pk"] == {"S": "ALL"}
+    assert "timestamp" in item
+
+
 @patch_dynamodb()
 def test_send_message_invalid_request(mock_dynamodb):
     """Test send_message_handler with invalid MessageRequest.

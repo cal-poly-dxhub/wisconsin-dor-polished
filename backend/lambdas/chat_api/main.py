@@ -104,6 +104,31 @@ def emit_message_event(session_id: str, query: str, query_id: str, persona: str 
         raise EventBridgeError(details={"response": response})
 
 
+def write_pending_message(session_id: str, query_id: str, query: str) -> None:
+    """Persist a pending row (query text, empty answer) synchronously.
+
+    Written before the EventBridge handoff so a page reload immediately after
+    send can restore the in-flight query and poll for the answer. The async
+    worker (agentic_retrieval) overwrites this row (full-item put_item, same
+    queryId) once the answer is ready. Best-effort: a failure here is logged
+    but not raised, since the worker still writes the final row.
+    """
+    try:
+        dynamodb.put_item(
+            TableName=message_table_name,
+            Item={
+                "queryId": {"S": query_id},
+                "sessionId": {"S": session_id},
+                "gsi1pk": {"S": "ALL"},
+                "timestamp": {"S": datetime.now(UTC).isoformat()},
+                "query": {"S": query},
+                "answer": {"S": ""},
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Failed to write pending message {query_id}: {e}")
+
+
 def validate_session_exists(session_id: str) -> None:
     """Validate that a session exists in DynamoDB."""
     try:
@@ -1063,6 +1088,7 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
 
         logger.info(f"Processing message with query_id {query_id} for session {session_id}")
 
+        write_pending_message(session_id, query_id, message_request.message)
         emit_message_event(session_id, message_request.message, query_id, message_request.persona)
         update_session_timestamp(session_id)
         set_session_title_if_missing(session_id, message_request.message)
