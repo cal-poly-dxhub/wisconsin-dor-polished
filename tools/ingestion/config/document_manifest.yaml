@@ -1015,6 +1015,60 @@ categories:
       - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2025-5-1a.aspx
       - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2025-5-22.aspx
       - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2025-6-25.aspx
+      # 2026 Assessor-News
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-01-15.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-01-20.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-01-26.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-01-27.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-02-02.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-02-13.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-02-16.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-02-17.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-02-20.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-02-23.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-02-24.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-03-02.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-03-06.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-03-09.aspx
+      # WI DOR CMS filename typo — page is actually the March 17, 2026 item.
+      - url: https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-17-03.aspx
+        effective_date: "2026-03-17"
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-03-24.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-04-27.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-05-18.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-05-27.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-06-01.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-06-02.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-06-03.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-06-08.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-06-10.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-06-18.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-07-02.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-07-14.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-07-31.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-08-04.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2026-08-14.aspx
+      # 2026 COTVC-News
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-01-14.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-01-26.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-03-03.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-03-17a.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-04-21a.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-04-29.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-05-05.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-05-20.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-05-21.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-05-28.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-05-29.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-6-02.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-06-16.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/COTVC-News/2026-07-30.aspx
+      # 2026 MFG-News (new category — scraper support added for /MFG-News/ path)
+      - https://www.revenue.wi.gov/Pages/SLF/MFG-News/2026-02-12.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/MFG-News/2026-06-11.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/MFG-News/2026-06-11a.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/MFG-News/2026-07-06.aspx
+      - https://www.revenue.wi.gov/Pages/SLF/MFG-News/2026-07-14.aspx
 
   iaao:
     framework_id: FW-IAAO
