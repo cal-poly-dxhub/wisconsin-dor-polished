@@ -42,7 +42,7 @@ from botocore.exceptions import ClientError
 GENERIC_STEMS = {"home", "index", "default", "main", "page"}
 
 # News category parent path segments (used for URL-based ID construction)
-NEWS_PARENT_SEGMENTS = {"cotvc-news", "assessor-news"}
+NEWS_PARENT_SEGMENTS = {"cotvc-news", "assessor-news", "mfg-news"}
 
 # Regex patterns for document ID extraction by category
 STATUTE_CHAPTER_RE = re.compile(r"ch\.\s*(\d+)", re.I)
@@ -53,7 +53,7 @@ IAAO_TYPO_CORRECTIONS = {"responibilities": "responsibilities", "comunication": 
 
 # Date extraction from news page URLs (supports YYYY-MM-DD and YYYYMMDD formats)
 NEWS_DATE_RE = re.compile(
-    r"/(?:COTVC-News|Assessor-News)/"
+    r"/(?:COTVC-News|Assessor-News|MFG-News)/"
     r"(?:"
     r"(?P<y1>\d{4})-(?P<m1>\d{1,2})-(?P<d1>\d{1,2})[a-z]?"
     r"|(?P<y2>\d{4})(?P<m2>\d{2})(?P<d2>\d{2})"
