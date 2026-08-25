@@ -18,17 +18,34 @@ import {
 import Link from 'next/link';
 import { toast } from 'sonner';
 
-export default function SignUpPage() {
+export default function ForgotPasswordPage() {
   const router = useRouter();
-  const { signUp, confirmSignUp, resendConfirmationCode } = useAuth();
+  const { forgotPassword, confirmForgotPassword } = useAuth();
   const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showConfirmation, setShowConfirmation] = useState(false);
-  const [verificationCode, setVerificationCode] = useState('');
+  const [showReset, setShowReset] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleRequestCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+
+    try {
+      await forgotPassword(email);
+      toast.success('If an account exists, a reset code has been sent.');
+      setShowReset(true);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Failed to send reset code';
+      toast.error(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (password !== confirmPassword) {
@@ -44,36 +61,12 @@ export default function SignUpPage() {
     setIsLoading(true);
 
     try {
-      const result = await signUp({ email, password });
-      if (result.userConfirmed) {
-        toast.success('Account created! Please sign in.');
-        router.push('/login');
-      } else {
-        toast.success(
-          'Account created! Please check your email for verification code.'
-        );
-        setShowConfirmation(true);
-      }
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Failed to create account';
-      toast.error(errorMessage);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleConfirmation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-
-    try {
-      await confirmSignUp({ email, code: verificationCode });
-      toast.success('Email verified! Please sign in.');
+      await confirmForgotPassword({ email, code, newPassword: password });
+      toast.success('Password reset! Please sign in.');
       router.push('/login');
     } catch (error) {
       const errorMessage =
-        error instanceof Error ? error.message : 'Failed to verify email';
+        error instanceof Error ? error.message : 'Failed to reset password';
       toast.error(errorMessage);
     } finally {
       setIsLoading(false);
@@ -82,39 +75,61 @@ export default function SignUpPage() {
 
   const handleResendCode = async () => {
     try {
-      await resendConfirmationCode(email);
-      toast.success('Verification code resent!');
+      await forgotPassword(email);
+      toast.success('Reset code resent!');
     } catch (error) {
       const errorMessage =
-        error instanceof Error
-          ? error.message
-          : 'Failed to resend verification code';
+        error instanceof Error ? error.message : 'Failed to resend reset code';
       toast.error(errorMessage);
     }
   };
 
-  if (showConfirmation) {
+  if (showReset) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="space-y-1">
             <CardTitle className="text-2xl font-bold">
-              Verify your email
+              Reset your password
             </CardTitle>
             <CardDescription>
-              We sent a verification code to {email}
+              Enter the code we sent to {email} and choose a new password
             </CardDescription>
           </CardHeader>
-          <form onSubmit={handleConfirmation}>
+          <form onSubmit={handleResetPassword}>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="code">Verification Code</Label>
+                <Label htmlFor="code">Reset Code</Label>
                 <Input
                   id="code"
                   type="text"
                   placeholder="123456"
-                  value={verificationCode}
-                  onChange={e => setVerificationCode(e.target.value)}
+                  value={code}
+                  onChange={e => setCode(e.target.value)}
+                  required
+                  disabled={isLoading}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">New Password</Label>
+                <PasswordInput
+                  id="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  required
+                  disabled={isLoading}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Must be at least 8 characters with uppercase, lowercase,
+                  numbers, and symbols
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm New Password</Label>
+                <PasswordInput
+                  id="confirmPassword"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
                   required
                   disabled={isLoading}
                 />
@@ -122,7 +137,7 @@ export default function SignUpPage() {
             </CardContent>
             <CardFooter className="flex flex-col space-y-4">
               <Button type="submit" className="w-full" disabled={isLoading}>
-                {isLoading ? 'Verifying...' : 'Verify Email'}
+                {isLoading ? 'Resetting...' : 'Reset password'}
               </Button>
               <Button
                 type="button"
@@ -144,14 +159,13 @@ export default function SignUpPage() {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold">
-            Create an account
-          </CardTitle>
+          <CardTitle className="text-2xl font-bold">Forgot password</CardTitle>
           <CardDescription>
-            Enter your details to create your account
+            Enter your email and we&apos;ll send you a code to reset your
+            password
           </CardDescription>
         </CardHeader>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleRequestCode}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -165,37 +179,13 @@ export default function SignUpPage() {
                 disabled={isLoading}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <PasswordInput
-                id="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required
-                disabled={isLoading}
-              />
-              <p className="text-xs text-muted-foreground">
-                Must be at least 8 characters with uppercase, lowercase,
-                numbers, and symbols
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <PasswordInput
-                id="confirmPassword"
-                value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-                required
-                disabled={isLoading}
-              />
-            </div>
           </CardContent>
           <CardFooter className="flex flex-col space-y-4">
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? 'Creating account...' : 'Create account'}
+              {isLoading ? 'Sending code...' : 'Send reset code'}
             </Button>
             <div className="text-center text-sm text-muted-foreground">
-              Already have an account?{' '}
+              Remember your password?{' '}
               <Link
                 href="/login"
                 className="font-medium text-primary underline-offset-4 hover:underline"

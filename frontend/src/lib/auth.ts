@@ -46,6 +46,12 @@ export interface ConfirmSignUpParams {
   code: string;
 }
 
+export interface ConfirmForgotPasswordParams {
+  email: string;
+  code: string;
+  newPassword: string;
+}
+
 export const signUp = (
   params: SignUpParams
 ): Promise<{ userSub: string; userConfirmed: boolean }> => {
@@ -157,6 +163,44 @@ export const getCurrentSession = (): Promise<CognitoUserSession | null> => {
 export const getIdToken = async (): Promise<string | null> => {
   const session = await getCurrentSession();
   return session ? session.getIdToken().getJwtToken() : null;
+};
+
+export const forgotPassword = (email: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const cognitoUser = new CognitoUser({
+      Username: email,
+      Pool: userPool.current,
+    });
+
+    cognitoUser.forgotPassword({
+      onSuccess: () => {
+        resolve();
+      },
+      onFailure: err => {
+        reject(err);
+      },
+    });
+  });
+};
+
+export const confirmForgotPassword = (
+  params: ConfirmForgotPasswordParams
+): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const cognitoUser = new CognitoUser({
+      Username: params.email,
+      Pool: userPool.current,
+    });
+
+    cognitoUser.confirmPassword(params.code, params.newPassword, {
+      onSuccess: () => {
+        resolve();
+      },
+      onFailure: err => {
+        reject(err);
+      },
+    });
+  });
 };
 
 export const resendConfirmationCode = (email: string): Promise<void> => {
