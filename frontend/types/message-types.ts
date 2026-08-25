@@ -115,6 +115,16 @@ export const ChoicesMessageSchema = z.object({
   content: ChoicesContentSchema,
 });
 
+export const SuggestionContentSchema = z.object({
+  kind: z.literal('topic-shift'),
+});
+
+export const SuggestionMessageSchema = z.object({
+  responseType: z.literal('suggestion'),
+  queryId: z.string(),
+  content: SuggestionContentSchema,
+});
+
 export const MessageUnionSchema = z.discriminatedUnion('responseType', [
   DocumentsMessageSchema,
   FAQMessageSchema,
@@ -123,10 +133,19 @@ export const MessageUnionSchema = z.discriminatedUnion('responseType', [
   AnswerEventTypeSchema,
   AgentEventSchema,
   ChoicesMessageSchema,
+  SuggestionMessageSchema,
 ]);
 
 export const WebSocketMessageSchema = z.object({
-  streamId: z.enum(['answer-event', 'answer', 'resources', 'error', 'agent-trace', 'choices']),
+  streamId: z.enum([
+    'answer-event',
+    'answer',
+    'resources',
+    'error',
+    'agent-trace',
+    'choices',
+    'suggestion',
+  ]),
   body: MessageUnionSchema,
 });
 
@@ -145,6 +164,8 @@ export type AgentEventKind = z.infer<typeof AgentEventKindSchema>;
 export type AgentEvent = z.infer<typeof AgentEventSchema>;
 export type ChoicesContent = z.infer<typeof ChoicesContentSchema>;
 export type ChoicesMessage = z.infer<typeof ChoicesMessageSchema>;
+export type SuggestionContent = z.infer<typeof SuggestionContentSchema>;
+export type SuggestionMessage = z.infer<typeof SuggestionMessageSchema>;
 export type MessageUnion = z.infer<typeof MessageUnionSchema>;
 export type WebSocketMessage = z.infer<typeof WebSocketMessageSchema>;
 

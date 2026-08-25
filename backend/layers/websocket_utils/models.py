@@ -138,3 +138,17 @@ class ChoicesMessage(WebSocketMessage):
     response_type: Literal["choices"] = "choices"
     query_id: str
     content: ChoicesContent
+
+
+class SuggestionContent(WebSocketMessage):
+    # `kind` discriminates the suggestion variant so the frontend can render
+    # the right controls. Currently only topic-shift (offers new-chat /
+    # continue-here actions); kept as a Literal so adding a variant forces a
+    # matching frontend update.
+    kind: Literal["topic-shift"]
+
+
+class SuggestionMessage(WebSocketMessage):
+    response_type: Literal["suggestion"] = "suggestion"
+    query_id: str
+    content: SuggestionContent

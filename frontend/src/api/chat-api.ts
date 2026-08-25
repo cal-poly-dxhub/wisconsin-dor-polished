@@ -16,6 +16,9 @@ const CreateSessionResponse = z.object({
 const SendMessageRequest = z.object({
   message: z.string().min(1),
   persona: z.enum(['citizen', 'government']).optional(),
+  // Set when re-sending the original question after "Continue here" on a
+  // topic-shift suggestion, so the backend skips pre-loop classification.
+  forceProceed: z.boolean().optional(),
 });
 const SendMessageResponse = z.object({
   message: z.string(),

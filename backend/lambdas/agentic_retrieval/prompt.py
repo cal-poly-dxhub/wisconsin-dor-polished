@@ -50,6 +50,9 @@ def _load_prompt(config_id: str, fallback_attr: str) -> str:
 
 SYSTEM_PROMPT: str = _load_prompt("agenticRetrieval", "SYSTEM_PROMPT_FALLBACK")
 ANSWER_STREAM_SYSTEM_PROMPT: str = _load_prompt("answerStream", "ANSWER_STREAM_PROMPT_FALLBACK")
+DISAMBIGUATION_CLASSIFIER_PROMPT: str = _load_prompt(
+    "disambiguationClassifier", "DISAMBIGUATION_CLASSIFIER_FALLBACK"
+)
 
 PERSONA_PROMPTS: dict[str, str] = {}
 for _persona_id, _fallback_attr in [

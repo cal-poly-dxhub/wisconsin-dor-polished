@@ -11,6 +11,7 @@ import type {
   ResourceItem,
   QueryStatus,
   SessionStatus,
+  SuggestionKind,
 } from './types';
 
 function traceStepKey(event: AgentTraceEvent): string {
@@ -119,6 +120,20 @@ export const useChatStore = create<ChatStore>()(
       set(state => {
         if (state.queries[queryId]) {
           state.queries[queryId].choices = choices;
+        }
+      }),
+
+    setQuerySuggestion: (queryId: string, suggestion: SuggestionKind) =>
+      set(state => {
+        if (state.queries[queryId]) {
+          state.queries[queryId].suggestion = suggestion;
+        }
+      }),
+
+    clearQuerySuggestion: (queryId: string) =>
+      set(state => {
+        if (state.queries[queryId]) {
+          state.queries[queryId].suggestion = undefined;
         }
       }),
 

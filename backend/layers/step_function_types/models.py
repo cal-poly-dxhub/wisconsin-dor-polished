@@ -19,6 +19,11 @@ Persona = Literal["citizen", "government"]
 class MessageRequest(CamelCaseModel):
     message: str
     persona: Persona | None = None
+    # Set when re-sending the original question after the user picks "Continue
+    # here" on a topic-shift suggestion. Threaded through to the agentic
+    # retrieval Lambda so it skips pre-loop classification. Serialized as
+    # `forceProceed` on the wire.
+    force_proceed: bool = False
 
 
 # Structured "rich" feedback captured by the feedback modal. Mirrors the
@@ -73,6 +78,9 @@ class MessageEvent(BaseModel):
     query_id: str
     session_id: str
     persona: Persona | None = None
+    # Carries the frontend's "Continue here" choice through to the Lambda's
+    # UserQuery so pre-loop classification is skipped for that turn.
+    force_proceed: bool = False
 
 
 class ErrorBody(BaseModel):
@@ -89,6 +97,11 @@ class UserQuery(BaseModel):
     query_id: str
     session_id: str
     persona: Persona | None = None
+    # Set by the frontend when the user picks "Continue here" on a topic-shift
+    # suggestion: re-sends the original question but tells the Lambda to skip
+    # pre-loop classification and run the agentic loop directly. Deterministic —
+    # no re-classification, so the suggestion can't loop on itself.
+    force_proceed: bool = False
 
 
 class FAQ(BaseModel):

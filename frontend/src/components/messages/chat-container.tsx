@@ -8,7 +8,7 @@ import { ChevronDown } from 'lucide-react';
 
 interface ChatContainerProps {
   variant?: 'default' | 'borderless' | 'narrow' | 'wide';
-  onSendMessage?: (message: string) => void;
+  onSendMessage?: (message: string, forceProceed?: boolean) => void;
 }
 
 export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(

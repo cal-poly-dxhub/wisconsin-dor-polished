@@ -6,6 +6,8 @@ export interface MessageUnion {
   [key: string]: unknown;
 }
 
+export type SuggestionKind = 'topic-shift';
+
 export interface AgentTraceEvent {
   kind:
     | 'loop_start'
@@ -36,6 +38,10 @@ export interface Query {
   };
   resources?: ResourceItem[];
   choices?: string[];
+  // Soft, dismissible suggestion attached to this turn. 'topic-shift' offers
+  // start-new-chat / continue-here controls when the classifier thinks the
+  // question opens an unrelated subject. Cleared once the user picks or dismisses.
+  suggestion?: SuggestionKind;
 
   error?: QueryError;
 
@@ -150,6 +156,8 @@ export interface ChatStore {
   updateQueryResources: (queryId: string, resources: ResourceItem[]) => void;
 
   setQueryChoices: (queryId: string, choices: string[]) => void;
+  setQuerySuggestion: (queryId: string, suggestion: SuggestionKind) => void;
+  clearQuerySuggestion: (queryId: string) => void;
   setQueryError: (queryId: string, error: QueryError) => void;
   clearQueryError: (queryId: string) => void;
   incrementQueryRetry: (queryId: string) => void;

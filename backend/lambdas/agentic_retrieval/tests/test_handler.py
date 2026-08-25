@@ -419,7 +419,9 @@ class TestPreLoopClassification:
         )
         # Sanity: the env flag must have been read at import time.
         assert handler.ENABLE_DISAMBIGUATION is True
-        monkeypatch.setattr(disambiguation, "classify_query", lambda q, h: verdict)
+        monkeypatch.setattr(
+            disambiguation, "classify_query", lambda q, h, allow_topic_shift=False: verdict
+        )
 
         mock_ws = MagicMock()
         monkeypatch.setattr(
@@ -476,6 +478,28 @@ class TestPreLoopClassification:
         assert kwargs.get("rag_documents", args[3] if len(args) > 3 else None) == []
         # Disambiguation offers property-type choices over the WebSocket.
         assert mock_ws.client.post_to_connection.call_count == 1
+
+    def test_topic_shift_suggests_without_sources(self, fresh_modules, monkeypatch):
+        handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(
+            fresh_modules, monkeypatch, "TOPIC_SHIFT"
+        )
+        ctx = SimpleNamespace(aws_request_id="r-1")
+        result = handler.handler(
+            {"query": "What about TID base values?", "query_id": "q-1", "session_id": "s-1"},
+            ctx,
+        )
+
+        assert result == {"successful": True}
+        # No retrieval — the topic-shift suggestion short-circuits the loop.
+        run_loop.assert_not_called()
+        finalize.assert_called_once()
+        args, kwargs = finalize.call_args
+        assert kwargs.get("rag_documents", args[3] if len(args) > 3 else None) == []
+        assert disambiguation.TOPIC_SHIFT_SUGGESTION in (args[2], kwargs.get("answer", ""))
+        # A suggestion control message is pushed over the WebSocket.
+        assert mock_ws.client.post_to_connection.call_count == 1
+        # The suggestion answer is persisted to chat history.
+        assert disambiguation.TOPIC_SHIFT_SUGGESTION in saved["args"]
 
     def test_proceed_runs_the_loop(self, fresh_modules, monkeypatch):
         handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(

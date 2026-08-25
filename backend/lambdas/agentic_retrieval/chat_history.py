@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 
 import boto3
 from step_function_types.models import FAQResource, RAGDocument
@@ -13,6 +14,43 @@ CHAT_HISTORY_TABLE = os.environ.get("CHAT_HISTORY_TABLE_NAME", "")
 MAX_HISTORY_TURNS = 5
 
 dynamodb_resource = boto3.resource("dynamodb", region_name=REGION)
+
+# Markdown-stripping patterns applied to prior answers when they are replayed
+# as conversation context (see sanitize_answer_for_history). The full DynamoDB
+# answer keeps its rendered markdown; only the in-context copy is flattened.
+_MD_LINK = re.compile(r"\[([^\]]+)\]\((?:doc:|https?:)[^)]*\)")  # [text](doc:..|http..) -> text
+_MD_HEADING = re.compile(r"^#{1,6}[ \t]*", flags=re.M)  # ## Heading -> Heading
+_MD_BOLD = re.compile(r"\*\*([^*]+)\*\*")  # **x** -> x
+_MD_ITALIC = re.compile(r"\*([^*]+)\*")  # *x* -> x
+_MD_CODE = re.compile(r"`([^`]+)`")  # `x` -> x
+_MD_HR = re.compile(r"^[ \t]*-{3,}[ \t]*$", flags=re.M)  # --- -> (blank)
+_MD_BULLET = re.compile(r"^[ \t]*[-*][ \t]+", flags=re.M)  # normalize bullets to "- "
+_EMOJI = re.compile(r"[\U0001f300-\U0001faff☀-➿]")  # pictographs/symbols
+_BLANK_LINES = re.compile(r"\n{3,}")
+
+
+def sanitize_answer_for_history(answer: str) -> str:
+    """Flatten a rendered markdown answer to plain text for conversation replay.
+
+    Prior answers are re-sent as ``assistant`` turns on every follow-up (and on
+    every loop turn within it). The model needs the substance, not the
+    presentation layer, so this strips citation-link syntax, headings, bold /
+    italic / code markers, horizontal rules, and emoji while preserving all
+    prose. Deterministic: same input always yields the same output. The full
+    markdown answer stays untouched in DynamoDB for the UI and triage.
+    """
+    if not answer:
+        return answer
+    s = _MD_LINK.sub(r"\1", answer)
+    s = _MD_HEADING.sub("", s)
+    s = _MD_BOLD.sub(r"\1", s)
+    s = _MD_ITALIC.sub(r"\1", s)
+    s = _MD_CODE.sub(r"\1", s)
+    s = _MD_HR.sub("", s)
+    s = _MD_BULLET.sub("- ", s)
+    s = _EMOJI.sub("", s)
+    s = _BLANK_LINES.sub("\n\n", s)
+    return s.strip()
 
 
 def get_chat_history(session_id: str) -> list[dict[str, str]]:
@@ -33,7 +71,7 @@ def get_chat_history(session_id: str) -> list[dict[str, str]]:
         )
         items = response.get("Items", [])
         history = [
-            {"query": item["query"], "answer": item["answer"]}
+            {"query": item["query"], "answer": sanitize_answer_for_history(item["answer"])}
             for item in items
             if item.get("query") and item.get("answer")
         ]

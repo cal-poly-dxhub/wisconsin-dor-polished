@@ -25,6 +25,7 @@ import { FeedbackModal } from './feedback/feedback-modal';
 import { AnnotationController } from './feedback/annotation-controller';
 import { RetrievalModal } from './retrieval-modal';
 import { ChoiceChips } from './choice-chips';
+import { TopicShiftSuggestion } from './topic-shift-suggestion';
 
 type TraceStep = {
   label: string;
@@ -229,7 +230,7 @@ export interface ChatMessageProps {
   streamingComplete?: boolean;
   selected?: boolean;
   items?: ResourceItem[];
-  onSendMessage?: (message: string) => void;
+  onSendMessage?: (message: string, forceProceed?: boolean) => void;
 }
 
 interface StreamResponseProps {
@@ -546,6 +547,7 @@ export function ChatMessage({
   const agentTrace = useChatStore(s => s.queries[queryId]?.agentTrace);
   const devTrace = useDevTrace();
   const choices = useChatStore(s => s.queries[queryId]?.choices);
+  const suggestion = useChatStore(s => s.queries[queryId]?.suggestion);
   const [retrievalModalOpen, setRetrievalModalOpen] = useState(false);
   const isAnnotatingThis = useFeedbackStore(s => s.annotatingQueryId === queryId);
   const annotationActive = useFeedbackStore(s => s.annotatingQueryId !== null);
@@ -770,6 +772,17 @@ export function ChatMessage({
           {choices && choices.length > 0 && streamingComplete && (
             <div className="chat-response-aligned">
               <ChoiceChips queryId={queryId} choices={choices} onSelect={onSendMessage} />
+            </div>
+          )}
+
+          {/* Soft, dismissible suggestion for a topic shift */}
+          {suggestion === 'topic-shift' && streamingComplete && (
+            <div className="chat-response-aligned">
+              <TopicShiftSuggestion
+                queryId={queryId}
+                query={query}
+                onSendMessage={onSendMessage}
+              />
             </div>
           )}
 

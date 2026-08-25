@@ -28,7 +28,7 @@ export interface UseValidatedWebSocketReturn {
   connectionState: 'connecting' | 'open' | 'closing' | 'closed';
   isConnected: boolean;
   lastMessage: MessageUnion | null;
-  sendMessage: (message: string) => Promise<void>;
+  sendMessage: (message: string, forceProceed?: boolean) => Promise<void>;
   close: () => void;
   reconnect: () => void;
   sessionId: string | null;
@@ -238,7 +238,7 @@ export const useValidatedWebSocket = (
 
   // Ensure a session exists, then send a message via mutation
   const sendMessage = useCallback(
-    async (message: string) => {
+    async (message: string, forceProceed?: boolean) => {
       const sessionId = await ensureSession();
       if (!sessionId) {
         // No-op. Session creation failed and error was handled by
@@ -250,7 +250,7 @@ export const useValidatedWebSocket = (
       const persona = useSettingsStore.getState().persona;
       sendMessageMutation.mutate({
         sessionId,
-        payload: { message, persona },
+        payload: { message, persona, forceProceed },
       });
     },
     [sendMessageMutation, ensureSession]
