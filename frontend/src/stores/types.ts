@@ -140,6 +140,11 @@ export interface ChatStore {
   sessionId: string | null;
   sessionCache: Record<string, SessionSnapshot>;
   switchingSession: boolean;
+  // One-shot: when true, the next message send suppresses the TOPIC_SHIFT
+  // verdict (OUT_OF_SCOPE / DISAMBIGUATE still apply) and then resets to false.
+  // Set when the user dismisses a topic-shift suggestion, so the nudge that was
+  // just declined can't immediately re-fire on their next question.
+  suppressTopicShiftOnNextSend: boolean;
 
   setSessionStatus: (status: SessionStatus) => void;
   setSwitchingSession: (switching: boolean) => void;
@@ -169,6 +174,7 @@ export interface ChatStore {
   removeError: (errorId: string) => void;
   clearErrors: () => void;
   setDraftMessage: (draft: string) => void;
+  setSuppressTopicShiftOnNextSend: (value: boolean) => void;
   clearHistory: () => void;
   stashSession: (sessionId: string) => void;
   restoreSession: (sessionId: string) => boolean;

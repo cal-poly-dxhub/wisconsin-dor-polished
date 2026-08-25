@@ -82,7 +82,7 @@ def emit_message_event(
     query: str,
     query_id: str,
     persona: str | None = None,
-    force_proceed: bool = False,
+    suppress_topic_shift: bool = False,
 ):
     """Emit an EventBridge event to trigger chat message processing."""
     event = MessageEvent(
@@ -90,7 +90,7 @@ def emit_message_event(
         query_id=query_id,
         session_id=session_id,
         persona=persona,
-        force_proceed=force_proceed,
+        suppress_topic_shift=suppress_topic_shift,
     )
     logger.info(f"Emitting event: {event}")
 
@@ -1106,7 +1106,7 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
             message_request.message,
             query_id,
             message_request.persona,
-            message_request.force_proceed,
+            message_request.suppress_topic_shift,
         )
         update_session_timestamp(session_id)
         set_session_title_if_missing(session_id, message_request.message)

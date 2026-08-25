@@ -124,10 +124,12 @@ def handler(event: dict, context) -> dict[str, Any]:
         # fresh chat). Each such verdict short-circuits before the agentic loop,
         # so no retrieval runs and no sources attach.
         #
-        # force_proceed is set when the user picked "Continue here" on a
-        # topic-shift suggestion: honor the original question directly and skip
-        # classification entirely, so the suggestion can never loop on itself.
-        if ENABLE_DISAMBIGUATION and not user_query.force_proceed:
+        # suppress_topic_shift is set when the user picked "Continue here" on a
+        # topic-shift suggestion, or on the first send after dismissing one. It
+        # gates ONLY the TOPIC_SHIFT verdict — OUT_OF_SCOPE and DISAMBIGUATE
+        # still apply, so a generic "continue here" question still gets clarified
+        # — while ensuring the nudge fires at most once and can't loop.
+        if ENABLE_DISAMBIGUATION:
             from disambiguation import (
                 CLARIFICATION_QUESTION,
                 OUT_OF_SCOPE_MESSAGE,
@@ -139,8 +141,9 @@ def handler(event: dict, context) -> dict[str, Any]:
                 classify_query,
             )
 
+            allow_topic_shift = ENABLE_TOPIC_SHIFT and not user_query.suppress_topic_shift
             verdict = classify_query(
-                user_query.query, chat_history, allow_topic_shift=ENABLE_TOPIC_SHIFT
+                user_query.query, chat_history, allow_topic_shift=allow_topic_shift
             )
             _phase_label = {
                 VERDICT_OUT_OF_SCOPE: "Query is outside property tax scope",

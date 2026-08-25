@@ -16,9 +16,10 @@ const CreateSessionResponse = z.object({
 const SendMessageRequest = z.object({
   message: z.string().min(1),
   persona: z.enum(['citizen', 'government']).optional(),
-  // Set when re-sending the original question after "Continue here" on a
-  // topic-shift suggestion, so the backend skips pre-loop classification.
-  forceProceed: z.boolean().optional(),
+  // Suppresses only the TOPIC_SHIFT verdict for this send (OUT_OF_SCOPE /
+  // DISAMBIGUATE still apply). Set on "Continue here" and on the first send
+  // after dismissing a topic-shift suggestion, so the nudge fires at most once.
+  suppressTopicShift: z.boolean().optional(),
 });
 const SendMessageResponse = z.object({
   message: z.string(),

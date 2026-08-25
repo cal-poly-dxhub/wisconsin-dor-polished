@@ -19,11 +19,11 @@ Persona = Literal["citizen", "government"]
 class MessageRequest(CamelCaseModel):
     message: str
     persona: Persona | None = None
-    # Set when re-sending the original question after the user picks "Continue
-    # here" on a topic-shift suggestion. Threaded through to the agentic
-    # retrieval Lambda so it skips pre-loop classification. Serialized as
-    # `forceProceed` on the wire.
-    force_proceed: bool = False
+    # Suppresses ONLY the TOPIC_SHIFT verdict for this turn (OUT_OF_SCOPE and
+    # DISAMBIGUATE still apply). Set when the user picked "Continue here" on a
+    # topic-shift suggestion, or on the send right after dismissing one — so the
+    # nudge fires at most once and can't loop. Serialized as `suppressTopicShift`.
+    suppress_topic_shift: bool = False
 
 
 # Structured "rich" feedback captured by the feedback modal. Mirrors the
@@ -78,9 +78,9 @@ class MessageEvent(BaseModel):
     query_id: str
     session_id: str
     persona: Persona | None = None
-    # Carries the frontend's "Continue here" choice through to the Lambda's
-    # UserQuery so pre-loop classification is skipped for that turn.
-    force_proceed: bool = False
+    # Carries the frontend's topic-shift suppression through to the Lambda's
+    # UserQuery so TOPIC_SHIFT is gated for that turn.
+    suppress_topic_shift: bool = False
 
 
 class ErrorBody(BaseModel):
@@ -97,11 +97,13 @@ class UserQuery(BaseModel):
     query_id: str
     session_id: str
     persona: Persona | None = None
-    # Set by the frontend when the user picks "Continue here" on a topic-shift
-    # suggestion: re-sends the original question but tells the Lambda to skip
-    # pre-loop classification and run the agentic loop directly. Deterministic —
-    # no re-classification, so the suggestion can't loop on itself.
-    force_proceed: bool = False
+    # Suppresses ONLY the TOPIC_SHIFT verdict for this turn. Pre-loop
+    # classification still runs, so OUT_OF_SCOPE refusal and DISAMBIGUATE
+    # clarification still apply — a "Continue here" question that is itself
+    # generic will still get property-type chips. Set by the frontend on the
+    # "Continue here" send and on the first send after a dismiss, so the nudge
+    # fires at most once and can't loop on itself.
+    suppress_topic_shift: bool = False
 
 
 class FAQ(BaseModel):

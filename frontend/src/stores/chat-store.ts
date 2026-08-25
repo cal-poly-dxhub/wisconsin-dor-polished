@@ -37,6 +37,7 @@ export const useChatStore = create<ChatStore>()(
     sessionId: null,
     sessionCache: {},
     switchingSession: false,
+    suppressTopicShiftOnNextSend: false,
 
     // Session management
     setSessionStatus: (sessionStatus: SessionStatus) =>
@@ -208,11 +209,18 @@ export const useChatStore = create<ChatStore>()(
         state.draftMessage = draftMessage;
       }),
 
+    setSuppressTopicShiftOnNextSend: (value: boolean) =>
+      set(state => {
+        state.suppressTopicShiftOnNextSend = value;
+      }),
+
     clearHistory: () =>
       set(state => {
         state.queries = {};
         state.queryOrder = [];
         state.errors = [];
+        // Leaving the conversation drops any pending one-shot suppression.
+        state.suppressTopicShiftOnNextSend = false;
       }),
 
     stashSession: (sessionId: string) =>
@@ -249,6 +257,7 @@ export const useChatStore = create<ChatStore>()(
         state.errors = [];
         state.draftMessage = '';
         state.sessionId = null;
+        state.suppressTopicShiftOnNextSend = false;
       }),
 
     setSessionId: (sessionId: string | null) =>

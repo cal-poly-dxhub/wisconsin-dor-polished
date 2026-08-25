@@ -25,7 +25,7 @@ export interface UseWebSocketChatReturn {
   isConnected: boolean;
   disconnect: () => void;
   reconnect: () => void;
-  sendMessage: (message: string, forceProceed?: boolean) => Promise<void>;
+  sendMessage: (message: string, suppressTopicShift?: boolean) => Promise<void>;
 }
 
 export function useWebSocketChat(
@@ -260,7 +260,7 @@ export function useWebSocketChat(
 
   // Wrap sendMessage to optimistically add the query to the store immediately
   const optimisticSendMessage = useCallback(
-    async (message: string, forceProceed?: boolean) => {
+    async (message: string, suppressTopicShift?: boolean) => {
       sendTimestampRef.current = performance.now();
       console.log(`[WS Timing] SEND | message="${message.slice(0, 60)}${message.length > 60 ? '...' : ''}"`);
       const optimisticId = `pending-${Date.now()}`;
@@ -280,7 +280,7 @@ export function useWebSocketChat(
       addQuery(query);
       setCurrentQueryId(optimisticId);
 
-      await sendMessage(message, forceProceed);
+      await sendMessage(message, suppressTopicShift);
     },
     [sendMessage, addQuery, setCurrentQueryId]
   );

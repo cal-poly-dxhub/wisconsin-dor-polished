@@ -230,7 +230,7 @@ export interface ChatMessageProps {
   streamingComplete?: boolean;
   selected?: boolean;
   items?: ResourceItem[];
-  onSendMessage?: (message: string, forceProceed?: boolean) => void;
+  onSendMessage?: (message: string, suppressTopicShift?: boolean) => void;
 }
 
 interface StreamResponseProps {

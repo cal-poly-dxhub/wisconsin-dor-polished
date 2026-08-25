@@ -9,20 +9,23 @@ import { useNewChat } from '@/hooks/use-new-chat';
 interface TopicShiftSuggestionProps {
   queryId: string;
   /** The original question that triggered the suggestion — re-sent verbatim
-   *  (with forceProceed) when the user chooses to continue here. */
+   *  (suppressing the nudge) on "Continue here", or prefilled into the fresh
+   *  chat's input on "Start new chat". */
   query: string;
-  onSendMessage?: (message: string, forceProceed?: boolean) => void;
+  onSendMessage?: (message: string, suppressTopicShift?: boolean) => void;
 }
 
 /**
  * Soft, dismissible suggestion shown when the classifier thinks the user's
  * question opens a topic unrelated to the current conversation. Offers two
- * actions — start a fresh chat, or continue right here — plus a dismiss (X)
- * that just hides the card. It never blocks: dismissing leaves the user free
- * to type anything next.
+ * actions — start a fresh chat, or continue right here — plus a dismiss (X).
+ * It never blocks: dismissing leaves the user free to type anything next.
  *
- * "Continue here" re-sends the original question with forceProceed=true so the
- * backend skips classification and answers directly (no re-suggest loop).
+ * The nudge fires at most once per topic. "Continue here" re-sends the original
+ * question with suppressTopicShift=true (still classified, so an ambiguous
+ * question is disambiguated — only TOPIC_SHIFT is gated). Dismiss arms a
+ * one-shot store flag so the user's very next send is likewise suppressed,
+ * preventing the just-declined nudge from re-firing.
  */
 export function TopicShiftSuggestion({
   queryId,
@@ -32,6 +35,10 @@ export function TopicShiftSuggestion({
   const queryOrder = useChatStore(s => s.queryOrder);
   const chatState = useChatStore(s => s.chatState);
   const clearQuerySuggestion = useChatStore(s => s.clearQuerySuggestion);
+  const setDraftMessage = useChatStore(s => s.setDraftMessage);
+  const setSuppressTopicShiftOnNextSend = useChatStore(
+    s => s.setSuppressTopicShiftOnNextSend
+  );
   const startNewChat = useNewChat();
 
   // Only the latest turn's suggestion is actionable; older ones are inert.
@@ -46,7 +53,17 @@ export function TopicShiftSuggestion({
 
   const handleStartNewChat = () => {
     if (disabled) return;
+    // Prefill the fresh chat's input with the question that triggered the
+    // nudge, so the user can send or edit it without retyping.
     startNewChat();
+    setDraftMessage(query);
+  };
+
+  const handleDismiss = () => {
+    clearQuerySuggestion(queryId);
+    // The user declined the nudge for this topic — don't re-raise it on their
+    // very next question. Consumed (reset) on that send.
+    setSuppressTopicShiftOnNextSend(true);
   };
 
   return (
@@ -94,7 +111,7 @@ export function TopicShiftSuggestion({
           <button
             type="button"
             aria-label="Dismiss suggestion"
-            onClick={() => clearQuerySuggestion(queryId)}
+            onClick={handleDismiss}
             className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
           >
             <X className="h-4 w-4" />
