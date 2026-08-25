@@ -21,14 +21,49 @@ def _bedrock_reply(text: str) -> dict:
 
 
 class TestClassifyQuery:
-    def test_followup_short_circuits_to_proceed(self, monkeypatch):
+    def test_followup_is_classified_not_short_circuited(self, monkeypatch):
+        # A follow-up naming a property type still short-circuits on the local
+        # keyword check (no LLM call needed).
         disambiguation, converse = _load(monkeypatch)
         verdict = disambiguation.classify_query(
             "What about commercial?", chat_history=[{"query": "q", "answer": "a"}]
         )
         assert verdict == disambiguation.VERDICT_PROCEED
-        # No LLM call — history means the loop already has context.
         converse.assert_not_called()
+
+    def test_generic_followup_reaches_classifier(self, monkeypatch):
+        # A generic follow-up with no property-type keyword must reach the LLM
+        # classifier (history is passed along), not blanket-PROCEED.
+        disambiguation, converse = _load(monkeypatch)
+        converse.return_value = _bedrock_reply("DISAMBIGUATE")
+        verdict = disambiguation.classify_query(
+            "How is my property assessed?",
+            chat_history=[{"query": "When is the BOR?", "answer": "The Board of Review meets..."}],
+        )
+        assert verdict == disambiguation.VERDICT_DISAMBIGUATE
+        converse.assert_called_once()
+        # Prior conversation is included in the classifier's user message.
+        sent = converse.call_args.kwargs["messages"][0]["content"][0]["text"]
+        assert "PRIOR CONVERSATION" in sent
+        assert "When is the BOR?" in sent
+        assert "CURRENT QUESTION" in sent
+
+    def test_established_property_type_followup_proceeds(self, monkeypatch):
+        # When the model sees an established property type in history it returns
+        # PROCEED — the drill-down case that must NOT re-ask for a type.
+        disambiguation, converse = _load(monkeypatch)
+        converse.return_value = _bedrock_reply("PROCEED")
+        verdict = disambiguation.classify_query(
+            "How is the value calculated?",
+            chat_history=[
+                {"query": "commercial property", "answer": "For commercial property, the income..."}
+            ],
+        )
+        # 'commercial' keyword in the prior answer doesn't short-circuit — the
+        # keyword check only looks at the current query, which is generic — so
+        # the classifier decides.
+        assert verdict == disambiguation.VERDICT_PROCEED
+        converse.assert_called_once()
 
     def test_named_property_type_short_circuits_to_proceed(self, monkeypatch):
         disambiguation, converse = _load(monkeypatch)

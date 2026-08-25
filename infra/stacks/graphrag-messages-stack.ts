@@ -64,6 +64,10 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           // Overrides the retrieval.toml default (false) to preserve this
           // stack's currently-deployed behavior.
           ENABLE_DISAMBIGUATION: 'true',
+          // Enables the TOPIC_SHIFT verdict: a follow-up that opens an
+          // unrelated subject short-circuits with a soft "start a new chat?"
+          // suggestion instead of running the loop. Only acts mid-conversation.
+          ENABLE_TOPIC_SHIFT: 'true',
         }),
       }
     );

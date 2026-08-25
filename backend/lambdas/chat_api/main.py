@@ -77,9 +77,21 @@ def create_error_response(
     return create_api_response(error.status_code, error.to_response(extra))
 
 
-def emit_message_event(session_id: str, query: str, query_id: str, persona: str | None = None):
+def emit_message_event(
+    session_id: str,
+    query: str,
+    query_id: str,
+    persona: str | None = None,
+    suppress_topic_shift: bool = False,
+):
     """Emit an EventBridge event to trigger chat message processing."""
-    event = MessageEvent(query=query, query_id=query_id, session_id=session_id, persona=persona)
+    event = MessageEvent(
+        query=query,
+        query_id=query_id,
+        session_id=session_id,
+        persona=persona,
+        suppress_topic_shift=suppress_topic_shift,
+    )
     logger.info(f"Emitting event: {event}")
 
     try:
@@ -1089,7 +1101,13 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
         logger.info(f"Processing message with query_id {query_id} for session {session_id}")
 
         write_pending_message(session_id, query_id, message_request.message)
-        emit_message_event(session_id, message_request.message, query_id, message_request.persona)
+        emit_message_event(
+            session_id,
+            message_request.message,
+            query_id,
+            message_request.persona,
+            message_request.suppress_topic_shift,
+        )
         update_session_timestamp(session_id)
         set_session_title_if_missing(session_id, message_request.message)
 

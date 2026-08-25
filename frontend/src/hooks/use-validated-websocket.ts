@@ -28,7 +28,7 @@ export interface UseValidatedWebSocketReturn {
   connectionState: 'connecting' | 'open' | 'closing' | 'closed';
   isConnected: boolean;
   lastMessage: MessageUnion | null;
-  sendMessage: (message: string) => Promise<void>;
+  sendMessage: (message: string, suppressTopicShift?: boolean) => Promise<void>;
   close: () => void;
   reconnect: () => void;
   sessionId: string | null;
@@ -238,7 +238,7 @@ export const useValidatedWebSocket = (
 
   // Ensure a session exists, then send a message via mutation
   const sendMessage = useCallback(
-    async (message: string) => {
+    async (message: string, suppressTopicShift?: boolean) => {
       const sessionId = await ensureSession();
       if (!sessionId) {
         // No-op. Session creation failed and error was handled by
@@ -247,10 +247,19 @@ export const useValidatedWebSocket = (
         return;
       }
 
+      // Fold in the one-shot store flag (set when a suggestion was dismissed)
+      // and consume it, so the next send after a dismiss suppresses the nudge
+      // exactly once.
+      const store = useChatStore.getState();
+      const suppress = suppressTopicShift || store.suppressTopicShiftOnNextSend;
+      if (store.suppressTopicShiftOnNextSend) {
+        store.setSuppressTopicShiftOnNextSend(false);
+      }
+
       const persona = useSettingsStore.getState().persona;
       sendMessageMutation.mutate({
         sessionId,
-        payload: { message, persona },
+        payload: { message, persona, suppressTopicShift: suppress },
       });
     },
     [sendMessageMutation, ensureSession]

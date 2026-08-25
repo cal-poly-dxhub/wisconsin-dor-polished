@@ -24,6 +24,7 @@ from websocket_utils.models import (
     FragmentContent,
     FragmentMessage,
     PlainWebSocketMessage,
+    SuggestionMessage,
     WebSocketMessage,
 )
 
@@ -88,6 +89,11 @@ class WebSocketServer:
             case ChoicesMessage():
                 message = {
                     "streamId": "choices",
+                    "body": body.model_dump(by_alias=True),
+                }
+            case SuggestionMessage():
+                message = {
+                    "streamId": "suggestion",
                     "body": body.model_dump(by_alias=True),
                 }
             case _:

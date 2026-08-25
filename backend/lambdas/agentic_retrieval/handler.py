@@ -30,10 +30,22 @@ from streaming.delivery import send_resources, send_resources_and_finalize
 from tracing.runtime import emit as _emit
 from tracing.runtime import log_event as _log
 from tracing.runtime import query_fields as _query_fields
-from websocket_utils.models import ChoicesContent, ChoicesMessage
+from websocket_utils.models import (
+    ChoicesContent,
+    ChoicesMessage,
+    SuggestionContent,
+    SuggestionMessage,
+)
 from websocket_utils.utils import get_ws_connection_from_session
 
-from config import AGENTIC_MODEL_ID, ENABLE_DISAMBIGUATION, RAW_BUCKET, bedrock, neptune
+from config import (
+    AGENTIC_MODEL_ID,
+    ENABLE_DISAMBIGUATION,
+    ENABLE_TOPIC_SHIFT,
+    RAW_BUCKET,
+    bedrock,
+    neptune,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,23 +119,36 @@ def handler(event: dict, context) -> dict[str, Any]:
             )
 
         # Pre-loop query classification: if enabled, check whether the query
-        # is out of scope (refuse) or a generic property assessment question
-        # that needs a property type (clarify). Either verdict short-circuits
-        # before the agentic loop, so no retrieval runs and no sources attach.
+        # is out of scope (refuse), a generic property assessment question that
+        # needs a property type (clarify), or an unrelated new topic (suggest a
+        # fresh chat). Each such verdict short-circuits before the agentic loop,
+        # so no retrieval runs and no sources attach.
+        #
+        # suppress_topic_shift is set when the user picked "Continue here" on a
+        # topic-shift suggestion, or on the first send after dismissing one. It
+        # gates ONLY the TOPIC_SHIFT verdict — OUT_OF_SCOPE and DISAMBIGUATE
+        # still apply, so a generic "continue here" question still gets clarified
+        # — while ensuring the nudge fires at most once and can't loop.
         if ENABLE_DISAMBIGUATION:
             from disambiguation import (
                 CLARIFICATION_QUESTION,
                 OUT_OF_SCOPE_MESSAGE,
                 PROPERTY_TYPE_CHOICES,
+                TOPIC_SHIFT_SUGGESTION,
                 VERDICT_DISAMBIGUATE,
                 VERDICT_OUT_OF_SCOPE,
+                VERDICT_TOPIC_SHIFT,
                 classify_query,
             )
 
-            verdict = classify_query(user_query.query, chat_history)
+            allow_topic_shift = ENABLE_TOPIC_SHIFT and not user_query.suppress_topic_shift
+            verdict = classify_query(
+                user_query.query, chat_history, allow_topic_shift=allow_topic_shift
+            )
             _phase_label = {
                 VERDICT_OUT_OF_SCOPE: "Query is outside property tax scope",
                 VERDICT_DISAMBIGUATE: "Query needs clarification on property type",
+                VERDICT_TOPIC_SHIFT: "Query looks like a new topic",
             }.get(verdict, "Query is specific enough to proceed")
             _emit(
                 ws_server,
@@ -137,8 +162,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                 },
             )
 
-            if verdict in (VERDICT_OUT_OF_SCOPE, VERDICT_DISAMBIGUATE):
-                is_disambiguate = verdict == VERDICT_DISAMBIGUATE
+            if verdict in (VERDICT_OUT_OF_SCOPE, VERDICT_DISAMBIGUATE, VERDICT_TOPIC_SHIFT):
                 _log(
                     "disambiguation_short_circuit",
                     request_id=request_id,
@@ -147,7 +171,11 @@ def handler(event: dict, context) -> dict[str, Any]:
                     verdict=verdict,
                     **_query_fields(user_query.query),
                 )
-                answer = CLARIFICATION_QUESTION if is_disambiguate else OUT_OF_SCOPE_MESSAGE
+                answer = {
+                    VERDICT_DISAMBIGUATE: CLARIFICATION_QUESTION,
+                    VERDICT_OUT_OF_SCOPE: OUT_OF_SCOPE_MESSAGE,
+                    VERDICT_TOPIC_SHIFT: TOPIC_SHIFT_SUGGESTION,
+                }[verdict]
                 if ws_server:
                     send_resources_and_finalize(
                         ws_server,
@@ -156,15 +184,30 @@ def handler(event: dict, context) -> dict[str, Any]:
                         rag_documents=[],
                         faq_resource=None,
                     )
-                    # Only the disambiguation verdict offers property-type
-                    # choices; an out-of-scope refusal has no follow-up options.
-                    if is_disambiguate:
+                    # The disambiguation verdict offers property-type choices;
+                    # the topic-shift verdict offers new-chat / continue actions.
+                    # An out-of-scope refusal has no follow-up controls.
+                    if verdict == VERDICT_DISAMBIGUATE:
                         choices_msg = ChoicesMessage(
                             query_id=user_query.query_id,
                             content=ChoicesContent(choices=PROPERTY_TYPE_CHOICES),
                         )
                         data = json.dumps(
                             {"streamId": "choices", "body": choices_msg.model_dump(by_alias=True)}
+                        )
+                        ws_server.client.post_to_connection(
+                            ConnectionId=ws_server.connection_id, Data=data
+                        )
+                    elif verdict == VERDICT_TOPIC_SHIFT:
+                        suggestion_msg = SuggestionMessage(
+                            query_id=user_query.query_id,
+                            content=SuggestionContent(kind="topic-shift"),
+                        )
+                        data = json.dumps(
+                            {
+                                "streamId": "suggestion",
+                                "body": suggestion_msg.model_dump(by_alias=True),
+                            }
                         )
                         ws_server.client.post_to_connection(
                             ConnectionId=ws_server.connection_id, Data=data

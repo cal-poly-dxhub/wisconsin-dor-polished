@@ -29,6 +29,7 @@ import { useSessionsList, useDeleteSession, useRenameSession } from '@/hooks/api
 import { getSessionHistory } from '@/api/chat-api';
 import { useChatStore } from '@/stores/chat-store';
 import { useFeedbackStore } from '@/stores/feedback-store';
+import { useNewChat } from '@/hooks/use-new-chat';
 import { formatDistanceToNow } from 'date-fns';
 import { SettingsModal } from '@/components/settings/settings-modal';
 
@@ -54,6 +55,7 @@ export function SessionsSidebar() {
   const stashSession = useChatStore((state) => state.stashSession);
   const restoreSession = useChatStore((state) => state.restoreSession);
   const setSwitchingSession = useChatStore((state) => state.setSwitchingSession);
+  const handleNewChat = useNewChat();
 
   const deleteSessionMutation = useDeleteSession({
     onSuccess: (_data, deletedSessionId) => {
@@ -94,17 +96,6 @@ export function SessionsSidebar() {
       return true;
     }
     return false;
-  };
-
-  const handleNewChat = () => {
-    if (blockedByAnnotation()) return;
-    if (currentSessionId) {
-      stashSession(currentSessionId);
-    }
-    clearHistory();
-    reset();
-    refetch();
-    sessionStorage.setItem('explicit-new-chat', 'true');
   };
 
   const handleStartRename = (sessionId: string, currentTitle: string) => {

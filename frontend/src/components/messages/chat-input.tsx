@@ -1,6 +1,6 @@
 'use client';
 import { useChatStore } from '@/stores/chat-store';
-import { KeyboardEvent, useLayoutEffect, useRef, useState } from 'react';
+import { KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -13,13 +13,28 @@ export function ChatInput({
   placeholder = 'Type your message...',
   className = '',
 }: ChatInputProps) {
-  const [message, setMessage] = useState('');
+  // Seed from the store draft once on mount so a programmatic prefill (e.g.
+  // "Start new chat" on a topic-shift suggestion carries the question over)
+  // lands in a freshly-mounted input. Consumed immediately so it doesn't
+  // resurrect on later mounts.
+  const [message, setMessage] = useState(
+    () => useChatStore.getState().draftMessage
+  );
 
   const chatState = useChatStore(s => s.chatState);
   const setChatState = useChatStore(s => s.setChatState);
+  const setDraftMessage = useChatStore(s => s.setDraftMessage);
   const disabled = chatState !== 'idle';
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (useChatStore.getState().draftMessage) {
+      setDraftMessage('');
+    }
+    // Run once on mount; the initial value was already captured above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useLayoutEffect(() => {
     const ta = textAreaRef.current;

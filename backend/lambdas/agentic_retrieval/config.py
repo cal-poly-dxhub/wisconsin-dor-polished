@@ -22,6 +22,9 @@ LOG_QUERY_TEXT = os.environ.get("LOG_QUERY_TEXT", "true").lower() == "true"
 LOG_MAX_TEXT_CHARS = int(os.environ.get("LOG_MAX_TEXT_CHARS", "500"))
 EMIT_AGENT_TRACE = os.environ.get("EMIT_AGENT_TRACE", "true").lower() == "true"
 ENABLE_DISAMBIGUATION = os.environ.get("ENABLE_DISAMBIGUATION", "false").lower() == "true"
+# Soft "start a new chat?" suggestion when a follow-up opens an unrelated topic.
+# Gated separately from disambiguation so it can be rolled out independently.
+ENABLE_TOPIC_SHIFT = os.environ.get("ENABLE_TOPIC_SHIFT", "false").lower() == "true"
 
 MAX_TURNS = 10
 WS_HEARTBEAT_INTERVAL = 15  # seconds between keepalive pings

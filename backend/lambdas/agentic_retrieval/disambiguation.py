@@ -31,6 +31,7 @@ CLASSIFIER_MODEL_ID = os.environ.get(
 # Verdicts returned by classify_query().
 VERDICT_OUT_OF_SCOPE = "OUT_OF_SCOPE"
 VERDICT_DISAMBIGUATE = "DISAMBIGUATE"
+VERDICT_TOPIC_SHIFT = "TOPIC_SHIFT"
 VERDICT_PROCEED = "PROCEED"
 
 PROPERTY_TYPE_CHOICES = [
@@ -62,54 +63,63 @@ OUT_OF_SCOPE_MESSAGE = (
     "I'm happy to help! 😊"
 )
 
-_CLASSIFIER_PROMPT = """\
-You are a query classifier for the Wisconsin Department of Revenue property tax chatbot.
+TOPIC_SHIFT_SUGGESTION = (
+    "It looks like you're asking about a new topic. Starting a fresh chat can "
+    "keep answers focused and accurate — or you can continue right here.\n\n"
+    "What would you like to do?"
+)
 
-Classify the user's question into exactly ONE of three categories.
+# Classifier system prompt. Externalized to DynamoDB (config id
+# "disambiguationClassifier") and loaded via prompt.py, mirroring the
+# agenticRetrieval / answerStream prompts; the bundled copy in _prompt_fallback
+# is the offline fallback. The prompt always describes all four verdicts —
+# whether TOPIC_SHIFT is acted on is gated by ENABLE_TOPIC_SHIFT in the handler.
+from prompt import DISAMBIGUATION_CLASSIFIER_PROMPT as _CLASSIFIER_PROMPT  # noqa: E402
 
-OUT_OF_SCOPE — The question is NOT about Wisconsin property tax or any related Wisconsin Department of Revenue State & Local Finance topic. Examples: general knowledge, science, weather, math, coding, current events, other states' or federal income taxes, Wisconsin income/sales/excise tax matters unrelated to local government finance, personal or legal advice unrelated to property tax, or casual chit-chat.
-
-The scope is BROAD. In addition to property assessment and taxation, the following Wisconsin DOR State & Local Finance topics are all IN SCOPE — never classify these as OUT_OF_SCOPE:
-- Shared revenue and state aid to local governments: county and municipal aid (CMA), supplemental county and municipal aid (SCMA), expenditure restraint program, personal property aid, exempt computer aid (Chapter 79 programs)
-- Levy limits and the levy limit worksheets
-- Tax incremental financing (TIF/TID): base value, increment, net new construction
-- Innovation grants and innovation planning grants (including fair market compensation for volunteer firefighters/EMS), and other grant programs DOR administers for local governments
-- Equalized values, the statement of changes, and apportionment
-- Local government financial reporting and forms administered by DOR's SLF division
-These may not "look" like property tax (they can resemble grants, employment compensation, or income/sales tax), but they ARE core DOR State & Local Finance topics. When in doubt about a local-government-finance question, PROCEED.
-
-DISAMBIGUATE — The question IS about Wisconsin property assessment or taxation, but does NOT specify a property type or classification, AND the answer would differ materially depending on the property classification (residential, commercial, manufacturing, agricultural, etc.) — e.g., different statutes, manuals, procedures, or exemption rules apply.
-
-PROCEED — Any other in-scope question. Answer PROCEED when ANY of these are true:
-- The question names a specific property type (residential, manufacturing, agricultural, etc.)
-- The topic has the same answer regardless of property type (e.g., Board of Review procedures, assessment dates, general rights)
-- The question is about an ownership category or exemption class (Native American/tribal, religious/church, government, nonprofit, veteran) — these depend on ownership or legal status, not property classification
-- The question is about any DOR State & Local Finance program listed above (shared revenue, CMA/SCMA, levy limits, TIF/TID, innovation grants, equalized values, aid calculations)
-- The question references a specific statute, form, or document
-- The question is a follow-up to a previous conversation
-
-Decision order:
-1. If the question is not about Wisconsin property tax at all → OUT_OF_SCOPE.
-2. Otherwise, if it needs a property type to answer well → DISAMBIGUATE.
-3. Otherwise → PROCEED.
-
-Respond with ONLY one word: OUT_OF_SCOPE, DISAMBIGUATE, or PROCEED — nothing else."""
+# Cap per-answer length when building the classifier's history context. The
+# classifier only needs the topic/scope of prior turns, not the full sourced
+# answer, so truncating keeps the (cheap) Haiku call small and predictable.
+_CLASSIFIER_HISTORY_ANSWER_CHARS = 600
+_CLASSIFIER_HISTORY_MAX_TURNS = 5
 
 
-def classify_query(query: str, chat_history: list[dict]) -> str:
-    """Classify a query as OUT_OF_SCOPE, DISAMBIGUATE, or PROCEED.
+def _format_history_for_classifier(chat_history: list[dict]) -> str:
+    """Render recent turns as compact text for the classifier's user message.
 
-    Fail-open: any error (or a mid-conversation follow-up) returns PROCEED so
-    the agentic loop still runs. Local keyword checks short-circuit to PROCEED
-    when the query already names a property type or ownership class — those are
-    unambiguously in scope and specific, so no LLM call is needed.
+    Truncates each prior answer — the classifier needs conversational scope
+    (was a property type established?), not the full answer text.
     """
-    # Never short-circuit a follow-up: chat history carries the context the
-    # agent needs, and the classifier can't see whether the prior turn was
-    # already in scope.
-    if chat_history:
-        return VERDICT_PROCEED
+    turns = chat_history[-_CLASSIFIER_HISTORY_MAX_TURNS:]
+    lines = []
+    for idx, turn in enumerate(turns, start=1):
+        answer = (turn.get("answer") or "").strip()
+        if len(answer) > _CLASSIFIER_HISTORY_ANSWER_CHARS:
+            answer = answer[:_CLASSIFIER_HISTORY_ANSWER_CHARS] + "…"
+        lines.append(f"Turn {idx}\nUser: {turn.get('query', '')}\nAssistant: {answer}")
+    return "\n\n".join(lines)
 
+
+def classify_query(
+    query: str, chat_history: list[dict], allow_topic_shift: bool = False
+) -> str:
+    """Classify a query as OUT_OF_SCOPE, DISAMBIGUATE, TOPIC_SHIFT, or PROCEED.
+
+    Fail-open: any error returns PROCEED so the agentic loop still runs. Local
+    keyword checks short-circuit to PROCEED when the query already names a
+    property type or ownership class — those are unambiguously in scope and
+    specific, so no LLM call is needed.
+
+    Follow-ups ARE classified (with prior turns passed to the model), so a
+    generic new topic raised mid-conversation is still disambiguated, while a
+    drill-down on an already-established property type proceeds. The model is
+    told to treat an established property type as PROCEED.
+
+    ``allow_topic_shift`` gates the TOPIC_SHIFT verdict (feature flag): when
+    False, a topic-shift reply is downgraded to PROCEED so the loop still runs
+    normally. TOPIC_SHIFT is only meaningful mid-conversation, so it is never
+    returned when there is no chat history.
+    """
+    chat_history = chat_history or []
     q = query.lower()
     type_keywords = [
         "manufacturing",
@@ -146,23 +156,41 @@ def classify_query(query: str, chat_history: list[dict]) -> str:
     if any(kw in q for kw in ownership_keywords):
         return VERDICT_PROCEED
 
+    if chat_history:
+        user_text = (
+            f"PRIOR CONVERSATION:\n{_format_history_for_classifier(chat_history)}\n\n"
+            f"CURRENT QUESTION: {query}"
+        )
+    else:
+        user_text = query
+
     try:
         response = _bedrock.converse(
             modelId=CLASSIFIER_MODEL_ID,
-            messages=[{"role": "user", "content": [{"text": query}]}],
+            messages=[{"role": "user", "content": [{"text": user_text}]}],
             system=[{"text": _CLASSIFIER_PROMPT}],
             inferenceConfig={"maxTokens": 16, "temperature": 0.0},
         )
         output = response["output"]["message"]["content"][0]["text"].strip().upper()
         # Check OUT_OF_SCOPE first — it is the most specific and must win over a
-        # stray substring match. Anything unrecognized falls through to PROCEED.
+        # stray substring match. TOPIC_SHIFT before DISAMBIGUATE for the same
+        # reason. Anything unrecognized falls through to PROCEED.
         if "OUT_OF_SCOPE" in output or "OUT OF SCOPE" in output:
             verdict = VERDICT_OUT_OF_SCOPE
+        elif "TOPIC_SHIFT" in output or "TOPIC SHIFT" in output:
+            verdict = VERDICT_TOPIC_SHIFT
         elif "DISAMBIGUATE" in output:
             verdict = VERDICT_DISAMBIGUATE
         else:
             verdict = VERDICT_PROCEED
-        logger.info(f"Query classifier: query='{query[:80]}' → raw='{output}' verdict={verdict}")
+        # Downgrade TOPIC_SHIFT to PROCEED unless the feature is enabled AND we
+        # are mid-conversation — a topic shift is meaningless on turn one.
+        if verdict == VERDICT_TOPIC_SHIFT and not (allow_topic_shift and chat_history):
+            verdict = VERDICT_PROCEED
+        logger.info(
+            f"Query classifier: query='{query[:80]}' history_turns={len(chat_history)} "
+            f"allow_topic_shift={allow_topic_shift} → raw='{output}' verdict={verdict}"
+        )
         return verdict
     except Exception:  # noqa: BLE001
         logger.warning(

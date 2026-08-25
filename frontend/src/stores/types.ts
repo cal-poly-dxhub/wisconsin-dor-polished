@@ -6,6 +6,8 @@ export interface MessageUnion {
   [key: string]: unknown;
 }
 
+export type SuggestionKind = 'topic-shift';
+
 export interface AgentTraceEvent {
   kind:
     | 'loop_start'
@@ -36,6 +38,10 @@ export interface Query {
   };
   resources?: ResourceItem[];
   choices?: string[];
+  // Soft, dismissible suggestion attached to this turn. 'topic-shift' offers
+  // start-new-chat / continue-here controls when the classifier thinks the
+  // question opens an unrelated subject. Cleared once the user picks or dismisses.
+  suggestion?: SuggestionKind;
 
   error?: QueryError;
 
@@ -134,6 +140,11 @@ export interface ChatStore {
   sessionId: string | null;
   sessionCache: Record<string, SessionSnapshot>;
   switchingSession: boolean;
+  // One-shot: when true, the next message send suppresses the TOPIC_SHIFT
+  // verdict (OUT_OF_SCOPE / DISAMBIGUATE still apply) and then resets to false.
+  // Set when the user dismisses a topic-shift suggestion, so the nudge that was
+  // just declined can't immediately re-fire on their next question.
+  suppressTopicShiftOnNextSend: boolean;
 
   setSessionStatus: (status: SessionStatus) => void;
   setSwitchingSession: (switching: boolean) => void;
@@ -150,6 +161,8 @@ export interface ChatStore {
   updateQueryResources: (queryId: string, resources: ResourceItem[]) => void;
 
   setQueryChoices: (queryId: string, choices: string[]) => void;
+  setQuerySuggestion: (queryId: string, suggestion: SuggestionKind) => void;
+  clearQuerySuggestion: (queryId: string) => void;
   setQueryError: (queryId: string, error: QueryError) => void;
   clearQueryError: (queryId: string) => void;
   incrementQueryRetry: (queryId: string) => void;
@@ -161,6 +174,7 @@ export interface ChatStore {
   removeError: (errorId: string) => void;
   clearErrors: () => void;
   setDraftMessage: (draft: string) => void;
+  setSuppressTopicShiftOnNextSend: (value: boolean) => void;
   clearHistory: () => void;
   stashSession: (sessionId: string) => void;
   restoreSession: (sessionId: string) => boolean;

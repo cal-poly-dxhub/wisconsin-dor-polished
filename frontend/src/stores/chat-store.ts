@@ -11,6 +11,7 @@ import type {
   ResourceItem,
   QueryStatus,
   SessionStatus,
+  SuggestionKind,
 } from './types';
 
 function traceStepKey(event: AgentTraceEvent): string {
@@ -36,6 +37,7 @@ export const useChatStore = create<ChatStore>()(
     sessionId: null,
     sessionCache: {},
     switchingSession: false,
+    suppressTopicShiftOnNextSend: false,
 
     // Session management
     setSessionStatus: (sessionStatus: SessionStatus) =>
@@ -122,6 +124,20 @@ export const useChatStore = create<ChatStore>()(
         }
       }),
 
+    setQuerySuggestion: (queryId: string, suggestion: SuggestionKind) =>
+      set(state => {
+        if (state.queries[queryId]) {
+          state.queries[queryId].suggestion = suggestion;
+        }
+      }),
+
+    clearQuerySuggestion: (queryId: string) =>
+      set(state => {
+        if (state.queries[queryId]) {
+          state.queries[queryId].suggestion = undefined;
+        }
+      }),
+
     setQueryError: (queryId: string, error: QueryError) =>
       set(state => {
         if (state.queries[queryId]) {
@@ -193,11 +209,18 @@ export const useChatStore = create<ChatStore>()(
         state.draftMessage = draftMessage;
       }),
 
+    setSuppressTopicShiftOnNextSend: (value: boolean) =>
+      set(state => {
+        state.suppressTopicShiftOnNextSend = value;
+      }),
+
     clearHistory: () =>
       set(state => {
         state.queries = {};
         state.queryOrder = [];
         state.errors = [];
+        // Leaving the conversation drops any pending one-shot suppression.
+        state.suppressTopicShiftOnNextSend = false;
       }),
 
     stashSession: (sessionId: string) =>
@@ -234,6 +257,7 @@ export const useChatStore = create<ChatStore>()(
         state.errors = [];
         state.draftMessage = '';
         state.sessionId = null;
+        state.suppressTopicShiftOnNextSend = false;
       }),
 
     setSessionId: (sessionId: string | null) =>

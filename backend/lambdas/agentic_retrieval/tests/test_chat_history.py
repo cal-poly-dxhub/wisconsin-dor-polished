@@ -35,6 +35,40 @@ class FakeFAQResource(pydantic.BaseModel):
 import chat_history
 
 
+class TestSanitizeAnswerForHistory:
+    def test_strips_citation_links_keeping_text(self):
+        out = chat_history.sanitize_answer_for_history(
+            "See [§ 70.32(1)](doc:statutes-70#page=1) and [the guide](https://x.gov/g)."
+        )
+        assert out == "See § 70.32(1) and the guide."
+
+    def test_strips_headings_bold_italic_code(self):
+        out = chat_history.sanitize_answer_for_history(
+            "## Title\n\nThe **full** value is *market* value per `70.32`."
+        )
+        assert out == "Title\n\nThe full value is market value per 70.32."
+
+    def test_strips_hr_and_emoji_and_collapses_blank_lines(self):
+        out = chat_history.sanitize_answer_for_history(
+            "First.\n\n---\n\n\n\nSecond. 😊"
+        )
+        assert out == "First.\n\nSecond."
+
+    def test_normalizes_bullets(self):
+        out = chat_history.sanitize_answer_for_history("*  one\n-   two")
+        assert out == "- one\n- two"
+
+    def test_preserves_prose_substance(self):
+        # No detail is dropped — only markup is flattened.
+        raw = "Under **§ 70.365**, notice is required; otherwise BOR is not required."
+        out = chat_history.sanitize_answer_for_history(raw)
+        assert "70.365" in out and "notice is required" in out
+        assert "**" not in out
+
+    def test_empty_answer_passthrough(self):
+        assert chat_history.sanitize_answer_for_history("") == ""
+
+
 class TestGetChatHistory:
     def test_returns_empty_when_unconfigured(self):
         with patch.object(chat_history, "CHAT_HISTORY_TABLE", ""):
@@ -66,6 +100,28 @@ class TestGetChatHistory:
         kwargs = mock_table.query.call_args.kwargs
         assert kwargs["IndexName"] == "sessionIdKey"
         assert kwargs["ScanIndexForward"] is True
+
+    def test_sanitizes_markdown_from_answers(self):
+        mock_table = MagicMock()
+        mock_table.query.return_value = {
+            "Items": [
+                {
+                    "query": "q1",
+                    "answer": "## H\n\nSee [§ 70.32](doc:statutes-70) for **value**.",
+                    "timestamp": "2025-01-01",
+                },
+            ]
+        }
+        mock_resource = MagicMock()
+        mock_resource.Table.return_value = mock_table
+
+        with (
+            patch.object(chat_history, "dynamodb_resource", mock_resource),
+            patch.object(chat_history, "CHAT_HISTORY_TABLE", "SomeTable"),
+        ):
+            history = chat_history.get_chat_history("sess-1")
+
+        assert history[0]["answer"] == "H\n\nSee § 70.32 for value."
 
     def test_caps_at_max_turns(self):
         items = [
