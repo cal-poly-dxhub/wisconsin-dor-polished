@@ -9,9 +9,12 @@ import {
   confirmSignUp as cognitoConfirmSignUp,
   getCurrentSession,
   resendConfirmationCode as cognitoResendConfirmationCode,
+  forgotPassword as cognitoForgotPassword,
+  confirmForgotPassword as cognitoConfirmForgotPassword,
   SignInParams,
   SignUpParams,
   ConfirmSignUpParams,
+  ConfirmForgotPasswordParams,
 } from '@/lib/auth';
 
 interface AuthContextType {
@@ -23,6 +26,8 @@ interface AuthContextType {
   confirmSignUp: (params: ConfirmSignUpParams) => Promise<void>;
   signOut: () => Promise<void>;
   resendConfirmationCode: (email: string) => Promise<void>;
+  forgotPassword: (email: string) => Promise<void>;
+  confirmForgotPassword: (params: ConfirmForgotPasswordParams) => Promise<void>;
   refreshSession: () => Promise<void>;
 }
 
@@ -81,6 +86,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     await cognitoResendConfirmationCode(email);
   };
 
+  const forgotPassword = async (email: string) => {
+    await cognitoForgotPassword(email);
+  };
+
+  const confirmForgotPassword = async (params: ConfirmForgotPasswordParams) => {
+    await cognitoConfirmForgotPassword(params);
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -92,6 +105,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         confirmSignUp,
         signOut,
         resendConfirmationCode,
+        forgotPassword,
+        confirmForgotPassword,
         refreshSession,
       }}
     >
