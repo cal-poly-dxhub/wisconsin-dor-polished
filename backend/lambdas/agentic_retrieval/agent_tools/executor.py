@@ -148,6 +148,41 @@ def embed_query(query: str, model_id: str = "amazon.titan-embed-text-v2:0") -> l
     return embedding
 
 
+# Top-level statute subsection marker, e.g. "(49)", "(4m)", "(19)".
+# Mirrors the chunker's own splitting pattern (tools/ingestion/chunking/
+# pdfChunker.py::_split_statute_section) so retrieval and ingestion agree on
+# what a subsection boundary is. Anchored to line-start (after optional
+# whitespace) to avoid matching cross-references buried mid-sentence.
+_SUBSECTION_MARKER_RE = re.compile(r"(?m)^\s*\((?P<marker>\d+[a-z]*)\)\s")
+
+
+def _normalize_subsection(raw: str) -> str:
+    """Normalize a subsection argument to its bare marker, e.g. '(49)' -> '49'."""
+    return raw.strip().lstrip("(").rstrip(")").strip().lower()
+
+
+def _find_subsection_chunks(chunks: list[dict], subsection: str) -> list[dict]:
+    """Return the chunk(s) whose text introduces the given statute subsection.
+
+    Dense statute sections (e.g. § 70.11, with ~50 subsections) are packed
+    multiple-subsections-per-chunk by the ingestion chunker, so a subsection
+    lives as a text marker inside a chunk rather than as its own node or a
+    metadata field. This scans chunk text for the top-level marker "(N)" at a
+    line start and returns the matching chunk(s) in document order — bypassing
+    semantic ranking, which otherwise drops a low-scoring but specifically
+    requested subsection.
+    """
+    target = _normalize_subsection(subsection)
+    if not target:
+        return []
+    matched = []
+    for chunk in chunks:
+        text = chunk.get("text") or ""
+        if any(m.group("marker").lower() == target for m in _SUBSECTION_MARKER_RE.finditer(text)):
+            matched.append(chunk)
+    return matched
+
+
 def _rank_chunks_by_relevance(
     chunks: list[dict],
     query_embedding: list[float],
@@ -501,9 +536,52 @@ def execute_tool(
         doc_id = tool_input.get("doc_id") or tool_input.get("node_id") or ""
         heading = tool_input.get("heading", "")
         query = tool_input.get("query", "")
+        subsection = tool_input.get("subsection", "")
         top_k = min(tool_input.get("top_k", 5), 10)
         if not doc_id or not heading:
             return {"error": "Both doc_id and heading are required"}
+
+        # Exact-fetch mode: a specific subsection was requested. Semantic
+        # ranking silently drops a low-scoring subsection even when the agent
+        # explicitly asked for it (a dense section like § 70.11 has ~50), so
+        # bypass ranking and return the chunk(s) that introduce that marker.
+        # No embeddings needed — this is an exact text match, not a query.
+        if subsection:
+            chunks = neptune.get_section_chunks(doc_id, heading)
+            matched = _find_subsection_chunks(chunks, subsection)
+            _log_tool_event(
+                "get_section_complete",
+                tool_name=tool_name,
+                doc_id=doc_id,
+                heading=heading,
+                chunk_count=len(matched),
+                section_chunk_count=len(chunks),
+                subsection=_normalize_subsection(subsection),
+                mode="subsection",
+                latency_ms=round((time.perf_counter() - started) * 1000),
+            )
+            if not chunks:
+                return {
+                    "error": f"No chunks found for heading '{heading}' in document '{doc_id}'",
+                    "suggestion": "Use list_sections to see available headings for this document",
+                }
+            if not matched:
+                return {
+                    "error": (
+                        f"Subsection ({_normalize_subsection(subsection)}) not found "
+                        f"in section '{heading}' of '{doc_id}'"
+                    ),
+                    "suggestion": (
+                        "Retry get_section with a query instead of subsection to see the "
+                        "section's content, or verify the subsection number."
+                    ),
+                }
+            return {
+                "chunks": matched,
+                "doc_id": doc_id,
+                "heading": heading,
+                "subsection": _normalize_subsection(subsection),
+            }
 
         if query:
             chunks = neptune.get_section_chunks_with_embeddings(doc_id, heading)
