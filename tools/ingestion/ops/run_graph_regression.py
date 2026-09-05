@@ -302,6 +302,9 @@ def compare() -> None:
 
     logger.info("\n=== BASELINE vs AFTER COMPARISON ===")
     regressions = 0
+    turn_increases = 0
+    base_turns_total = 0
+    after_turns_total = 0
     for qid in base_runs:
         b, a = base_runs[qid], after_runs.get(qid)
         if a is None:
@@ -341,6 +344,19 @@ def compare() -> None:
         after_disc = a.get("discovered_doc_count")
         if base_disc is not None and after_disc is not None:
             logger.info(f"      discovered: baseline={base_disc} after={after_disc}")
+        # Loop-effort guardrail: extra tool-loop turns/discovery is not a
+        # correctness regression, but a systematic increase means the change
+        # made the agent search harder. Flag as a soft warning, not a fail.
+        base_turns = b.get("turns")
+        after_turns = a.get("turns")
+        if base_turns is not None and after_turns is not None:
+            base_turns_total += base_turns
+            after_turns_total += after_turns
+            turn_note = ""
+            if after_turns > base_turns:
+                turn_increases += 1
+                turn_note = f"  ⚠️ +{after_turns - base_turns} turn(s)"
+            logger.info(f"      turns: baseline={base_turns} after={after_turns}{turn_note}")
         if dropped:
             # Annotate each dropped citation with the baseline path that found
             # it. A drop tagged "auto-enrichment" is expected under Option A; a
@@ -356,6 +372,21 @@ def compare() -> None:
             logger.info(f"      LOST must_cite: {lost_cites}")
         if new_halluc:
             logger.info(f"      NEW HALLUCINATED cases: {new_halluc}")
+
+    # Loop-effort summary (soft signal, does not gate the exit code).
+    if base_turns_total or after_turns_total:
+        delta = after_turns_total - base_turns_total
+        sign = f"+{delta}" if delta > 0 else str(delta)
+        logger.info(
+            f"\n=== turns: baseline={base_turns_total} after={after_turns_total} "
+            f"(Δ {sign}); {turn_increases} quer(y/ies) took more turns ==="
+        )
+        if turn_increases:
+            logger.info(
+                "  ⚠️ Loop-effort increased on the queries marked above. Not a "
+                "correctness regression, but review whether the change made the "
+                "agent search harder than baseline."
+            )
 
     logger.info(f"\n=== {regressions} regression(s) detected ===")
     if regressions:
