@@ -408,10 +408,22 @@ def update_query_feedback(session_id: str, feedback_request: FeedbackRequest):
     only via the per-query detail endpoint, not the list GSI).
     """
     try:
-        update_expr = "SET thumbUp = :thumbUp, feedback = :feedback"
+        # Persist a first-class `rating` scalar ('up' | 'mid' | 'down') so the
+        # admin activity list can distinguish the middle rating. `thumbUp`
+        # collapses mid→false, so it alone can't. Prefer the structured rating;
+        # fall back to deriving it from the boolean for thumb-only submissions.
+        rating_value: str | None = None
+        rich = feedback_request.rich_feedback
+        if rich is not None and rich.rating in ("up", "mid", "down"):
+            rating_value = rich.rating
+        if rating_value is None:
+            rating_value = "up" if feedback_request.thumb_up else "down"
+
+        update_expr = "SET thumbUp = :thumbUp, feedback = :feedback, #rating = :rating"
         expr_values: dict[str, Any] = {
             ":thumbUp": {"BOOL": feedback_request.thumb_up},
             ":feedback": {"S": feedback_request.feedback or ""},
+            ":rating": {"S": rating_value},
         }
 
         if feedback_request.rich_feedback is not None:
@@ -428,6 +440,7 @@ def update_query_feedback(session_id: str, feedback_request: FeedbackRequest):
             Key={"queryId": {"S": feedback_request.query_id}},
             UpdateExpression=update_expr,
             ExpressionAttributeValues=expr_values,
+            ExpressionAttributeNames={"#rating": "rating"},
         )
     except Exception as e:
         logger.error(f"Failed to update query feedback in DynamoDB: {e}")
@@ -535,25 +548,25 @@ def activity_handler() -> dict[str, Any]:
             key_condition += " AND #ts < :before"
             expr_values[":before"] = {"S": before}
 
+        # Filters key off the first-class `rating` scalar ('up'|'mid'|'down').
+        # `down` matches ONLY true thumbs-down — mixed is its own bucket now.
+        # (Legacy rows are backfilled with `rating`, so existence ≡ rated.)
         filter_expression = None
-        if feedback_filter == "up":
-            filter_expression = "thumbUp = :fv"
-            expr_values[":fv"] = {"BOOL": True}
-        elif feedback_filter == "down":
-            filter_expression = "thumbUp = :fv"
-            expr_values[":fv"] = {"BOOL": False}
+        if feedback_filter in ("up", "mid", "down"):
+            filter_expression = "#rating = :rv"
+            expr_values[":rv"] = {"S": feedback_filter}
         elif feedback_filter == "rated":
-            filter_expression = "attribute_exists(thumbUp)"
+            filter_expression = "attribute_exists(#rating)"
         elif feedback_filter == "unrated":
-            filter_expression = "attribute_not_exists(thumbUp)"
+            filter_expression = "attribute_not_exists(#rating)"
 
         query_kwargs: dict[str, Any] = {
             "TableName": message_table_name,
             "IndexName": os.environ.get("ACTIVITY_INDEX_NAME", "activityIndexV2"),
             "KeyConditionExpression": key_condition,
             "ExpressionAttributeValues": expr_values,
-            "ExpressionAttributeNames": {"#q": "query", "#ts": "timestamp"},
-            "ProjectionExpression": "queryId, sessionId, #q, #ts, thumbUp, feedback",
+            "ExpressionAttributeNames": {"#q": "query", "#ts": "timestamp", "#rating": "rating"},
+            "ProjectionExpression": "queryId, sessionId, #q, #ts, thumbUp, feedback, #rating",
             "ScanIndexForward": False,
             "ReturnConsumedCapacity": "INDEXES",
         }
@@ -609,6 +622,7 @@ def activity_handler() -> dict[str, Any]:
                     "query": deserialized.get("query", ""),
                     "timestamp": deserialized.get("timestamp", ""),
                     "thumbUp": deserialized.get("thumbUp"),
+                    "rating": deserialized.get("rating"),
                     "feedback": deserialized.get("feedback") or None,
                 }
             )
@@ -682,6 +696,7 @@ def activity_detail_handler(query_id: str) -> dict[str, Any]:
             "answer": deserialized.get("answer", ""),
             "timestamp": deserialized.get("timestamp", ""),
             "thumbUp": deserialized.get("thumbUp"),
+            "rating": deserialized.get("rating"),
             "feedback": deserialized.get("feedback"),
             "richFeedback": deserialized.get("richFeedback"),
             "feedbackSubmittedAt": deserialized.get("feedbackSubmittedAt"),

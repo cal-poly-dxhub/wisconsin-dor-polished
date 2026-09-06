@@ -46,10 +46,20 @@ const TIME_RANGE_LABELS: Record<TimeRange, string> = {
 const FEEDBACK_LABELS: Record<FeedbackFilter, string> = {
   all: 'All feedback',
   up: 'Thumbs up only',
+  mid: 'Mixed only',
   down: 'Thumbs down only',
   rated: 'Has rating',
   unrated: 'No rating',
 };
+
+// Effective rating for a list row: prefer the first-class `rating` scalar, fall
+// back to the legacy `thumbUp` boolean for rows that predate it.
+function summaryRating(item: ActivitySummary): 'up' | 'mid' | 'down' | null {
+  if (item.rating === 'up' || item.rating === 'mid' || item.rating === 'down') return item.rating;
+  if (item.thumbUp === true) return 'up';
+  if (item.thumbUp === false) return 'down';
+  return null;
+}
 
 function isTimeRange(value: string | null): value is TimeRange {
   return value != null && value in TIME_RANGE_LABELS;
@@ -92,6 +102,7 @@ function formatRelativeTime(timestamp: number): string {
 }
 
 function applyClientSearch(items: ActivitySummary[], searchQuery: string): ActivitySummary[] {
+  if (!Array.isArray(items)) return [];
   const normalizedQuery = searchQuery.trim().toLowerCase();
   if (!normalizedQuery) return items;
 
@@ -188,12 +199,20 @@ function ActivityDashboard() {
   );
 
   const stats = useMemo(() => {
-    const thumbsUp = displayItems.filter(item => item.thumbUp === true).length;
-    const thumbsDown = displayItems.filter(item => item.thumbUp === false).length;
+    let thumbsUp = 0;
+    let mixed = 0;
+    let thumbsDown = 0;
+    for (const item of displayItems) {
+      const r = summaryRating(item);
+      if (r === 'up') thumbsUp += 1;
+      else if (r === 'mid') mixed += 1;
+      else if (r === 'down') thumbsDown += 1;
+    }
     return {
       total: displayItems.length,
-      rated: thumbsUp + thumbsDown,
+      rated: thumbsUp + mixed + thumbsDown,
       thumbsUp,
+      mixed,
       thumbsDown,
     };
   }, [displayItems]);
@@ -234,6 +253,10 @@ function ActivityDashboard() {
         <div className="flex items-center gap-1.5">
           <ThumbsUp className="h-3.5 w-3.5 text-green-500" />
           <span className="text-2xl font-semibold text-foreground">{stats.thumbsUp}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <ThumbsUp className="h-3.5 w-3.5 -rotate-90 text-amber-500" />
+          <span className="text-2xl font-semibold text-foreground">{stats.mixed}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <ThumbsDown className="h-3.5 w-3.5 text-red-500" />
@@ -338,9 +361,11 @@ function ActivityDashboard() {
                       className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                     >
                       <div className="shrink-0">
-                        {item.thumbUp === true ? (
+                        {summaryRating(item) === 'up' ? (
                           <ThumbsUp className="h-3.5 w-3.5 text-green-500" />
-                        ) : item.thumbUp === false ? (
+                        ) : summaryRating(item) === 'mid' ? (
+                          <ThumbsUp className="h-3.5 w-3.5 -rotate-90 text-amber-500" />
+                        ) : summaryRating(item) === 'down' ? (
                           <ThumbsDown className="h-3.5 w-3.5 text-red-500" />
                         ) : (
                           <MessageSquare className="h-3.5 w-3.5 text-muted-foreground/50" />
