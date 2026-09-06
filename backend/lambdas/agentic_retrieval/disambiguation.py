@@ -53,14 +53,12 @@ CLARIFICATION_QUESTION = (
 )
 
 OUT_OF_SCOPE_MESSAGE = (
-    "That question is outside the scope of what I can help with. I'm the "
-    "**Wisconsin Department of Revenue property tax assistant** — my knowledge "
-    "is limited to Wisconsin property assessment, taxation, statutes, "
-    "administrative rules, exemptions, and related procedures.\n\n"
-    "If you have a question about **Wisconsin property taxes** — how property "
-    "is assessed, how to appeal an assessment, exemptions and credits, or "
-    "agricultural, residential, commercial, and manufacturing valuation — "
-    "I'm happy to help! 😊"
+    "The question is unclear or outside the scope of what I can help with. "
+    "I'm the Wisconsin Department of Revenue property tax assistant. My "
+    "knowledge is limited to Wisconsin property assessment, taxation, statutes, "
+    "administrative rules, exemptions, and related procedures. If you have a "
+    "question about Wisconsin property taxes, please revise and clarify your "
+    "question."
 )
 
 TOPIC_SHIFT_SUGGESTION = (

@@ -320,3 +320,7 @@ tools/ingestion/ops/case_law_stability.json
 
 # Tooling
 .cursor
+
+# regression harness run artifacts (generated)
+tools/ingestion/ops/classifier_regression_*.json
+tools/ingestion/ops/graph_regression_*.json
