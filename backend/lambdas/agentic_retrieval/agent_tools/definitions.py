@@ -136,7 +136,13 @@ TOOL_DEFINITIONS = [
                 "similarity); without a query, returns all chunks in document "
                 "order. ALWAYS provide a query when the section has more than "
                 "~10 chunks — it dramatically reduces noise. Omit the query "
-                "only when you need the full sequential text of a short section."
+                "only when you need the full sequential text of a short section. "
+                "When you need one specific numbered subsection of a dense "
+                "statute section (e.g. § 70.11 has ~50 exemptions), pass "
+                "`subsection` (e.g. '49') to fetch exactly that subsection's "
+                "text verbatim — this bypasses semantic ranking, which can "
+                "otherwise drop a subsection you know you need. Prefer this over "
+                "`query` whenever you already know the subsection number."
             ),
             "inputSchema": {
                 "json": {
@@ -161,6 +167,17 @@ TOOL_DEFINITIONS = [
                                 "chunks by relevance. Be specific — include the "
                                 "property type, assessment concept, or statute "
                                 "reference you are investigating."
+                            ),
+                        },
+                        "subsection": {
+                            "type": "string",
+                            "description": (
+                                "A specific numbered subsection to fetch verbatim, "
+                                "e.g. '49' or '4m' (the marker inside the parens of "
+                                "'(49)'/'(4m)'). Returns the chunk(s) introducing "
+                                "that subsection, bypassing semantic ranking. Use "
+                                "when you know the exact subsection number. Takes "
+                                "precedence over `query` if both are provided."
                             ),
                         },
                         "top_k": {

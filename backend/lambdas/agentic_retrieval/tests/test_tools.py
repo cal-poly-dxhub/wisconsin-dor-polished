@@ -197,6 +197,118 @@ def test_refine_query_tool_removed_from_definitions():
     assert "refine_query" not in names
 
 
+# ---------------------------------------------------------------------------
+# get_section subsection retrieval (Option A) — the § 70.11(49) fix
+# ---------------------------------------------------------------------------
+
+# A realistic slice of § 70.11 as the ingestion chunker packs it: several
+# subsections glued into one chunk, plus a mid-sentence cross-reference to
+# (49) that must NOT be treated as the subsection's own introduction.
+_SEC_7011_CHUNKS = [
+    {
+        "chunk_id": "c-a",
+        "doc_id": "statutes-70",
+        "text": (
+            "(47) BROADBAND EQUIPMENT. Equipment used to provide broadband...\n"
+            "(48) DIGITAL GOODS. ...\n"
+            "(49) RECREATIONAL PREFABRICATED STRUCTURES. Any prefabricated "
+            "structure originally designed to be towed upon a highway...\n"
+            "(50) SOMETHING ELSE. ..."
+        ),
+        "start_page": 12,
+        "heading": "70.11 Property exempted from taxation.",
+    },
+    {
+        "chunk_id": "c-b",
+        "doc_id": "statutes-70",
+        "text": (
+            "(1) PROPERTY OF THE STATE. ... property not otherwise exempt "
+            "under s. 66.0435 (3) or 70.11 (49) is taxable as real property."
+        ),
+        "start_page": 5,
+        "heading": "70.11 Property exempted from taxation.",
+    },
+]
+
+
+def test_find_subsection_chunks_matches_marker_at_line_start():
+    from agent_tools.executor import _find_subsection_chunks
+
+    matched = _find_subsection_chunks(_SEC_7011_CHUNKS, "49")
+
+    # Only the chunk that INTRODUCES (49) at a line start matches — the
+    # chunk that merely cross-references "70.11 (49)" mid-sentence does not.
+    assert [c["chunk_id"] for c in matched] == ["c-a"]
+
+
+def test_find_subsection_chunks_normalizes_parenthesized_input():
+    from agent_tools.executor import _find_subsection_chunks
+
+    assert _find_subsection_chunks(_SEC_7011_CHUNKS, "(49)")[0]["chunk_id"] == "c-a"
+
+
+def test_find_subsection_chunks_alnum_marker():
+    from agent_tools.executor import _find_subsection_chunks
+
+    chunks = [{"chunk_id": "x", "text": "(4m) SPECIAL CASE. ...\n(5) NEXT. ..."}]
+    assert [c["chunk_id"] for c in _find_subsection_chunks(chunks, "4m")] == ["x"]
+    # (4) must not match (4m), and vice versa.
+    assert _find_subsection_chunks(chunks, "4") == []
+
+
+def test_execute_tool_get_section_subsection_bypasses_ranking():
+    from agent_tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.get_section_chunks.return_value = _SEC_7011_CHUNKS
+
+    # embed_query must NOT be called in subsection mode (no ranking).
+    with patch("agent_tools.executor.embed_query") as mock_embed:
+        result = execute_tool(
+            "get_section",
+            {
+                "doc_id": "statutes-70",
+                "heading": "70.11 Property exempted from taxation.",
+                "subsection": "49",
+            },
+            mock_neptune,
+        )
+
+    mock_embed.assert_not_called()
+    mock_neptune.get_section_chunks_with_embeddings.assert_not_called()
+    assert result["subsection"] == "49"
+    assert [c["chunk_id"] for c in result["chunks"]] == ["c-a"]
+    assert result["chunks"][0]["start_page"] == 12
+
+
+def test_execute_tool_get_section_subsection_not_found():
+    from agent_tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.get_section_chunks.return_value = _SEC_7011_CHUNKS
+
+    result = execute_tool(
+        "get_section",
+        {
+            "doc_id": "statutes-70",
+            "heading": "70.11 Property exempted from taxation.",
+            "subsection": "99",
+        },
+        mock_neptune,
+    )
+
+    assert "error" in result
+    assert "(99)" in result["error"]
+    assert "chunks" not in result
+
+
+def test_get_section_subsection_param_in_definitions():
+    from agent_tools import TOOL_DEFINITIONS
+
+    spec = next(t["toolSpec"] for t in TOOL_DEFINITIONS if t["toolSpec"]["name"] == "get_section")
+    assert "subsection" in spec["inputSchema"]["json"]["properties"]
+
+
 @pytest.mark.real_auto_refine
 def test_auto_refine_uses_history(monkeypatch):
     """_auto_refine passes chat history to Bedrock so follow-ups resolve."""
