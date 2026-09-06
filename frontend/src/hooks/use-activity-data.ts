@@ -28,16 +28,62 @@ export interface ActivitySummary {
   query: string;
   timestamp: string;
   thumbUp: boolean | null;
+  // First-class rating scalar. `thumbUp` collapses mid→false, so `rating` is
+  // the only field that distinguishes a "mixed" rating in the list. Null on
+  // rows that predate the scalar and haven't been backfilled.
+  rating: 'up' | 'mid' | 'down' | null;
   feedback: string | null;
   email: string | null;
+}
+
+// Structured feedback captured by the chat feedback modal, stored on the
+// ChatHistoryTable row under `richFeedback` (camelCase, mirrors the backend
+// RichFeedback model + the frontend FeedbackDraft). Only surfaced via the
+// per-query detail endpoint, not the list GSI. All fields optional/nullable
+// because older rows predate the richer schema.
+export interface RichSubsectionFeedback {
+  answer: 'yes' | 'no' | null;
+  comment?: string;
+}
+
+export interface RichSourceNote {
+  id: string;
+  sourceId?: string;
+  citedFully?: string; // '' | 'yes' | 'no'
+  missedDetail?: string;
+  comment?: string;
+}
+
+export interface RichAnnotation {
+  id: string;
+  startOffset?: number;
+  endOffset?: number;
+  quote?: string;
+  comment?: string;
+}
+
+export interface RichFeedback {
+  rating: 'up' | 'mid' | 'down' | null;
+  positiveComment?: string;
+  response?: Record<string, RichSubsectionFeedback>;
+  sourcesOk?: 'yes' | 'no' | null;
+  sourceNotes?: RichSourceNote[];
+  linksWork?: 'yes' | 'no' | null;
+  brokenLinkIds?: string[];
+  brokenLinksReason?: string;
+  annotations?: RichAnnotation[];
+  speedTimely?: 'yes' | 'no' | null;
+  speedComment?: string;
 }
 
 export interface ActivityItem extends ActivitySummary {
   answer: string;
   trace: TraceEvent[] | null;
+  richFeedback?: RichFeedback | null;
+  feedbackSubmittedAt?: string | null;
 }
 
-export type FeedbackFilter = 'all' | 'up' | 'down' | 'rated' | 'unrated';
+export type FeedbackFilter = 'all' | 'up' | 'mid' | 'down' | 'rated' | 'unrated';
 
 export interface ActivityFilters {
   after?: string;
@@ -74,7 +120,12 @@ function loadCache(): CacheStore {
     const parsed = JSON.parse(raw) as CacheStore;
     const now = Date.now();
     return Object.fromEntries(
-      Object.entries(parsed).filter(([, entry]) => now - entry.fetchedAt < CACHE_TTL_MS)
+      // Drop stale entries AND any malformed entry whose `items` isn't an array
+      // (e.g. one poisoned by a past error response) so it can't crash reads.
+      Object.entries(parsed).filter(
+        ([, entry]) =>
+          entry && Array.isArray(entry.items) && now - entry.fetchedAt < CACHE_TTL_MS
+      )
     );
   } catch {
     return {};
@@ -135,9 +186,17 @@ export function useActivityData() {
       nextCursor?: string | null;
     }>();
 
-    return response.statusCode && response.body
-      ? JSON.parse(response.body) as PageResponse
-      : response as PageResponse;
+    const page = (response.statusCode && response.body
+      ? JSON.parse(response.body)
+      : response) as PageResponse;
+
+    // A wrapped error envelope (statusCode+body) parses to an object without an
+    // `items` array. Treat that as a failure so it surfaces in the catch block
+    // instead of being cached as an empty/undefined page and crashing readers.
+    if (!page || !Array.isArray(page.items)) {
+      throw new Error('Activity response did not contain an items array');
+    }
+    return page;
   }, []);
 
   const applyResults = useCallback((
@@ -169,7 +228,7 @@ export function useActivityData() {
     abortControllerRef.current = new AbortController();
 
     const cached = moduleCache[filterKey];
-    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    if (cached && Array.isArray(cached.items) && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
       setItems(cached.items);
       setNextCursor(cached.nextCursor);
       setTotalLoaded(cached.items.length);

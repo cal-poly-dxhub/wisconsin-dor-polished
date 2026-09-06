@@ -441,6 +441,7 @@ def test_activity_list_returns_lean_projected_summaries(mock_dynamodb):
             "query": "How is agricultural land assessed?",
             "timestamp": "2026-07-21T20:00:00+00:00",
             "thumbUp": True,
+            "rating": None,
             "feedback": "Useful response",
             "email": "admin@example.com",
         }
@@ -450,7 +451,7 @@ def test_activity_list_returns_lean_projected_summaries(mock_dynamodb):
     assert query_kwargs["IndexName"] == "activityIndexV2"
     assert query_kwargs["Limit"] == 25
     assert query_kwargs["ProjectionExpression"] == (
-        "queryId, sessionId, #q, #ts, thumbUp, feedback"
+        "queryId, sessionId, #q, #ts, thumbUp, feedback, #rating"
     )
     assert query_kwargs["ReturnConsumedCapacity"] == "INDEXES"
 
@@ -479,7 +480,10 @@ def test_activity_feedback_filter_fills_sparse_page(mock_dynamodb):
     assert body["count"] == 1
     assert body["items"][0]["thumbUp"] is False
     assert mock_dynamodb.query.call_count == 2
-    assert mock_dynamodb.query.call_args_list[0].kwargs["FilterExpression"] == "thumbUp = :fv"
+    assert mock_dynamodb.query.call_args_list[0].kwargs["FilterExpression"] == "#rating = :rv"
+    assert mock_dynamodb.query.call_args_list[0].kwargs["ExpressionAttributeValues"][":rv"] == {
+        "S": "down"
+    }
     assert mock_dynamodb.query.call_args_list[1].kwargs["ExclusiveStartKey"] == first_cursor
 
 
@@ -512,10 +516,15 @@ def test_feedback_legacy_payload_writes_only_scalars(mock_dynamodb):
 
     assert response["statusCode"] == 200
     update_kwargs = mock_dynamodb.update_item.call_args.kwargs
-    assert update_kwargs["UpdateExpression"] == "SET thumbUp = :thumbUp, feedback = :feedback"
+    assert update_kwargs["UpdateExpression"] == (
+        "SET thumbUp = :thumbUp, feedback = :feedback, #rating = :rating"
+    )
+    assert update_kwargs["ExpressionAttributeNames"] == {"#rating": "rating"}
     values = update_kwargs["ExpressionAttributeValues"]
     assert values[":thumbUp"] == {"BOOL": True}
     assert values[":feedback"] == {"S": "great"}
+    # thumb-only payload derives the rating from the boolean.
+    assert values[":rating"] == {"S": "up"}
     assert ":richFeedback" not in values
 
 
@@ -567,6 +576,9 @@ def test_feedback_rich_payload_writes_derived_thumb_and_map(mock_dynamodb):
     assert "feedbackSubmittedAt = :submittedAt" in update_kwargs["UpdateExpression"]
     values = update_kwargs["ExpressionAttributeValues"]
     assert values[":thumbUp"] == {"BOOL": False}
+    # The middle rating is preserved as a first-class scalar (not collapsed to
+    # thumbs-down like the boolean).
+    assert values[":rating"] == {"S": "mid"}
     # richFeedback is a DynamoDB map with camelCase keys preserved.
     rich = values[":richFeedback"]
     assert "M" in rich

@@ -135,10 +135,16 @@ export class SessionsStack extends cdk.NestedStack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    // Keep timestampIndex during rollout so the API can fall back while this
-    // lean replacement backfills. Remove the legacy index in a later deploy.
+    // Lean index backing the admin activity list. A GSI's projection can't be
+    // modified in place (CloudFormation requires replacement, which the
+    // one-GSI-per-update rule blocks), so each projection change is a new index
+    // name — activityIndexV2 (superseded, removed) → activityIndexV3, which adds
+    // the `rating` scalar. The list projects/filters on `rating` to surface the
+    // middle ("mixed") rating; `thumbUp` alone can't distinguish mid from down.
+    // The handler reads ACTIVITY_INDEX_NAME and falls back to timestampIndex
+    // (ProjectionType.ALL) during index rollout.
     this.chatHistoryTable.addGlobalSecondaryIndex({
-      indexName: 'activityIndexV2',
+      indexName: 'activityIndexV3',
       partitionKey: {
         name: 'gsi1pk',
         type: dynamodb.AttributeType.STRING,
@@ -148,7 +154,7 @@ export class SessionsStack extends cdk.NestedStack {
         type: dynamodb.AttributeType.STRING,
       },
       projectionType: dynamodb.ProjectionType.INCLUDE,
-      nonKeyAttributes: ['sessionId', 'query', 'thumbUp', 'feedback'],
+      nonKeyAttributes: ['sessionId', 'query', 'thumbUp', 'feedback', 'rating'],
     });
 
     const apiHandler = new lambda.Function(this, 'ApiHandler', {
@@ -174,7 +180,7 @@ export class SessionsStack extends cdk.NestedStack {
       environment: {
         SESSIONS_TABLE_NAME: this.sessionsTable.tableName,
         MESSAGES_TABLE_NAME: this.chatHistoryTable.tableName,
-        ACTIVITY_INDEX_NAME: 'activityIndexV2',
+        ACTIVITY_INDEX_NAME: 'activityIndexV3',
         RAW_BUCKET_NAME: props.rawBucketName,
         WORK_BUCKET_NAME: props.workBucketName,
       },

@@ -11,14 +11,14 @@ export default async function QueryDetailPage({
   const { queryId } = await params;
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="px-6 py-8">
       <Button asChild variant="ghost" size="sm" className="mb-6 gap-1.5 text-xs text-muted-foreground">
         <Link href="/admin/activity">
           <ArrowLeft className="h-3 w-3" />
           Back to activity
         </Link>
       </Button>
-      <ActivityDetail queryId={queryId} />
+      <ActivityDetail queryId={queryId} layout="split" />
     </div>
   );
 }

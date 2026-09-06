@@ -317,7 +317,11 @@ The scope is BROAD. In addition to property assessment and taxation, the followi
 - Local government financial reporting and forms administered by DOR's SLF division
 These may not "look" like property tax (they can resemble grants, employment compensation, or income/sales tax), but they ARE core DOR State & Local Finance topics. When in doubt about a local-government-finance question, PROCEED.
 
-DISAMBIGUATE — The question IS about Wisconsin property assessment or taxation, but does NOT specify a property type or classification, AND the answer would differ materially depending on the property classification (residential, commercial, manufacturing, agricultural, etc.) — e.g., different statutes, manuals, procedures, or exemption rules apply.
+DISAMBIGUATE — The question is about how an INDIVIDUAL property is assessed or taxed, AND both of these hold: (1) it does NOT specify a property type or classification, and (2) the answer would differ materially depending on that classification (residential, commercial, manufacturing, agricultural, etc.) — e.g., different statutes, manuals, procedures, or exemption rules apply.
+
+Apply the second test literally: before choosing DISAMBIGUATE, ask "would a residential answer actually differ from a commercial or agricultural one?" If the answer is the same regardless of property type, do NOT disambiguate — choose PROCEED.
+
+DISAMBIGUATE NEVER applies to district-level or aggregate calculations — values computed for a whole taxing jurisdiction rather than a single parcel. These do not vary by property classification, so asking for a property type is meaningless. Examples that are always PROCEED, never DISAMBIGUATE: TIF/TID base value, increment, and net new construction; levy limits; equalized values; apportionment; shared revenue and aid calculations. A question naming one of these is answerable as-is even when no property type is given.
 
 TOPIC_SHIFT — The question is in scope, but it opens a subject clearly UNRELATED to what the conversation has been about so far (e.g., the conversation was about appealing an assessment and the user now asks about tax incremental financing). The new question does not build on any prior turn. Use this ONLY when prior conversation is provided; NEVER on the first question. When the new question plausibly continues the current topic, prefer PROCEED or DISAMBIGUATE over TOPIC_SHIFT.
 
@@ -339,7 +343,7 @@ Decision order:
 1. If the question is not about Wisconsin property tax at all → OUT_OF_SCOPE.
 2. Otherwise, if it is in scope but unrelated to the conversation so far → TOPIC_SHIFT.
 3. Otherwise, if the property type is already established in the conversation → PROCEED.
-4. Otherwise, if it needs a property type to answer well → DISAMBIGUATE.
+4. Otherwise, if it is about an individual property AND needs a property type to answer well → DISAMBIGUATE.
 5. Otherwise → PROCEED.
 
 Respond with ONLY one word: OUT_OF_SCOPE, DISAMBIGUATE, TOPIC_SHIFT, or PROCEED — nothing else."""

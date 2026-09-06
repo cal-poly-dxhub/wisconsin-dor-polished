@@ -13,6 +13,8 @@
 | 48 | Investigate WPAM get_section gap — agents re-search doc-globally after get_section on same chapter | — |
 | 49 | Validate Scholar-fetched opinion matches requested citation (prevent citation→text mis-assignment) | 2f57489d |
 | 50 | Rich feedback phase 2 — render richFeedback in the admin activity dashboard | — |
+| 51 | Disambiguation follow-up logic + classifier accuracy (BLOCKED — awaiting Wisconsin validation) | cd922c84 (TID net new construction) |
+| 52 | Subsection auto-backfill (C1) — guarantee dense-statute subsections reach the answer without the agent asking | 77633d5d (§ 70.11(49) mobile home) |
 
 ## Done
 
@@ -275,6 +277,66 @@ From 18 lines to ~6 lines.
 - `frontend/src/app/admin/activity/_components/activity-detail.tsx` — detail rendering
 - `frontend/src/api/chat-api.ts` — reuse the `RichFeedback` Zod schema for the activity response
 - (reference) `backend/lambdas/chat_api/main.py` `activity_detail_handler` — already returns the field
+
+---
+
+### Task 51: Disambiguation follow-up logic + classifier accuracy — BLOCKED (awaiting Wisconsin validation, 2026-08-27)
+
+**Status:** Core follow-up/topic-shift logic SHIPPED and deployed (us-east-1). Classifier accuracy tuning is ongoing and paused pending a validated list of clarify-worthy questions back from Wisconsin DOR. Revisit when they respond.
+
+**What shipped (merged #24, prompt-only follow-ups pushed via `upload_model_configs.py`):**
+- Follow-ups are now classified. Removed the blanket `if chat_history: return PROCEED` guard in `disambiguation.py`, so a generic new topic raised mid-session is still disambiguated while a drill-down on an established property type proceeds. `classify_query` takes chat history (truncated prior turns).
+- Deterministic history compaction — `sanitize_answer_for_history` flattens replayed-answer markdown before it re-enters classifier/loop context (full-sanitized, lossless; caching is on).
+- `TOPIC_SHIFT` verdict (flag `ENABLE_TOPIC_SHIFT`) — a follow-up opening an unrelated subject short-circuits with a soft, dismissible "start a new chat?" suggestion (Start new chat / Continue here). `suppress_topic_shift` gates ONLY that verdict (renamed from the original `force_proceed`), so Continue-here still honors OUT_OF_SCOPE and DISAMBIGUATE. Dismiss arms a one-shot client flag so the nudge fires at most once. Decision order is `SCOPE → TOPIC → DISAMBIGUATE` (TOPIC_SHIFT outranks DISAMBIGUATE).
+
+**Accuracy work in flight:**
+- Fixed a real miss (`cd922c84`): "What is the new TID net new construction?" classified as DISAMBIGUATE. TID net new construction is a **district-level aggregate** — no per-property-type fork — so it should PROCEED. Fix was to sharpen the DISAMBIGUATE definition to (1) apply only to an INDIVIDUAL property AND (2) require the answer to actually differ by classification, plus an explicit carve-out that aggregate/jurisdiction-level calculations (TIF/TID, levy limits, equalized values, apportionment, shared revenue) are always PROCEED. Also tightened decision-order step 4 ("about an individual property AND needs a property type"). Pushed to DynamoDB `disambiguationClassifier`.
+- **Known residual miss:** the exact wording "What is the **new** TID net new construction?" STILL disambiguates — the redundant "new" ("the new TID ... net new construction") pushes the model toward a newly-built-parcel reading and overrides the explicit rule. Every other phrasing ("What is TID net new construction?", "How is TID net new construction calculated?") correctly PROCEEDs. A prompt rule shifts the boundary but doesn't build a wall on adversarial surface tokens. Guaranteed fix if needed: add `"net new construction"` (+ `"tid"`, `"levy limit"`, `"equalized value"`) to the deterministic keyword short-circuit in `disambiguation.py` that PROCEEDs before the LLM runs — but that's a code change (bundle + `cdk deploy`), not a prompt push, and brittle to unlisted phrasings. Left as-is per decision on 2026-08-26.
+- **Other flagged candidates (not yet actioned):** "What is open book?" → DISAMBIGUATE (open book is a type-independent procedure; likely should be PROCEED). "How much will I owe?" → OUT_OF_SCOPE (arguably a property-tax question). "What information is used to determine my assessment?" (57× in history, the most common disambiguated query) borders on legitimate — worth pressure-testing.
+
+**Blocking dependency — Wisconsin DOR review:** Sent a docx (`/Users/sac/Work/DxHub/wisdor/Chatbot Clarifying Questions - Property Type.docx`) listing what the assistant currently clarifies, built from REAL tester queries (filtered from the ChatHistoryTable to rows that received the clarification prompt, then re-classified against the live prompt to keep only those that still disambiguate). Asked DOR to (1) validate the list and (2) modify/add. Their response defines the target labels for any further tuning — do not tune blind before it lands.
+
+**When revisited:**
+1. Fold DOR's validated list into a labeled regression set; run against the live classifier (harness pattern: pull live prompt from the ModelConfig DynamoDB table, `converse` each query with Haiku temp 0.0, bucket by verdict).
+2. Decide the keyword short-circuit question for the TID "new" residual and any other adversarial phrasings DOR flags.
+3. Action the "open book" / "how much will I owe" candidates if DOR agrees.
+4. TOPIC_SHIFT is single-turn-untestable — validate with query pairs (prior topic + unrelated follow-up), not the single-query harness.
+
+**Key files:**
+- `backend/lambdas/agentic_retrieval/disambiguation.py` — `classify_query`, keyword short-circuit, verdict parse/gating
+- `backend/lambdas/agentic_retrieval/handler.py` — pre-loop classification block, `suppress_topic_shift` / `ENABLE_TOPIC_SHIFT` gating
+- `config/model_configs.toml` + `backend/lambdas/agentic_retrieval/_prompt_fallback.py` — `disambiguationClassifier` prompt (keep byte-identical; push via `tools/upload_model_configs.py --only disambiguationClassifier`)
+- `frontend/src/components/messages/topic-shift-suggestion.tsx`, `frontend/src/hooks/use-new-chat.ts` — suggestion UI + new-chat/prefill
+
+---
+
+### Task 52: Subsection auto-backfill (C1) — guarantee dense-statute subsections reach the answer
+
+**Status:** TABLED (2026-08-27). Option A shipped (#26); this is the follow-on that makes the fix reliable. Deferred pending a decision on the cheaper prompt-nudge alternative vs. the always-on stage.
+
+**Context — why this exists:** Query `77633d5d` ("What exemptions can apply to a mobile home?") rated "mid" because the answer name-dropped **§ 70.11(49)** as plain text with no citation. § 70.11 is a dense enumerated section (~50 subsections packed multi-per-chunk by the chunker), and `get_section`'s semantic ranking silently drops a low-scoring subsection.
+
+**What already shipped (Option A, PR #26):** `get_section` gained a `subsection` param that fetches the `(N)` chunk verbatim, bypassing ranking. Regression-clean (0 regressions, turns net −1). **But a direct post-deploy test proved A is insufficient alone:** the agent loop is non-deterministic — on one run it went `vector_search → search_document → prepare_answer` (2 turns) and **never called `get_section` at all**, so the `subsection` param never fired and 70.11(49) would again be uncited. A only helps when the agent *chooses* to drill in.
+
+**Proposed (C1) — auto-backfill, independent of agent choice:** A backend stage (mirroring `statute_backfill`) that scans the top-N already-retrieved chunks for statute-subsection references (`§?\s*\d+\.\d+\(\d+[a-z]*\)`) resolving to a doc already in play, and attaches the matching subsection chunk — reusing the `_find_subsection_chunks` helper that landed in #26. Fires during retrieval assembly, so it adds **no agent turns / no tool calls** (the turn-bloat concern was Option A's, already cleared; C1 is turn-neutral by construction).
+
+**The real risk — context bloat, and how it's bounded:** C1 auto-attaches chunks the agent didn't ask for, diluting answer-context + costing tokens. Bound it with the same three levers the existing `statute_backfill` uses without blowing up:
+- **Cap** — `SUBSECTION_BACKFILL_CAP` (~2): at most N subsection chunks per query.
+- **Gate** — only trigger from subsection refs in the top-K retrieved chunks (not every `(N)` mentioned anywhere), to avoid firing on incidental cross-references like "…not exempt under 70.11(49)" in an unrelated answer.
+- **Dedup** — skip if the chunk is already in context (`already_have` set); `DIVERSITY_CAP_PER_DOC=3` clips downstream regardless.
+Higher blast radius than A: C1 is **always-on** (every query), not opt-in, so a loose gate affects all traffic. Needs the regression harness to confirm the gate isn't over-firing.
+
+**Cheaper alternative to evaluate FIRST (prompt nudge):** Add one line to `agenticRetrieval`: *"When a statute cross-references a specific subsection you'll cite (e.g. 70.11(49)), fetch it with get_section's `subsection` param before answering."* This raises how often the (already-safe) Option A fires, with near-zero risk and no always-on machinery. It doesn't *guarantee* firing like C1, but may close most of the gap. **Recommendation: try the nudge, measure with the harness (add the mobile-home query to the golden set as a direct guard), and only build C1 if the nudge proves unreliable.**
+
+**Content half already fixed:** the 2026-04-29 "prefabricated structures" advisory (§ 70.11(49)) was ingested (Task 39 follow-on), giving a directly linkable source for that exemption independent of A/C1.
+
+**Validation:** Add `77633d5d` ("What exemptions can apply to a mobile home?") to `graph_regression_queries.yaml` with `must_contain: ["70\\.11\\(49\\)|recreational prefabricated"]`; baseline → change → after-compare, watching the turns-delta guardrail and cited-doc drift.
+
+**Key files:**
+- `backend/lambdas/agentic_retrieval/agent_tools/executor.py` — `_find_subsection_chunks` (landed in #26), `get_section` handler
+- `backend/lambdas/agentic_retrieval/agent_tools/stages/statute_backfill.py` — template for the new stage
+- `config/model_configs.toml` + `_prompt_fallback.py` — `agenticRetrieval`, if doing the prompt-nudge alternative
+- `tools/ingestion/tests/graph_regression_queries.yaml` — add the mobile-home guard query
 
 ---
 
