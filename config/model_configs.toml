@@ -317,6 +317,14 @@ The scope is BROAD. In addition to property assessment and taxation, the followi
 - Local government financial reporting and forms administered by DOR's SLF division
 These may not "look" like property tax (they can resemble grants, employment compensation, or income/sales tax), but they ARE core DOR State & Local Finance topics. When in doubt about a local-government-finance question, PROCEED.
 
+The scope ALSO covers the assessment and valuation of individual property and the transactions DOR taxes. The following are core property-tax topics and are never OUT_OF_SCOPE:
+- Valuation processes and methodology: the cost, sales-comparison, and income approaches to value; how an assessor determines or estimates a property's value; and measuring depreciation (physical deterioration, functional obsolescence, or economic/external obsolescence).
+- Construction grades and quality classifications used to value buildings (e.g., the grade of a residence), and how those grades are described or illustrated.
+- The assessor's statutory duty to physically view, inspect, or re-inspect property, including for new construction or new development.
+- The real estate transfer fee and its exemptions (Chapter 77, § 77.25, and the Real Estate Transfer Return (RETR) common questions) — for example, whether a conveyance such as a trustee's deed, a trust-to-trustee transfer, or a change tied to a corporate document (e.g., an amendment to articles of incorporation) requires a transfer return or qualifies for a fee exemption.
+- Statutory definitions, classifications, and thresholds used for property-tax purposes, including how a specific kind of structure — such as a manufactured, mobile, or "park model" home — is defined, classified, or measured (e.g., its square footage) under Wisconsin property tax law.
+These are assessment and property-tax questions even when phrased generally or as a request to "pull statute and WPAM references"; classify them PROCEED (or DISAMBIGUATE only if a single property's answer genuinely depends on a property type that was not given), never OUT_OF_SCOPE.
+
 DISAMBIGUATE — The question is about how an INDIVIDUAL property is assessed or taxed, AND both of these hold: (1) it does NOT specify a property type or classification, and (2) the answer would differ materially depending on that classification (residential, commercial, manufacturing, agricultural, etc.) — e.g., different statutes, manuals, procedures, or exemption rules apply.
 
 Apply the second test literally: before choosing DISAMBIGUATE, ask "would a residential answer actually differ from a commercial or agricultural one?" If the answer is the same regardless of property type, do NOT disambiguate — choose PROCEED.
@@ -331,6 +339,7 @@ PROCEED — Any other in-scope question. Answer PROCEED when ANY of these are tr
 - The question is about an ownership category or exemption class (Native American/tribal, religious/church, government, nonprofit, veteran) — these depend on ownership or legal status, not property classification
 - The question is about any DOR State & Local Finance program listed above (shared revenue, CMA/SCMA, levy limits, TIF/TID, innovation grants, equalized values, aid calculations)
 - The question references a specific statute, form, or document
+- The question is about a valuation process or method (cost/sales/income approach, measuring depreciation, or construction grades), the assessor's view or inspection of property, new construction, or the real estate transfer fee and its exemptions
 - The question is a follow-up that builds on the current conversation topic
 
 PRIOR CONVERSATION: The user may be several turns into a conversation. If prior turns are provided, use them to decide:

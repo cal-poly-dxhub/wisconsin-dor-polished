@@ -1,0 +1,331 @@
+# Classifier regression golden set — pre-loop query-classifier guardrail.
+#
+# SIBLING to graph_regression_queries.yaml. That harness calls run_agentic_loop()
+# directly and therefore CANNOT observe the pre-loop classifier verdict. This set
+# exercises classify_query() itself (disambiguation.py) with the LIVE
+# disambiguationClassifier prompt from the ModelConfig DynamoDB table, Haiku
+# temp 0.0 / maxTokens 16 — the exact same code path the deployed
+# agentic_retrieval Lambda runs before the loop. It is the ONLY place the EOW P0
+# fixes (out-of-scope message rewrite + targeted in-scope topic additions) are
+# observable, because those are ENTIRELY classifier decisions.
+#
+# Runner: tools/ingestion/ops/run_classifier_regression.py
+#   --mode baseline   (capture current prod classifier behavior BEFORE the fix)
+#   --mode after      (re-run AFTER pushing the revised prompt to DynamoDB)
+#   --compare-only    (diff verdict per case between the two runs)
+#
+# ── FIELDS ────────────────────────────────────────────────────────────────────
+#   id:                unique case id (runner rejects duplicates).
+#   query:             the CURRENT user question the classifier scores.
+#   chat_history:      optional list of prior {query, answer} turns, oldest first
+#                      (passed verbatim to classify_query so mid-session verdicts
+#                      can be tested). Answers may be truncated — the classifier
+#                      itself truncates each to 600 chars.
+#   allow_topic_shift: optional bool (default false). Mirrors the handler's
+#                      allow_topic_shift arg. Prod sets ENABLE_TOPIC_SHIFT=true,
+#                      so a mid-conversation topic shift CAN surface; on turn one
+#                      it is always downgraded to PROCEED regardless.
+#   expected_verdict:  the TARGET verdict (post-fix): PROCEED / DISAMBIGUATE /
+#                      OUT_OF_SCOPE / TOPIC_SHIFT.
+#   expected_baseline: passing  = expected to already MATCH expected_verdict today
+#                                 (regression anchor / already-fixed guard).
+#                      failing  = expected to MISMATCH today; the pending P0 fix
+#                                 should flip it to match. A baseline mismatch on a
+#                                 `failing` case is EXPECTED (RED, not a harness
+#                                 failure). A baseline mismatch on a `passing` case
+#                                 is a BAD SURPRISE (regression) → nonzero exit.
+#   expected_message_substring:
+#                      optional. When the verdict is OUT_OF_SCOPE (or DISAMBIGUATE
+#                      / TOPIC_SHIFT), the runner maps the verdict to the canned
+#                      message (imported from disambiguation.py, the same constant
+#                      the handler returns) and asserts this substring is present.
+#                      LEFT EMPTY today — wire only. Once the DOR out-of-scope
+#                      message rewrite ships (Decision 1), set #28's value to
+#                      "please revise and clarify your question." to guard it.
+#   tags / queryId_ref / notes: metadata (queryId_ref = original prod UUID or
+#                      email/backlog ref). Ignored by the pass/fail gate.
+#
+# NON-DETERMINISM: temp=0.0 is near-deterministic but NOT guaranteed identical
+# across calls. For a guard whose verdict sits near a decision boundary
+# (topic-shift especially), re-run 3-5x before trusting a flip baseline↔after.
+
+cases:
+  # ════════════════════════════════════════════════════════════════════════════
+  #  GUARD SET — the EOW P0 classifier fixes (from the CLASSIFIER-HARNESS BACKLOG
+  #  block at the bottom of graph_regression_queries.yaml + DOR §7b decisions).
+  # ════════════════════════════════════════════════════════════════════════════
+
+  # ── #6: mid-session generic "my assessment" with a 3-turn history that never
+  #    named a property CLASSIFICATION. Old 08-19 code had a blanket
+  #    `if chat_history: return PROCEED`, so follow-ups were never disambiguated
+  #    (thumbs-down). PR#24 removed that. This is the LIVE-VALIDATION case for the
+  #    fix: the same generic question, mid-conversation, must still DISAMBIGUATE
+  #    because no residential/commercial/agricultural/manufacturing type was ever
+  #    established. History below is the real 3 turns preceding it in session
+  #    542754bd (interpreter → mobile-home exemptions → camping-trailer exemptions —
+  #    none of which pin a formal classification).
+  - id: c6-midsession-assessment-disambig
+    queryId_ref: "#6 / 861d4587"
+    tags: [disambiguation, mid-session, pr24-regression]
+    expected_verdict: DISAMBIGUATE
+    expected_baseline: passing
+    query: "what information is used to determine my assessment?"
+    chat_history:
+      - query: "is the board of review required to have a foreign language interpreter?"
+        answer: >
+          Neither § 70.47 nor the 2026 Guide for Board of Review Members contains
+          any requirement for the board of review to provide a foreign language
+          interpreter to a property owner appealing an assessment.
+      - query: "What exemptions can apply to a mobile home?"
+        answer: >
+          Several different exemptions can potentially apply to a mobile home in
+          Wisconsin, depending on the type of home, how it is used, and whether it
+          is subject to a monthly municipal permit fee instead of the property tax.
+      - query: "What exemptions can apply to a camping trailer?"
+        answer: >
+          Under § 70.111(19)(a), a camping trailer is exempt from general property
+          taxation. The exemption turns on how the unit is defined and used, not on
+          the owner's property classification.
+    notes: >
+      DISAMBIGUATE expected because no formal property classification was pinned
+      by any prior turn. VERIFY live — PR#24 claims this is fixed; if the baseline
+      returns PROCEED, PR#24 did NOT hold in the live prompt. Guards against the
+      classifier rubber-stamping mid-session generics (over-PROCEED).
+
+  # ── #22/#23/#24/#26: FALSE out-of-scope refusals. DOR Decision 2 — add TARGETED
+  #    in-scope topics (valuation processes/depreciation, real estate transfer
+  #    fee/ch.77/§77.25/RETR, property view/new construction). All four are
+  #    genuinely IN SCOPE; the bug is the classifier refusing them. Expected RED
+  #    today, GREEN after the targeted-topic additions ship.
+  - id: c22-depreciation-proceed
+    queryId_ref: "#22 / 59573b84"
+    tags: [oos-false-refusal, valuation-process]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "how do you measure depreciation"
+    notes: >
+      DOR: "Depreciation is part of the valuation process … add processes of
+      valuation to scope." No property-type/ownership keyword, so no local
+      short-circuit — the LLM classifier decides. Expected OUT_OF_SCOPE today
+      (the false refusal), PROCEED after the valuation-process scope addition.
+
+  - id: c23-actual-view-newdev-proceed
+    queryId_ref: "#23 / 35257ac5"
+    tags: [oos-false-refusal, property-view]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "pull statute and WPAM references relating to getting actual view of properties specifically for new developments"
+    notes: >
+      Assessor's right/duty to physically view a property (70.05/70.32; WPAM).
+      DOR confirms in scope. Expected OUT_OF_SCOPE today → PROCEED after the
+      property-view / new-construction scope addition.
+
+  - id: c24-trustee-deed-transfer-fee-proceed
+    queryId_ref: "#24 / 95a9b7af"
+    tags: [oos-false-refusal, transfer-fee]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "When filing a Trustee's Deed from a trust to a married couple who are the trustees, is there a transfer fee exemption?"
+    notes: >
+      DOR-authoritative IN SCOPE — ch.77 + RETR common questions; answer is a
+      §77.25(9) transfer-fee exemption. Expected OUT_OF_SCOPE today → PROCEED
+      after the transfer-fee / deed scope addition.
+
+  - id: c26-cape-cod-grades-proceed
+    queryId_ref: "#26 / be4a7333"
+    tags: [oos-false-refusal, residential-grade]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "can you give me pictures examples of cape cod with the various grades"
+    notes: >
+      Residential building grades ARE in scope (WPAM). The image-capability half
+      is an answerStream concern, not the classifier's — the classifier must not
+      refuse the topic. Expected OUT_OF_SCOPE today → PROCEED after scope fix.
+
+  # ── #28: two-counties. REVISED (client, post-P0): the incoherent-premise
+  #    coherence judgment is NOT something a 16-token, corpus-blind Haiku classifier
+  #    can make safely — trying to catch it in the classifier just recreates the
+  #    over-refusal we are killing. So the classifier now PROCEEDs on #28 and the
+  #    coherence judgment is DEFERRED to the retrieval + answer layer, which has the
+  #    statutes/WPAM to note that a parcel lies in one county (though a municipality
+  #    can span counties). It was OUT_OF_SCOPE at baseline, so this is a `failing`
+  #    case that the P0 scope broadening flips to PROCEED. No OOS message fires here
+  #    anymore — the message guard moved to the dedicated oos-anchor case below.
+  - id: c28-two-counties-proceed
+    queryId_ref: "#28 / 175b5e5b"
+    tags: [oos-false-refusal, coherence-deferred-to-retrieval]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "pull all WPAM references relating to how an assessor should handle a property having value in two counties at the same time"
+    notes: >
+      PROCEED expected (post-revision). Coherence of the premise ("value in two
+      counties") is deferred to the retrieval + answer layer, NOT judged by the
+      classifier — a corpus-blind 16-token Haiku call cannot reliably tell an
+      impossible premise from a valid one without recreating the over-refusal bug.
+      Was OUT_OF_SCOPE at baseline → the targeted in-scope additions flip it to
+      PROCEED, which is intended. True-OOS refusal coverage now lives in the
+      oos-anchor case below.
+
+  # ── #27: domain-term ambiguity ("split between 2 municipalities"). A single
+  #    parcel straddling two municipalities is assessed where it lies (§70.12) —
+  #    the answer does NOT vary by property classification, so the DOR-aligned
+  #    expectation is PROCEED. NOTE the alternative: this is also a candidate for a
+  #    future extended DISAMBIGUATE-on-domain-term path (ask which "split" the user
+  #    means). Distinct from #28 (two COUNTIES = impossible for one parcel → OOS);
+  #    two MUNICIPALITIES is a real, answerable straddle. Watch the baseline for a
+  #    spurious OUT_OF_SCOPE (the classifier conflating it with #28).
+  - id: c27-split-municipalities-proceed
+    queryId_ref: "#27 / 3a7240d7"
+    tags: [interpretation, domain-term-ambiguity, proceed-vs-disambiguate]
+    expected_verdict: PROCEED
+    expected_baseline: passing
+    query: "pull all references to properties split between 2 municipalities"
+    notes: >
+      DOR-aligned expectation = PROCEED (straddle → §70.12, answerable as-is,
+      classification-independent). ALTERNATIVE acceptable target = DISAMBIGUATE
+      (domain-term ambiguity) if an extended disambiguation path is built. FLAG
+      for human: if the baseline returns OUT_OF_SCOPE, the classifier is
+      conflating this with the #28 two-counties case — a real finding.
+
+  # ── Email false-refusals (NOT in the 29 rich rows). DOR: over-conservative
+  #    classifier; both genuinely in scope. Expected RED today → GREEN after fix.
+  - id: email-park-model-sqft-proceed
+    queryId_ref: "email 8/21"
+    tags: [oos-false-refusal, email]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "What statute talks about the square footage of a Park model?"
+    notes: >
+      Reported as a false OUT_OF_SCOPE (8/21 email). References a specific statute
+      about a property-tax concept → in scope. Expected OUT_OF_SCOPE today →
+      PROCEED after scope fix.
+
+  - id: email-articles-incorp-transfer-return-proceed
+    queryId_ref: "email 8/28 (= #29 topic)"
+    tags: [oos-false-refusal, email, transfer-fee]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "Does an amendment to an Articles of Incorporation require a real estate transfer return be completed?"
+    notes: >
+      Real estate transfer return = ch.77 territory → in scope. False OUT_OF_SCOPE
+      on 8/28 (same topic as #29, later answered-but-truncated). Expected
+      OUT_OF_SCOPE today → PROCEED after transfer-fee scope addition.
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  KNOWN-GOOD ANCHORS — guard against OVER-correction. P0 must not turn the
+  #  classifier into a rubber stamp (over-PROCEED) NOR make it over-disambiguate.
+  #  These MUST stay GREEN before AND after the fix.
+  # ════════════════════════════════════════════════════════════════════════════
+
+  # -- Must stay PROCEED (real thumbs-up production queries from the graph harness
+  #    known-good stratum). If any flips to OOS/DISAMBIGUATE after the fix, the fix
+  #    over-corrected.
+  - id: anchor-proceed-7725-conveyance
+    queryId_ref: "0b50ac75 (graph known-good)"
+    tags: [anchor, proceed]
+    expected_verdict: PROCEED
+    expected_baseline: passing
+    query: "explain when sec. 77.25(10) applies and does not apply to a conveyance of real estate"
+    notes: >
+      References a specific statute (§77.25(10)) → unambiguously PROCEED. Anchor
+      against over-DISAMBIGUATE / over-OOS.
+
+  - id: anchor-proceed-town-clerk-bor
+    queryId_ref: "8388fe28 (graph known-good)"
+    tags: [anchor, proceed]
+    expected_verdict: PROCEED
+    expected_baseline: passing
+    query: "can the town clerk be the chairman of board of review"
+    notes: >
+      Board-of-Review procedure — same answer regardless of property type →
+      PROCEED, must NOT be disambiguated. Anchor against over-DISAMBIGUATE.
+
+  - id: anchor-proceed-tid-increment
+    queryId_ref: "cbce3376 (graph known-good)"
+    tags: [anchor, proceed, district-level]
+    expected_verdict: PROCEED
+    expected_baseline: passing
+    query: "how do you determine the tax increment for a tid"
+    notes: >
+      District-level TIF calculation — the classifier prompt explicitly lists
+      TIF/TID increment as always-PROCEED (never DISAMBIGUATE). Anchor.
+
+  # -- Must stay DISAMBIGUATE (a genuinely property-type-dependent generic question
+  #    asked FRESH on turn one — the Task 51 "57×-disambiguated" example). This is
+  #    the counterweight to the over-PROCEED risk: P0 must not silence legitimate
+  #    disambiguation.
+  - id: anchor-disambiguate-fresh-assessment
+    queryId_ref: "Task 51 example (fresh first-turn)"
+    tags: [anchor, disambiguation, first-turn]
+    expected_verdict: DISAMBIGUATE
+    expected_baseline: passing
+    query: "what information is used to determine my assessment?"
+    notes: >
+      SAME text as #6 but with NO chat history (fresh turn one). Generic
+      individual-property assessment question whose answer varies materially by
+      classification → DISAMBIGUATE. Anchor against over-PROCEED. Contrast with
+      the district-level anchors above which stay PROCEED.
+
+  # -- TOPIC_SHIFT (soft / advisory). allow_topic_shift mirrors prod
+  #    ENABLE_TOPIC_SHIFT=true. Appeal → TIF is the classifier prompt's own
+  #    topic-shift example. INHERENTLY FUZZY — re-run 3-5x before trusting a flip.
+  - id: topicshift-appeal-to-tif
+    queryId_ref: "synthetic (prompt example)"
+    tags: [topic-shift, advisory, fuzzy]
+    allow_topic_shift: true
+    expected_verdict: TOPIC_SHIFT
+    expected_baseline: passing
+    query: "how do you determine the tax increment for a tid"
+    chat_history:
+      - query: "what is the process to appeal an assessed value?"
+        answer: >
+          The Wisconsin assessment appeal process has several sequential stages,
+          beginning with an informal review with your assessor, then a formal
+          objection to the Board of Review, and potentially appeal to circuit
+          court or the Department of Revenue.
+    notes: >
+      In-scope but unrelated to the appeal conversation → TOPIC_SHIFT (prompt's own
+      example). ADVISORY: topic-shift sits near a decision boundary and the same
+      query proceeds fine as a fresh turn (see anchor-proceed-tid-increment); if it
+      returns PROCEED here, that is acceptable classifier behavior, not a hard
+      regression — treat this row as a signal, not a gate. Re-run to confirm.
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  TRUE-OUT-OF-SCOPE ANCHORS — the ONLY cases that must still REFUSE. Added when
+  #  the coherence-premise clause was removed and #28 was allowed to PROCEED: with
+  #  #28 gone from the OOS column the set had ZERO genuine-refusal coverage, so the
+  #  in-scope broadening could have silently destroyed legitimate refusal without
+  #  tripping the gate. These anchors prove OUT_OF_SCOPE still fires AND that the
+  #  rewritten OUT_OF_SCOPE_MESSAGE (with the rephrase prompt) is returned.
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: oos-anchor-weather
+    queryId_ref: "synthetic (true-OOS anchor)"
+    tags: [oos-anchor]
+    expected_verdict: OUT_OF_SCOPE
+    expected_baseline: passing
+    query: "What's the weather in Madison today?"
+    expected_message_substring: "please revise and clarify your question."
+    notes: >
+      Clearly off-topic (general knowledge / weather) → OUT_OF_SCOPE, and the
+      rewritten OUT_OF_SCOPE_MESSAGE must fire (guards the "please revise and
+      clarify your question." wording). Proves the in-scope broadening did NOT turn
+      the classifier into a rubber stamp.
+
+  - id: oos-anchor-coding
+    queryId_ref: "synthetic (true-OOS anchor)"
+    tags: [oos-anchor]
+    expected_verdict: OUT_OF_SCOPE
+    expected_baseline: passing
+    query: "Can you help me write a Python script to sort a list?"
+    expected_message_substring: "please revise and clarify your question."
+    notes: >
+      Coding help is explicitly out of scope (the prompt lists "coding") →
+      OUT_OF_SCOPE with the rephrase message. Second true-OOS anchor so refusal
+      coverage does not hinge on a single example. NOTE (flagged to humans): a
+      federal-income-tax anchor was tried first and REJECTED — the classifier
+      (both the deployed prompt AND this candidate) returns PROCEED for federal
+      income-tax questions like "federal standard deduction" or "mortgage interest
+      on my federal 1040", despite the prompt listing "federal income taxes" as
+      OUT_OF_SCOPE. That leak is PRE-EXISTING (not caused by the P0 broadening) and
+      is left as a separate finding; it would make an unstable anchor here.
