@@ -7,12 +7,48 @@
 # must not regress.
 #
 # Grading (run_graph_regression.py):
-#   - must_cite:     doc_ids that MUST appear in the answer's cited_doc_ids.
-#   - must_contain:  regex/substring facts that MUST be asserted in the answer
-#                    text (case-insensitive).
-#   - stratum:       single bucket "B" for the whole set — the harness treats B
-#                    as a hard gate: 100% must_cite + must_contain retention,
-#                    zero hallucinated case citations.
+#   - must_cite:         doc_ids that MUST appear in the answer's cited_doc_ids.
+#   - must_contain:      regex/substring facts that MUST be asserted in the
+#                        answer text (case-insensitive).
+#   - must_not_contain:  regex/substring that MUST NOT appear in the answer text
+#                        (case-insensitive). For citation-validity / synthesis
+#                        guards where the failure is best stated negatively
+#                        (fabricated URL, chapter-conflated link, bad paraphrase).
+#   - stratum:           bucket. A = fact gate only; B/D/E = cite + fact gate.
+#                        must_not_contain is enforced on A/B/D/E. Hallucinated
+#                        case citations fail any stratum.
+#   - tags / expected_baseline / queryId_ref:  METADATA ONLY (ignored by the
+#                        grader). tags group a guard by fix workstream so you can
+#                        filter (e.g. grep 'oos-content-half'); expected_baseline
+#                        records whether the guard is expected RED or GREEN today
+#                        (pre-fix), so a human can run --mode baseline and confirm
+#                        the known-failing set matches before shipping a fix.
+#
+# ── SCOPE OF THIS SET ─────────────────────────────────────────────────────────
+# Rows 1-6 below (queryIds 0b50ac75 … e97be124) are the ORIGINAL known-good
+# thumbs-up stratum — must not regress. Everything after the "FEEDBACK GUARD SET"
+# banner was authored 2026-09-05 from the 28 mixed/negative feedback rows
+# (/tmp/feedback_master_synthesis.md) to make prompt/retrieval fixes attributable
+# and regression-safe. Many of those are EXPECTED TO FAIL today (pre-fix
+# baseline) — see expected_baseline on each.
+#
+# ── WHAT THIS HARNESS CANNOT TEST (deliberately excluded) ─────────────────────
+# run_graph_regression.run_one_query() calls run_agentic_loop() DIRECTLY, which
+# does NOT invoke the pre-loop query classifier (classify_query lives only in
+# handler.py). So this harness CANNOT observe an OUT_OF_SCOPE / DISAMBIGUATE /
+# TOPIC_SHIFT verdict — every query here is forced through retrieval. Therefore:
+#   * False-refusal rows (#22/#23/#24/#26) appear here only as their CONTENT half
+#     (tag: oos-content-half) — "IF we proceed, does retrieval find the right
+#     material?". Their BEHAVIORAL half (must the classifier stop refusing?) is a
+#     classifier-harness guard, NOT expressible here.
+#   * Pure classifier decisions (#6 must DISAMBIGUATE; #28 must stay OUT_OF_SCOPE
+#     per DOR Decision 3; the email park-model / articles-of-incorporation
+#     in-scope cases) are NOT added as active cases. They belong in a sibling
+#     classifier harness (Task 51 pattern: pull the live disambiguationClassifier
+#     prompt from the ModelConfig DynamoDB table, `converse` each labelled query
+#     with Haiku temp 0.0, bucket by verdict). test_disambiguation.py exists but
+#     is unit-level (mocked Bedrock) — the live labelled harness does not yet
+#     exist. See the CLASSIFIER-HARDNESS BACKLOG comment at the bottom of file.
 #
 # Two-run workflow (see run_graph_regression.py docstring):
 #   --mode baseline   (capture current prod behavior BEFORE deploying a change)
@@ -23,6 +59,13 @@ queries:
   - queryId: 0b50ac75
     stratum: B
     query: "explain when sec. 77.25(10) applies and does not apply to a conveyance of real estate"
+    rubric: >
+      PASS if the answer explains BOTH when §77.25(10) applies AND when it does
+      not apply to a conveyance of real estate — i.e. it frames (10) as the
+      transfer-fee exemption for a conveyance of real estate as security for a
+      debt or obligation and distinguishes true security conveyances from
+      outright transfers. FAIL if it only lists (10) without explaining the
+      apply / does-not-apply boundary, or misstates the subsection's subject.
     must_cite: [statutes-77]
     must_contain: ["77\\.25\\(10\\)", "security for a debt|debt or obligation"]
     notes: >
@@ -34,6 +77,12 @@ queries:
   - queryId: 1eada146
     stratum: B
     query: "if a company qualifies as a Light, Heat, and Power company and has a facility with a nameplate capacity less than 50 megawatts and located in multiple municipalities are they state assessed?"
+    rubric: >
+      PASS if the answer reaches a clear determination of whether the described
+      Light/Heat/Power company is state-assessed, grounded in ch. 76 (esp.
+      §76.28 and the nameplate-capacity / multi-municipality factors) rather
+      than fanning out to unrelated chapters. FAIL if it never resolves the
+      state-assessment question or does not ground the answer in ch. 76.
     must_cite: [statutes-76]
     must_contain: ["76\\.28", "state assess|state-assessed|ch\\.? ?76"]
     notes: >
@@ -44,6 +93,11 @@ queries:
   - queryId: 20c8678e
     stratum: B
     query: "explain highest and best use as it is used and required by assessors"
+    rubric: >
+      PASS if the answer explains the highest-and-best-use doctrine as assessors
+      apply it (legally permissible, physically possible, financially feasible,
+      maximally productive use) and grounds it in §70.32 and the WPAM. FAIL if
+      it does not actually explain the HBU concept in the assessment context.
     must_cite: [statutes-70, wpam-wisconsin-property-assessment-manual-2026]
     must_contain: ["highest and best use", "70\\.32"]
     notes: >
@@ -54,6 +108,11 @@ queries:
   - queryId: 8388fe28
     stratum: B
     query: "can the town clerk be the chairman of board of review"
+    rubric: >
+      PASS if the answer gives a direct resolution of whether the town clerk may
+      serve as chair of the Board of Review, grounded in the BOR composition
+      rules (§70.46) and the elected-vs-appointed distinction. FAIL if it does
+      not directly answer whether the clerk can be chair with a statutory basis.
     must_cite: [statutes-70]
     must_contain: ["70\\.46", "board of review|BOR"]
     notes: >
@@ -64,6 +123,12 @@ queries:
   - queryId: cbce3376
     stratum: B
     query: "how do you determine the tax increment for a tid"
+    rubric: >
+      PASS if the answer describes the tax-increment mechanics for a TID under
+      §66.1105 — the increment as the difference between current value and the
+      certified base value — as a method, WITHOUT inventing specific computed
+      dollar figures or a dollar tax liability. FAIL if it omits the
+      base-vs-current-value method or fabricates concrete computed dollar amounts.
     must_cite: [statutes-66]
     must_contain: ["tax increment", "66\\.1105"]
     notes: >
@@ -74,9 +139,741 @@ queries:
   - queryId: e97be124
     stratum: B
     query: "If a property is exempted in error can the assessor assess it as omitted the following year"
+    rubric: >
+      PASS if the answer addresses whether property exempted in error can be
+      picked up as omitted property in a later year via the omitted-property
+      procedure of §70.44. FAIL if it never reaches the omitted-assessment
+      mechanism / §70.44 for the exempted-in-error scenario.
     must_cite: [statutes-70]
     must_contain: ["70\\.44", "omitted"]
     notes: >
       Omitted-property procedure, 70.44. Cites statutes-70 subsections, a
       case-law node, the omitted-taxes form instructions, PA-502, and a FAQ —
       diverse framework coverage in one answer.
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  FEEDBACK GUARD SET  (authored 2026-09-05 from 28 mixed/negative rows)
+  #  Source: /tmp/feedback_master_synthesis.md + /tmp/fb_investigation_{A..H}_*.md
+  #  Metadata fields (tags / expected_baseline / queryId_ref) are IGNORED by the
+  #  grader; they exist so a human can filter by fix-workstream and run a
+  #  pre-fix baseline. expected_baseline values:
+  #    passing               = should be GREEN today (known-good regression guard)
+  #    failing               = expected RED today; a pending prompt/retrieval fix
+  #                            should flip it GREEN
+  #    failing-until-ingest  = expected RED until the missing doc is ingested
+  # ════════════════════════════════════════════════════════════════════════════
+
+  # ── THEME: subsection-7011 (Task 52) — §70.11(49) recreational-prefab exemption
+  #    Both queries reached §70.11 (or should) but the (49) subsection was
+  #    ranking-dropped pre-#26; the 4/29/26 advisory now exists in-corpus.
+  - queryId: 77633d5d
+    queryId_ref: "#4"
+    stratum: B
+    tags: [subsection-7011]
+    expected_baseline: failing
+    query: "What exemptions can apply to a mobile home?"
+    rubric: >
+      PASS only if the §70.11(49) recreational-prefabricated-home exemption is
+      presented as a substantive exemption option applicable to mobile /
+      manufactured homes, integrated into the list of exemptions with its
+      citation (and ideally the 4/29/26 advisory). FAIL if §70.11(49) is merely
+      name-dropped once (e.g. only under a trailing "Default Rule" note) without
+      being carried as a cited exemption, or omitted entirely — that is exactly
+      the tester's complaint.
+    must_cite: [statutes-70]
+    must_contain: ["70\\.11\\(49\\)|recreational prefabricated"]
+    notes: >
+      #4 (mid). Agent drilled into §70.11 and even queried "section 49" but
+      get_section ran in query/ranking mode (subsection param unmentioned in the
+      prompt pre-fix), so chunk_0029 with (49) was dropped and only name-dropped
+      as plain text. Fix = prompt-nudge to use get_section subsection="49".
+      Expected RED until the nudge ships.
+
+  - queryId: 1d0b6132
+    queryId_ref: "#5"
+    stratum: B
+    tags: [subsection-7011]
+    expected_baseline: failing
+    query: "What exemptions can apply to a camping trailer?"
+    rubric: >
+      PASS only if the answer surfaces and explains the §70.11(49)
+      recreational-prefabricated-home exemption as applicable to a camping
+      trailer (ideally citing the 4/29/26 advisory). FAIL if the answer stays on
+      §70.111 / §70.11(19) and omits the §70.11(49) recreational exemption — the
+      tester's exact complaint.
+    must_cite: [statutes-70]
+    must_contain: ["70\\.11\\(49\\)|recreational prefabricated"]
+    notes: >
+      #5 (mid). Harder than #4 — the agent stayed on §70.111 and never touched
+      §70.11, so subsection-exact fetch cannot fire. Real lever is surfacing the
+      now-ingested 4/29/26 advisory (news_pages-cotvc-news-2026-04-29) via
+      broad_discovery/vector_search, and/or a prompt cross-link hint. Expected RED
+      until discovery surfacing improves.
+
+  # ── THEME: missing-citation — correct source in corpus, never fetched/cited
+  - queryId: dd7c1fd1
+    queryId_ref: "#2"
+    stratum: B
+    tags: [missing-citation, statute-page-neighbor]
+    expected_baseline: failing
+    query: "Can a municipality use a prior year assessment roll for the current year?"
+    rubric: >
+      PASS if the answer cites and applies §70.56 (the "lost roll" / prior-year
+      roll provision) as governing whether a municipality may use a prior year
+      assessment roll for the current year. FAIL if §70.56 is absent — the
+      tester's exact complaint was "Missing citation of 70.56".
+    must_cite: [statutes-70]
+    must_contain: ["70\\.56", "lost roll|prior year|new assessment"]
+    notes: >
+      #2 (mid; tester: "Missing citation of 70.56"). §70.56 "Lost roll" is the
+      sibling emergency provision to 70.71 (both retrieved) on the same PDF page
+      44, but 70.56 never entered a vector_search/get_section call. Fix = statute
+      page-neighbor sibling backfill (Task 48 family). Expected RED until then.
+
+  - queryId: 3e15e2ad
+    queryId_ref: "#3"
+    stratum: B
+    tags: [missing-citation, synthesis-guardrail, clarity]
+    expected_baseline: failing
+    query: "is the board of review required to have a foreign language interpreter?"
+    rubric: >
+      PASS if the answer explains the §70.47(8m) waiver process for the
+      foreign-language interpreter requirement (i.e. how/when the interpreter
+      requirement can be waived), not just the base requirement. FAIL if it
+      states the interpreter requirement but omits the (8m) waiver process — the
+      "additional reference that needs inclusion" the tester asked for.
+    must_cite: [statutes-70]
+    must_contain: ["70\\.47\\(8m\\)|waiver"]
+    notes: >
+      #3 (mid, tone=no). Two defects — (a) answerStream has no themed-heading
+      directive (emergent house style, not machine-checkable here); (b) cited
+      70.47(8) but omitted the (8m) waiver process the tester wanted. This guard
+      asserts the (8m)/waiver completeness half only. Expected RED until the
+      sibling-subsection coverage / prompt fix ships.
+
+  - queryId: 9e09337f
+    queryId_ref: "#12"
+    stratum: B
+    tags: [missing-citation, card-page-collision]
+    expected_baseline: failing
+    query: "What are the steps of the Board of Review process?"
+    rubric: >
+      PASS if the enumerated Board of Review process steps include the §70.85
+      appeal-to-the-Department-of-Revenue route as one of the post-BOR appeal
+      options. FAIL if the steps omit the §70.85 DOR-review appeal — the
+      tester's complaint was "Step 7 is missing the option for an appeal to DOR
+      under 70.85".
+    must_cite: [statutes-70]
+    must_contain: ["70\\.85", "appeal.{0,40}(department of revenue|dor)|dor.{0,40}appeal"]
+    notes: >
+      #12 (mid). Step 7 omitted the §70.85 DOR-review appeal route (70.85 is in
+      corpus, p53; cited by same tester's #7 that day). Also had a 70.46/70.47
+      card page-collision (both on p38) — a card-relevance-gate fix, not
+      assertable here. This guard covers the 70.85-appeal completeness half.
+      Expected RED until the BOR-appeal-checklist prompt cue / sibling backfill.
+
+  - queryId: efce8d63
+    queryId_ref: "#14"
+    stratum: B
+    tags: [missing-citation, wpam-nav]
+    expected_baseline: failing
+    query: "Are we required to have the assessor complete full value assessments each year?"
+    rubric: >
+      PASS if the answer draws on WPAM Ch.4 "The Assessment Cycle" and explains
+      the distinction between a maintenance assessment and a revaluation
+      (including what is minimally required for a maintenance assessment each
+      year). FAIL if it omits the maintenance-vs-revaluation distinction — the
+      tester's complaint was "missing information from Chapter 4 of the WPAM".
+    must_cite: [wpam-wisconsin-property-assessment-manual-2026]
+    must_contain: ["maintenance assessment|revaluation"]
+    notes: >
+      #14 (mid; tester: "Missing WPAM"). WPAM Ch.4 "The Assessment Cycle"
+      (maintenance vs revaluation) is in corpus and was cited in #2, but vector
+      search missed it here and the agent never fell back to list_sections/
+      get_section on WPAM. Task-48 WPAM-navigation fix. Expected RED until then.
+
+  # ── THEME: synthesis-guardrail — correct sources retrieved, framing failed.
+  #    These are Phase-B (answerStream) prompt-rule guards. Several defects
+  #    (heading style, ordering, over-inclusion) are only partly machine-checkable;
+  #    each guard asserts the strongest positive/negative signal available.
+  - queryId: 8322bf0d
+    queryId_ref: "#7"
+    stratum: A
+    tags: [synthesis-guardrail]
+    expected_baseline: failing
+    query: "what is the process to appeal an assessed value?"
+    rubric: >
+      PASS if, where the answer states the §74.37 excessive-assessment
+      precondition that the Board of Review objection process must be followed,
+      it ALSO states the express statutory exception — that this requirement
+      does NOT apply if notice under §70.365 was not given. FAIL if the answer
+      states the BOR-objection precondition without the §70.365 notice exception
+      (the tester's exact complaint), or omits the exception entirely.
+    must_contain: ["70\\.365", "notice"]
+    notes: >
+      #7 (mid). The §74.37 excessive-assessment precondition ("BOR objection must
+      be followed") was stated, but the express statutory EXCEPTION — "does not
+      apply if notice under s. 70.365 was not given" — was in the retrieved WPAM
+      Ch.20 chunk yet dropped in synthesis. Guard: answer must state the 70.365
+      notice exception. Fix = answerStream "state express statutory exceptions"
+      rule. Expected RED until then.
+
+  - queryId: eddb38ca
+    queryId_ref: "#8"
+    stratum: A
+    tags: [synthesis-guardrail]
+    expected_baseline: failing
+    query: "Does my 501c3 property qualify for exemption?"
+    rubric: >
+      FAIL if Form PC-220 / §70.337 appears under a heading or section framed as
+      how to apply for / claim / obtain the exemption — e.g. a "How to Apply" or
+      "Filing Requirements to claim exemption" section, or listed alongside the
+      PR-230 request form as one of the steps to get exempt — EVEN IF the
+      surrounding sentence also notes PC-220 is biennial. That placement is the
+      defect: it implies PC-220 is part of the exemption REQUEST. PC-220/§70.337
+      is a POST-exemption biennial report filed only after the property is
+      already exempt. PASS only if PC-220/§70.337 is either omitted or presented
+      OUTSIDE the apply/request/how-to-obtain flow (e.g. under an ongoing-
+      obligations or "after you are exempt" section), clearly separated from the
+      PR-230 request step.
+    must_contain: ["PR-230"]
+    must_not_contain: ["how to apply[\\s\\S]{0,200}PC-220"]
+    notes: >
+      #8 (down). PC-220/§70.337 (a POST-exemption biennial report) was listed
+      under a "How to Apply" heading, implying it is part of the exemption
+      REQUEST. Guard approximates the defect: PR-230 (the actual request form)
+      must be present, and "PC-220" must NOT appear within ~200 chars after a
+      "How to Apply" heading. Regex is best-effort (heading text may vary) — the
+      real fix is the answerStream request-vs-reporting taxonomy rule. Expected
+      RED until then; treat a must_not_contain miss here as advisory.
+
+  - queryId: b5769e67
+    queryId_ref: "#9"
+    stratum: B
+    tags: [synthesis-guardrail, citation-validity]
+    expected_baseline: failing
+    query: "How are my property taxes determined?"
+    rubric: >
+      FAIL if the answer cites Milewski v. Town of Dover (or any court case) as
+      authority for mill-rate / property-tax COMPUTATION mechanics — that case
+      concerns valuation and the right to view a property, not tax computation.
+      PASS if the mill-rate / tax-determination mechanics are attributed to the
+      DOR guidance sources (Guide for Property Owners, Assessment and Tax Roll
+      Instructions for Clerks / PA-502) rather than to case law.
+    must_cite: [gov_publications-pa502]
+    must_contain: ["mill rate"]
+    notes: >
+      #9 (mid). The mill-rate step wrongly cited Milewski v. Town of Dover
+      (case-law-377-wis-2d-38, a view/uniformity holding) as authority for
+      mill-rate MECHANICS; correct sources are the Guide for Property Owners
+      (pb060) and Assessment/Tax Roll Instructions for Clerks (pa502). The
+      grader has no must_NOT_cite, so this guard only positively asserts pa502 is
+      cited + "mill rate" present; the "don't cite case law for mechanics" half
+      is not directly assertable here — FLAG: needs a must_not_cite capability or
+      the answerStream case-law-usage guard. Expected RED until fix.
+
+  - queryId: 86d4bea3
+    queryId_ref: "#10"
+    stratum: A
+    tags: [synthesis-guardrail, clarity]
+    expected_baseline: failing
+    query: "Does my land qualify as agricultural?"
+    rubric: >
+      FAIL if the answer introduces the agricultural-qualification analysis as a
+      "two-part test" (or otherwise promises a specific number of parts/tests)
+      but then enumerates a DIFFERENT number of parts — e.g. opens with
+      "two-part test" and then presents "Part 1 … Part 7". PASS if the announced
+      number of parts/steps is internally consistent with the enumeration that
+      follows (no numbering mismatch). Judge only the numbering consistency, not
+      the substantive correctness of the agricultural test.
+    must_not_contain: ["two-part test[\\s\\S]{0,600}### Part 7|two-part test[\\s\\S]{0,600}Part 7"]
+    notes: >
+      #10 (mid). Opener promised a "two-part test" then rendered "Part 1 … Part
+      7" — a numbering-consistency defect. Guard: the answer must NOT say
+      "two-part test" and then present a "Part 7". Best-effort regex; the durable
+      fix is the answerStream numbering-consistency guard. Expected RED until fix.
+
+  - queryId: a4a0575e
+    queryId_ref: "#16"
+    stratum: B
+    tags: [synthesis-guardrail]
+    expected_baseline: failing
+    query: "How can the clerk correct an assessment roll error after the Board of Review has adjourned for the year?"
+    rubric: >
+      The question is about the CLERK correcting the CURRENT-year roll after BOR
+      adjournment. §70.43 is an ASSESSOR-initiated correction of the PRECEDING
+      (prior) year's error — wrong actor AND wrong year for this question. FAIL
+      if the answer offers §70.43 as one of the available / enumerated correction
+      mechanisms responsive to this question (e.g. as a numbered "mechanism" or
+      option), regardless of the order it appears in, because that mis-scopes the
+      answer to assessor prior-year processes the tester did not ask about. PASS
+      only if the answer confines its responsive mechanisms to the clerk's
+      current-year authority (§70.73(1m), §70.52) and either omits §70.43 or
+      explicitly flags it as NOT applicable to the clerk's current-year
+      correction rather than presenting it as an option.
+    must_cite: [statutes-70]
+    must_contain: ["70\\.73\\(1m\\)"]
+    notes: >
+      #16 (down). Right clerk/current-year statutes (70.73(1m), 70.52) WERE
+      retrieved but buried under the §70.43 assessor/PRIOR-year mechanism + a
+      heavy chargeback walkthrough (wrong actor + wrong year). Guard asserts the
+      responsive 70.73(1m) is present; de-emphasis of 70.43 is not machine-
+      checkable. Fix = answerStream scope-to-actor/timeframe rule. Expected RED
+      until then (answer may already mention 70.73(1m), so this guard is a
+      weak positive — see notes; the framing defect needs human/LLM-judge).
+
+  - queryId: 858ff06f
+    queryId_ref: "#17"
+    stratum: A
+    tags: [synthesis-guardrail, clarity]
+    expected_baseline: passing
+    query: "If a waste treatment plant is not required to be permitted as a hazardous waste facility, do they still meet the requirements to be classified as a manufacturing facility according to the Wisconsin Statutes?"
+    rubric: >
+      PASS if the substance is correct: the answer addresses whether a
+      non-hazardous waste treatment plant meets manufacturing-classification
+      requirements, grounded in §70.995 (and the §291.01 hazardous-waste
+      definition and/or §70.11(21)). FAIL only if the substantive answer is
+      wrong or absent. Do NOT fail on framing/ordering (the tester rated
+      accuracy=yes; the only defect was that the direct answer was buried).
+    must_contain: ["70\\.995", "291\\.01|hazardous waste"]
+    notes: >
+      #17 (mid; relevance=no, accuracy=yes). Substance was CORRECT (70.995(2)(z),
+      291.01(22) definition, 70.11(21)); only the framing under-served the
+      conditional (direct answer buried at the end). This guard pins the correct
+      substance so a framing-only prompt fix does not regress the retrieval.
+      Expected GREEN today — retrieval/substance is fine; the fix is presentational.
+
+  - queryId: 7608801c
+    queryId_ref: "#20"
+    stratum: A
+    tags: [synthesis-guardrail]
+    expected_baseline: failing
+    query: "How do I amend my Statement of Assessment?"
+    rubric: >
+      When explaining what to do after amending the SOA, PASS if the answer uses
+      the clear approved SOA-FAQ phrasing that treats the two inputs distinctly —
+      i.e. when compiling tax bills, use the aggregate ratio found on the Final
+      SOA AND the updated values from the amended SOA. FAIL if it collapses them
+      into an ambiguous paraphrase such as using the aggregate ratio "combined
+      with" the updated values (the tester's exact complaint that "combined"
+      leaves new officials unsure what to do).
+    must_contain: ["aggregate ratio"]
+    must_not_contain: ["combined with"]
+    notes: >
+      #20 (mid). Model paraphrased the clear SOA-FAQ language ("...aggregate
+      ratio found on the Final SOA AND the updated values...") into the ambiguous
+      "combined with". Guard: keep "aggregate ratio", forbid "combined with".
+      Fix = answerStream "prefer approved source phrasing for procedures" rule.
+      Expected RED until then.
+
+  # ── THEME: citation-validity — link/URL correctness (runs through the loop).
+  - queryId: 505d93d0
+    queryId_ref: "#13"
+    stratum: A
+    tags: [citation-validity]
+    expected_baseline: failing
+    query: "We need to hire an assessor, how do we start the process?"
+    rubric: >
+      FAIL if any §61.19 (villages) reference or link in the answer resolves to
+      the wrong chapter — e.g. a §61.19 label whose link/target points at ch. 62
+      / §62.09 (the cities statute), a chapter-conflated citation. PASS if
+      villages §61.19 is cited/linked to the villages chapter (statutes-61)
+      correctly, or §61.19 is not referenced at all.
+    must_not_contain: ["\\[§\\s*61\\.19[^\\]]*\\]\\(doc:statutes-62"]
+    notes: >
+      #13 (mid; tester: "citation for 61.19 went to 62.09"). Phase-B chapter
+      conflation — the villages §61.19 link reused the cities' doc:statutes-62
+      token. Guard: the answer must NOT render a §61.19 label pointing at
+      doc:statutes-62. Fix = Phase-B citation-repair pass (assert label chapter
+      == doc chapter) and/or answerStream rule. Expected RED until then.
+
+  - queryId: 2a4a9aed
+    queryId_ref: "#25"
+    stratum: A
+    tags: [citation-validity, fabricated-url]
+    expected_baseline: failing
+    query: "who is the assessor for Town of Otsego in columbia county wi"
+    rubric: >
+      This is an out-of-corpus directory lookup. FAIL if the answer emits a
+      fabricated or unverified deep DOR URL for the assessor listing — in
+      particular any revenue.wi.gov/.../assessors.aspx path (which 404s). PASS if
+      the answer acknowledges it cannot identify the specific assessor and does
+      NOT invent a nonexistent deep URL (the legitimate destination is the
+      assrlist.pdf directory).
+    must_not_contain: ["assessors\\.aspx"]
+    notes: >
+      #25 (down; "The page does not exist"). Assessor-directory lookup is
+      out-of-corpus (empty resources) — the model acknowledged the gap then
+      IMPROVISED a fabricated deep URL revenue.wi.gov/Pages/SLF/assessors.aspx
+      (404). Guard: answer must NOT contain that path. DOR's correct destination
+      is assrlist.pdf. Fix = answerStream "never emit unretrieved deep URLs" rule
+      + curated redirect map. Expected RED until then. (No must_cite — this query
+      correctly cites nothing.)
+
+  # ── THEME: oos-content-half — false-refusal rows, CONTENT half only.
+  #    The behavioral "must not refuse" half is a CLASSIFIER guard (see bottom of
+  #    file); the harness bypasses the classifier, so here we only verify that IF
+  #    the query proceeds, retrieval finds the right in-scope material. Per DOR
+  #    (dor_docs_guidance.md) all four are genuinely in scope.
+  - queryId: 59573b84
+    queryId_ref: "#22"
+    stratum: B
+    tags: [oos-content-half]
+    expected_baseline: passing
+    query: "how do you measure depreciation"
+    rubric: >
+      PASS if the answer substantively explains how depreciation is measured
+      within the cost approach to value (WPAM), treating it as an in-scope
+      valuation-process question. FAIL if it refuses / declares the question
+      out of scope, or fails to explain depreciation measurement. (DOR: valuation
+      processes are in scope.)
+    must_cite: [wpam-wisconsin-property-assessment-manual-2026]
+    must_contain: ["depreciation", "cost approach|cost-approach"]
+    notes: >
+      #22 (down; false OOS). Depreciation is core to the cost approach to value
+      (WPAM). DOR: "add valuation processes to scope." This CONTENT guard checks
+      the loop, when forced to run, cites WPAM cost-approach/depreciation. If it
+      passes today, the ONLY defect is the classifier refusal (classifier guard).
+
+  - queryId: 35257ac5
+    queryId_ref: "#23"
+    stratum: B
+    tags: [oos-content-half]
+    expected_baseline: passing
+    query: "pull statute and WPAM references relating to getting actual view of properties specifically for new developments"
+    rubric: >
+      PASS if the answer surfaces statute and WPAM material on the assessor's
+      right/duty to physically view (actual view of) property — e.g. §70.05
+      and/or §70.32, WPAM view guidance, in the new-construction / new-development
+      context. FAIL if it refuses / treats the request as off-topic, or fails to
+      provide view-related statutory or WPAM content. (DOR confirms in scope.)
+    must_cite: [statutes-70, wpam-wisconsin-property-assessment-manual-2026]
+    must_contain: ["view", "70\\.05|70\\.32|new construction|new development"]
+    notes: >
+      #23 (down; false OOS). Assessor's right/duty to physically view a property
+      (70.05/70.32; WPAM; case law). DOR confirms a rephrase gives a good answer.
+      Content guard verifies retrieval surfaces statute + WPAM view material.
+
+  - queryId: 95a9b7af
+    queryId_ref: "#24"
+    stratum: B
+    tags: [oos-content-half]
+    expected_baseline: passing
+    query: "When filing a Trustee's Deed from a trust to a married couple who are the trustees, is there a transfer fee exemption?"
+    rubric: >
+      PASS if the answer identifies that a transfer-fee exemption under ch. 77 /
+      §77.25 applies to the described trust/trustee conveyance (DOR: exemption 9,
+      §77.25(9)) rather than refusing. FAIL if it refuses / declares the question
+      out of scope, or fails to surface the ch. 77 §77.25 transfer-fee exemption.
+    must_cite: [statutes-77]
+    must_contain: ["77\\.25", "exempt"]
+    notes: >
+      #24 (down; false OOS). DOR-authoritative: IN SCOPE — ch.77 + RETR common
+      questions were loaded; the answer is a transfer-fee exemption under
+      §77.25(9) (trust/trustee conveyance). Content guard verifies ch.77 + a
+      77.25 exemption surface. NOT a content gap — the refusal is the bug.
+
+  - queryId: be4a7333
+    queryId_ref: "#26"
+    stratum: B
+    tags: [oos-content-half, capability-image]
+    expected_baseline: passing
+    query: "can you give me pictures examples of cape cod with the various grades"
+    rubric: >
+      PASS if the answer provides the WPAM residential building grade /
+      quality-class information (the grade scale and what the grades mean), which
+      is in scope, even though it cannot display images. FAIL if it refuses /
+      treats the whole request as out of scope and fails to surface any WPAM
+      grade material. (Not judged: whether it also states it cannot show images.)
+    must_cite: [wpam-wisconsin-property-assessment-manual-2026]
+    must_contain: ["grade|quality class"]
+    notes: >
+      #26 (mid; false OOS + no image capability). Residential building grades ARE
+      in scope (WPAM). DOR wants the tester's use-case before building image
+      support. Content guard verifies WPAM grade material surfaces. The "state I
+      cannot show images, here is the grade scale" capability reply is an
+      answerStream/synthesis guard, not assertable here.
+
+  # ── THEME: interpretation — domain-term ambiguity
+  - queryId: 3a7240d7
+    queryId_ref: "#27"
+    stratum: A
+    tags: [interpretation, disambiguation]
+    expected_baseline: failing
+    query: "pull all references to properties split between 2 municipalities"
+    rubric: >
+      The user's "split" means one parcel straddling / located in two
+      municipalities at the same time, not subdividing one parcel into many.
+      PASS if the answer addresses that straddle sense — a single property lying
+      in two municipalities and how it is assessed where it lies (e.g. §70.12) —
+      even if it also notes the ambiguity. FAIL if the answer only / primarily
+      treats "split" as parcel subdivision (one parcel divided into multiple)
+      and never addresses the single-parcel-in-two-municipalities case (the
+      tester's complaint).
+    must_contain: ["70\\.12", "lies|located in the (municipality|district)|straddl"]
+    notes: >
+      #27 (mid). "split" is ambiguous — parcel subdivision (one→many parcels) vs
+      one parcel straddling two municipalities (user's meaning). Agent found the
+      right concept (70.12, 70.08, WPAM Ch.7) but framed around subdivision.
+      Guard asserts the straddle-sense content (70.12 "assessed where it lies")
+      is present. Fix = prompt guidance to state the interpretation used.
+      Expected RED-ish until the interpretation prompt hint ships. NOTE: also a
+      DISAMBIGUATE candidate for the classifier harness (domain-term ambiguity).
+
+  # ── THEME: source-currency — model was faithful; possible stale corpus (no code fix)
+  - queryId: 31c3ef37
+    queryId_ref: "#11"
+    stratum: B
+    tags: [source-currency, no-action, blocked-on-dor-content]
+    expected_baseline: passing
+    query: "How do i appeal the classification of my land?"
+    rubric: >
+      PASS if the answer faithfully describes the land-classification appeal
+      process as stated in the ingested DOR sources (including the manufacturing
+      classification objection path, e.g. PA-130), citing those sources. FAIL
+      only if it misrepresents what its cited source says. Note: an SME believes
+      the underlying manufacturing guide is STALE (paper-only filing), but that
+      is a corpus-currency issue, not a grading failure — do not fail a faithful
+      reading of the ingested source.
+    must_cite: [statutes-70]
+    must_contain: ["PA-130|manufacturing classification"]
+    notes: >
+      #11 (mid). Model FAITHFULLY reported the manufacturing guide ("PA-130
+      classification objections can only be filed by paper"). Tester (SME) says
+      that is wrong — likely a STALE guide vs current MTA practice, NOT a model
+      error. No prompt fix; needs SME confirm + possible reingest. This guard is
+      a "do not regress the faithful reading" anchor; expected GREEN.
+
+  # ── THEME: ingestion-gap — authoritative source exists live but not in corpus.
+  - queryId: 0b2411cd
+    queryId_ref: "#15"
+    stratum: B
+    tags: [ingestion-gap]
+    expected_baseline: failing-until-ingest
+    query: "Is native American property taxable or exempt?"
+    rubric: >
+      PASS if the answer relies on / cites the DOR publication "Native American
+      Property Taxation — Treaty of 1854" (napt-treaty-update) when addressing
+      the taxability of Native American property. FAIL if that on-point treaty
+      publication is absent from the answer's sources (expected to FAIL until the
+      pub is added to the manifest and reingested).
+    must_cite: [gov_publications-napt-treaty-update]
+    must_contain: ["1854|treaty"]
+    notes: >
+      #15 (mid). The on-point pub napt-treaty-update.pdf ("Native American
+      Property Taxation — Treaty of 1854") is ABSENT from document_manifest.yaml,
+      so it was never chunked/cited. must_cite uses the doc_id it WILL get once
+      added under gov_publications. Expected RED until manifest add + reingest.
+
+  - queryId: a49f4608
+    queryId_ref: "#19"
+    stratum: B
+    tags: [ingestion-gap]
+    expected_baseline: failing-until-ingest
+    query: "Please describe the contract requirements for the Innovation Grant"
+    rubric: >
+      PASS if the answer draws on the Innovation Grant common-questions FAQ
+      (slf-ig) — which enumerates the full set of ~9 contract requirements —
+      rather than deriving only a partial list (~5) from statute (§79.038)
+      alone. FAIL if the answer relies solely on statute and does not surface the
+      Innovation Grant FAQ source (expected to FAIL until that FAQ is ingested /
+      KB-synced). Exact requirement count is not required; the FAQ source is the
+      signal.
+    must_cite: [faq_pages-slf-ig]
+    must_contain: ["contract"]
+    notes: >
+      #19 (mid). Bot gave 5 statute-derived requirements (§79.038); DOR's
+      Innovation Grant common-questions FAQ (slf-ig.aspx) enumerates ~9. That FAQ
+      page is in NEITHER the FAQ KB nor the manifest faq_pages. must_cite the
+      doc_id it will get once ingested. Expected RED until FAQ ingest + KB sync.
+      (Exact requirement COUNT is not asserted — fuzzy 5-vs-9; presence of the
+      FAQ source is the real signal.)
+
+  # ── THEME: truncation — CONTENT half only (delivery bug is unit-test territory)
+  - queryId: 6d10e4ad
+    queryId_ref: "#29"
+    stratum: B
+    tags: [truncation-content]
+    expected_baseline: passing
+    query: "Where there is a change or amendment to Articles of Incorporation, does the company need to complete a real estate transfer return?"
+    rubric: >
+      PASS if the answer substantively and completely addresses whether an
+      amendment to Articles of Incorporation requires a real estate transfer
+      return, grounded in ch. 77 / §77.25 transfer-return rules, and reads as a
+      complete (non-truncated) response. FAIL if it does not address the
+      transfer-return question or is visibly cut off mid-thought. (The original
+      truncation was a WebSocket delivery bug, not a generation failure.)
+    must_cite: [statutes-77]
+    must_contain: ["transfer return|77\\.25"]
+    notes: >
+      #29 (down; "response was cut off"). The stored answer was COMPLETE (2809
+      chars, 712 tokens << 4096 cap) — the truncation was a SILENT WebSocket
+      delivery-failure swallow in loop/phase_b.py, NOT generation. That belongs
+      in a phase_b unit test (log the drop + delivered_fully flag + retry +
+      frontend reconcile), NOT this harness. This guard only pins the CONTENT
+      (transfer-return / ch.77) so the answer stays correct. Same in-scope topic
+      as the 8/28 email park-model/articles-of-incorporation false refusals.
+
+  # ── THEME: load-verification — DOR email: tester saw chapter "fails"; DOR says
+  #    loaded. Assert each chapter is retrievable. Expected GREEN if truly loaded.
+  - queryId: verify-ch33
+    queryId_ref: "email-ch33"
+    stratum: B
+    tags: [load-verification]
+    expected_baseline: passing
+    query: "What is a public inland lake protection and rehabilitation district and how is it funded?"
+    rubric: >
+      PASS if the answer explains what a public inland lake protection and
+      rehabilitation district is and how it is funded, drawing on ch. 33
+      material (confirming ch. 33 is loaded and retrievable). FAIL if it cannot
+      answer or no ch. 33 lake-district content surfaces.
+    must_cite: [statutes-33]
+    must_contain: ["lake|inland"]
+    notes: >
+      DOR email flagged ch.33 (lake districts) as a tester "fail"; ch.33 IS in
+      the manifest. Guard confirms statutes-33 is loaded + retrievable.
+
+  - queryId: verify-ch60
+    queryId_ref: "email-ch60"
+    stratum: B
+    tags: [load-verification]
+    expected_baseline: passing
+    query: "What powers does a town sanitary district have under Wisconsin law?"
+    rubric: >
+      PASS if the answer describes the powers of a town sanitary district under
+      ch. 60, confirming ch. 60 is loaded and retrievable. FAIL if it cannot
+      answer or no ch. 60 town / sanitary-district content surfaces.
+    must_cite: [statutes-60]
+    must_contain: ["sanitary|town"]
+    notes: >
+      DOR email flagged ch.60 (town / town sanitary districts) as a "fail"; ch.60
+      IS in the manifest. Guard confirms statutes-60 is loaded + retrievable.
+
+  - queryId: verify-ch200
+    queryId_ref: "email-ch200"
+    stratum: B
+    tags: [load-verification]
+    expected_baseline: passing
+    query: "What is a metropolitan sewerage district under chapter 200?"
+    rubric: >
+      PASS if the answer describes what a metropolitan sewerage district is under
+      ch. 200, confirming ch. 200 is loaded and retrievable. FAIL if it cannot
+      answer or no ch. 200 metropolitan sewerage-district content surfaces.
+    must_cite: [statutes-200]
+    must_contain: ["metropolitan|sewerage"]
+    notes: >
+      DOR email flagged ch.200 (metropolitan) as a "fail"; ch.200 IS in the
+      manifest. Guard confirms statutes-200 is loaded + retrievable.
+
+  - queryId: verify-pa105
+    queryId_ref: "email-pa105"
+    stratum: A
+    tags: [load-verification]
+    expected_baseline: passing
+    query: "What is form PA-105 used for?"
+    rubric: >
+      PASS if the answer identifies form PA-105 and explains what it is used for
+      (confirming PA-105 is retrievable). FAIL if it cannot identify PA-105 or
+      states it is unable to find the form.
+    must_contain: ["PA-105"]
+    notes: >
+      DOR email: PA-105 was "unable to find" then FIXED on retry. Guard confirms
+      PA-105 stays retrievable. (No must_cite — form doc_id convention not pinned
+      here; presence in the answer is the signal.)
+
+  # ── THEME: known-good — DOR email positives. Regression anchors; must stay GREEN
+  #    so scope/synthesis fixes don't break confirmed-correct answers.
+  - queryId: good-palpable-74-33
+    queryId_ref: "email-positive"
+    stratum: B
+    tags: [known-good]
+    expected_baseline: passing
+    query: "What palpable errors can be corrected under section 74.33?"
+    rubric: >
+      PASS if the answer identifies §74.33(1) as the governing provision and
+      enumerates the palpable-error grounds it lists — DOR's confirmed-correct
+      answer lists the six enumerated categories (e.g. clerical errors, double
+      assessment, arithmetic/extension errors, taxing of exempt property, etc.).
+      FAIL if it misstates the governing section or fails to enumerate the
+      statutory palpable-error categories under §74.33(1).
+    must_cite: [statutes-74]
+    must_contain: ["74\\.33", "palpable"]
+    notes: >
+      DOR-confirmed CORRECT answer (palpable errors, §74.33(1), 6 enumerated
+      items). Regression anchor — must not break. (Exact 6-item enumeration not
+      asserted, only the governing section + concept.)
+
+  - queryId: good-three-factor
+    queryId_ref: "email-positive"
+    stratum: A
+    tags: [known-good]
+    expected_baseline: passing
+    query: "What is the three-factor test for classifying manufacturing property?"
+    rubric: >
+      PASS if the answer describes the three-factor test for classifying
+      manufacturing property (grounded in the A.O. Smith case). FAIL if it
+      misstates the test or does not present a three-factor manufacturing
+      classification analysis. (DOR-confirmed correct answer — regression anchor.)
+    must_contain: ["three.factor|A\\.?\\s?O\\.?\\s?Smith"]
+    notes: >
+      DOR-confirmed CORRECT answer (three-factor test, A.O. Smith). Regression
+      anchor. Regex tolerates "three-factor"/"three factor"/"A.O. Smith"/"AO
+      Smith".
+
+  - queryId: good-solar-70-111-18
+    queryId_ref: "email-positive"
+    stratum: B
+    tags: [known-good]
+    expected_baseline: passing
+    query: "Is solar energy equipment exempt from property tax in Wisconsin?"
+    rubric: >
+      PASS if the answer correctly states that solar energy equipment is exempt
+      from property tax under §70.111(18). FAIL if it misstates the exemption or
+      cites the wrong section. (DOR-confirmed correct answer — regression anchor.)
+    must_cite: [statutes-70]
+    must_contain: ["70\\.111\\(18\\)|solar"]
+    notes: >
+      DOR-confirmed CORRECT answer (solar exemption, §70.111(18)). Regression
+      anchor — must not break.
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLASSIFIER-HARNESS BACKLOG  (NOT runnable by this graph harness)
+#  These are pre-loop query-classifier decisions (classify_query in handler.py),
+#  which run_agentic_loop() never invokes — so they CANNOT be graded here. They
+#  belong in a sibling live-classifier harness (Task 51 pattern: pull the live
+#  disambiguationClassifier prompt from the ModelConfig DynamoDB table, `converse`
+#  each labelled query with Haiku temp 0.0, bucket by verdict). test_disambiguation.py
+#  exists but is unit-level (mocked Bedrock); the live labelled harness is NOT yet
+#  built. Recommended home: tools/ingestion/tests/classifier_regression_queries.yaml
+#  + a runner mirroring this one but calling classify_query. Guards to add there:
+#
+#    queryId  row   expected_verdict   note
+#    -------  ----  ----------------   -------------------------------------------
+#    861d4587 #6    DISAMBIGUATE       mid-session generic "my assessment" w/ 3-turn
+#                                      history that never named a property type
+#                                      (regression fixed by PR#24; needs live confirm)
+#    59573b84 #22   PROCEED            "how do you measure depreciation" (in-scope)
+#    35257ac5 #23   PROCEED            "actual view … new developments" (in-scope)
+#    95a9b7af #24   PROCEED            Trustee's Deed transfer-fee exemption (ch.77)
+#    be4a7333 #26   PROCEED            "cape cod … grades" (residential grade, in-scope)
+#    175b5e5b #28   OUT_OF_SCOPE       "value in two counties" — DOR Decision 3: a
+#                                      single parcel can't have value in two counties;
+#                                      genuinely unclear → SHOULD stay refused, but
+#                                      with the REVISED rephrase message (not the old
+#                                      dead-end). Assert verdict==OUT_OF_SCOPE AND the
+#                                      new message wording.
+#    3a7240d7 #27   PROCEED/DISAMBIG   domain-term ambiguity ("split") — candidate for
+#                                      an extended DISAMBIGUATE-on-domain-term path.
+#    email    --    PROCEED            "square footage of a Park model" (8/21, in-scope)
+#    email    --    PROCEED            "amendment to Articles of Incorporation …
+#                                      transfer return" (8/28, in-scope; = #29 topic)
+#
+#  Also assert the REVISED out-of-scope message text (dor_docs_guidance.md verbatim:
+#  "…please revise and clarify your question.") once the OOS-message rewrite ships —
+#  that guard also lives in the classifier harness (the message is returned by the
+#  handler on an OUT_OF_SCOPE verdict, upstream of the loop).
+#
+#  DEFERRED (no guard): #21 chargeback publishing page — DOR Decision 4 tabled it
+#  (VaultPublic dynamic portal, per-report URLs change; needs a separate update
+#  cycle). Not ingestible now; revisit if a curated resource-link map is built.
+# ══════════════════════════════════════════════════════════════════════════════

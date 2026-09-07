@@ -5,8 +5,15 @@ through the real agentic retrieval path (Phase A research loop + a
 non-streaming Phase B answer generation), then grades each answer on:
 
   1. Cited-doc overlap — must_cite doc_ids present in cited_doc_ids (primary gate).
-  2. Key-fact presence — must_contain regexes matched in the answer text.
+  2. Rubric judge — an LLM judge (Sonnet, temp 0) grades the full answer text
+     against the case's SME-authored `rubric`, a concrete PASS/FAIL criterion.
+     This replaces the old fragile must_contain / must_not_contain prose regexes
+     (which are still computed for provenance but no longer gate).
   3. No hallucinated case citations — every cited `case-law-*` id exists in the graph.
+
+The judge is grounded: it grades ONLY against the supplied rubric and must not
+substitute its own knowledge of Wisconsin law — so verdicts track the SME
+feedback, not the model's guesses.
 
 Originally built to guard the removal of the LLM semantic-edge load phase, but
 reusable as a general graph-regression gate.
@@ -74,14 +81,66 @@ def load_queries() -> list[dict]:
     return data.get("queries", [])
 
 
-def run_one_query(entry: dict) -> dict:
-    """Run a single query through Phase A + a non-streaming Phase B answer gen."""
+def _load_answerstream_from_toml(path: str) -> str:
+    """Load the answerStream prompt from a local model_configs.toml.
+
+    Used by the --candidate-answerstream override so Phase B can be re-run with
+    the LOCAL (edited, not-yet-deployed) prompt while everything else — model,
+    temperature, retrieved context — stays identical to production.
+    """
+    import tomllib
+
+    with open(path, "rb") as f:
+        cfg = tomllib.load(f)
+    return cfg["answerStream"]["prompt"]
+
+
+def _phase_b_generate(
+    query: str, answer_context: str, fallback_answer: str, answerstream_prompt: str
+) -> str:
+    """Non-streaming Phase-B answer generation from a prebuilt context.
+
+    Isolated so it can be re-run alone (--phase-b-only) on a saved answer_context
+    without re-billing Phase A. The answerStream system prompt is a parameter so a
+    candidate prompt can be swapped in with model/temp held identical.
+    """
+    from loop.phase_b import apply_persona
+
+    from config import AGENTIC_MODEL_ID, bedrock
+
+    if fallback_answer:
+        return fallback_answer
+    if not answer_context:
+        return ""
+    try:
+        resp = bedrock.converse(
+            modelId=AGENTIC_MODEL_ID,
+            messages=[{"role": "user", "content": [{"text": answer_context}]}],
+            system=[{"text": apply_persona(answerstream_prompt, None)}],
+            inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+        )
+        return resp["output"]["message"]["content"][0].get("text", "")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"  answer generation failed: {exc}")
+        return ""
+
+
+def run_one_query(entry: dict, answerstream_prompt: str | None = None) -> dict:
+    """Run a single query through Phase A + a non-streaming Phase B answer gen.
+
+    If answerstream_prompt is given (candidate override), Phase B uses it instead
+    of the live/DynamoDB answerStream prompt. The prebuilt answer_context is stored
+    on the run so a later --phase-b-only pass can re-generate the answer cheaply.
+    """
     # Imported lazily so --compare-only works without AWS/Neptune configured.
     from loop.phase_a import run_agentic_loop
-    from loop.phase_b import apply_persona, build_answer_context
+    from loop.phase_b import build_answer_context
     from prompt import ANSWER_STREAM_SYSTEM_PROMPT
 
-    from config import AGENTIC_MODEL_ID, bedrock, neptune
+    from config import neptune
+
+    if answerstream_prompt is None:
+        answerstream_prompt = ANSWER_STREAM_SYSTEM_PROMPT
 
     query = entry["query"]
     started = time.perf_counter()
@@ -91,9 +150,10 @@ def run_one_query(entry: dict) -> dict:
 
     cited_doc_ids = list(result.cited_doc_ids)
 
-    # Phase B: build context and generate the answer text non-streaming.
-    answer_text = result.fallback_answer or ""
-    if not answer_text:
+    # Phase B: build context (independent of answerStream) then generate the
+    # answer text non-streaming with the (possibly candidate) answerStream prompt.
+    answer_context = ""
+    if not result.fallback_answer:
         answer_context = build_answer_context(
             query=query,
             cited_chunks=result.all_chunks,
@@ -104,17 +164,9 @@ def run_one_query(entry: dict) -> dict:
             chat_history=[],
             neptune_client=neptune,
         )
-        try:
-            resp = bedrock.converse(
-                modelId=AGENTIC_MODEL_ID,
-                messages=[{"role": "user", "content": [{"text": answer_context}]}],
-                system=[{"text": apply_persona(ANSWER_STREAM_SYSTEM_PROMPT, None)}],
-                inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
-            )
-            answer_text = resp["output"]["message"]["content"][0].get("text", "")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"  answer generation failed for {entry.get('queryId')}: {exc}")
-            answer_text = ""
+    answer_text = _phase_b_generate(
+        query, answer_context, result.fallback_answer or "", answerstream_prompt
+    )
 
     # Per-cited-doc discovery attribution: which retrieval path surfaced each
     # cited doc. This is what makes the baseline↔after comparison exact —
@@ -137,9 +189,110 @@ def run_one_query(entry: dict) -> dict:
         "discovery_counts": discovery_counts,
         "discovered_doc_count": len(result.discovery),
         "answer": answer_text,
+        # Stored so --phase-b-only can re-generate the answer with a candidate
+        # answerStream prompt without re-running Phase A (context is unchanged by
+        # answerStream). fallback_answer, when set, means Phase B was bypassed.
+        "answer_context": answer_context,
+        "fallback_answer": result.fallback_answer or "",
         "turns": len(result.trace_log),
         "latency_ms": round((time.perf_counter() - started) * 1000),
     }
+
+
+# ── LLM judge ────────────────────────────────────────────────────────────────
+# Replaces the fragile must_contain / must_not_contain prose regexes with a
+# Sonnet judge that grades each answer against the case's `rubric` — a concrete
+# PASS/FAIL criterion authored from the tester's verbatim complaint (or DOR's
+# confirmed-correct verdict for known-good anchors). The deterministic checks
+# (must_cite doc-id overlap, no-hallucinated-case-law) stay as-is; only the
+# prose checks move to the judge.
+JUDGE_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
+
+# CRITICAL grounding rule: the judge grades ONLY against the supplied rubric and
+# must NOT substitute its own knowledge of Wisconsin law. This keeps every
+# verdict anchored to the SME feedback, not the model's guesses.
+JUDGE_SYSTEM_PROMPT = """You are a strict grader for a Wisconsin Department of Revenue property-tax Q&A assistant.
+
+You are given ONE question, ONE answer produced by the assistant, and ONE rubric
+written by a subject-matter expert (SME). The rubric encodes either the SME's
+own complaint about a past answer or the confirmed-correct behavior for a
+known-good question.
+
+GROUNDING RULE (critical):
+- Grade the answer ONLY against the provided rubric.
+- Do NOT use your own knowledge of Wisconsin statutes, forms, or property-tax
+  procedure to decide whether the answer is "really" correct. The rubric is the
+  sole authority. If you believe the rubric is wrong, grade against it anyway.
+- If the rubric's stated PASS condition is satisfied by the answer, return PASS.
+- If the rubric's stated FAIL condition is met (or the PASS condition is not
+  satisfied), return FAIL.
+- The list of cited document IDs is provided as supporting context for
+  conditions that mention citations; the answer prose is the primary evidence.
+
+Record your decision by calling the `record_verdict` tool exactly once."""
+
+JUDGE_TOOL = {
+    "toolSpec": {
+        "name": "record_verdict",
+        "description": "Record the PASS/FAIL verdict of the answer against the rubric.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["PASS", "FAIL"],
+                        "description": "PASS if the rubric's PASS condition is met; FAIL otherwise.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "One sentence naming the specific rubric condition met or violated.",
+                    },
+                },
+                "required": ["verdict", "reason"],
+            }
+        },
+    }
+}
+
+
+def judge_answer(query: str, answer: str, rubric: str, cited_doc_ids: list[str]) -> dict:
+    """Grade one answer against its rubric with the Sonnet judge (temp 0).
+
+    Returns {"verdict": "PASS"|"FAIL", "reason": str}. On any Bedrock/parse
+    failure returns verdict "ERROR" with the exception text so a flaky judge
+    call never masquerades as a PASS.
+    """
+    from config import bedrock  # lazy — keeps --compare-only import-free
+
+    user_msg = (
+        f"QUESTION:\n{query}\n\n"
+        f"RUBRIC (grade ONLY against this):\n{rubric}\n\n"
+        f"CITED DOCUMENT IDS:\n{cited_doc_ids or '(none)'}\n\n"
+        f"ANSWER TO GRADE:\n{answer or '(empty answer)'}"
+    )
+    try:
+        resp = bedrock.converse(
+            modelId=JUDGE_MODEL_ID,
+            messages=[{"role": "user", "content": [{"text": user_msg}]}],
+            system=[{"text": JUDGE_SYSTEM_PROMPT}],
+            inferenceConfig={"maxTokens": 512, "temperature": 0.0},
+            toolConfig={
+                "tools": [JUDGE_TOOL],
+                "toolChoice": {"tool": {"name": "record_verdict"}},
+            },
+        )
+        for block in resp["output"]["message"]["content"]:
+            if "toolUse" in block:
+                inp = block["toolUse"]["input"]
+                verdict = str(inp.get("verdict", "")).upper()
+                if verdict not in ("PASS", "FAIL"):
+                    verdict = "ERROR"
+                return {"verdict": verdict, "reason": inp.get("reason", "")}
+        return {"verdict": "ERROR", "reason": "no tool_use block in judge response"}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"  judge call failed: {exc}")
+        return {"verdict": "ERROR", "reason": f"judge exception: {exc}"}
 
 
 def _cited_case_ids(cited_doc_ids: list[str]) -> list[str]:
@@ -162,8 +315,21 @@ def verify_case_ids_exist(case_ids: list[str]) -> dict[str, bool]:
     return existence
 
 
-def grade(entry: dict, run: dict, case_existence: dict[str, bool]) -> dict:
-    """Grade one run against its golden-set expectations."""
+def grade(
+    entry: dict, run: dict, case_existence: dict[str, bool], run_judge: bool = True
+) -> dict:
+    """Grade one run against its golden-set expectations.
+
+    Gating checks (determine overall pass):
+      - must_cite  — doc_ids present in cited_doc_ids (deterministic, free).
+      - rubric     — LLM judge PASS against the SME-authored rubric (if present).
+      - no-hallucination — every cited case-law node exists in the graph.
+
+    The legacy must_contain / must_not_contain regexes are STILL computed and
+    stored (fact_hits / notcontain_hits) for provenance and for the historical
+    baseline↔after comparison, but they NO LONGER GATE — the rubric+judge
+    replaces them. Overall pass = cite_pass AND judge_pass AND no_hallucination.
+    """
     cited = set(run["cited_doc_ids"])
     answer = run["answer"] or ""
 
@@ -171,25 +337,55 @@ def grade(entry: dict, run: dict, case_existence: dict[str, bool]) -> dict:
     cite_hits = {doc_id: (doc_id in cited) for doc_id in must_cite}
     cite_pass = all(cite_hits.values())
 
+    # --- Legacy prose regexes: retained as advisory/provenance only (non-gating).
     must_contain = entry.get("must_contain", []) or []
     fact_hits = {
         pat: bool(re.search(pat, answer, re.IGNORECASE)) for pat in must_contain
     }
     fact_pass = all(fact_hits.values())
 
+    must_not_contain = entry.get("must_not_contain", []) or []
+    notcontain_hits = {
+        pat: bool(re.search(pat, answer, re.IGNORECASE)) for pat in must_not_contain
+    }
+    notcontain_pass = not any(notcontain_hits.values())
+
     cited_cases = _cited_case_ids(run["cited_doc_ids"])
     hallucinated = [c for c in cited_cases if not case_existence.get(c, True)]
+    no_hallucination = not hallucinated
+
+    # --- LLM judge against the rubric (the gating semantic check).
+    rubric = (entry.get("rubric") or "").strip()
+    judge_verdict = None
+    judge_reason = ""
+    if rubric and run_judge:
+        j = judge_answer(entry["query"], answer, rubric, run["cited_doc_ids"])
+        judge_verdict = j["verdict"]
+        judge_reason = j["reason"]
+    # A case with a rubric must earn a PASS; a case without a rubric is not
+    # judge-gated. An ERROR verdict is NOT a pass (fail-closed).
+    judge_pass = True if not rubric else (judge_verdict == "PASS")
+
+    overall_pass = cite_pass and judge_pass and no_hallucination
 
     return {
         "queryId": run["queryId"],
         "stratum": run["stratum"],
+        "tags": entry.get("tags", []) or [],
         "cite_hits": cite_hits,
         "cite_pass": cite_pass,
         "fact_hits": fact_hits,
         "fact_pass": fact_pass,
+        "notcontain_hits": notcontain_hits,
+        "notcontain_pass": notcontain_pass,
         "cited_case_ids": cited_cases,
         "hallucinated_case_ids": hallucinated,
-        "no_hallucination": not hallucinated,
+        "no_hallucination": no_hallucination,
+        "has_rubric": bool(rubric),
+        "judge_verdict": judge_verdict,
+        "judge_reason": judge_reason,
+        "judge_pass": judge_pass,
+        "overall_pass": overall_pass,
     }
 
 
@@ -205,9 +401,22 @@ def _checkpoint(out_path: str, mode: str, runs: list[dict], grades: list[dict]) 
     os.replace(tmp, out_path)
 
 
-def run_mode(mode: str, resume: bool = True) -> None:
+def run_mode(
+    mode: str,
+    resume: bool = True,
+    ids: list[str] | None = None,
+    out_path: str | None = None,
+    answerstream_prompt: str | None = None,
+) -> None:
     entries = load_queries()
-    out_path = BASELINE_PATH if mode == "baseline" else AFTER_PATH
+    if ids:
+        wanted = set(ids)
+        entries = [e for e in entries if e.get("queryId") in wanted]
+        missing = wanted - {e.get("queryId") for e in entries}
+        if missing:
+            logger.warning(f"--ids not found in golden set: {sorted(missing)}")
+    if out_path is None:
+        out_path = BASELINE_PATH if mode == "baseline" else AFTER_PATH
 
     # Resume: reload any queries already completed in a prior (partial) run so a
     # killed run picks up where it left off instead of re-billing every query.
@@ -237,7 +446,7 @@ def run_mode(mode: str, resume: bool = True) -> None:
 
     for i, entry in enumerate(todo, start=1):
         logger.info(f"  [{i}/{len(todo)}] {entry.get('queryId')} — {entry['query'][:70]}")
-        run = run_one_query(entry)
+        run = run_one_query(entry, answerstream_prompt=answerstream_prompt)
         case_existence = verify_case_ids_exist(_cited_case_ids(run["cited_doc_ids"]))
         run["case_existence"] = case_existence
         g = grade(entry, run, case_existence)
@@ -255,30 +464,112 @@ def run_mode(mode: str, resume: bool = True) -> None:
     _print_grade_summary(mode, entries, grades)
 
 
+def phase_b_only(
+    mode: str,
+    answerstream_prompt: str,
+    ids: list[str] | None = None,
+    out_path: str | None = None,
+) -> None:
+    """Re-run ONLY Phase B (+ judge) on a saved run's stored answer_context.
+
+    Cheap iteration path: Phase A retrieval is untouched (answerStream does not
+    affect it), so we reuse each run's saved answer_context and only re-bill one
+    converse per case for the answer + one judge call. Requires a prior full run
+    (with answer_context stored) at out_path.
+    """
+    entries = {e["queryId"]: e for e in load_queries()}
+    if out_path is None:
+        out_path = BASELINE_PATH if mode == "baseline" else AFTER_PATH
+    if not os.path.exists(out_path):
+        logger.error(f"No saved run at {out_path} — run a full pass first to capture context.")
+        sys.exit(1)
+    with open(out_path) as f:
+        data = json.load(f)
+
+    runs = data["runs"]
+    wanted = set(ids) if ids else None
+    new_runs: list[dict] = []
+    new_grades: list[dict] = []
+    for run in runs:
+        qid = run["queryId"]
+        if wanted is not None and qid not in wanted:
+            new_runs.append(run)
+            # keep prior grade for untouched cases
+            prior = next((g for g in data.get("grades", []) if g["queryId"] == qid), None)
+            if prior:
+                new_grades.append(prior)
+            continue
+        if "answer_context" not in run:
+            logger.warning(f"  {qid}: no stored answer_context — skipping (need a fresh full run)")
+            new_runs.append(run)
+            continue
+        logger.info(f"  [phase-B] {qid} — {run['query'][:70]}")
+        run = dict(run)
+        run["answer"] = _phase_b_generate(
+            run["query"],
+            run.get("answer_context", ""),
+            run.get("fallback_answer", ""),
+            answerstream_prompt,
+        )
+        entry = entries.get(qid)
+        case_existence = run.get("case_existence", {})
+        g = grade(entry, run, case_existence) if entry else None
+        new_runs.append(run)
+        if g:
+            new_grades.append(g)
+            logger.info(
+                f"      judge={g.get('judge_verdict') or '-'} "
+                f"({g.get('judge_reason', '')[:100]})"
+            )
+    _checkpoint(out_path, data.get("mode", mode), new_runs, new_grades)
+    logger.info(f"\nRe-ran Phase B for {out_path}")
+    _print_grade_summary(mode, list(entries.values()), new_grades)
+
+
 def _print_grade_summary(mode: str, entries: list[dict], grades: list[dict]) -> None:
     logger.info(f"\n=== GRADE SUMMARY ({mode}) ===")
     hard_fail = 0
+    gated = 0  # cases that count toward the engineering pass/fail gate
+    blocked_lines: list[str] = []
     for g in grades:
         stratum = g["stratum"]
-        # Strata B/D/E must retain must_cite + must_contain; A must retain facts;
-        # C is judged by comparison. Hallucinations fail any stratum.
+        # Gates: must_cite (deterministic) + rubric judge (semantic) + no
+        # hallucinated case law. The legacy must_contain / must_not_contain
+        # regexes no longer gate — the judge replaces them.
         problems = []
-        if stratum in ("B", "D", "E") and not g["cite_pass"]:
+        if not g["cite_pass"]:
             missing = [d for d, ok in g["cite_hits"].items() if not ok]
             problems.append(f"missing must_cite {missing}")
-        if stratum in ("A", "B", "D", "E") and not g["fact_pass"]:
-            missing = [p for p, ok in g["fact_hits"].items() if not ok]
-            problems.append(f"missing facts {missing}")
+        if g.get("has_rubric") and not g.get("judge_pass"):
+            verdict = g.get("judge_verdict") or "?"
+            problems.append(f"JUDGE {verdict}: {g.get('judge_reason', '')}")
         if not g["no_hallucination"]:
             problems.append(f"HALLUCINATED cases {g['hallucinated_case_ids']}")
         status = "OK" if not problems else "FAIL"
+        # Surface the judge reason even on PASS for auditability.
+        judge_note = ""
+        if g.get("has_rubric") and g.get("judge_pass") and not problems:
+            judge_note = f"  [judge PASS: {g.get('judge_reason', '')}]"
+        line = f"  [{stratum}] {g['queryId']}: {status} {'; '.join(problems)}{judge_note}"
+        # Cases tagged blocked-on-dor-content are external/blocked (e.g. a stale
+        # DOR guide we cannot fix in code). Show them, but do NOT count them in
+        # the engineering pass/fail gate.
+        if "blocked-on-dor-content" in (g.get("tags") or []):
+            blocked_lines.append(line + "  [EXTERNAL/BLOCKED — not gated]")
+            continue
+        gated += 1
         if problems:
             hard_fail += 1
-        logger.info(f"  [{stratum}] {g['queryId']}: {status} {'; '.join(problems)}")
+        logger.info(line)
+    if blocked_lines:
+        logger.info("\n--- external/blocked (not counted in gate) ---")
+        for bl in blocked_lines:
+            logger.info(bl)
     logger.info(
-        f"\n{len(grades) - hard_fail}/{len(grades)} passed intra-run gates "
-        f"({hard_fail} flagged). Run --compare-only after both baseline+after "
-        f"for cited-doc drift."
+        f"\n{gated - hard_fail}/{gated} passed intra-run gates "
+        f"({hard_fail} flagged; {len(blocked_lines)} external/blocked excluded). "
+        f"Gate = must_cite AND judge(rubric) AND no-hallucination. "
+        f"Run --compare-only after both baseline+after for drift."
     )
 
 
@@ -330,8 +621,15 @@ def compare() -> None:
                 d for d, ok in ag["cite_hits"].items() if bg["cite_hits"].get(d) and not ok
             ]
         new_halluc = ag["hallucinated_case_ids"]
+        # A forbidden phrase that was absent at baseline but appears after is a
+        # regression (e.g. a fabricated URL or chapter-conflated link reappears).
+        new_forbidden = [
+            p
+            for p, hit in ag.get("notcontain_hits", {}).items()
+            if hit and not bg.get("notcontain_hits", {}).get(p, False)
+        ]
 
-        is_regression = bool(lost_facts or lost_cites or new_halluc)
+        is_regression = bool(lost_facts or lost_cites or new_halluc or new_forbidden)
         if is_regression:
             regressions += 1
 
@@ -372,6 +670,8 @@ def compare() -> None:
             logger.info(f"      LOST must_cite: {lost_cites}")
         if new_halluc:
             logger.info(f"      NEW HALLUCINATED cases: {new_halluc}")
+        if new_forbidden:
+            logger.info(f"      NEW FORBIDDEN phrases: {new_forbidden}")
 
     # Loop-effort summary (soft signal, does not gate the exit code).
     if base_turns_total or after_turns_total:
@@ -416,7 +716,8 @@ def _run_single(mode: str, query_id: str) -> None:
     g = grade(match, run, case_existence)
     logger.info(
         f"  cited={run['cited_doc_ids']}\n"
-        f"  cite_pass={g['cite_pass']} fact_pass={g['fact_pass']} "
+        f"  cite_pass={g['cite_pass']} judge={g.get('judge_verdict') or '-'} "
+        f"({g.get('judge_reason', '')}) "
         f"halluc={g['hallucinated_case_ids']} turns={run['turns']} "
         f"({run['latency_ms']}ms)"
     )
@@ -449,7 +750,8 @@ def regrade(mode: str) -> None:
         new_grades.append(g)
         logger.info(
             f"  {run['queryId']} [{g['stratum']}]: "
-            f"cite_pass={g['cite_pass']} fact_pass={g['fact_pass']} "
+            f"cite_pass={g['cite_pass']} "
+            f"judge={g.get('judge_verdict') or '-'} "
             f"halluc={len(g['hallucinated_case_ids'])}"
         )
     data["grades"] = new_grades
@@ -485,7 +787,42 @@ def main() -> None:
         action="store_true",
         help="Re-grade the saved run for --mode against the current YAML (no re-run)",
     )
+    parser.add_argument(
+        "--ids",
+        default="",
+        help="Comma-separated queryIds to restrict the run to (subset testing)",
+    )
+    parser.add_argument(
+        "--out",
+        default="",
+        help="Override output JSON path (default baseline.json/after.json by --mode)",
+    )
+    _default_toml = os.path.join(_REPO_ROOT, "config", "model_configs.toml")
+    parser.add_argument(
+        "--candidate-answerstream",
+        nargs="?",
+        const=_default_toml,
+        default=None,
+        help="Inject the LOCAL config/model_configs.toml answerStream into Phase B "
+        "(pre-deploy test). Optionally pass a path to a different TOML.",
+    )
+    parser.add_argument(
+        "--phase-b-only",
+        action="store_true",
+        help="Re-run ONLY Phase B (+ judge) on a saved run's stored answer_context "
+        "(cheap iteration; requires a prior full run at --out/--mode file).",
+    )
     args = parser.parse_args()
+
+    ids = [s.strip() for s in args.ids.split(",") if s.strip()] or None
+    out_path = args.out or None
+    answerstream_prompt = None
+    if args.candidate_answerstream:
+        answerstream_prompt = _load_answerstream_from_toml(args.candidate_answerstream)
+        logger.info(
+            f"Using CANDIDATE answerStream from {args.candidate_answerstream} "
+            f"({len(answerstream_prompt)} chars) for Phase B."
+        )
 
     if args.compare_only:
         compare()
@@ -495,12 +832,25 @@ def main() -> None:
             parser.error("--regrade requires --mode {baseline,after}")
         regrade(args.mode)
         return
+    if args.phase_b_only:
+        if not args.mode:
+            parser.error("--phase-b-only requires --mode {baseline,after}")
+        if answerstream_prompt is None:
+            parser.error("--phase-b-only requires --candidate-answerstream")
+        phase_b_only(args.mode, answerstream_prompt, ids=ids, out_path=out_path)
+        return
     if not args.mode:
         parser.error("provide --mode {baseline,after} or --compare-only")
     if args.only:
         _run_single(args.mode, args.only)
         return
-    run_mode(args.mode, resume=not args.no_resume)
+    run_mode(
+        args.mode,
+        resume=not args.no_resume,
+        ids=ids,
+        out_path=out_path,
+        answerstream_prompt=answerstream_prompt,
+    )
 
 
 if __name__ == "__main__":
