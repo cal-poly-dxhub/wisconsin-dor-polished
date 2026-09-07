@@ -63,6 +63,11 @@ class StageContext:
     broad_query_used: str = ""
     broad_skipped: bool = True
 
+    # vocab_injection (trigger-gated additive arm)
+    vocab_discovery: list[dict] = field(default_factory=list)
+    vocab_injected_terms: list[str] = field(default_factory=list)
+    vocab_query_used: str = ""
+
     # Timing + tracing
     timings: dict[str, float] = field(default_factory=dict)
 
