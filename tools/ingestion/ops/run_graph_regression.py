@@ -95,6 +95,21 @@ def _load_answerstream_from_toml(path: str) -> str:
     return cfg["answerStream"]["prompt"]
 
 
+def _load_agenticretrieval_from_toml(path: str) -> str:
+    """Load the agenticRetrieval prompt from a local model_configs.toml.
+
+    Used by the --candidate-agenticretrieval override so the Phase-A research
+    loop can be re-run with the LOCAL (edited, not-yet-deployed) agentic system
+    prompt while everything else — model, temperature, tools — stays identical
+    to production. Mirrors _load_answerstream_from_toml.
+    """
+    import tomllib
+
+    with open(path, "rb") as f:
+        cfg = tomllib.load(f)
+    return cfg["agenticRetrieval"]["prompt"]
+
+
 def _phase_b_generate(
     query: str, answer_context: str, fallback_answer: str, answerstream_prompt: str
 ) -> str:
@@ -125,19 +140,33 @@ def _phase_b_generate(
         return ""
 
 
-def run_one_query(entry: dict, answerstream_prompt: str | None = None) -> dict:
+def run_one_query(
+    entry: dict,
+    answerstream_prompt: str | None = None,
+    agenticretrieval_prompt: str | None = None,
+) -> dict:
     """Run a single query through Phase A + a non-streaming Phase B answer gen.
 
     If answerstream_prompt is given (candidate override), Phase B uses it instead
-    of the live/DynamoDB answerStream prompt. The prebuilt answer_context is stored
-    on the run so a later --phase-b-only pass can re-generate the answer cheaply.
+    of the live/DynamoDB answerStream prompt. If agenticretrieval_prompt is given,
+    the Phase-A research loop uses that candidate agentic system prompt instead of
+    the live/DynamoDB one (model/temp/tools held identical). The prebuilt
+    answer_context is stored on the run so a later --phase-b-only pass can
+    re-generate the answer cheaply.
     """
     # Imported lazily so --compare-only works without AWS/Neptune configured.
+    import loop.phase_a as _phase_a
     from loop.phase_a import run_agentic_loop
     from loop.phase_b import build_answer_context
     from prompt import ANSWER_STREAM_SYSTEM_PROMPT
 
     from config import neptune
+
+    # Candidate agenticRetrieval override: run_agentic_loop reads the module-level
+    # SYSTEM_PROMPT global at call time, so patching it on the phase_a module swaps
+    # in the local (not-yet-deployed) prompt without touching anything else.
+    if agenticretrieval_prompt is not None:
+        _phase_a.SYSTEM_PROMPT = agenticretrieval_prompt
 
     if answerstream_prompt is None:
         answerstream_prompt = ANSWER_STREAM_SYSTEM_PROMPT
@@ -407,6 +436,7 @@ def run_mode(
     ids: list[str] | None = None,
     out_path: str | None = None,
     answerstream_prompt: str | None = None,
+    agenticretrieval_prompt: str | None = None,
 ) -> None:
     entries = load_queries()
     if ids:
@@ -446,7 +476,11 @@ def run_mode(
 
     for i, entry in enumerate(todo, start=1):
         logger.info(f"  [{i}/{len(todo)}] {entry.get('queryId')} — {entry['query'][:70]}")
-        run = run_one_query(entry, answerstream_prompt=answerstream_prompt)
+        run = run_one_query(
+            entry,
+            answerstream_prompt=answerstream_prompt,
+            agenticretrieval_prompt=agenticretrieval_prompt,
+        )
         case_existence = verify_case_ids_exist(_cited_case_ids(run["cited_doc_ids"]))
         run["case_existence"] = case_existence
         g = grade(entry, run, case_existence)
@@ -807,6 +841,15 @@ def main() -> None:
         "(pre-deploy test). Optionally pass a path to a different TOML.",
     )
     parser.add_argument(
+        "--candidate-agenticretrieval",
+        nargs="?",
+        const=_default_toml,
+        default=None,
+        help="Inject the LOCAL config/model_configs.toml agenticRetrieval into the "
+        "Phase-A research loop (pre-deploy test). Optionally pass a path to a "
+        "different TOML. Only affects full runs (--mode), not --phase-b-only.",
+    )
+    parser.add_argument(
         "--phase-b-only",
         action="store_true",
         help="Re-run ONLY Phase B (+ judge) on a saved run's stored answer_context "
@@ -822,6 +865,15 @@ def main() -> None:
         logger.info(
             f"Using CANDIDATE answerStream from {args.candidate_answerstream} "
             f"({len(answerstream_prompt)} chars) for Phase B."
+        )
+    agenticretrieval_prompt = None
+    if args.candidate_agenticretrieval:
+        agenticretrieval_prompt = _load_agenticretrieval_from_toml(
+            args.candidate_agenticretrieval
+        )
+        logger.info(
+            f"Using CANDIDATE agenticRetrieval from {args.candidate_agenticretrieval} "
+            f"({len(agenticretrieval_prompt)} chars) for the Phase-A loop."
         )
 
     if args.compare_only:
@@ -850,6 +902,7 @@ def main() -> None:
         ids=ids,
         out_path=out_path,
         answerstream_prompt=answerstream_prompt,
+        agenticretrieval_prompt=agenticretrieval_prompt,
     )
 
 
