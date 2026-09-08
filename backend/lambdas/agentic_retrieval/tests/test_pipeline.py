@@ -38,6 +38,7 @@ def test_vector_search_stages_order_matches_original_monolith():
         "statute_backfill",
         "caselaw_backfill",
         "broad_discovery",
+        "vocab_injection",
     ]
 
 
