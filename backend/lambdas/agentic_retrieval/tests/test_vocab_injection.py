@@ -10,6 +10,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _injection_on(monkeypatch):
+    # The additive arm is DORMANT by default (superseded by vocab_swap); these
+    # tests exercise its firing behavior, so enable it. The disabled-flag test
+    # overrides this back to "false".
+    monkeypatch.setenv("VOCAB_INJECTION_ENABLED", "true")
+
+
 def _ctx(query, *, chunks=None, broad=None, fetch_k=50, top_k=15, max_per_doc=5):
     from agent_tools.stages.base import StageContext
 
