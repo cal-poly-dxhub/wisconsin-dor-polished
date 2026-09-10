@@ -2,19 +2,23 @@
 
 ## TODO
 
-| # | Task | Related Responses |
-|---|------|-------------------|
-| 40 | Harden inline linking prose — quote verbatim instead of paraphrasing | — |
-| 43 | Prompt rewrite: compress FRAMEWORK APPLICABILITY section | — |
-| 44 | Prompt rewrite: compress CITATION RULES section | — |
-| 45 | Scholar-sourced case-law dedup pass (docket-number keyed) | 2f57489d (Lowe's 379/405 dup) |
-| 46 | Backfill case-law titles from opinion-text captions | — |
-| 47 | Route case-law / flat-structure docs straight to search_document (skip list_sections/get_section) | — |
-| 48 | Investigate WPAM get_section gap — agents re-search doc-globally after get_section on same chapter | — |
-| 49 | Validate Scholar-fetched opinion matches requested citation (prevent citation→text mis-assignment) | 2f57489d |
-| 50 | Rich feedback phase 2 — render richFeedback in the admin activity dashboard | — |
-| 51 | Disambiguation follow-up logic + classifier accuracy (BLOCKED — awaiting Wisconsin validation) | cd922c84 (TID net new construction) |
-| 52 | Subsection auto-backfill (C1) — guarantee dense-statute subsections reach the answer without the agent asking | 77633d5d (§ 70.11(49) mobile home) |
+| # | Task | Status (audit 2026-09-10) | Related Responses |
+|---|------|---------------------------|-------------------|
+| 43 | Prompt rewrite: compress FRAMEWORK APPLICABILITY section | Not started — still verbose 9-tier listing | — |
+| 44 | Prompt rewrite: compress CITATION RULES section | Not started — still ~18 rules | — |
+| 45 | Scholar-sourced case-law dedup pass (docket-number keyed) | One-time pass done; durable prevention (docket in extract.py + load.py secondary key) still needed | 2f57489d (Lowe's 379/405 dup) |
+| 46 | Backfill case-law titles from opinion-text captions | Consumer side done (extract.py); Scholar-path caption parser still needed | — |
+| 47 | Route case-law / flat-structure docs straight to search_document (skip list_sections/get_section) | Not started — tool descriptions still steer to list_sections/get_section first | — |
+| 48 | Investigate WPAM get_section gap — agents re-search doc-globally after get_section on same chapter | Open investigation — no findings recorded; get_section still z-score ranks | — |
+| 49 | Validate Scholar-fetched opinion matches requested citation (prevent citation→text mis-assignment) | One-time purge done; durable citation-match guard still needed | 2f57489d |
+| 51 | Disambiguation follow-up logic + classifier accuracy (BLOCKED — awaiting Wisconsin validation) | Core logic shipped; accuracy tuning blocked on DOR validation | cd922c84 (TID net new construction) |
+| 52 | Subsection auto-backfill (C1) — guarantee dense-statute subsections reach the answer without the agent asking | Largely superseded — the §70.11(49) recreational-home gap was solved for the camping-trailer/RV family by vocab-swap (Task 58, PR #33). Always-on C1 stage no longer the primary plan. Mobile-home residual → Task 59 | §70.11(49) recreational-home exemptions |
+| 58 | Vocabulary-bridge (vocab-swap) for citizen-term → statute-term gaps | DONE for the recreational-home family (#33). Map expansion is evidence-gated + legally-validated per entry | §70.11(49) family |
+| 59 | Mobile-home §70.11(49) reliability + legal-applicability question | Open — vocab-swap fixes camping/RV but not mobile-home phrasing; needs DOR SME input | §70.11(49) / §66.0435 / §70.17(3) |
+| 60 | DOR/SME content questions (client-side, not retrieval bugs) | Open — carry to DOR: maintenance-vs-revaluation source, residential grade scale + images, BOR interpreter reference, stale mfg-appeal guide | — |
+| 61 | Content-gap ingestion — treaty pub, Innovation Grant FAQ, assessor directory | Open — one reingest cycle (napt-treaty-update.pdf, Innovation Grant common-questions, assrlist.pdf) | — |
+| 62 | Reliability — client-side answer truncation + citation-link integrity | Open — truncation is frontend stream/render (server sends full answer); add link-resolves-to-retrieved-doc validation | — |
+| 63 | Confidentiality follow-up — residual production queryIds in repo + history | Open — #32 scrubbed the two test YAMLs (HEAD-only); decide docs/tasks.md scrub + git-history purge | — |
 
 ## Done
 
@@ -57,6 +61,21 @@
 | 42 | Markarian hierarchy query fails to ground `statutes-70` (turn-budget exhaustion) |
 | 5 | Replace LLM classification with structural parsers |
 | 21 | Add z-score normalization to search_document result filtering (investigated — declined) |
+| 40 | Harden inline linking prose — quote verbatim instead of paraphrasing (answerStream "Use Source Language in Link Text" section) |
+| 50 | Rich feedback phase 2 — render richFeedback in the admin activity dashboard (RichFeedbackDisplay in activity-detail.tsx) |
+
+## Done — Feedback remediation sprint (PRs #28–#33, 2026-09)
+
+Shipped from the mixed/negative rich-feedback root-cause analysis. All merged to `main` and deployed (prompts via `upload_model_configs.py`; code via bundle + `cdk deploy`).
+
+| PR | Shipped |
+|----|---------|
+| #28 | Classifier scope broadening + rephrase out-of-scope message (fixes false refusals on in-scope questions) |
+| #29 | answerStream answer-accuracy guardrails + LLM-judge grader / Phase-B replay harness |
+| #30 | §70.11(49) subsection nudge + answerStream structure/conditional rules |
+| #31 | Trigger-gated vocab-injection search arm (later demoted to dormant fallback by #33) |
+| #32 | Scrub client-feedback provenance from public test YAMLs (HEAD-only) |
+| #33 | Promote vocab-swap to primary vocabulary mechanism (the recreational-home fix) |
 
 ---
 
@@ -312,6 +331,8 @@ From 18 lines to ~6 lines.
 
 ### Task 52: Subsection auto-backfill (C1) — guarantee dense-statute subsections reach the answer
 
+**Status update (2026-09-10):** Largely SUPERSEDED. The §70.11(49) recreational-home problem this task targeted was solved for the **camping-trailer / RV / recreational-vehicle family** by the **vocab-swap** approach (Task 58, PR #33) — which promotes the statute vocabulary into the narrow vector-search arm so the controlling subsection surfaces at the top of retrieval, rather than auto-attaching it after the fact. The always-on C1 auto-backfill stage is **no longer the primary plan**. The subsection nudge (#30) and vocab-swap (#33) together cover the camping/RV case. Residual: **mobile-home** phrasing still doesn't reliably surface §70.11(49) — tracked as Task 59. The original tabled analysis is preserved below for reference.
+
 **Status:** TABLED (2026-08-27). Option A shipped (#26); this is the follow-on that makes the fix reliable. Deferred pending a decision on the cheaper prompt-nudge alternative vs. the always-on stage.
 
 **Context — why this exists:** Query `77633d5d` ("What exemptions can apply to a mobile home?") rated "mid" because the answer name-dropped **§ 70.11(49)** as plain text with no citation. § 70.11 is a dense enumerated section (~50 subsections packed multi-per-chunk by the chunker), and `get_section`'s semantic ranking silently drops a low-scoring subsection.
@@ -337,6 +358,52 @@ Higher blast radius than A: C1 is **always-on** (every query), not opt-in, so a 
 - `backend/lambdas/agentic_retrieval/agent_tools/stages/statute_backfill.py` — template for the new stage
 - `config/model_configs.toml` + `_prompt_fallback.py` — `agenticRetrieval`, if doing the prompt-nudge alternative
 - `tools/ingestion/tests/graph_regression_queries.yaml` — add the mobile-home guard query
+
+---
+
+### Feedback remediation sprint — shipped detail (PRs #28–#33)
+
+**PR #28 — Classifier scope broadening + rephrase out-of-scope message.** Broadened the pre-loop query classifier's in-scope topics (valuation/depreciation, transfer-fee ch.77/§77.25/RETR, assessor view / new construction, property-type definitions) so legitimate property-tax questions stop getting refused, and rewrote the out-of-scope message to invite the user to rephrase. Gated by a new prod-parity classifier regression harness (`tools/ingestion/ops/run_classifier_regression.py` + `classifier_regression_queries.yaml`). Prompt pushed via `upload_model_configs.py`.
+
+**PR #29 — answerStream accuracy guardrails + LLM-judge harness.** Added an "Answering Accurately" ruleset to the Phase-B answer prompt: actor/timeframe qualifiers (who can do what, when), numbering consistency (don't claim N steps then present M), no case-law for administrative mechanics, and exact approved wording for specific procedures. Also built the durable test tooling: an LLM-judge grader (grades each answer against a rubric, replacing brittle keyword checks) and a Phase-B replay path in `run_graph_regression.py` (`--candidate-answerstream` / `--phase-b-only`) that regenerates the answer against saved retrieval context for cheap prompt iteration.
+
+**PR #30 — §70.11(49) subsection nudge + answer structure/conditional rules.** Prompt rule directing the agent to fetch a cross-referenced numbered subsection verbatim via `get_section(subsection=…)` before answering, plus answerStream rules for themed section headings and restating a user's conditional in the conclusion.
+
+**PR #31 — Trigger-gated vocab-injection search arm (superseded).** An additive `vector_search` stage that, when a mapped trigger term appears, runs a vocabulary-augmented query and keeps only docs the main/broad arms missed. Strict no-op without a trigger term. It reliably *surfaced* the target advisory into context but the agent didn't always *cite* it; **demoted to a dormant fallback by #33**.
+
+**PR #32 — Scrub client-feedback provenance from public test YAMLs.** Replaced production queryIds with synthetic slugs and removed feedback-provenance framing (tester-complaint text, "expected failing" markers) from `graph_regression_queries.yaml` and `classifier_regression_queries.yaml`. HEAD-only — git history still contains the originals (see Task 63).
+
+**PR #33 — Promote vocab-swap to primary vocabulary mechanism.** New `vocab_swap` pipeline stage: after `auto_refine`, deterministically append the mapped statute vocabulary to the **narrow** arm's query (refine-then-swap, so the swap has the last word over the LLM refine) while the **broad** arm keeps the original query. Net effect: the controlling statute/advisory is promoted into the narrow top-k while the general framing is preserved — so the answer cites both. Validated on the camping-trailer/RV family (reliably cites §70.11(49) + the advisory + §70.111); anchors 7/7, no regressions; also reduced case-law-backfill context bloat. The #31 additive arm is retained dormant as a fallback.
+
+---
+
+### Task 58: Vocabulary-bridge (vocab-swap) for citizen-term → statute-term gaps
+
+**Status:** Primary mechanism SHIPPED (#33) for the recreational-home family. Expansion is future / evidence-gated.
+
+Property tax is full of terms-of-art where everyday phrasing (e.g. "camping trailer", "mobile home") never embeds close to the controlling statute language ("recreational prefabricated home", §70.11(49)), so plain vector search lands on an adjacent-but-wrong section. `vocab_swap` bridges that gap with a small synonym map. The map is deliberately tiny (only the validated recreational-vehicle/manufactured-home rule today) because a *wrong* mapping steers the agent to a wrong answer. Growth should be **evidence-driven** — mine query logs for colloquial terms that missed content already in the corpus — and **legally validated per entry**. Candidate durable direction: a DOR-authored plain-language→statute glossary ingested as corpus content (DOR owns the correct mappings), rather than an ever-growing code table.
+
+**Key files:** `backend/lambdas/agentic_retrieval/agent_tools/stages/vocab_swap.py` (stage + `VOCAB_RULES` map shared with the dormant `vocab_injection.py`), `agent_tools/pipeline.py`.
+
+### Task 59: Mobile-home §70.11(49) reliability + legal-applicability question
+
+**Status:** Open. The vocab-swap (#33) reliably fixes camping-trailer/RV phrasing but **mobile-home** phrasing still does not surface §70.11(49) (0/3 in a modal check). Two compounding causes: (1) mobile-home has more legitimately-competing statutes (§66.0435 permit fees, §70.17(3) real-property reclassification, RMH §70.111(19)(b)) that crowd the narrow arm, so the promotion doesn't stick; (2) an **SME question for DOR** — is §70.11(49) ("recreational prefabricated home") actually the controlling exemption for a *residential* mobile/manufactured home, or is it mainly for RVs/park models? The model's resistance may be partly correct. Needs DOR input; a stronger promotion may be warranted only if §70.11(49) is confirmed applicable.
+
+### Task 60: DOR/SME content questions (client-side, not retrieval bugs)
+
+**Status:** Open — carry to DOR. Several feedback items turned out to be content/SME rather than retrieval defects: (a) **full-value annual assessment** — the "maintenance assessment vs revaluation" minimum-requirement framing isn't cleanly in the ingested WPAM; need a DOR source to cite; (b) **residential grade scale** (Excellent→Poor) + example images — not in the corpus (proprietary cost-manual material); DOR to supply text + define the image use-case; (c) **Board-of-Review interpreter** reference — §70.47(8m) is a *hearing* waiver, not an interpreter provision, and §70.47 has no interpreter requirement, so the original answer was essentially correct; confirm the intended reference with DOR; (d) **manufacturing-appeal filing** — the 2026 guide's "paper only" statement is stale (My Tax Account now accepts electronic filing); DOR guide update.
+
+### Task 61: Content-gap ingestion — treaty pub, Innovation Grant FAQ, assessor directory
+
+**Status:** Open — one reingest cycle. Add to the corpus: the 1854-treaty / Native-American taxation publication (`napt-treaty-update.pdf`), the Innovation Grant common-questions FAQ page (the bot currently falls back to the statute's fewer contract elements), and the assessor-directory PDF (`assrlist.pdf`).
+
+### Task 62: Reliability — client-side answer truncation + citation-link integrity
+
+**Status:** Open. A response reported as "cut off" was verified against server logs to have streamed and persisted in full — so it's a **frontend** stream/render issue, not the Lambda: add a delivered-fully signal + client reconcile. Separately, intermittent citation-link bugs (a statute citation link resolving to the wrong chapter doc; a rendered `doc:` link to a document that wasn't actually retrieved) — add a citation-resolves-to-retrieved-doc validation pass in the answer path.
+
+### Task 63: Confidentiality follow-up — residual production queryIds
+
+**Status:** Open. PR #32 replaced production queryIds and feedback framing in the two test YAMLs, but that was HEAD-only, and `docs/tasks.md` itself still references legacy production queryIds. Decide: (1) scrub the remaining queryIds from `docs/tasks.md`, and (2) whether a git-history purge (`git filter-repo` + force-push) is warranted to remove the originals from history in this public repo.
 
 ---
 
