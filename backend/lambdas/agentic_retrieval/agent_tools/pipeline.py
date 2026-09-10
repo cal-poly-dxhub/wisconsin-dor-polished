@@ -20,12 +20,14 @@ from agent_tools.stages import (
     neptune_search,
     statute_backfill,
     vocab_injection,
+    vocab_swap,
     wpam_dedup,
 )
 from agent_tools.stages.base import StageContext
 
 VECTOR_SEARCH_STAGES = [
     auto_refine,
+    vocab_swap,
     neptune_search,
     wpam_dedup,
     diversity_cap,

@@ -28,6 +28,7 @@ def test_vector_search_stages_order_matches_original_monolith():
 
     assert names == [
         "auto_refine",
+        "vocab_swap",
         "neptune_search",
         "wpam_dedup",
         "diversity_cap",

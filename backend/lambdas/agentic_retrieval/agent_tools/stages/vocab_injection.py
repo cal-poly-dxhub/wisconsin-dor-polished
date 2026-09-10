@@ -20,6 +20,11 @@ no Neptune call). Runs last, so it can dedupe against both the main and broad
 results. The map is a small, tightly-scoped synonym table (query expansion),
 deliberately NOT a topic->answer map: it only injects vocabulary, retrieval
 still decides relevance.
+
+SUPERSEDED by ``vocab_swap`` (which rewrites the narrow arm's query in place
+rather than adding a low-priority additive doc the agent tended to ignore) and
+kept DORMANT by default (VOCAB_INJECTION_ENABLED=false) as a reversible
+fallback. ``VOCAB_RULES`` below remains the shared vocabulary map used by both.
 """
 
 import logging
@@ -80,7 +85,8 @@ def run(ctx: StageContext) -> StageResult:
     ctx.vocab_injected_terms = []
     ctx.vocab_query_used = ""
 
-    if os.environ.get("VOCAB_INJECTION_ENABLED", "true").lower() != "true":
+    # Dormant by default — superseded by vocab_swap. Flip on only as a fallback.
+    if os.environ.get("VOCAB_INJECTION_ENABLED", "false").lower() != "true":
         ctx.timings["vocab_injection"] = (time.perf_counter() - started) * 1000
         return StageResult()
 

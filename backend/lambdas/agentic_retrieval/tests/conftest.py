@@ -51,6 +51,7 @@ PACKAGE_MODULES = [
     "agent_tools.stages.caselaw_backfill",
     "agent_tools.stages.broad_discovery",
     "agent_tools.stages.vocab_injection",
+    "agent_tools.stages.vocab_swap",
     "graph",
     "graph.neptune_client",
     "streaming",
