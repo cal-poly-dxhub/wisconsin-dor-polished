@@ -61,6 +61,48 @@ OUT_OF_SCOPE_MESSAGE = (
     "question."
 )
 
+NOT_CERTAIN_CHOICE = PROPERTY_TYPE_CHOICES[-1]
+
+
+def resolve_choice_reply(query: str, chat_history: list[dict]) -> tuple[str, bool]:
+    """Turn a property-type chip reply into an answerable question.
+
+    When the user answers the clarification prompt by clicking a chip, the
+    frontend sends the chip label verbatim as the next message ("Residential",
+    "Not certain — general information"). On its own that text is useless:
+    the classifier re-disambiguates "Not certain…" (observed 4/4 in production),
+    and even for a type pick the retrieval pipeline and the flowchart router
+    only see the bare word, so a "is my bible camp taxable?" → "Residential"
+    exchange never seeds the bible-camp chart.
+
+    Returns ``(effective_query, is_choice_reply)``. When the query exactly
+    matches a chip AND the previous turn was our clarification question, the
+    effective query is the ORIGINAL question (for "Not certain") or the original
+    question annotated with the chosen type. ``is_choice_reply`` tells the
+    handler to skip classification: the user has already answered the
+    clarification, so re-classifying can only loop. Any other query is returned
+    unchanged with ``False``.
+    """
+    if not chat_history:
+        return query, False
+    text = (query or "").strip()
+    choice = next((c for c in PROPERTY_TYPE_CHOICES if c.casefold() == text.casefold()), None)
+    if choice is None:
+        return query, False
+    last = chat_history[-1]
+    if (last.get("answer") or "").strip() != CLARIFICATION_QUESTION:
+        return query, False
+    original = (last.get("query") or "").strip()
+    if not original:
+        return query, False
+    if choice == NOT_CERTAIN_CHOICE:
+        effective = original
+    else:
+        effective = f"{original} (property type: {choice})"
+    logger.info(f"Choice reply '{choice}' resolved to effective query '{effective[:100]}'")
+    return effective, True
+
+
 TOPIC_SHIFT_SUGGESTION = (
     "It looks like you're asking about a new topic. Starting a fresh chat can "
     "keep answers focused and accurate — or you can continue right here.\n\n"
@@ -97,9 +139,7 @@ def _format_history_for_classifier(chat_history: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-def classify_query(
-    query: str, chat_history: list[dict], allow_topic_shift: bool = False
-) -> str:
+def classify_query(query: str, chat_history: list[dict], allow_topic_shift: bool = False) -> str:
     """Classify a query as OUT_OF_SCOPE, DISAMBIGUATE, TOPIC_SHIFT, or PROCEED.
 
     Fail-open: any error returns PROCEED so the agentic loop still runs. Local

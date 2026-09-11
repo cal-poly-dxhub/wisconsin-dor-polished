@@ -87,6 +87,24 @@ def handler(event: dict, context) -> dict[str, Any]:
 
         chat_history = get_chat_history(session_id)
 
+        # A property-type chip reply ("Residential", "Not certain — general
+        # information") is resolved back into the question that triggered the
+        # clarification, so classification, retrieval, and the flowchart router
+        # all see the real question. The raw chip text is still what gets
+        # persisted as the user's message.
+        from disambiguation import resolve_choice_reply
+
+        effective_query, is_choice_reply = resolve_choice_reply(user_query.query, chat_history)
+        if is_choice_reply:
+            _log(
+                "choice_reply_resolved",
+                request_id=request_id,
+                query_id=user_query.query_id,
+                session_id=user_query.session_id,
+                choice=user_query.query,
+                **_query_fields(effective_query),
+            )
+
         ws_server = None
         if session_id:
             try:
@@ -129,7 +147,9 @@ def handler(event: dict, context) -> dict[str, Any]:
         # gates ONLY the TOPIC_SHIFT verdict — OUT_OF_SCOPE and DISAMBIGUATE
         # still apply, so a generic "continue here" question still gets clarified
         # — while ensuring the nudge fires at most once and can't loop.
-        if ENABLE_DISAMBIGUATION:
+        # A resolved chip reply skips classification: the user has just answered
+        # our clarification, so re-classifying can only refuse or loop.
+        if ENABLE_DISAMBIGUATION and not is_choice_reply:
             from disambiguation import (
                 CLARIFICATION_QUESTION,
                 OUT_OF_SCOPE_MESSAGE,
@@ -143,7 +163,7 @@ def handler(event: dict, context) -> dict[str, Any]:
 
             allow_topic_shift = ENABLE_TOPIC_SHIFT and not user_query.suppress_topic_shift
             verdict = classify_query(
-                user_query.query, chat_history, allow_topic_shift=allow_topic_shift
+                effective_query, chat_history, allow_topic_shift=allow_topic_shift
             )
             _phase_label = {
                 VERDICT_OUT_OF_SCOPE: "Query is outside property tax scope",
@@ -223,7 +243,7 @@ def handler(event: dict, context) -> dict[str, Any]:
         # === Phase A: Research Loop ===
         persona = user_query.persona
         result = run_agentic_loop(
-            user_query.query,
+            effective_query,
             chat_history=chat_history,
             query_id=user_query.query_id,
             session_id=user_query.session_id,
@@ -369,7 +389,7 @@ def handler(event: dict, context) -> dict[str, Any]:
 
                 # 3. Stream answer (Phase B) — handles dead connections internally
                 answer_context = build_answer_context(
-                    user_query.query,
+                    effective_query,
                     cited_chunks,
                     cited,
                     cited_discovery,
@@ -414,14 +434,12 @@ def handler(event: dict, context) -> dict[str, Any]:
                                 "Phase B fallback: generated answer via non-streaming converse()"
                             )
                         except Exception as fallback_exc:
-                            logger.error(
-                                f"Phase B non-streaming fallback failed: {fallback_exc}"
-                            )
+                            logger.error(f"Phase B non-streaming fallback failed: {fallback_exc}")
                             answer = "(Answer generation failed — please retry)"
             else:
                 # No WebSocket — generate answer without streaming for DB save
                 answer_context = build_answer_context(
-                    user_query.query,
+                    effective_query,
                     cited_chunks,
                     cited,
                     cited_discovery,
