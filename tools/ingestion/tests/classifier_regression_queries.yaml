@@ -196,6 +196,72 @@ cases:
       false OUT_OF_SCOPE. Expected OUT_OF_SCOPE today → PROCEED after transfer-fee
       scope addition.
 
+  # ── assessment-date timing. A tester was refused OUT_OF_SCOPE four times in a
+  #    row (four phrasings, first one with NO history) even though § 70.10
+  #    answers it directly and the prompt already listed "assessment dates" as a
+  #    PROCEED example. The classifier refused on the odd/precise phrasing, not
+  #    the subject. Queries below are the production wording verbatim.
+  - id: cq-assessment-date-time-of-day-1-proceed
+    tags: [oos-false-refusal, assessment-date]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "Assessment are set at what time of day on January 1 of each year?"
+    notes: >
+      First attempt, no history. § 70.10 — valued as of the close of January 1.
+
+  - id: cq-assessment-date-time-of-day-2-proceed
+    tags: [oos-false-refusal, assessment-date]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "The assessment date each year is January 1, but what time of day on January 1 is used?"
+    chat_history:
+      - query: "Assessment are set at what time of day on January 1 of each year?"
+        answer: >
+          The question is unclear or outside the scope of what I can help with.
+    notes: >
+      Second attempt, after one refusal in history.
+
+  - id: cq-assessment-date-time-of-day-3-proceed
+    tags: [oos-false-refusal, assessment-date]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "The statutory assessment date as the close of January 1 of each\nyear. What time of day on January 1?"
+    chat_history:
+      - query: "Assessment are set at what time of day on January 1 of each year?"
+        answer: >
+          The question is unclear or outside the scope of what I can help with.
+      - query: "The assessment date each year is January 1, but what time of day on January 1 is used?"
+        answer: >
+          The question is unclear or outside the scope of what I can help with.
+    notes: >
+      Third attempt; user quotes the statute back and is still refused.
+
+  - id: cq-assessment-date-time-of-day-4-proceed
+    tags: [oos-false-refusal, assessment-date]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "the statutory assessment date is what time of day on January 1 of each\nyear"
+    chat_history:
+      - query: "Assessment are set at what time of day on January 1 of each year?"
+        answer: >
+          The question is unclear or outside the scope of what I can help with.
+      - query: "The assessment date each year is January 1, but what time of day on January 1 is used?"
+        answer: >
+          The question is unclear or outside the scope of what I can help with.
+      - query: "The statutory assessment date as the close of January 1 of each year. What time of day on January 1?"
+        answer: >
+          The question is unclear or outside the scope of what I can help with.
+    notes: >
+      Fourth attempt (no question mark, lowercase). Still refused in prod.
+
+  - id: cq-assessment-effective-date-proceed
+    tags: [assessment-date]
+    expected_verdict: PROCEED
+    expected_baseline: passing
+    query: "What is the effective date of assessment each year?"
+    notes: >
+      The fifth phrasing finally got an answer in prod; regression anchor.
+
   # ════════════════════════════════════════════════════════════════════════════
   #  KNOWN-GOOD ANCHORS — guard against OVER-correction. The fix must not turn the
   #  classifier into a rubber stamp (over-PROCEED) NOR make it over-disambiguate.

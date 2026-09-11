@@ -124,3 +124,49 @@ class TestClassifyQuery:
         converse.side_effect = RuntimeError("bedrock down")
         verdict = disambiguation.classify_query("q", chat_history=[])
         assert verdict == disambiguation.VERDICT_PROCEED
+
+
+class TestResolveChoiceReply:
+    """Chip replies to the clarification prompt resolve back to the real question."""
+
+    def _clarified(self, disambiguation, question):
+        return [{"query": question, "answer": disambiguation.CLARIFICATION_QUESTION}]
+
+    def test_type_pick_annotates_original_question(self, monkeypatch):
+        disambiguation, _ = _load(monkeypatch)
+        history = self._clarified(disambiguation, "Is my mobile home taxable?")
+        effective, is_choice = disambiguation.resolve_choice_reply("Residential", history)
+        assert is_choice is True
+        assert effective == "Is my mobile home taxable? (property type: Residential)"
+
+    def test_not_certain_returns_original_question(self, monkeypatch):
+        disambiguation, _ = _load(monkeypatch)
+        history = self._clarified(disambiguation, "Is my bible camp taxable?")
+        effective, is_choice = disambiguation.resolve_choice_reply(
+            "Not certain — general information", history
+        )
+        assert is_choice is True
+        assert effective == "Is my bible camp taxable?"
+
+    def test_case_and_whitespace_insensitive(self, monkeypatch):
+        disambiguation, _ = _load(monkeypatch)
+        history = self._clarified(disambiguation, "How is my property assessed?")
+        effective, is_choice = disambiguation.resolve_choice_reply("  agricultural ", history)
+        assert is_choice is True
+        assert effective.endswith("(property type: Agricultural)")
+
+    def test_chip_text_without_clarification_turn_is_untouched(self, monkeypatch):
+        disambiguation, _ = _load(monkeypatch)
+        history = [{"query": "What is open book?", "answer": "Open book is..."}]
+        effective, is_choice = disambiguation.resolve_choice_reply("Residential", history)
+        assert (effective, is_choice) == ("Residential", False)
+
+    def test_no_history_is_untouched(self, monkeypatch):
+        disambiguation, _ = _load(monkeypatch)
+        assert disambiguation.resolve_choice_reply("Residential", []) == ("Residential", False)
+
+    def test_free_text_reply_is_untouched(self, monkeypatch):
+        disambiguation, _ = _load(monkeypatch)
+        history = self._clarified(disambiguation, "How is my property assessed?")
+        q = "It's a duplex I rent out"
+        assert disambiguation.resolve_choice_reply(q, history) == (q, False)

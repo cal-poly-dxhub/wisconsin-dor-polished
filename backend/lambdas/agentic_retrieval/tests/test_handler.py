@@ -516,10 +516,9 @@ class TestPreLoopClassification:
         monkeypatch.setattr(
             disambiguation,
             "classify_query",
-            lambda q, h, allow_topic_shift=False: captured.update(
-                {"allow_topic_shift": allow_topic_shift}
-            )
-            or "DISAMBIGUATE",
+            lambda q, h, allow_topic_shift=False: (
+                captured.update({"allow_topic_shift": allow_topic_shift}) or "DISAMBIGUATE"
+            ),
         )
 
         ctx = SimpleNamespace(aws_request_id="r-1")
@@ -572,3 +571,85 @@ class TestPreLoopClassification:
         )
         # PROCEED does not short-circuit — the agentic loop runs.
         run_loop.assert_called_once()
+
+
+class TestChoiceReplyResolution:
+    """A chip reply to the clarification prompt skips the classifier and runs
+    the loop on the original question, while persisting the chip text."""
+
+    def _setup(self, fresh_modules, monkeypatch, history):
+        handler, disambiguation = fresh_modules(
+            "handler", "disambiguation", env={"ENABLE_DISAMBIGUATION": "true"}
+        )
+        classify = MagicMock(return_value="DISAMBIGUATE")
+        monkeypatch.setattr(disambiguation, "classify_query", classify)
+        monkeypatch.setattr(handler, "get_ws_connection_from_session", MagicMock(return_value=None))
+        monkeypatch.setattr(handler, "get_chat_history", lambda sid: history)
+        saved = {}
+        monkeypatch.setattr(
+            handler, "save_chat_history", lambda *a, **kw: saved.update({"args": a})
+        )
+        monkeypatch.setattr(handler, "send_resources_and_finalize", MagicMock())
+        monkeypatch.setattr(handler.asyncio, "run", lambda coro: coro.close())
+        run_loop = MagicMock(
+            return_value=SimpleNamespace(
+                fallback_answer="ans",
+                cited_doc_ids=[],
+                all_chunks=[],
+                all_doc_ids=set(),
+                discovery={},
+                fetched_opinions={},
+                high_confidence_faq=None,
+                faq_entries=[],
+                trace_log=[],
+                connection_alive=True,
+                answer_plan="",
+                seeded_flowchart=None,
+                seeded_flowchart_score=None,
+            )
+        )
+        monkeypatch.setattr(handler, "run_agentic_loop", run_loop)
+        return handler, disambiguation, classify, run_loop, saved
+
+    def test_not_certain_chip_runs_loop_on_original_question(self, fresh_modules, monkeypatch):
+        history = [{"query": "Is my bible camp taxable?", "answer": None}]
+        handler, disambiguation, classify, run_loop, saved = self._setup(
+            fresh_modules, monkeypatch, history
+        )
+        history[0]["answer"] = disambiguation.CLARIFICATION_QUESTION
+        ctx = SimpleNamespace(aws_request_id="r-1")
+        handler.handler(
+            {"query": "Not certain — general information", "query_id": "q-2", "session_id": "s-1"},
+            ctx,
+        )
+        # Classifier skipped: it would otherwise DISAMBIGUATE again and loop.
+        classify.assert_not_called()
+        run_loop.assert_called_once()
+        assert run_loop.call_args.args[0] == "Is my bible camp taxable?"
+        # The chip text is what the user sent; that's what history keeps.
+        assert saved["args"][2] == "Not certain — general information"
+
+    def test_type_chip_runs_loop_on_annotated_question(self, fresh_modules, monkeypatch):
+        history = [{"query": "Is my mobile home taxable?", "answer": None}]
+        handler, disambiguation, classify, run_loop, saved = self._setup(
+            fresh_modules, monkeypatch, history
+        )
+        history[0]["answer"] = disambiguation.CLARIFICATION_QUESTION
+        ctx = SimpleNamespace(aws_request_id="r-1")
+        handler.handler({"query": "Residential", "query_id": "q-2", "session_id": "s-1"}, ctx)
+        classify.assert_not_called()
+        assert (
+            run_loop.call_args.args[0] == "Is my mobile home taxable? (property type: Residential)"
+        )
+
+    def test_non_chip_followup_still_classified(self, fresh_modules, monkeypatch):
+        history = [{"query": "Is my mobile home taxable?", "answer": "Depends..."}]
+        handler, disambiguation, classify, run_loop, saved = self._setup(
+            fresh_modules, monkeypatch, history
+        )
+        ctx = SimpleNamespace(aws_request_id="r-1")
+        handler.handler(
+            {"query": "How is my property assessed?", "query_id": "q-2", "session_id": "s-1"}, ctx
+        )
+        classify.assert_called_once()
+        run_loop.assert_not_called()
