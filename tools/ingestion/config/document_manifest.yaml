@@ -148,6 +148,7 @@ categories:
       - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-tid-sect-6023.aspx
       - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-vallimit.aspx
       - https://www.revenue.wi.gov/Pages/FAQS/slf-tif-internal.aspx
+      - https://www.revenue.wi.gov/Pages/FAQS/slf-ig.aspx
 
   gov_publications:
     framework_id: FW-GOV-PUBS
@@ -173,6 +174,7 @@ categories:
       - https://www.revenue.wi.gov/DORForms/pm-201.pdf
       - https://www.revenue.wi.gov/DORForms/sl-101.pdf
       - https://www.revenue.wi.gov/DORForms/sl-103.pdf
+      - https://www.revenue.wi.gov/DOR%20Publications/napt-treaty-update.pdf
 
   form_instructions:
     framework_id: FW-GOV-PUBS
