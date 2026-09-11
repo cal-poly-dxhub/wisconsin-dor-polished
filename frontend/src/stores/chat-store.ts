@@ -124,6 +124,13 @@ export const useChatStore = create<ChatStore>()(
         }
       }),
 
+    setQueryFlowchart: (queryId, flowchart) =>
+      set(state => {
+        if (state.queries[queryId]) {
+          state.queries[queryId].flowchart = flowchart;
+        }
+      }),
+
     setQuerySuggestion: (queryId: string, suggestion: SuggestionKind) =>
       set(state => {
         if (state.queries[queryId]) {

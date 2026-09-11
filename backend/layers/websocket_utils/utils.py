@@ -21,6 +21,7 @@ from websocket_utils.models import (
     DocumentsMessage,
     ErrorMessage,
     FAQMessage,
+    FlowchartMessage,
     FragmentContent,
     FragmentMessage,
     PlainWebSocketMessage,
@@ -64,6 +65,11 @@ class WebSocketServer:
                     "body": body.model_dump(by_alias=True),
                 }
             case FAQMessage():
+                message = {
+                    "streamId": "resources",
+                    "body": body.model_dump(by_alias=True),
+                }
+            case FlowchartMessage():
                 message = {
                     "streamId": "resources",
                     "body": body.model_dump(by_alias=True),

@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { ChevronLeft, MessageSquare, Moon, Sun, LogOut, Loader2, Plus, MoreHorizontal, Pencil, Trash2, Settings } from 'lucide-react';
+import { ChevronLeft, Moon, Sun, LogOut, Loader2, Plus, MoreHorizontal, Pencil, Trash2, Settings } from 'lucide-react';
 import Image from 'next/image';
 import { useTheme } from 'next-themes';
 import {
@@ -32,6 +32,7 @@ import { useFeedbackStore } from '@/stores/feedback-store';
 import { useNewChat } from '@/hooks/use-new-chat';
 import { formatDistanceToNow } from 'date-fns';
 import { SettingsModal } from '@/components/settings/settings-modal';
+import { iconForTitle } from './topic-icon';
 
 export function SessionsSidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -312,24 +313,26 @@ export function SessionsSidebar() {
                   Failed to load sessions
                 </div>
               ) : sessionsData?.sessions && sessionsData.sessions.length > 0 ? (
-                sessionsData.sessions.map((session) => (
+                sessionsData.sessions.map((session) => {
+                  const TopicIcon = iconForTitle(session.title);
+                  return (
                   <div
                     key={session.sessionId}
                     onClick={() => handleSessionSelect(session.sessionId)}
-                    className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted group cursor-pointer ${
+                    className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors duration-200 ease-out hover:bg-muted group cursor-pointer ${
                       currentSessionId === session.sessionId
                         ? 'bg-muted text-foreground'
                         : 'text-muted-foreground'
                     }`}
                   >
                     <div className="flex flex-1 items-center gap-3 min-w-0">
-                      <MessageSquare className="h-4 w-4 shrink-0" />
+                      <TopicIcon className="h-5 w-5 shrink-0 text-muted-foreground/80 transition-colors duration-200 group-hover:text-foreground" />
                       <div className="flex-1 overflow-hidden text-left">
                         <p className="truncate text-sm">
                           {session.title || 'New chat'}
                         </p>
                         {session.lastMessageAt && (
-                          <p className="truncate text-xs text-muted-foreground">
+                          <p className="truncate text-xs text-muted-foreground/50">
                             {formatDistanceToNow(new Date(session.lastMessageAt), {
                               addSuffix: true,
                             })}
@@ -364,7 +367,8 @@ export function SessionsSidebar() {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
-                ))
+                  );
+                })
               ) : (
                 <div className="text-xs text-muted-foreground px-2 py-8 text-center">
                   No recent chats

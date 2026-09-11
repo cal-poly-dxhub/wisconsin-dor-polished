@@ -13,6 +13,8 @@ from typing import Any
 
 import boto3
 from case_law import fetch_case_opinion
+from flowcharts import get_flowchart as load_flowchart
+from flowcharts import list_flowcharts as list_flowchart_registry
 from graph.neptune_client import NeptuneClient
 from worksheets import get_worksheet as load_worksheet
 from worksheets import list_worksheets as list_worksheet_registry
@@ -831,6 +833,31 @@ def execute_tool(
             worksheet_id=worksheet_id,
             sheet=tool_input.get("sheet"),
             sheet_count=len(result.get("sheets", [])) if "sheets" in result else 0,
+            has_error=bool(result.get("error")),
+            latency_ms=round((time.perf_counter() - started) * 1000),
+        )
+        return result
+
+    elif tool_name == "list_flowcharts":
+        flowcharts = list_flowchart_registry()
+        _log_tool_event(
+            "list_flowcharts_complete",
+            tool_name=tool_name,
+            flowchart_count=len(flowcharts),
+            latency_ms=round((time.perf_counter() - started) * 1000),
+        )
+        return {"flowcharts": flowcharts}
+
+    elif tool_name == "get_flowchart":
+        flowchart_id = tool_input.get("flowchart_id", "")
+        if not flowchart_id:
+            return {"error": "flowchart_id is required"}
+        result = load_flowchart(flowchart_id, raw_bucket=RAW_BUCKET)
+        _log_tool_event(
+            "get_flowchart_complete",
+            tool_name=tool_name,
+            flowchart_id=flowchart_id,
+            node_count=len(result.get("nodes", [])) if "nodes" in result else 0,
             has_error=bool(result.get("error")),
             latency_ms=round((time.perf_counter() - started) * 1000),
         )

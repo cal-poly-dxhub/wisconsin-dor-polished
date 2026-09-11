@@ -45,6 +45,7 @@ select = [
 "backend/lambdas/agentic_retrieval/_prompt_fallback.py" = ["E501"]
 "backend/lambdas/agentic_retrieval/case_law.py" = ["E501"]
 "backend/lambdas/agentic_retrieval/disambiguation.py" = ["E501"]
+"backend/lambdas/agentic_retrieval/flowcharts.py" = ["E501"]
 "backend/lambdas/agentic_retrieval/loop/phase_b.py" = ["E501"]
 "backend/lambdas/agentic_retrieval/prompt.py" = ["E501"]
 "backend/lambdas/agentic_retrieval/rag_documents.py" = ["E501"]

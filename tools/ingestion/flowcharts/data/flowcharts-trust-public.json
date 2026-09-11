@@ -1,0 +1,112 @@
+{
+  "flowchart_id": "flowcharts-trust-public",
+  "schema_version": 1,
+  "title": "Property Held in Trust in Public Interest",
+  "summary": "Decision tree for whether property held in trust in the public interest is exempt under sec. 70.11(20): Property Tax Exemption Request filing, qualifying preservation use (native plants/animals, Indian mounds, geological formations), open to the public, reasonable restrictions, pecuniary profit, and county board determination.",
+  "statute": "sec. 70.11(20), Wis. Stats.",
+  "admin_rule": null,
+  "source": {
+    "doc_id": "wpam-wisconsin-property-assessment-manual-2026",
+    "wpam_chapter": "Chapter 19 Property Tax Exemptions",
+    "wpam_page": "19-27",
+    "pdf_page": 691,
+    "source_url": "https://www.revenue.wi.gov/documents/wpam26.pdf#page=691"
+  },
+  "disclaimer": "This flow chart provides general information and may not apply in every situation. A thorough review of each property is still required.",
+  "router_description": "Property held in trust in public interest under sec. 70.11(20). Decision tree for land preserving native wild plants, native wild animals, Indian mounds or works of ancient persons, geological or geographical formations, open to the public with reasonable restrictions, non-profit ownership.",
+  "start_node": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "label": "START"},
+    {
+      "id": "step1",
+      "type": "decision",
+      "step": 1,
+      "question": "Was the \"Property Tax Exemption Request\", form PR-230, filed with the municipal assessor where the property is located by March 1?",
+      "authorities": [
+        {"kind": "form", "cite": "Form PR-230 (Property Tax Exemption Request)", "note": "must be filed with the municipal assessor by March 1"}
+      ]
+    },
+    {
+      "id": "step2",
+      "type": "decision",
+      "step": 2,
+      "question": "Is the property used for one of the following preservation purposes?",
+      "criteria": [
+        "Preserving native wild plants (see the WI DNR website for examples of native Wisconsin plants and information to assist in determining if the property is preserving native wild plants)",
+        "Preserving native wild animal life (see the WI DNR website for examples of native Wisconsin animals and information to assist in determining if the property is preserving native wild animal life)",
+        "Preserving Indian mounds and other works of ancient persons or geological or geographical formations of scientific interest (see the WI DNR website for information on burial mounds and the UW website for information on geological landforms)"
+      ],
+      "authorities": [
+        {"kind": "gov_pub", "cite": "WI DNR website", "note": "examples of native plants/animals and burial-mound information"},
+        {"kind": "gov_pub", "cite": "UW website", "note": "information on geological landforms"}
+      ]
+    },
+    {
+      "id": "step3",
+      "type": "decision",
+      "step": 3,
+      "question": "Is the property open to the public?",
+      "note": "There are standard hours the property is open to the public. Example: Year-round — Mon, Wed and Sat from 8 a.m.–5 p.m.; April to October — Mon, Wed and Fri from 10 a.m.–4 p.m.; November to March — Sat, Sun from 10 a.m.–4 p.m."
+    },
+    {
+      "id": "step4",
+      "type": "decision",
+      "step": 4,
+      "question": "Is the property subject to reasonable restrictions?",
+      "note": "The reasonableness of the use or access restrictions will depend, in part, on the nature of the subject property. For example, the property may have periodic restrictions when it is not open to the public that are reasonable. Example: Year-round — closed Tues, Thurs, Fri, Sun; April to October — closed Tues, Thurs, weekends; November to March — closed Mon–Fri."
+    },
+    {
+      "id": "step5",
+      "type": "decision",
+      "step": 5,
+      "question": "Does any pecuniary profit accrue to any owner or member of the organization or to any associate of any such owner or member from the use or holding of the property?"
+    },
+    {
+      "id": "step6",
+      "type": "decision",
+      "step": 6,
+      "question": "Did the county board determine the property: is owned by, or held in trust for, a non-profit organization OR did meet all the requirements outlined in steps 2, 3, 4, or 5?"
+    },
+    {
+      "id": "outcome_taxable",
+      "type": "terminal",
+      "outcome": "taxable",
+      "label": "Property is taxable",
+      "action": "Property is taxable."
+    },
+    {
+      "id": "outcome_taxable_listed",
+      "type": "terminal",
+      "outcome": "taxable",
+      "label": "Property is taxable",
+      "action": "Property is taxable. The assessor lists and values the property for the assessment year and distributes a Notice of Changed Assessment if appropriate."
+    },
+    {
+      "id": "outcome_exempt",
+      "type": "terminal",
+      "outcome": "exempt",
+      "label": "Property is exempt",
+      "action": "Property is exempt."
+    }
+  ],
+  "edges": [
+    {"from": "start", "to": "step1"},
+    {"from": "step1", "to": "step2", "branch": "yes", "label": "Yes — Go to Step 2"},
+    {"from": "step1", "to": "outcome_taxable", "branch": "no", "label": "No — Stop"},
+    {"from": "step2", "to": "step3", "branch": "yes", "label": "Yes — Go to Step 3"},
+    {"from": "step2", "to": "outcome_taxable", "branch": "no", "label": "No — Stop"},
+    {"from": "step3", "to": "step4", "branch": "yes", "label": "Yes — Go to Step 4"},
+    {"from": "step3", "to": "outcome_taxable", "branch": "no", "label": "No — Stop"},
+    {"from": "step4", "to": "step5", "branch": "yes", "label": "Yes — Go to Step 5"},
+    {"from": "step4", "to": "outcome_taxable", "branch": "no", "label": "No — Stop"},
+    {"from": "step5", "to": "step6", "branch": "yes", "label": "Yes — Go to Step 6"},
+    {"from": "step5", "to": "outcome_taxable", "branch": "no", "label": "No — Stop"},
+    {"from": "step6", "to": "outcome_exempt", "branch": "yes", "label": "Yes"},
+    {"from": "step6", "to": "outcome_taxable_listed", "branch": "no", "label": "No"}
+  ],
+  "references": [
+    {"label": "WI DNR — examples of native Wisconsin plants", "kind": "gov_pub"},
+    {"label": "WI DNR — examples of native Wisconsin animals", "kind": "gov_pub"},
+    {"label": "WI DNR — burial mounds; UW — geological landforms", "kind": "gov_pub"}
+  ]
+}
