@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import '@/components/messages/chat-message.css';
 import { type ActivityItem, type RichFeedback, type TraceEvent } from '@/hooks/use-activity-data';
 import { SUBSECTIONS } from '@/stores/feedback-store';
+import { CanvasView } from '@/app/admin/canvas/canvas-view';
+import { toCanvasEvents } from '@/app/admin/canvas/hooks/use-persisted-trace';
 import { http } from '@/lib/http';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,11 +22,18 @@ import {
   Eye,
   Code,
   Search,
-  GitBranch,
-  CheckCircle,
+  FileText,
+  Network,
+  BookText,
+  Sparkles,
+  CheckCircle2,
   XCircle,
+  AlertCircle,
   Zap,
+  Clock3,
   ChevronRight,
+  ListTree,
+  LayoutGrid,
   Check,
   X,
   Quote,
@@ -234,30 +243,35 @@ export function ActivityDetail({
 
   if (layout === 'split') {
     return (
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:items-start">
-        {/* Left half — what the assistant produced */}
-        <div className="min-w-0 space-y-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Response
-          </h3>
-          {questionCard}
-          {responseCard}
-          {traceCard}
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:items-start">
+          {/* Left half — what the assistant produced */}
+          <div className="min-w-0 space-y-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Response
+            </h3>
+            {questionCard}
+            {responseCard}
+          </div>
+
+          {/* Right half — how the user rated it */}
+          <div className="min-w-0 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Feedback
+              </h3>
+              {ratingBadge}
+            </div>
+            {metaBar}
+            {legacyCommentCard}
+            {richCard}
+            {idsFooter}
+          </div>
         </div>
 
-        {/* Right half — how the user rated it */}
-        <div className="min-w-0 space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Feedback
-            </h3>
-            {ratingBadge}
-          </div>
-          {metaBar}
-          {legacyCommentCard}
-          {richCard}
-          {idsFooter}
-        </div>
+        {/* Full-width row — the retrieval trace gets the whole width beneath the
+            response/feedback columns so the timeline has room to breathe. */}
+        {traceCard && <div className="min-w-0">{traceCard}</div>}
       </div>
     );
   }
@@ -279,168 +293,380 @@ export function ActivityDetail({
   );
 }
 
-function getToolIcon(toolName: string) {
+// Humanized tool labels, mirroring the canvas's TOOL_TITLES.
+const TOOL_LABELS: Record<string, string> = {
+  faq_search: 'FAQ Search',
+  refine_query: 'Query Refinement',
+  vector_search: 'Vector Search',
+  search_document: 'Document Search',
+  list_sections: 'List Sections',
+  get_section: 'Get Section',
+  get_document: 'Get Document',
+  get_neighbors: 'Graph Neighbors',
+  get_authority_chain: 'Authority Chain',
+  list_framework_docs: 'Framework Documents',
+  find_case_law: 'Case Law Search',
+  fetch_case_opinion: 'Fetch Case Opinion',
+  prepare_answer: 'Answer Synthesis',
+  answer: 'Answer Synthesis',
+  cite_documents: 'Cite Documents',
+  clarify: 'Clarify',
+};
+
+function toolLabel(toolName?: string): string {
+  if (!toolName) return 'Step';
+  return TOOL_LABELS[toolName] ?? toolName;
+}
+
+function getToolIcon(toolName?: string) {
   switch (toolName) {
     case 'faq_search':
+    case 'find_case_law':
+      return <Search className="h-4 w-4" />;
     case 'vector_search':
     case 'search_document':
-      return <Search className="h-3 w-3" />;
+      return <FileText className="h-4 w-4" />;
     case 'get_neighbors':
     case 'get_authority_chain':
-      return <GitBranch className="h-3 w-3" />;
+      return <Network className="h-4 w-4" />;
+    case 'get_section':
+    case 'list_sections':
+    case 'get_document':
+    case 'list_framework_docs':
+    case 'fetch_case_opinion':
+      return <BookText className="h-4 w-4" />;
+    case 'prepare_answer':
+    case 'answer':
+    case 'cite_documents':
+      return <Sparkles className="h-4 w-4" />;
     default:
-      return <Zap className="h-3 w-3" />;
+      return <Zap className="h-4 w-4" />;
   }
 }
 
-function getStatusColor(status?: string) {
+// Status → dot color + node accent. `ok`/`terminal` read as success.
+function statusStyle(status?: string): { ring: string; icon: React.ReactNode | null } {
   switch (status) {
     case 'ok':
-      return 'text-green-600 dark:text-green-400';
-    case 'error':
-      return 'text-red-600 dark:text-red-400';
-    case 'miss':
-      return 'text-amber-600 dark:text-amber-400';
     case 'terminal':
-      return 'text-blue-600 dark:text-blue-400';
+      return {
+        ring: 'border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400',
+        icon: <CheckCircle2 className="h-3 w-3" />,
+      };
+    case 'error':
+      return {
+        ring: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400',
+        icon: <XCircle className="h-3 w-3" />,
+      };
+    case 'miss':
+      return {
+        ring: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+        icon: <AlertCircle className="h-3 w-3" />,
+      };
     default:
-      return 'text-muted-foreground';
+      return { ring: 'border-border bg-muted text-muted-foreground', icon: null };
   }
+}
+
+// Turn a metadata key into a readable label ("preDedupCount" → "Pre-dedup").
+function humanizeKey(key: string): string {
+  const withSpaces = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .replace(/\bMs\b/i, '')
+    .replace(/\bId\b/i, 'ID')
+    .trim();
+  const lower = withSpaces.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+// Render a metadata value as a short, human string. Objects/arrays are
+// summarized (count + example) instead of dumping "[object Object]".
+function formatMetaValue(value: unknown): string {
+  if (value == null) return '—';
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(3);
+  }
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return 'none';
+    const allPrimitive = value.every(v => typeof v !== 'object' || v === null);
+    if (allPrimitive) {
+      const head = value.slice(0, 3).map(v => (typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(2)) : String(v)));
+      return value.length > 3 ? `${head.join(', ')} +${value.length - 3}` : head.join(', ');
+    }
+    return `${value.length} item${value.length === 1 ? '' : 's'}`;
+  }
+  if (typeof value === 'object') {
+    const keys = Object.keys(value as Record<string, unknown>);
+    return keys.length === 0 ? '—' : `${keys.length} field${keys.length === 1 ? '' : 's'}`;
+  }
+  return String(value);
+}
+
+// Metadata keys that are noisy / already surfaced elsewhere (latency shown on
+// the header row; doc IDs shown as title badges). Everything else renders as a
+// clean stat chip. Ordered so the most useful stats come first.
+const META_HIDE = new Set(['latencyMs', 'chunkIds', 'docChunks', 'seeded']);
+const META_ORDER = [
+  'chunkCount',
+  'preDedupCount',
+  'totalChunkCount',
+  'broadChunkCount',
+  'docCount',
+  'documentCount',
+  'topScore',
+  'faqCount',
+  'caseLawCount',
+  'neighborCount',
+  'sectionCount',
+  'chainLength',
+];
+
+function orderedMeta(metadata: Record<string, unknown>): [string, unknown][] {
+  const entries = Object.entries(metadata).filter(([k]) => !META_HIDE.has(k));
+  return entries.sort(([a], [b]) => {
+    const ia = META_ORDER.indexOf(a);
+    const ib = META_ORDER.indexOf(b);
+    if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return a.localeCompare(b);
+  });
+}
+
+function StatChip({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col rounded-md border border-border bg-muted/40 px-2.5 py-1.5">
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">{label}</span>
+      <span className="mt-0.5 truncate text-xs font-medium tabular-nums text-foreground" title={value}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function TimelineStep({ event, isLast }: { event: TraceEvent; isLast: boolean }) {
+  const style = statusStyle(event.status);
+  const meta = event.metadata ? orderedMeta(event.metadata) : [];
+
+  return (
+    <div className="flex gap-3">
+      {/* Rail: icon node + connector */}
+      <div className="flex flex-col items-center">
+        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${style.ring}`}>
+          {getToolIcon(event.toolName)}
+        </div>
+        {!isLast && <div className="mt-1 w-px flex-1 bg-border" />}
+      </div>
+
+      {/* Body */}
+      <div className="min-w-0 flex-1 pb-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-foreground">{toolLabel(event.toolName)}</span>
+          {event.turn != null && (
+            <Badge variant="outline" className="px-1.5 py-0 text-[10px] font-normal">
+              Turn {event.turn}
+            </Badge>
+          )}
+          {style.icon && (
+            <span className={`flex items-center gap-1 text-[11px] ${style.ring.split(' ').find(c => c.startsWith('text-')) ?? ''}`}>
+              {style.icon}
+              {event.status}
+            </span>
+          )}
+          {event.latencyMs != null && (
+            <span className="ml-auto flex items-center gap-1 text-[11px] tabular-nums text-muted-foreground">
+              <Clock3 className="h-3 w-3" />
+              {event.latencyMs.toLocaleString()}ms
+            </span>
+          )}
+        </div>
+
+        {event.summary && (
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{event.summary}</p>
+        )}
+
+        {event.docTitles && event.docTitles.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {event.docTitles.slice(0, 6).map((title, i) => (
+              <Badge key={`${title}-${i}`} variant="secondary" className="max-w-[220px] truncate px-2 py-0.5 text-[10px] font-normal">
+                {title}
+              </Badge>
+            ))}
+            {event.docTitles.length > 6 && (
+              <span className="self-center text-[10px] text-muted-foreground">
+                +{event.docTitles.length - 6} more
+              </span>
+            )}
+          </div>
+        )}
+
+        {meta.length > 0 && (
+          <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4">
+            {meta.map(([key, value]) => (
+              <StatChip key={key} label={humanizeKey(key)} value={formatMetaValue(value)} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TimelineView({ trace }: { trace: TraceEvent[] }) {
+  const loopComplete = trace.find(event => event.kind === 'loop_complete');
+  const toolResults = trace.filter(event => event.kind === 'tool_result');
+
+  return (
+    <div>
+      <div className="space-y-0">
+        {toolResults.map((event, index) => (
+          <TimelineStep
+            key={`${event.kind}-${event.turn}-${event.ts}-${index}`}
+            event={event}
+            isLast={index === toolResults.length - 1}
+          />
+        ))}
+      </div>
+
+      {loopComplete?.discovery && Object.keys(loopComplete.discovery).length > 0 && (
+        <>
+          <Separator className="my-4" />
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Discovery Sources
+            </span>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {Object.entries(loopComplete.discovery).map(([source, count]) => (
+                <Badge key={source} variant="outline" className="gap-1 text-[11px] font-normal">
+                  {source}
+                  <span className="font-semibold tabular-nums text-foreground">{count}</span>
+                </Badge>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {loopComplete?.citedDocIds && loopComplete.citedDocIds.length > 0 && (
+        <>
+          <Separator className="my-4" />
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Cited Documents
+            </span>
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">
+              {loopComplete.citedDocIds.map(docId => (
+                <p key={docId} className="break-all rounded border border-border bg-muted/40 px-2 py-1 font-mono text-[11px] text-foreground">
+                  {docId}
+                </p>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: 'timeline' | 'canvas';
+  onChange: (v: 'timeline' | 'canvas') => void;
+}) {
+  const base =
+    'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors';
+  return (
+    <div className="flex items-center gap-0.5 rounded-lg border border-border bg-muted/50 p-0.5">
+      <button
+        type="button"
+        onClick={() => onChange('timeline')}
+        className={`${base} ${view === 'timeline' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+      >
+        <ListTree className="h-3.5 w-3.5" />
+        Timeline
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('canvas')}
+        className={`${base} ${view === 'canvas' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+      >
+        <LayoutGrid className="h-3.5 w-3.5" />
+        Canvas
+      </button>
+    </div>
+  );
 }
 
 function RetrievalTrace({ trace }: { trace: TraceEvent[] }) {
   // Collapsed by default — the trace is long and secondary to the feedback.
   const [open, setOpen] = useState(false);
+  const [view, setView] = useState<'timeline' | 'canvas'>('timeline');
   const loopComplete = trace.find(event => event.kind === 'loop_complete');
-  const toolResults = trace.filter(event => event.kind === 'tool_result');
+
+  // Adapt the flat persisted trace to the canvas event stream once, lazily —
+  // only needed when the canvas view is shown.
+  const canvasEvents = useMemo(
+    () => (view === 'canvas' ? toCanvasEvents(trace) : []),
+    [view, trace]
+  );
 
   return (
-    <Card className="mt-4">
-      <CardHeader className="pb-3">
+    // Not a card — a full-width section set off by a top rule, so the trace
+    // reads as a continuation of the detail rather than a boxed panel.
+    <section className="mt-6 border-t border-border pt-5">
+      <div className="flex w-full items-center justify-between gap-4">
         <button
           type="button"
           onClick={() => setOpen(previous => !previous)}
           aria-expanded={open}
-          className="flex w-full items-center justify-between gap-4 text-left"
+          className="flex min-w-0 flex-1 items-center gap-4 text-left"
         >
-          <CardTitle className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+          <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
             <ChevronRight
-              className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+              className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
             />
             Retrieval Trace
-          </CardTitle>
+          </span>
           {loopComplete && (
-            <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+            <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
               {loopComplete.turnsUsed != null && (
-                <span>{loopComplete.turnsUsed} turn{loopComplete.turnsUsed === 1 ? '' : 's'}</span>
+                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
+                  {loopComplete.turnsUsed} turn{loopComplete.turnsUsed === 1 ? '' : 's'}
+                </Badge>
               )}
               {loopComplete.elapsedMs != null && (
-                <span>{(loopComplete.elapsedMs / 1000).toFixed(1)}s</span>
+                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal tabular-nums">
+                  {(loopComplete.elapsedMs / 1000).toFixed(1)}s
+                </Badge>
               )}
               {loopComplete.citedDocCount != null && (
-                <span>{loopComplete.citedDocCount} cited</span>
+                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
+                  {loopComplete.citedDocCount} cited
+                </Badge>
               )}
             </div>
           )}
         </button>
-      </CardHeader>
+        {open && <ViewToggle view={view} onChange={setView} />}
+      </div>
       {open && (
-      <CardContent>
-        <div className="space-y-2">
-          {toolResults.map((event, index) => (
-            <div key={`${event.kind}-${event.turn}-${event.ts}-${index}`} className="flex items-start gap-2.5">
-              <div className="mt-1.5 flex flex-col items-center self-stretch">
-                <div className={`rounded-full p-0.5 ${getStatusColor(event.status)}`}>
-                  {event.status === 'ok' || event.status === 'terminal' ? (
-                    <CheckCircle className="h-3 w-3" />
-                  ) : event.status === 'error' ? (
-                    <XCircle className="h-3 w-3" />
-                  ) : (
-                    getToolIcon(event.toolName || '')
-                  )}
-                </div>
-                {index < toolResults.length - 1 && <div className="mt-1 w-px flex-1 bg-border" />}
-              </div>
-
-              <div className="min-w-0 flex-1 pb-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-foreground">
-                    {event.toolName || event.kind}
-                  </span>
-                  {event.turn != null && (
-                    <span className="text-[10px] text-muted-foreground">T{event.turn}</span>
-                  )}
-                  {event.latencyMs != null && (
-                    <span className="text-[10px] text-muted-foreground">{event.latencyMs}ms</span>
-                  )}
-                </div>
-                {event.summary && (
-                  <p className="mt-0.5 text-xs text-muted-foreground">{event.summary}</p>
-                )}
-                {event.docTitles && event.docTitles.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {event.docTitles.slice(0, 5).map((title, titleIndex) => (
-                      <Badge
-                        key={`${title}-${titleIndex}`}
-                        variant="secondary"
-                        className="px-1.5 py-0 text-[10px] font-normal"
-                      >
-                        {title.length > 40 ? `${title.slice(0, 40)}...` : title}
-                      </Badge>
-                    ))}
-                    {event.docTitles.length > 5 && (
-                      <span className="text-[10px] text-muted-foreground">
-                        +{event.docTitles.length - 5} more
-                      </span>
-                    )}
-                  </div>
-                )}
-                {event.metadata && Object.keys(event.metadata).length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
-                    {Object.entries(event.metadata).map(([key, value]) => (
-                      <span key={key}>
-                        {key}: <span className="text-foreground">{String(value)}</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
+        <div className="mt-5">
+          {view === 'timeline' ? (
+            <TimelineView trace={trace} />
+          ) : (
+            // The canvas panes carry their own light-mode palette; wrap so they
+            // render on a neutral surface regardless of admin theme, and pull
+            // back the CanvasView's outer horizontal padding.
+            <div className="-mx-2 overflow-hidden rounded-lg border border-border bg-white py-2 text-neutral-900">
+              <CanvasView events={canvasEvents} />
             </div>
-          ))}
+          )}
         </div>
-
-        {loopComplete?.discovery && Object.keys(loopComplete.discovery).length > 0 && (
-          <>
-            <Separator className="my-3" />
-            <div>
-              <span className="text-xs font-medium text-muted-foreground">Discovery Sources</span>
-              <div className="mt-1.5 flex flex-wrap gap-2">
-                {Object.entries(loopComplete.discovery).map(([source, count]) => (
-                  <Badge key={source} variant="outline" className="gap-1 text-[10px] font-normal">
-                    {source}: {String(count)}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-
-        {loopComplete?.citedDocIds && loopComplete.citedDocIds.length > 0 && (
-          <>
-            <Separator className="my-3" />
-            <div>
-              <span className="text-xs font-medium text-muted-foreground">Cited Documents</span>
-              <div className="mt-1.5 space-y-0.5">
-                {loopComplete.citedDocIds.map(docId => (
-                  <p key={docId} className="break-all font-mono text-xs text-foreground">{docId}</p>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-      </CardContent>
       )}
-    </Card>
+    </section>
   );
 }
 

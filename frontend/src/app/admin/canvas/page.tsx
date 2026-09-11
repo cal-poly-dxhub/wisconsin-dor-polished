@@ -1,30 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { ArrowRight } from 'lucide-react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useVisualizerSocket } from './hooks/use-visualizer-socket';
+import { usePersistedTrace } from './hooks/use-persisted-trace';
 import { useCorpusManifest } from './hooks/use-corpus-manifest';
 import { DEMO_TRACE, type FixtureTraceEvent } from './fixtures/demo-trace';
 import { useTiming } from './hooks/use-timing';
-import { VectorSearchPane } from './components/vector-search-pane';
-import { InitialVectorSearchPane } from './components/initial-vector-search-pane';
-import { GetNeighborsPane } from './components/get-neighbors-pane';
-import { SearchDocumentPane } from './components/search-document-pane';
-import { GetSectionPane } from './components/get-section-pane';
-import { ListSectionsPane } from './components/list-sections-pane';
-import { DisambiguationPane } from './components/disambiguation-pane';
-import { PrepareAnswerPane } from './components/prepare-answer-pane';
-import { FaqSearchPane } from './components/faq-search-pane';
-import { ThinkingPane } from './components/thinking-pane';
-import { PlaceholderPane } from './components/placeholder-pane';
-import { GetDocumentPane } from './components/get-document-pane';
-import { GetAuthorityChainPane } from './components/get-authority-chain-pane';
-import { ListFrameworkDocsPane } from './components/list-framework-docs-pane';
-import { FetchCaseOpinionPane } from './components/fetch-case-opinion-pane';
-import { ClarifyPane } from './components/clarify-pane';
-import { TurnStatusBar } from './components/turn-usage-divider';
+import { CanvasView } from './canvas-view';
 
 const queryClient = new QueryClient();
 
@@ -37,488 +22,32 @@ function fmtTime(ms: number): string {
   return `${mm}:${ss}.${cs}`;
 }
 
-// --- Turn-grouped data model ---
-
-interface ToolPane {
-  id: string;
-  toolName: string;
-  callSummary: string;
-  status: 'pending' | 'complete';
-  metadata: Record<string, unknown>;
-}
-
-interface TurnGroup {
-  id: string;
-  turn: number | null;
-  label?: string;
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadInputTokens: number;
-    cacheWriteInputTokens: number;
-    cumulativeTotal: number;
-    bedrockLatencyMs?: number;
-  };
-  panes: ToolPane[];
-  isWide?: boolean; // seeded vector_search spans 2 columns
-}
-
-function isSeededVectorSearch(metadata: Record<string, unknown>): boolean {
-  return metadata.seeded === true;
-}
-
-function vectorSearchPaneData(pane: ToolPane) {
-  const m = pane.metadata;
-  return {
-    query: (m.broadQuery as string) || pane.callSummary.replace(/^"|"$/g, ''),
-    latencyMs: (m.latencyMs as number) ?? 0,
-    preDedupCount: (m.preDedupCount as number) ?? 0,
-    chunkCount: (m.chunkCount as number) ?? 0,
-    broadChunkCount: m.broadChunkCount as number | undefined,
-    totalChunkCount: m.totalChunkCount as number | undefined,
-    topK: m.topK as number | undefined,
-    diversityCapPerDoc: m.diversityCapPerDoc as number | undefined,
-    docCount: m.docCount as number | undefined,
-    topScore: m.topScore as number | undefined,
-    docChunks: (m.docChunks as Record<string, number>) ?? {},
-    authorityBreakdown: m.authorityBreakdown as Record<string, number> | undefined,
-    scoreBuckets: m.scoreBuckets as Record<string, number> | undefined,
-    targetWpamYear: m.targetWpamYear as number | undefined,
-    caseLawCount: m.caseLawCount as number | undefined,
-    autoEnrichedCount: m.autoEnrichedCount as number | undefined,
-    statuteBackfill: m.statuteBackfill as
-      | { chunkId: string; docId: string; sourceRank: number }[]
-      | undefined,
-    caselawBackfill: m.caselawBackfill as
-      | { caseId: string; title: string; citation: string; summary: string; relevanceScore?: number; contentRole?: string; citedStubs?: string[] }[]
-      | undefined,
-    caselawBackfillMeta: m.caselawBackfillMeta as
-      | { stubsSearched?: string[]; candidateCount?: number; fetchSaturated?: boolean; fetchK?: number; latencyMs?: number }
-      | undefined,
-    refinedQuery: m.refinedQuery as string | undefined,
-    broadQuery: m.broadQuery as string | undefined,
-    broadSkipped: m.broadSkipped as boolean | undefined,
-    broadDiscovery: m.broadDiscovery as { docId: string; score: number }[] | undefined,
-    broadDocChunks: m.broadDocChunks as Record<string, number> | undefined,
-    broadFullDocChunks: m.broadFullDocChunks as Record<string, number> | undefined,
-    broadPreDedupCount: m.broadPreDedupCount as number | undefined,
-    broadKeptCount: m.broadKeptCount as number | undefined,
-    broadAuthorityBreakdown: m.broadAuthorityBreakdown as Record<string, number> | undefined,
-    broadScoreBuckets: m.broadScoreBuckets as Record<string, number> | undefined,
-    broadTopScore: m.broadTopScore as number | undefined,
-  };
-}
-
-function buildTurns(events: FixtureTraceEvent[]): TurnGroup[] {
-  const turns: TurnGroup[] = [];
-  const turnMap = new Map<number | string, TurnGroup>();
-  let counter = 0;
-
-  function getOrCreateTurn(turn: number | null, label?: string): TurnGroup {
-    const key = turn ?? `special-${counter}`;
-    let group = turnMap.get(key);
-    if (!group) {
-      group = {
-        id: `turn-${counter++}`,
-        turn,
-        label,
-        panes: [],
-      };
-      turnMap.set(key, group);
-      turns.push(group);
-    }
-    return group;
-  }
-
-  for (const ev of events) {
-    // Disambiguation is a special pre-loop event
-    if (ev.kind === 'phase' && (ev.payload.phase as string) === 'generality_classified') {
-      const group = getOrCreateTurn(null, 'Disambiguation');
-      group.panes.push({
-        id: `pane-${counter++}`,
-        toolName: '_disambiguation',
-        callSummary: (ev.payload.label as string) || '',
-        status: 'complete',
-        metadata: { result: ev.payload.result, label: ev.payload.label },
-      });
-    }
-
-    // FAQ transition → attach to existing faq_search pane
-    if (ev.kind === 'phase' && (ev.payload.phase as string) === 'faq_transition') {
-      for (const g of [...turns].reverse()) {
-        const faqPane = g.panes.find((p) => p.toolName === 'faq_search');
-        if (faqPane) {
-          faqPane.metadata = { ...faqPane.metadata, transitionLabel: ev.payload.label };
-          break;
-        }
-      }
-    }
-
-    // Turn usage → attach to the turn group
-    if (ev.kind === 'turn_usage') {
-      const turnNum = (ev.turn as number) ?? (ev.payload.turn as number) ?? 0;
-      const group = getOrCreateTurn(turnNum);
-      group.usage = {
-        inputTokens: (ev.payload.inputTokens as number) ?? 0,
-        outputTokens: (ev.payload.outputTokens as number) ?? 0,
-        cacheReadInputTokens: (ev.payload.cacheReadInputTokens as number) ?? 0,
-        cacheWriteInputTokens: (ev.payload.cacheWriteInputTokens as number) ?? 0,
-        cumulativeTotal: (ev.payload.cumulativeTotal as number) ?? 0,
-        bedrockLatencyMs: ev.payload.bedrockLatencyMs as number | undefined,
-      };
-    }
-
-    // Reasoning → own pane inside the turn group
-    if (ev.kind === 'reasoning') {
-      const text = (ev.payload.text as string) || '';
-      if (text) {
-        const turnNum = ev.turn ?? 0;
-        const group = getOrCreateTurn(turnNum);
-        group.panes.push({
-          id: `pane-${counter++}`,
-          toolName: '_reasoning',
-          callSummary: text,
-          status: 'complete',
-          metadata: {},
-        });
-      }
-    }
-
-    // Tool call → add pending pane to the turn group
-    if (ev.kind === 'tool_call') {
-      const toolName = (ev.payload.toolName as string) || 'unknown';
-      if (toolName === 'refine_query') continue;
-      const turnNum = ev.turn ?? 0;
-      const group = getOrCreateTurn(turnNum);
-      group.panes.push({
-        id: `pane-${counter++}`,
-        toolName,
-        callSummary: (ev.payload.summary as string) || '',
-        status: 'pending',
-        metadata: {},
-      });
-      if (toolName === 'vector_search' && ev.turn === 0) {
-        group.isWide = true;
-      }
-    }
-
-    // Tool result → complete the pending pane in the turn group
-    if (ev.kind === 'tool_result') {
-      const toolName = (ev.payload.toolName as string) || 'unknown';
-      if (toolName === 'refine_query') continue;
-      const metadata = (ev.payload.metadata as Record<string, unknown>) || {};
-      // Find the pending pane in this turn's group
-      const turnNum = ev.turn ?? 0;
-      const group = getOrCreateTurn(turnNum);
-      const target = [...group.panes].reverse().find(
-        (p) => p.toolName === toolName && p.status === 'pending'
-      );
-      if (target) {
-        target.status = 'complete';
-        target.metadata = metadata;
-      } else if (toolName === 'vector_search' && isSeededVectorSearch(metadata)) {
-        group.panes.push({
-          id: `pane-${counter++}`,
-          toolName: 'vector_search',
-          callSummary: (metadata.broadQuery as string) || (ev.payload.summary as string) || '',
-          status: 'complete',
-          metadata,
-        });
-        group.isWide = true;
-      }
-      if (toolName === 'vector_search' && isSeededVectorSearch(metadata)) {
-        group.isWide = true;
-      }
-    }
-
-    // Loop complete → finalize
-    if (ev.kind === 'loop_complete') {
-      for (const g of turns) {
-        const prepPane = g.panes.find((p) => p.toolName === 'prepare_answer');
-        if (prepPane) {
-          prepPane.metadata = {
-            ...prepPane.metadata,
-            citedDocCount: ev.payload.citedDocCount,
-            discoveryTitles: ev.payload.discoveryTitles,
-            turnsUsed: ev.payload.turnsUsed,
-            elapsedMs: ev.payload.elapsedMs,
-          };
-        }
-      }
-      for (const g of turns) {
-        for (const p of g.panes) p.status = 'complete';
-      }
-    }
-  }
-  return turns;
-}
-
-function renderToolPane(pane: ToolPane, sendQuery: (q: string) => void) {
-  if (pane.toolName === '_reasoning') {
-    return <ThinkingPane text={pane.callSummary} />;
-  }
-  if (pane.toolName === '_disambiguation') {
-    return (
-      <DisambiguationPane
-        data={{
-          result: (pane.metadata.result as 'disambiguate' | 'proceed') ?? 'proceed',
-          label: (pane.metadata.label as string) ?? '',
-          onSelect: (choice) => sendQuery(choice),
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'vector_search' && isSeededVectorSearch(pane.metadata)) {
-    return <InitialVectorSearchPane data={vectorSearchPaneData(pane)} />;
-  }
-  if (pane.toolName === 'vector_search') {
-    return <VectorSearchPane data={vectorSearchPaneData(pane)} />;
-  }
-  if (pane.toolName === 'get_neighbors') {
-    return (
-      <GetNeighborsPane
-        data={{
-          seedDoc: pane.callSummary,
-          neighbors: ((pane.metadata.neighborEdges as {
-            id?: string; title: string; relationship: string; rank?: number; score?: number | null;
-          }[]) ?? []).slice(0, 10).map((e, i) => ({
-            docId: e.id ?? ((pane.metadata.neighborTitles as string[]) ?? [])[i] ?? e.title,
-            title: e.title,
-            relationship: e.relationship,
-            rank: e.rank ?? i + 1,
-            score: e.score ?? undefined,
-          })),
-          latencyMs: (pane.metadata.latencyMs as number) ?? 0,
-          ranked: (pane.metadata.ranked as boolean) ?? false,
-          query: (pane.metadata.query as string) ?? '',
-          topK: (pane.metadata.topK as number) ?? 10,
-          totalCandidates: (pane.metadata.totalCandidates as number) ?? 0,
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'search_document') {
-    return (
-      <SearchDocumentPane
-        data={{
-          docId: (pane.metadata.docId as string) ?? '',
-          docTitle: (pane.metadata.docTitle as string) ?? pane.callSummary,
-          query: pane.callSummary.replace(/^"(.+)" in .+$/, '$1'),
-          chunkCount: (pane.metadata.chunkCount as number) ?? 0,
-          keywordFallback: (pane.metadata.keywordFallback as boolean) ?? false,
-          latencyMs: (pane.metadata.latencyMs as number) ?? 0,
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'list_sections') {
-    return (
-      <ListSectionsPane
-        data={{
-          docTitle: (pane.metadata.docTitle as string) ?? '',
-          sectionCount: (pane.metadata.sectionCount as number) ?? 0,
-          sectionHeadings: (pane.metadata.sectionHeadings as string[]) ?? [],
-          latencyMs: (pane.metadata.latencyMs as number) ?? 0,
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'get_section') {
-    return (
-      <GetSectionPane
-        data={{
-          docTitle: (pane.metadata.docTitle as string) ?? '',
-          heading: (pane.metadata.heading as string) ?? '',
-          query: (pane.metadata.query as string) ?? '',
-          filtered: (pane.metadata.filtered as boolean) ?? Boolean(pane.metadata.query),
-          sectionChunkCount: (pane.metadata.sectionChunkCount as number) ?? 0,
-          returnedChunkCount: (pane.metadata.returnedChunkCount as number) ?? 0,
-          chunkScores: (pane.metadata.chunkScores as { chunkId: string; cosine: number; zScore: number | null; heading: string; included: boolean }[]) ?? [],
-          latencyMs: (pane.metadata.latencyMs as number) ?? 0,
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'faq_search') {
-    return (
-      <FaqSearchPane
-        data={{
-          query: pane.callSummary.replace(/^"|"$/g, ''),
-          latencyMs: pane.metadata.latencyMs as number | undefined,
-          faqCount: (pane.metadata.faqCount as number) ?? 0,
-          topScore: (pane.metadata.topScore as number) ?? 0,
-          faqScoreThreshold: (pane.metadata.faqScoreThreshold as number) ?? 0.7,
-          faqScores: (pane.metadata.faqScores as number[]) ?? [],
-          topFaqSnippet: (pane.metadata.topFaqSnippet as string) ?? '',
-          transitionLabel: pane.metadata.transitionLabel as string | undefined,
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'prepare_answer') {
-    return (
-      <PrepareAnswerPane
-        data={{
-          citedDocCount: (pane.metadata.citedDocCount as number) ?? 0,
-          discoveryTitles: (pane.metadata.discoveryTitles as Record<string, string>) ?? {},
-          turnsUsed: (pane.metadata.turnsUsed as number) ?? 0,
-          elapsedMs: (pane.metadata.elapsedMs as number) ?? 0,
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'get_document') {
-    return (
-      <GetDocumentPane
-        data={{
-          docId: (pane.metadata.docId as string) ?? pane.callSummary,
-          status: ((pane.metadata.documentCount as number) ?? 0) > 0 ? 'ok' : 'miss',
-          latencyMs: pane.metadata.latencyMs as number | undefined,
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'get_authority_chain') {
-    return (
-      <GetAuthorityChainPane
-        data={{
-          chainLength: (pane.metadata.chainLength as number) ?? 0,
-          latencyMs: pane.metadata.latencyMs as number | undefined,
-          summary: pane.callSummary,
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'list_framework_docs') {
-    return (
-      <ListFrameworkDocsPane
-        data={{
-          documentCount: (pane.metadata.documentCount as number) ?? 0,
-          latencyMs: pane.metadata.latencyMs as number | undefined,
-          summary: pane.callSummary,
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'fetch_case_opinion') {
-    return (
-      <FetchCaseOpinionPane
-        data={{
-          citation: pane.callSummary,
-          opinionChars: (pane.metadata.opinionChars as number) ?? 0,
-          status: ((pane.metadata.opinionChars as number) ?? 0) > 0 ? 'ok' : 'miss',
-          latencyMs: pane.metadata.latencyMs as number | undefined,
-        }}
-      />
-    );
-  }
-  if (pane.toolName === 'clarify') {
-    return (
-      <ClarifyPane
-        data={{
-          summary: pane.callSummary,
-          latencyMs: pane.metadata.latencyMs as number | undefined,
-        }}
-      />
-    );
-  }
-  return (
-    <PlaceholderPane
-      toolName={pane.toolName}
-      summary={pane.callSummary}
-      latencyMs={pane.metadata.latencyMs as number | undefined}
-    />
-  );
-}
-
-function CollapsibleDisambiguation({ turn, passed, sendQuery }: { turn: TurnGroup; passed: boolean; sendQuery: (q: string) => void }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200">
-      <button
-        type="button"
-        onClick={() => setOpen(prev => !prev)}
-        className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-neutral-50 transition-colors cursor-pointer"
-      >
-        <span className={`text-xs font-bold uppercase tracking-wide ${passed ? 'text-green-700' : 'text-red-700'}`}>
-          {passed ? 'Passed Disambiguation Classifier' : 'Failed Disambiguation Classifier'}
-        </span>
-        <div className="flex-1" />
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 12 12"
-          fill="none"
-          className={`transition-transform duration-200 text-neutral-400 ${open ? 'rotate-90' : ''}`}
-        >
-          <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </button>
-      {open && (
-        <div className="border-t border-neutral-100 divide-y divide-neutral-100">
-          {turn.panes.map((pane) => (
-            <div key={pane.id}>{renderToolPane(pane, sendQuery)}</div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CollapsibleFaqTurn({ turn, sendQuery }: { turn: TurnGroup; sendQuery: (q: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const faqPane = turn.panes.find(p => p.toolName === 'faq_search');
-  const topScore = (faqPane?.metadata.topScore as number) ?? 0;
-  const faqCount = (faqPane?.metadata.faqCount as number) ?? 0;
-  const latencyMs = (faqPane?.metadata.latencyMs as number) ?? 0;
-  const threshold = (faqPane?.metadata.faqScoreThreshold as number) ?? 0.7;
-  const matched = topScore >= threshold;
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200">
-      <button
-        type="button"
-        onClick={() => setOpen(prev => !prev)}
-        className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-neutral-50 transition-colors cursor-pointer"
-      >
-        <span className="text-xs font-bold uppercase tracking-wide text-neutral-500">FAQ Search</span>
-        <span className={`text-xs font-medium ${matched ? 'text-green-700' : 'text-neutral-400'}`}>
-          {matched ? `Match found · top ${topScore.toFixed(2)}` : `No match · top ${topScore.toFixed(2)}`}
-        </span>
-        <span className="text-xs text-neutral-300">{faqCount} result{faqCount === 1 ? '' : 's'}</span>
-        {latencyMs > 0 && <span className="text-xs text-neutral-300">{latencyMs}ms</span>}
-        <div className="flex-1" />
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 12 12"
-          fill="none"
-          className={`transition-transform duration-200 text-neutral-400 ${open ? 'rotate-90' : ''}`}
-        >
-          <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </button>
-      {open && (
-        <div className="border-t border-neutral-100 divide-y divide-neutral-100">
-          {turn.panes.map((pane) => (
-            <div key={pane.id}>{renderToolPane(pane, sendQuery)}</div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function CanvasPage() {
   return (
     <QueryClientProvider client={queryClient}>
-      <CanvasShell />
+      {/* useSearchParams (read in CanvasShell for ?queryId=) requires a Suspense
+          boundary under the App Router. */}
+      <Suspense fallback={null}>
+        <CanvasShell />
+      </Suspense>
     </QueryClientProvider>
   );
 }
 
 function CanvasShell() {
+  // Post-baked replay: when ?queryId=… is present, render a persisted query's
+  // stored trace instead of the fixture/live stream. Read once on mount — this
+  // page is a full-bleed inspector opened via a fresh navigation, not a route
+  // that swaps queryIds in place.
+  const searchParams = useSearchParams();
+  const persistedQueryId = searchParams.get('queryId');
+  const {
+    events: persistedEvents,
+    query: persistedQuery,
+    loading: persistedLoading,
+    error: persistedError,
+  } = usePersistedTrace(persistedQueryId);
+
   // --- Fixture playback ---
   const [fixtureEvents, setFixtureEvents] = useState<FixtureTraceEvent[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -546,14 +75,15 @@ function CanvasShell() {
     setTimeout(scheduleFixture, 0);
   }, [scheduleFixture]);
 
-  // Auto-play fixture on mount
+  // Auto-play fixture on mount — skipped when replaying a persisted query.
   const mountedRef = useRef(false);
   useEffect(() => {
     if (mountedRef.current) return;
     mountedRef.current = true;
+    if (persistedQueryId) return;
     scheduleFixture();
     return () => { for (const t of timerRef.current) clearTimeout(t); };
-  }, [scheduleFixture]);
+  }, [scheduleFixture, persistedQueryId]);
 
   // --- Live query via WebSocket ---
   const { manifest } = useCorpusManifest();
@@ -563,7 +93,9 @@ function CanvasShell() {
     isRunning,
   } = useVisualizerSocket(manifest);
 
-  const [mode, setMode] = useState<'fixture' | 'live'>('fixture');
+  const [mode, setMode] = useState<'fixture' | 'live' | 'persisted'>(
+    persistedQueryId ? 'persisted' : 'fixture'
+  );
   const [queryInput, setQueryInput] = useState('');
 
   const handleSubmit = useCallback(() => {
@@ -582,18 +114,20 @@ function CanvasShell() {
     playFixture();
   }, [playFixture]);
 
-  const events: FixtureTraceEvent[] = mode === 'live'
-    ? liveTraceEvents.map((ev) => ({
-        kind: ev.kind as FixtureTraceEvent['kind'],
-        turn: ev.turn ?? null,
-        seq: ev.seq,
-        timestamp: ev.timestamp,
-        payload: ev.payload,
-      }))
-    : fixtureEvents;
+  const events: FixtureTraceEvent[] =
+    mode === 'persisted'
+      ? persistedEvents
+      : mode === 'live'
+        ? liveTraceEvents.map((ev) => ({
+            kind: ev.kind as FixtureTraceEvent['kind'],
+            turn: ev.turn ?? null,
+            seq: ev.seq,
+            timestamp: ev.timestamp,
+            payload: ev.payload,
+          }))
+        : fixtureEvents;
 
   const timing = useTiming(events);
-  const turns = buildTurns(events);
 
   return (
     <div className="relative h-full w-full overflow-auto bg-white">
@@ -640,121 +174,29 @@ function CanvasShell() {
         </div>
       </div>
 
+      {/* Persisted-replay banner — shows which stored query is being inspected
+          and calls out that live-only panes (reasoning, token usage,
+          disambiguation) are blank because that data isn't persisted. */}
+      {mode === 'persisted' && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+          <span className="font-semibold uppercase tracking-wide">Replay</span>
+          {persistedLoading ? (
+            <span>Loading stored trace…</span>
+          ) : persistedError ? (
+            <span className="text-red-700">No stored trace found for this query.</span>
+          ) : (
+            <>
+              {persistedQuery && <span className="text-amber-800">&ldquo;{persistedQuery}&rdquo;</span>}
+              <span className="text-amber-700/70">
+                Reasoning, token usage &amp; disambiguation panes are blank — not captured in stored traces.
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Turn-grouped pane layout */}
-      <LayoutGroup>
-        {/* Pre-grid: Disambiguation as collapsible full-width row */}
-        <div className="px-4 pt-2">
-          <AnimatePresence initial={false}>
-            {turns
-              .filter((turn) => turn.panes.some(p => p.toolName === '_disambiguation'))
-              .map((turn) => {
-                const pane = turn.panes.find(p => p.toolName === '_disambiguation');
-                const passed = (pane?.metadata.result as string) !== 'disambiguate';
-                return (
-                  <motion.div
-                    key={turn.id}
-                    layout="position"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{
-                      layout: { duration: 0.4, ease: [0.4, 0, 0.2, 1] },
-                      opacity: { duration: 0.35, delay: 0.15 },
-                    }}
-                    className="mb-2"
-                  >
-                    <CollapsibleDisambiguation turn={turn} passed={passed} sendQuery={sendQuery} />
-                  </motion.div>
-                );
-              })}
-          </AnimatePresence>
-        </div>
-
-        {/* Pre-grid: FAQ Search as collapsible full-width row */}
-        <div className="px-4">
-          <AnimatePresence initial={false}>
-            {turns
-              .filter((turn) => turn.panes.some(p => p.toolName === 'faq_search'))
-              .map((turn) => {
-                const faqPanes = turn.panes.filter(p => p.toolName === 'faq_search');
-                const faqTurn: TurnGroup = { ...turn, panes: faqPanes };
-                return (
-                  <motion.div
-                    key={`faq-${turn.id}`}
-                    layout="position"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{
-                      layout: { duration: 0.4, ease: [0.4, 0, 0.2, 1] },
-                      opacity: { duration: 0.35, delay: 0.15 },
-                    }}
-                    className="mb-2"
-                  >
-                    <CollapsibleFaqTurn turn={faqTurn} sendQuery={sendQuery} />
-                  </motion.div>
-                );
-              })}
-          </AnimatePresence>
-        </div>
-
-        {/* Grid: everything else (with faq_search panes stripped out) */}
-        <div
-          className="px-4 pb-8 grid gap-4"
-          style={{
-            gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
-          }}
-        >
-          <AnimatePresence initial={false}>
-            {turns
-              .map((turn) => ({ ...turn, panes: turn.panes.filter(p => p.toolName !== 'faq_search' && p.toolName !== '_disambiguation') }))
-              .filter((turn) => turn.panes.length > 0)
-              .map((turn) => (
-              <motion.div
-                key={turn.id}
-                layout="position"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{
-                  layout: { duration: 0.4, ease: [0.4, 0, 0.2, 1] },
-                  opacity: { duration: 0.35, delay: 0.15 },
-                }}
-                className={`overflow-hidden rounded-lg border border-neutral-200 ${
-                  turn.isWide ? 'col-span-3' : ''
-                }`}
-              >
-                {/* Status bar */}
-                <TurnStatusBar
-                  data={{
-                    turn: turn.turn ?? 0,
-                    label: turn.label,
-                    inputTokens: turn.usage?.inputTokens,
-                    outputTokens: turn.usage?.outputTokens,
-                    cacheReadInputTokens: turn.usage?.cacheReadInputTokens,
-                    cacheWriteInputTokens: turn.usage?.cacheWriteInputTokens,
-                    cumulativeTotal: turn.usage?.cumulativeTotal,
-                    bedrockLatencyMs: turn.usage?.bedrockLatencyMs,
-                  }}
-                />
-
-                {/* Tool panes stacked vertically */}
-                <div className="divide-y divide-neutral-100">
-                  <AnimatePresence initial={false}>
-                    {turn.panes.map((pane) => (
-                      <motion.div
-                        key={pane.id}
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        transition={{ opacity: { duration: 0.3 }, height: { duration: 0.3 } }}
-                      >
-                        {renderToolPane(pane, sendQuery)}
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-      </LayoutGroup>
+      <CanvasView events={events} sendQuery={sendQuery} />
     </div>
   );
 }
