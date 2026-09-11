@@ -14,6 +14,7 @@ import { useDevTrace } from '@/hooks/use-dev-trace';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { AgentTraceEvent, ResourceItem, FAQ } from '@/stores/types';
 import type { QueryStatus } from '@/stores/types';
+import type { FlowchartContent } from '@messages/websocket-interface';
 
 import './chat-message.css';
 import AnimatedMarkdown, { type SourceTone, toneForAuthorityLevel } from './animated-markdown';
@@ -25,7 +26,7 @@ import { FeedbackModal } from './feedback/feedback-modal';
 import { AnnotationController } from './feedback/annotation-controller';
 import { RetrievalModal } from './retrieval-modal';
 import { ChoiceChips } from './choice-chips';
-import { FlowchartWalkthrough } from './flowchart-walkthrough';
+import { FlowchartBanner, FlowchartSourceCard } from './flowchart-walkthrough';
 import { TopicShiftSuggestion } from './topic-shift-suggestion';
 
 type TraceStep = {
@@ -290,18 +291,19 @@ export function StreamResponse({
   );
 }
 
-export function InlineSources({ items, streamingComplete, citationsByDoc }: { items: ResourceItem[]; streamingComplete?: boolean; citationsByDoc?: Map<string, InlineCitation[]> }) {
+export function InlineSources({ items, streamingComplete, citationsByDoc, flowchart }: { items: ResourceItem[]; streamingComplete?: boolean; citationsByDoc?: Map<string, InlineCitation[]>; flowchart?: FlowchartContent }) {
   const [open, setOpen] = useState(true);
   // Hide sources while annotating — zen mode focuses on just the markdown.
   const annotationActive = useFeedbackStore(s => s.annotatingQueryId !== null);
 
-  if (!items.length || !streamingComplete || annotationActive) return null;
+  if ((!items.length && !flowchart) || !streamingComplete || annotationActive) return null;
 
   const docCount = items.filter(i => i.type === 'document').length;
   const faqCount = items.filter(i => i.type === 'faq').length;
   const parts: string[] = [];
   if (docCount > 0) parts.push(`${docCount} document${docCount === 1 ? '' : 's'}`);
   if (faqCount > 0) parts.push(`${faqCount} FAQ${faqCount === 1 ? '' : 's'}`);
+  if (flowchart) parts.push('1 flowchart');
 
   return (
     <div className="mt-4">
@@ -323,6 +325,11 @@ export function InlineSources({ items, streamingComplete, citationsByDoc }: { it
       </button>
       {open && (
         <div className="inline-sources-row grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-2.5">
+          {flowchart && (
+            <div key="flowchart">
+              <FlowchartSourceCard flowchart={flowchart} />
+            </div>
+          )}
           {items.map(item => {
             const key =
               item.type === 'document'
@@ -636,10 +643,10 @@ export function ChatMessage({
     return (
       <div className="chat-response-aligned">
         <StreamResponse content={response} streamingComplete={streamingComplete} docUrls={docUrls} docTones={docTones} />
-        <InlineSources items={items ?? []} streamingComplete={streamingComplete} citationsByDoc={citationsByDoc} />
+        <InlineSources items={items ?? []} streamingComplete={streamingComplete} citationsByDoc={citationsByDoc} flowchart={flowchart} />
       </div>
     );
-  }, [response, streamingComplete, items, docUrls, docTones, citationsByDoc]);
+  }, [response, streamingComplete, items, docUrls, docTones, citationsByDoc, flowchart]);
 
   const containerClassName = useMemo(
     () => `font-sans ${isAnnotatingThis ? 'annotate-active' : ''} ${className || ''}`,
@@ -767,6 +774,11 @@ export function ChatMessage({
             </div>
           )}
 
+          {/* Full-width flowchart banner, shown just before the answer as soon
+              as a decision flowchart is seeded — it arrives before the answer
+              streams, so it does NOT gate on streamingComplete. */}
+          {flowchart && <FlowchartBanner flowchart={flowchart} />}
+
           {/* Response Paragraph */}
           {memoizedResponse}
 
@@ -774,14 +786,6 @@ export function ChatMessage({
           {choices && choices.length > 0 && streamingComplete && (
             <div className="chat-response-aligned">
               <ChoiceChips queryId={queryId} choices={choices} onSelect={onSendMessage} />
-            </div>
-          )}
-
-          {/* Interactive "Walk the flowchart" affordance when a decision
-              flowchart was seeded for this turn. */}
-          {flowchart && streamingComplete && (
-            <div className="chat-response-aligned">
-              <FlowchartWalkthrough flowchart={flowchart} />
             </div>
           )}
 

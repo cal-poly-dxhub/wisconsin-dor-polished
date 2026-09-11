@@ -84,6 +84,7 @@ const ChatMessage = z.object({
   answer: z.string(),
   timestamp: z.string().optional(),
   resources: z.any().optional(),
+  flowchart: z.any().optional(),
 });
 const SessionHistoryResponse = z.object({
   messages: z.array(ChatMessage),

@@ -481,6 +481,16 @@ def get_session_history_handler(session_id: str) -> dict[str, Any]:
                 deserializer = TypeDeserializer()
                 message["resources"] = deserializer.deserialize(item["resources"])
 
+            # Seeded decision flowchart — stored as a JSON string; parse back to
+            # the camelCase object the frontend's FlowchartContent expects so the
+            # "Walk the flowchart" banner/card survive a reload.
+            flowchart_raw = item.get("flowchart", {}).get("S")
+            if flowchart_raw:
+                try:
+                    message["flowchart"] = json.loads(flowchart_raw)
+                except (ValueError, TypeError):
+                    pass
+
             messages.append(message)
 
         return create_api_response(200, {"messages": messages})

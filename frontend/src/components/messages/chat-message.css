@@ -56,6 +56,10 @@
   margin-bottom: 0.5em;
   font-size: inherit;
   font-weight: 400 !important;
+  /* Slightly looser than the container's 1.6 so inline citation pills (which
+     are a touch taller than the text line box, due to their border + padding)
+     get a small gap and don't rub against the wrapped line above/below. */
+  line-height: 1.75;
 }
 
 /* Horizontal rules / section dividers */
@@ -135,7 +139,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.3em;
-  padding: 0.15em 0.5em;
+  padding: 0.2em 0.5em;
   margin: 0 0.1em;
   border-radius: 5px;
   border: 1px solid var(--border);
@@ -145,7 +149,12 @@
   font-weight: 500;
   text-decoration: none;
   outline: none;
-  vertical-align: baseline;
+  /* Give the label comfortable internal height, but pin the pill's own
+     line-height so it does NOT inherit the paragraph's loose 1.75 (which would
+     make the pill grow and eat the inter-line gap). ~1.35 reads cleanly while
+     staying shorter than the paragraph line box, so wrapped lines keep a gap. */
+  line-height: 1.35;
+  vertical-align: middle;
 }
 
 .markdown-container .source-link:hover {

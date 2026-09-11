@@ -447,6 +447,16 @@ def handler(event: dict, context) -> dict[str, Any]:
                     logger.error(f"Phase B non-streaming fallback failed: {exc}")
                     answer = "(Answer generation failed — please retry)"
 
+        # Persist the flowchart in the SAME camelCase wire shape the frontend
+        # consumes live, so resume hydration and the live path are identical.
+        persisted_flowchart = None
+        if result.seeded_flowchart:
+            from streaming.delivery import flowchart_content_for_wire
+
+            persisted_flowchart = flowchart_content_for_wire(
+                result.seeded_flowchart, result.seeded_flowchart_score
+            )
+
         save_chat_history(
             session_id,
             user_query.query_id,
@@ -455,6 +465,7 @@ def handler(event: dict, context) -> dict[str, Any]:
             rag_documents=rag_documents,
             faq_resource=faq_resource,
             trace_log=result.trace_log,
+            seeded_flowchart=persisted_flowchart,
         )
 
         return {"successful": True}

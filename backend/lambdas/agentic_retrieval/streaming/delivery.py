@@ -18,13 +18,35 @@ from websocket_utils.models import (
 from websocket_utils.utils import WebSocketServer
 
 
-def _flowchart_message(query_id: str, chart: dict, score: float | None) -> FlowchartMessage:
-    """Build a FlowchartMessage from a seeded flowchart sidecar dict.
+def flowchart_content_for_wire(chart: dict, score: float | None) -> dict:
+    """Map a seeded flowchart sidecar dict to the camelCase wire/persist shape.
 
-    FlowchartContent is a permissive mirror of the sidecar; extra sidecar keys
-    (e.g. per-node `figure`) are ignored by the model's field set, and the
-    edge `from`/`to` aliases map onto from_node/to_node.
+    The sidecar is snake_case with a nested `source`; the frontend (and the
+    stored history record, so resume matches the live path) expects the flat
+    camelCase FlowchartContent. Extra sidecar keys (e.g. per-node `figure`) are
+    dropped by the model's field set; edge `from`/`to` aliases are preserved.
     """
+    src = chart.get("source", {}) or {}
+    content = FlowchartContent.model_validate(
+        {
+            "flowchartId": chart.get("flowchart_id", ""),
+            "title": chart.get("title", ""),
+            "summary": chart.get("summary"),
+            "statute": chart.get("statute"),
+            "disclaimer": chart.get("disclaimer", ""),
+            "wpamPage": src.get("wpam_page"),
+            "sourceUrl": src.get("source_url"),
+            "startNode": chart.get("start_node", ""),
+            "nodes": chart.get("nodes", []),
+            "edges": chart.get("edges", []),
+            "routerScore": score,
+        }
+    )
+    return content.model_dump(by_alias=True)
+
+
+def _flowchart_message(query_id: str, chart: dict, score: float | None) -> FlowchartMessage:
+    """Build a FlowchartMessage from a seeded flowchart sidecar dict."""
     src = chart.get("source", {}) or {}
     return FlowchartMessage(
         query_id=query_id,

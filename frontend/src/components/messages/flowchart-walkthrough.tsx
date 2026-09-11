@@ -14,20 +14,14 @@ import {
   Flag,
 } from 'lucide-react';
 import { Button } from '../ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '../ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import type {
   FlowchartContent,
   FlowchartNode,
   FlowchartEdge,
 } from '@messages/websocket-interface';
 
-interface FlowchartWalkthroughProps {
+interface FlowchartProps {
   flowchart: FlowchartContent;
 }
 
@@ -48,15 +42,87 @@ function outcomeTone(outcome?: string): { icon: typeof Flag; className: string }
 }
 
 /**
- * "Walk the flowchart" — an interactive, one-step-at-a-time walk through a WPAM
- * decision tree seeded for this query. A highlighted button opens a modal that
- * presents the current decision (question + criteria + governing authorities),
- * lets the user follow the Yes / No branch, and lands on the terminal outcome.
- * Back and Restart controls let the user explore freely. The DOR disclaimer is
- * always visible — the walk is general guidance, not a determination.
+ * Full-width banner shown just before the answer markdown when a decision
+ * flowchart was seeded. Announces the chart and offers the walkthrough.
  */
-export function FlowchartWalkthrough({ flowchart }: FlowchartWalkthroughProps) {
+export function FlowchartBanner({ flowchart }: FlowchartProps) {
   const [open, setOpen] = useState(false);
+  return (
+    <div className="chat-response-aligned mb-4">
+      <div className="flex flex-col gap-3 rounded-xl border border-sky-300 bg-sky-50 px-4 py-3.5 dark:border-sky-800 dark:bg-sky-950/40 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-2.5">
+          <GitBranch className="mt-0.5 h-4 w-4 shrink-0 text-sky-600 dark:text-sky-400" />
+          <div>
+            <p className="text-sm font-medium text-sky-900 dark:text-sky-200">
+              There is a flowchart that may help you with this question
+            </p>
+            <p className="text-xs text-sky-700/80 dark:text-sky-300/70">
+              {flowchart.title}
+            </p>
+          </div>
+        </div>
+        <Button
+          onClick={() => setOpen(true)}
+          size="sm"
+          className="shrink-0 gap-2 bg-sky-600 text-white hover:bg-sky-700"
+        >
+          <GitBranch className="h-4 w-4" />
+          Walk the flowchart
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <FlowchartWalkthroughModal flowchart={flowchart} open={open} onOpenChange={setOpen} />
+    </div>
+  );
+}
+
+/**
+ * Source-card variant — matches the DocumentCard/FAQCard grid, styled with the
+ * blue flowchart accent. Clicking anywhere opens the walkthrough.
+ */
+export function FlowchartSourceCard({ flowchart }: FlowchartProps) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="group flex h-full w-full flex-col gap-1.5 rounded-lg border border-sky-300 bg-sky-50 p-3 text-left transition-colors hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:hover:bg-sky-900/50"
+      >
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-400">
+          <GitBranch className="h-3.5 w-3.5" />
+          Decision flowchart
+        </div>
+        <div className="text-sm font-medium leading-snug text-sky-900 dark:text-sky-200">
+          {flowchart.title}
+        </div>
+        {flowchart.statute && (
+          <div className="text-xs text-sky-700/70 dark:text-sky-300/60">
+            {flowchart.statute}
+          </div>
+        )}
+        <div className="mt-auto flex items-center gap-1 pt-1 text-xs font-medium text-sky-600 dark:text-sky-400">
+          Walk the flowchart
+          <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+        </div>
+      </button>
+      <FlowchartWalkthroughModal flowchart={flowchart} open={open} onOpenChange={setOpen} />
+    </>
+  );
+}
+
+/**
+ * The interactive, one-step-at-a-time walk through a WPAM decision tree. A
+ * controlled Dialog: `open` / `onOpenChange` are owned by the trigger surface
+ * (banner or source card). Presents the current decision (question + criteria +
+ * governing authorities), follows the Yes / No branch, and lands on the terminal
+ * outcome. Back and Start-over let the user explore freely. The DOR disclaimer
+ * is always visible — the walk is general guidance, not a determination.
+ */
+export function FlowchartWalkthroughModal({
+  flowchart,
+  open,
+  onOpenChange,
+}: FlowchartProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
   // Path of visited node ids; last element is the current node.
   const [path, setPath] = useState<string[]>([flowchart.startNode]);
 
@@ -82,9 +148,19 @@ export function FlowchartWalkthrough({ flowchart }: FlowchartWalkthroughProps) {
   );
 
   const currentId = path[path.length - 1];
-  const current = nodesById.get(currentId);
 
-  const reset = () => setPath([flowchart.startNode]);
+  const startPath = (): string[] => {
+    // Skip a leading start node so the first card is the first decision.
+    const start = nodesById.get(flowchart.startNode);
+    if (start?.type === 'start') {
+      const out = edgesFrom.get(flowchart.startNode) ?? [];
+      const next = out.find(e => !e.branch) ?? out[0];
+      if (next) return [flowchart.startNode, next.to];
+    }
+    return [flowchart.startNode];
+  };
+
+  const reset = () => setPath(startPath());
   const back = () => setPath(p => (p.length > 1 ? p.slice(0, -1) : p));
 
   // Advance along the edge whose branch matches (or the sole pass-through edge).
@@ -96,30 +172,10 @@ export function FlowchartWalkthrough({ flowchart }: FlowchartWalkthroughProps) {
     if (edge) setPath(p => [...p, edge.to]);
   };
 
-  // Auto-skip a start node so the first visible card is the first decision.
-  const visible = current?.type === 'start' ? followPassThrough(current) : current;
-
-  function followPassThrough(node: FlowchartNode): FlowchartNode | undefined {
-    const out = edgesFrom.get(node.id) ?? [];
-    const next = out.find(e => !e.branch) ?? out[0];
-    return next ? nodesById.get(next.to) : node;
-  }
-
-  // If we're sitting on a start node, jump the path forward to its successor so
-  // Back/step counting behaves. Done lazily on open.
-  const ensurePastStart = () => {
-    if (nodesById.get(flowchart.startNode)?.type === 'start') {
-      const out = edgesFrom.get(flowchart.startNode) ?? [];
-      const next = out.find(e => !e.branch) ?? out[0];
-      if (next) setPath([flowchart.startNode, next.to]);
-    }
-  };
-
-  const node = visible;
+  const node = nodesById.get(currentId);
   const isDecision = node?.type === 'decision';
   const isTerminal = node?.type === 'terminal' || node?.type === 'end';
 
-  // Step label: which decision number we're on (1-indexed) when known.
   const stepLabel =
     node?.step != null
       ? `Step ${node.step} of ${decisionCount}`
@@ -131,25 +187,10 @@ export function FlowchartWalkthrough({ flowchart }: FlowchartWalkthroughProps) {
     <Dialog
       open={open}
       onOpenChange={o => {
-        setOpen(o);
-        if (o) {
-          reset();
-          ensurePastStart();
-        }
+        onOpenChange(o);
+        if (o) setPath(startPath());
       }}
     >
-      <DialogTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="group gap-2 border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-900/50"
-        >
-          <GitBranch className="h-4 w-4" />
-          Walk the flowchart
-          <ArrowRight className="h-3.5 w-3.5 opacity-0 -translate-x-1 transition-all group-hover:opacity-100 group-hover:translate-x-0" />
-        </Button>
-      </DialogTrigger>
-
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
@@ -161,7 +202,6 @@ export function FlowchartWalkthrough({ flowchart }: FlowchartWalkthroughProps) {
           )}
         </DialogHeader>
 
-        {/* Progress / step label */}
         {stepLabel && (
           <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
             <span>{stepLabel}</span>
@@ -230,7 +270,6 @@ export function FlowchartWalkthrough({ flowchart }: FlowchartWalkthroughProps) {
           </motion.div>
         </AnimatePresence>
 
-        {/* Branch / navigation controls */}
         <div className="mt-1 space-y-3">
           {isDecision && (
             <div className="flex gap-2">
@@ -271,10 +310,7 @@ export function FlowchartWalkthrough({ flowchart }: FlowchartWalkthroughProps) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => {
-                reset();
-                ensurePastStart();
-              }}
+              onClick={reset}
               className="gap-1.5 text-xs text-muted-foreground"
             >
               <RotateCcw className="h-3.5 w-3.5" />
@@ -283,7 +319,6 @@ export function FlowchartWalkthrough({ flowchart }: FlowchartWalkthroughProps) {
           </div>
         </div>
 
-        {/* Disclaimer + source — always visible. */}
         <div className="mt-1 space-y-2 border-t pt-3">
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             {flowchart.disclaimer}

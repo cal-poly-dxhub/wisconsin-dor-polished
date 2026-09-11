@@ -106,6 +106,24 @@ AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run --with openpyxl python \
 # Writes s3://{raw-bucket}/worksheets/{worksheet_id}.json. The agentic_retrieval
 # list_worksheets / get_worksheet tools read these (formulas described, never evaluated).
 
+# Decision flowcharts (WPAM raster charts → hand-authored JSON sidecars for the
+# get_flowchart tool + pre-loop seed router):
+# Separate lightweight local step — NOT a Fargate phase. Unlike TID worksheets,
+# there is NO automated extractor: the charts are flattened raster images, so each
+# sidecar is HAND-TRANSCRIBED (tools/ingestion/flowcharts/data/*.json, committed).
+# At the annual WPAM refresh you MUST manually re-verify each of the 6 charts:
+#   (a) branch logic didn't change (statutes get amended), and
+#   (b) the page anchors — pdf_page / wpam_page / source.source_url#page=N — still
+#       point at the right page in the new edition (page numbers shift yearly).
+# Then re-upload. Graph-integrity tests (backend tests/test_flowcharts.py) guard
+# structure but CANNOT catch a stale page number or an outdated branch — that is
+# the manual verify step. Registry (titles, router descriptions) lives in code:
+# backend/lambdas/agentic_retrieval/flowcharts.py.
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python \
+  -m tools.ingestion.flowcharts.upload_flowcharts --raw-bucket wis-raw-bucket-c8e69250
+# Writes s3://{raw-bucket}/flowcharts/{flowchart_id}.json. Graceful if skipped:
+# a missing sidecar just disables that chart's seed (query runs as if no chart).
+
 # Case law (separate path — discovered from statute PDF hyperlinks, not manifest):
 AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python tools/ingestion/ingest_case_law.py \
   --bucket wis-raw-bucket-c8e69250 --from-s3 --resume

@@ -95,8 +95,9 @@ def save_chat_history(
     rag_documents: list[RAGDocument] | None = None,
     faq_resource: "FAQResource | None" = None,
     trace_log: list[dict] | None = None,
+    seeded_flowchart: dict | None = None,
 ) -> None:
-    """Persist a query/answer pair (with resources and trace) to the chat history table."""
+    """Persist a query/answer pair (with resources, flowchart, and trace) to history."""
     if not CHAT_HISTORY_TABLE or not session_id:
         return
     try:
@@ -150,6 +151,13 @@ def save_chat_history(
                 resources.append({"type": "faq", "data": faq_data})
         if resources:
             item["resources"] = resources
+
+        # Persist the seeded decision flowchart so the "Walk the flowchart"
+        # banner/card survive a page reload / session resume. Stored as a JSON
+        # string (nested nodes/edges are deep — DynamoDB maps get unwieldy and
+        # this mirrors how `trace` is stored).
+        if seeded_flowchart:
+            item["flowchart"] = json.dumps(seeded_flowchart)
 
         table = dynamodb_resource.Table(CHAT_HISTORY_TABLE)
         table.put_item(Item=item)

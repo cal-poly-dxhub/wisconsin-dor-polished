@@ -90,6 +90,7 @@ export function useSessionResume(): { loading: boolean } {
                   status: isPending ? 'pending' : 'completed',
                   response: { type: 'stream', content: msg.answer || '' },
                   resources: msg.resources,
+                  flowchart: msg.flowchart as Query['flowchart'],
                 };
                 addQuery(query);
               });
@@ -141,6 +142,7 @@ export function useSessionResume(): { loading: boolean } {
               content: msg.answer || '',
             },
             resources: msg.resources,
+            flowchart: msg.flowchart as Query['flowchart'],
           };
           addQuery(query);
         });
