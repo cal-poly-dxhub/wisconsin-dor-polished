@@ -11,11 +11,18 @@ import argparse
 import json
 import logging
 import os
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3
 import yaml
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+
+from tools.ingestion.lib.aliases import compose_embed_input
+
+EMBED_INPUT_MODES = ("plain", "enriched")
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -63,16 +70,26 @@ def embed_text(
     raise RuntimeError("unreachable")
 
 
-def load_extracted_docs(work_bucket: str) -> list[dict]:
+def extracted_key(doc_id: str, cache_prefix: str = "") -> str:
+    return f"{cache_prefix}extracted/{doc_id}.json"
+
+
+def embedded_key(doc_id: str, cache_prefix: str = "") -> str:
+    return f"{cache_prefix}embedded/{doc_id}.json"
+
+
+def load_extracted_docs(work_bucket: str, cache_prefix: str = "") -> list[dict]:
     """Load all extracted document JSONs from the work bucket in parallel."""
     keys: list[str] = []
+    prefix = f"{cache_prefix}extracted/"
+    manifest = f"{prefix}manifest.json"
     paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=work_bucket, Prefix="extracted/"):
+    for page in paginator.paginate(Bucket=work_bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
-            if key.endswith(".json") and key != "extracted/manifest.json":
+            if key.endswith(".json") and key != manifest:
                 keys.append(key)
-    logger.info(f"Found {len(keys)} extracted JSONs; downloading in parallel...")
+    logger.info(f"Found {len(keys)} extracted JSONs under '{prefix}'; downloading in parallel...")
 
     def fetch(key: str) -> dict:
         return json.loads(s3.get_object(Bucket=work_bucket, Key=key)["Body"].read())
@@ -86,22 +103,42 @@ def load_extracted_docs(work_bucket: str) -> list[dict]:
     return docs
 
 
-def embed_chunks(doc: dict, model_id: str, dimension: int) -> dict:
+def chunk_embed_input(doc: dict, chunk: dict, embed_input: str) -> str:
+    """The string sent to Titan for one chunk.
+
+    ``plain``    → chunk["text"] exactly as before.
+    ``enriched`` → title/heading header + gold queries + generated questions +
+                   aliases, then the chunk text (see lib/aliases.compose_embed_input).
+    The stored chunk text is never modified.
+    """
+    if embed_input == "enriched":
+        return compose_embed_input(doc, chunk, chunk.get("aliases"), chunk.get("gold_queries", []))
+    return chunk["text"]
+
+
+def embed_chunks(doc: dict, model_id: str, dimension: int, embed_input: str = "plain") -> dict:
     """Embed all chunks for a single document.
 
     Case-law opinions with extracted text are embedded chunk-by-chunk like the
     rest of the corpus. Cases without opinion text remain thin stubs and skip
     both chunk and document embeddings.
+
+    Records ``doc["embed_input_mode"]`` and per-chunk ``embed_input_chars`` for
+    provenance. The document-level embedding is unchanged by ``embed_input``.
     """
     doc_id = doc["doc_id"]
     chunks = doc.get("chunks", [])
+    if embed_input not in EMBED_INPUT_MODES:
+        raise ValueError(f"embed_input must be one of {EMBED_INPUT_MODES}, got {embed_input!r}")
 
     if doc.get("doc_type") == "case_law" and not chunks:
         return doc
 
+    doc["embed_input_mode"] = embed_input
     for i, chunk in enumerate(chunks):
-        embedding = embed_text(chunk["text"], model_id, dimension)
-        chunk["embedding"] = embedding
+        text = chunk_embed_input(doc, chunk, embed_input)
+        chunk["embed_input_chars"] = len(text)
+        chunk["embedding"] = embed_text(text, model_id, dimension)
         if (i + 1) % 50 == 0:
             logger.info(f"  {doc_id}: embedded {i + 1}/{len(chunks)} chunks")
 
@@ -113,15 +150,16 @@ def embed_chunks(doc: dict, model_id: str, dimension: int) -> dict:
     return doc
 
 
-def list_already_embedded(bucket: str) -> set[str]:
+def list_already_embedded(bucket: str, cache_prefix: str = "") -> set[str]:
     """Return set of doc_ids that already have embedding output in the work bucket."""
     embedded = set()
+    prefix = f"{cache_prefix}embedded/"
     paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix="embedded/"):
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
             if key.endswith(".json"):
-                doc_id = key.removeprefix("embedded/").removesuffix(".json")
+                doc_id = key.removeprefix(prefix).removesuffix(".json")
                 embedded.add(doc_id)
     return embedded
 
@@ -131,6 +169,20 @@ def main():
     parser.add_argument("--work-bucket", required=True)
     parser.add_argument("--config", default="tools/ingestion/config/ingest_config.yaml")
     parser.add_argument("--max-workers", type=int, default=5)
+    parser.add_argument(
+        "--cache-prefix",
+        default="",
+        help="Prefix for every work-bucket key (extracted/, embedded/). "
+        "e.g. 'staging/' reads staging/extracted/ and writes staging/embedded/.",
+    )
+    parser.add_argument(
+        "--embed-input",
+        choices=EMBED_INPUT_MODES,
+        default=None,
+        help="What to send to Titan per chunk: 'plain' (chunk text, default) or 'enriched' "
+        "(title/heading + gold queries + generated questions + aliases + chunk text). "
+        "Falls back to config alias_enrichment.embed_input, then 'plain'.",
+    )
     parser.add_argument(
         "--force", action="store_true", help="Re-embed all documents, ignoring cache"
     )
@@ -149,8 +201,15 @@ def main():
     config = load_config(args.config)
     model_id = config.get("bedrock_embed_model", "amazon.titan-embed-text-v2:0")
     dimension = config.get("embed_dimension", 1024)
+    embed_input = args.embed_input or (config.get("alias_enrichment") or {}).get(
+        "embed_input", "plain"
+    )
+    if embed_input not in EMBED_INPUT_MODES:
+        parser.error(f"alias_enrichment.embed_input must be one of {EMBED_INPUT_MODES}")
+    cache_prefix = args.cache_prefix
+    logger.info(f"Embed input mode: {embed_input}; cache prefix: '{cache_prefix}'")
 
-    docs = load_extracted_docs(args.work_bucket)
+    docs = load_extracted_docs(args.work_bucket, cache_prefix)
     logger.info(f"Loaded {len(docs)} extracted documents")
 
     if args.source_filter:
@@ -166,8 +225,8 @@ def main():
         stale = []
         for doc in docs:
             doc_id = doc["doc_id"]
-            ext_key = f"extracted/{doc_id}.json"
-            emb_key = f"embedded/{doc_id}.json"
+            ext_key = extracted_key(doc_id, cache_prefix)
+            emb_key = embedded_key(doc_id, cache_prefix)
             try:
                 ext_head = s3.head_object(Bucket=args.work_bucket, Key=ext_key)
                 emb_head = s3.head_object(Bucket=args.work_bucket, Key=emb_key)
@@ -178,7 +237,7 @@ def main():
         logger.info(f"Smart mode: {len(stale)}/{len(docs)} documents have stale embeddings")
         docs = stale
     else:
-        already_done = list_already_embedded(args.work_bucket)
+        already_done = list_already_embedded(args.work_bucket, cache_prefix)
         before = len(docs)
         docs = [d for d in docs if d["doc_id"] not in already_done]
         logger.info(
@@ -191,7 +250,8 @@ def main():
     embedded_count = 0
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = {
-            executor.submit(embed_chunks, doc, model_id, dimension): doc["doc_id"] for doc in docs
+            executor.submit(embed_chunks, doc, model_id, dimension, embed_input): doc["doc_id"]
+            for doc in docs
         }
         for future in as_completed(futures):
             doc_id = futures[future]
@@ -200,7 +260,7 @@ def main():
                 n_chunks = len(result.get("chunks", []))
                 embedded_count += n_chunks
 
-                cache_key = f"embedded/{result['doc_id']}.json"
+                cache_key = embedded_key(result["doc_id"], cache_prefix)
                 s3.put_object(
                     Bucket=args.work_bucket,
                     Key=cache_key,
@@ -219,13 +279,13 @@ def main():
     # GC: delete embedded files not present in the extracted set.
     # The extracted/ prefix is the authoritative document set; anything in
     # embedded/ that doesn't have a matching extracted/ record is stale.
-    extracted_ids = {d["doc_id"] for d in load_extracted_docs(args.work_bucket)}
-    embedded_ids = list_already_embedded(args.work_bucket)
+    extracted_ids = {d["doc_id"] for d in load_extracted_docs(args.work_bucket, cache_prefix)}
+    embedded_ids = list_already_embedded(args.work_bucket, cache_prefix)
     stale_ids = embedded_ids - extracted_ids
     if stale_ids:
         logger.info(f"GC: removing {len(stale_ids)} stale embedded files (not in extracted set)")
         for doc_id in sorted(stale_ids):
-            s3.delete_object(Bucket=args.work_bucket, Key=f"embedded/{doc_id}.json")
+            s3.delete_object(Bucket=args.work_bucket, Key=embedded_key(doc_id, cache_prefix))
         logger.info(f"GC: deleted {len(stale_ids)} stale embedded files")
     else:
         logger.info("GC: no stale embedded files found")

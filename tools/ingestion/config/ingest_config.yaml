@@ -116,3 +116,16 @@ statute_families:
 bedrock_embed_model: "amazon.titan-embed-text-v2:0"
 bedrock_llm_model: "us.anthropic.claude-sonnet-4-6"
 embed_dimension: 1024
+
+# --- Document expansion (chunk aliases) ---
+# Prepends, at EMBED time only, a short block of gold queries + generated
+# plain-language questions + everyday synonyms to each chunk's text before it
+# is sent to Titan. Stored chunk text never changes. Both switches default off;
+# extract.py --aliases / --aliases-only and embed.py --embed-input override them.
+# See tools/ingestion/lib/aliases.py.
+alias_enrichment:
+  enabled: false                       # extract: generate chunk["aliases"]
+  embed_input: plain                   # embed: plain | enriched
+  alias_model: "us.amazon.nova-2-lite-v1:0"
+  min_chunk_chars: 200                 # chunks shorter than this get no aliases
+  workers: 4                           # Bedrock concurrency per document

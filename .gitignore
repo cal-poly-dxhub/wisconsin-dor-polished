@@ -328,3 +328,4 @@ tools/ingestion/ops/graph_regression_*.json
 # regression harness local helpers (account-specific / throwaway)
 tools/ingestion/ops/.regression_env.sh
 tools/ingestion/ops/_probe_usage.py
+tools/ingestion/ops/recall_probe_*.json

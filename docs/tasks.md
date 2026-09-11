@@ -20,6 +20,7 @@
 | 62 | Reliability — client-side answer truncation + citation-link integrity | Open — truncation is frontend stream/render (server sends full answer); add link-resolves-to-retrieved-doc validation | — |
 | 63 | Confidentiality follow-up — git-history purge decision | Open (reduced) — #32 scrubbed the test YAMLs, docs/tasks.md now scrubbed too (both HEAD-only); only the git-history purge decision remains | — |
 | 64 | Reconcile stale-embedding backlog (~1166 docs) | Open — `embed --smart` found 1166/2364 docs whose extraction is newer than their embedding; deliberate embed + full load needed to propagate to the graph | — |
+| 65 | Document expansion — generated plain-language aliases + gold tester queries prepended to chunk embed input; statute subsection-per-chunk split; staging-graph evaluation | In progress (2026-09-11) — replaces the hand-curated vocab map (Task 58) as the vocabulary-bridge mechanism | camping trailer / mobile home §70.11(49) |
 
 ## Done
 
@@ -424,5 +425,17 @@ Property tax is full of terms-of-art where everyday phrasing (e.g. "camping trai
 
 ---
 
+---
 
+### Task 65: Document expansion (aliases in the embed input) + statute subsection split
+
+**Why:** Retrieval misses happen when a user's everyday words ("camping trailer", "mobile home") never embed near the controlling legal term ("recreational prefabricated structure", § 70.11(49)). Measured 2026-09-11 with a direct Neptune rank probe: for "What exemptions can apply to a camping trailer?" the 2026-04-29 advisory was not in the top 60 and the § 70.11(49) statute chunk was not in the top 60 for ANY phrasing, including one that literally named the subsection. Two causes: (1) vocabulary gap, (2) the statute chunker packs subsections (45)–(49) into one 3,165-char chunk so no single-topic vector exists. Re-chunking alone barely moves the distance (1.196 → 1.176); prepending four plain-language questions moved the statute chunk from outside the top 60 to tied with the best competitor (1.224 → 0.852). The vocab-swap map (Task 58) is a query-side patch with a precision problem (fires on the term, not the intent: 4 of 15 matching production queries were not exemption questions) and requires an engineer to maintain; this is the durable replacement.
+
+**Mechanism:** at extract time, one Nova 2 Lite call per chunk produces 2–3 plain-language questions the chunk answers plus everyday synonyms for its terms of art, cached per chunk-content hash under `aliases/`. Gold tester queries (rated up, or negative feedback naming the missing source) are attached to the chunk they should hit. At embed time the input string is `title > heading > subheading`, the gold queries, the generated questions, the synonyms, then the chunk text. Stored chunk text and answer context are unchanged; only the vector moves. Mechanical guard: an alias is dropped unless its legal term appears verbatim in the passage. Statute sections with ≥2 top-level numbered subsections are split one subsection per chunk (merged up to ~1,200 chars) so each vector is about one thing.
+
+**Evaluation:** `tools/ingestion/ops/build_recall_eval.py` mines gold rows into `tests/recall_eval_queries.yaml`; `run_recall_probe.py` measures rank of the expected doc/chunk in raw vector search against any graph id (recall@10/30, MRR), baseline vs after. End-to-end: `run_graph_regression.py` with `NEPTUNE_GRAPH_ID` pointed at a staging graph, plus the LLM judge and the anchor set. Staging: every pipeline phase takes `--cache-prefix staging/` so production `extracted/` / `embedded/` are untouched; a separate Neptune graph is loaded from the staging caches; promotion is flipping the Lambda's graph id (blue/green), rollback is flipping it back.
+
+**Not doing:** chunk attributes for retrieval (Neptune has no lexical index; attribute matching would recreate the term-list problem). Aliases are not stored on graph nodes in this pass.
+
+**Key files:** `tools/ingestion/lib/aliases.py`, `extract.py` (`--aliases`, `--aliases-only`, `--cache-prefix`), `embed.py` (`--embed-input enriched`), `load.py` (`--cache-prefix`), `chunking/pdfChunker.py` (subsection split), `ops/attach_gold_queries.py`, `ops/build_recall_eval.py`, `ops/run_recall_probe.py`.
 
