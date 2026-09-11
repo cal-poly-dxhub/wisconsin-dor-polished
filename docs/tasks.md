@@ -6,19 +6,20 @@
 |---|------|---------------------------|-------------------|
 | 43 | Prompt rewrite: compress FRAMEWORK APPLICABILITY section | Not started — still verbose 9-tier listing | — |
 | 44 | Prompt rewrite: compress CITATION RULES section | Not started — still ~18 rules | — |
-| 45 | Scholar-sourced case-law dedup pass (docket-number keyed) | One-time pass done; durable prevention (docket in extract.py + load.py secondary key) still needed | 2f57489d (Lowe's 379/405 dup) |
+| 45 | Scholar-sourced case-law dedup pass (docket-number keyed) | One-time pass done; durable prevention (docket in extract.py + load.py secondary key) still needed | dark-store/Lowe's dup |
 | 46 | Backfill case-law titles from opinion-text captions | Consumer side done (extract.py); Scholar-path caption parser still needed | — |
 | 47 | Route case-law / flat-structure docs straight to search_document (skip list_sections/get_section) | Not started — tool descriptions still steer to list_sections/get_section first | — |
 | 48 | Investigate WPAM get_section gap — agents re-search doc-globally after get_section on same chapter | Open investigation — no findings recorded; get_section still z-score ranks | — |
-| 49 | Validate Scholar-fetched opinion matches requested citation (prevent citation→text mis-assignment) | One-time purge done; durable citation-match guard still needed | 2f57489d |
-| 51 | Disambiguation follow-up logic + classifier accuracy (BLOCKED — awaiting Wisconsin validation) | Core logic shipped; accuracy tuning blocked on DOR validation | cd922c84 (TID net new construction) |
+| 49 | Validate Scholar-fetched opinion matches requested citation (prevent citation→text mis-assignment) | One-time purge done; durable citation-match guard still needed | dark-store/Lowe's |
+| 51 | Disambiguation follow-up logic + classifier accuracy (BLOCKED — awaiting Wisconsin validation) | Core logic shipped; accuracy tuning blocked on DOR validation | TID net-new-construction query |
 | 52 | Subsection auto-backfill (C1) — guarantee dense-statute subsections reach the answer without the agent asking | Largely superseded — the §70.11(49) recreational-home gap was solved for the camping-trailer/RV family by vocab-swap (Task 58, PR #33). Always-on C1 stage no longer the primary plan. Mobile-home residual → Task 59 | §70.11(49) recreational-home exemptions |
 | 58 | Vocabulary-bridge (vocab-swap) for citizen-term → statute-term gaps | DONE for the recreational-home family (#33). Map expansion is evidence-gated + legally-validated per entry | §70.11(49) family |
 | 59 | Mobile-home §70.11(49) reliability + legal-applicability question | Open — vocab-swap fixes camping/RV but not mobile-home phrasing; needs DOR SME input | §70.11(49) / §66.0435 / §70.17(3) |
 | 60 | DOR/SME content questions (client-side, not retrieval bugs) | Open — carry to DOR: maintenance-vs-revaluation source, residential grade scale + images, BOR interpreter reference, stale mfg-appeal guide | — |
-| 61 | Content-gap ingestion — treaty pub, Innovation Grant FAQ, assessor directory | Open — one reingest cycle (napt-treaty-update.pdf, Innovation Grant common-questions, assrlist.pdf) | — |
+| 61 | Content-gap ingestion — treaty pub + Innovation Grant FAQ | DONE (2026-09-10) — napt-treaty-update.pdf + slf-ig FAQ ingested & verified (2/2 target queries PASS). assrlist dropped: it's a link-fabrication issue → Task 62 | — |
 | 62 | Reliability — client-side answer truncation + citation-link integrity | Open — truncation is frontend stream/render (server sends full answer); add link-resolves-to-retrieved-doc validation | — |
-| 63 | Confidentiality follow-up — residual production queryIds in repo + history | Open — #32 scrubbed the two test YAMLs (HEAD-only); decide docs/tasks.md scrub + git-history purge | — |
+| 63 | Confidentiality follow-up — git-history purge decision | Open (reduced) — #32 scrubbed the test YAMLs, docs/tasks.md now scrubbed too (both HEAD-only); only the git-history purge decision remains | — |
+| 64 | Reconcile stale-embedding backlog (~1166 docs) | Open — `embed --smart` found 1166/2364 docs whose extraction is newer than their embedding; deliberate embed + full load needed to propagate to the graph | — |
 
 ## Done
 
@@ -209,7 +210,7 @@ From 18 lines to ~6 lines.
 
 **Impact:** Same class of bug the #14 pass fixed — the agent can cite one opinion under multiple node IDs, and citation cards fragment. Lower severity than the CL cohort only because it's fewer nodes.
 
-**Live example confirmed in a real answer (query `2f57489d`, 2026-08-13):** The dark-store answer cited BOTH `case-law-405-wis-2d-616` (CourtListener URL) and `case-law-379-wis-2d-141` (legis URL) as if they were two separate Lowe's holdings. They are the **same Supreme Court opinion** — both carry docket `2019AP1987`, both open "Lowe's lost the case. The Wisconsin Supreme Court held…", identical internal citation sets. `379 Wis. 2d 141` is a **misattributed citation** for the 2023 WI 8 opinion. This is the cross-host case the #14 source_url dedup structurally cannot catch (one node CourtListener-sourced, one Scholar/legis-sourced → different URLs), and it produced exactly the user-visible fragmentation: two citation cards for one case, and prose that reads as if there's independent corroboration. **This validates that the dedup key MUST be the docket number, not source_url.**
+**Live example confirmed in a real answer (the dark-store/Lowe's answer, 2026-08-13):** The dark-store answer cited BOTH `case-law-405-wis-2d-616` (CourtListener URL) and `case-law-379-wis-2d-141` (legis URL) as if they were two separate Lowe's holdings. They are the **same Supreme Court opinion** — both carry docket `2019AP1987`, both open "Lowe's lost the case. The Wisconsin Supreme Court held…", identical internal citation sets. `379 Wis. 2d 141` is a **misattributed citation** for the 2023 WI 8 opinion. This is the cross-host case the #14 source_url dedup structurally cannot catch (one node CourtListener-sourced, one Scholar/legis-sourced → different URLs), and it produced exactly the user-visible fragmentation: two citation cards for one case, and prose that reads as if there's independent corroboration. **This validates that the dedup key MUST be the docket number, not source_url.**
 
 **Proposed:**
 1. **Pick a stable dedup key that survives the Scholar path.** The Wisconsin **docket / appeal number** (`2022AP289`) is one-per-case and appears verbatim in the opinion text. Parse it from the raw `.txt` (`raw/case-law/{reporter}/{slug}.txt`). Fall back to a normalized parsed caption where no docket is present (older opinions).
@@ -289,7 +290,7 @@ From 18 lines to ~6 lines.
 2. Render it in `frontend/src/app/admin/activity/_components/activity-detail.tsx` — overall rating, the three Response yes/nos + comments, source notes (which source, cited-fully, missed detail), broken links + reason, annotations (quote + comment, ideally anchored/quoted against the answer), speed. Fall back to the existing `thumbUp`/`feedback` display when `richFeedback` is absent.
 3. Optional list-view nicety: the list only projects `thumbUp`/`feedback` via the GSI, so a per-row rich summary needs either a `get_item` per row or a purpose-built projected summary attribute — defer that decision to this task; the minimum is the detail drawer.
 
-**Validation:** open `/admin/activity`, find the seeded submission (queryId `83585f11-3677-40ed-9795-bb7b0c23a1d6`), confirm the detail drawer renders rating=mid, sourcesOk=no with the source note, the annotation, speed=timely, etc.; confirm an old thumbs-only row still renders without error.
+**Validation:** open `/admin/activity`, find the seeded rich-feedback submission, confirm the detail drawer renders rating=mid, sourcesOk=no with the source note, the annotation, speed=timely, etc.; confirm an old thumbs-only row still renders without error.
 
 **Key files:**
 - `frontend/src/hooks/use-activity-data.ts` — activity types
@@ -309,7 +310,7 @@ From 18 lines to ~6 lines.
 - `TOPIC_SHIFT` verdict (flag `ENABLE_TOPIC_SHIFT`) — a follow-up opening an unrelated subject short-circuits with a soft, dismissible "start a new chat?" suggestion (Start new chat / Continue here). `suppress_topic_shift` gates ONLY that verdict (renamed from the original `force_proceed`), so Continue-here still honors OUT_OF_SCOPE and DISAMBIGUATE. Dismiss arms a one-shot client flag so the nudge fires at most once. Decision order is `SCOPE → TOPIC → DISAMBIGUATE` (TOPIC_SHIFT outranks DISAMBIGUATE).
 
 **Accuracy work in flight:**
-- Fixed a real miss (`cd922c84`): "What is the new TID net new construction?" classified as DISAMBIGUATE. TID net new construction is a **district-level aggregate** — no per-property-type fork — so it should PROCEED. Fix was to sharpen the DISAMBIGUATE definition to (1) apply only to an INDIVIDUAL property AND (2) require the answer to actually differ by classification, plus an explicit carve-out that aggregate/jurisdiction-level calculations (TIF/TID, levy limits, equalized values, apportionment, shared revenue) are always PROCEED. Also tightened decision-order step 4 ("about an individual property AND needs a property type"). Pushed to DynamoDB `disambiguationClassifier`.
+- Fixed a real miss (the TID net-new-construction query): "What is the new TID net new construction?" classified as DISAMBIGUATE. TID net new construction is a **district-level aggregate** — no per-property-type fork — so it should PROCEED. Fix was to sharpen the DISAMBIGUATE definition to (1) apply only to an INDIVIDUAL property AND (2) require the answer to actually differ by classification, plus an explicit carve-out that aggregate/jurisdiction-level calculations (TIF/TID, levy limits, equalized values, apportionment, shared revenue) are always PROCEED. Also tightened decision-order step 4 ("about an individual property AND needs a property type"). Pushed to DynamoDB `disambiguationClassifier`.
 - **Known residual miss:** the exact wording "What is the **new** TID net new construction?" STILL disambiguates — the redundant "new" ("the new TID ... net new construction") pushes the model toward a newly-built-parcel reading and overrides the explicit rule. Every other phrasing ("What is TID net new construction?", "How is TID net new construction calculated?") correctly PROCEEDs. A prompt rule shifts the boundary but doesn't build a wall on adversarial surface tokens. Guaranteed fix if needed: add `"net new construction"` (+ `"tid"`, `"levy limit"`, `"equalized value"`) to the deterministic keyword short-circuit in `disambiguation.py` that PROCEEDs before the LLM runs — but that's a code change (bundle + `cdk deploy`), not a prompt push, and brittle to unlisted phrasings. Left as-is per decision on 2026-08-26.
 - **Other flagged candidates (not yet actioned):** "What is open book?" → DISAMBIGUATE (open book is a type-independent procedure; likely should be PROCEED). "How much will I owe?" → OUT_OF_SCOPE (arguably a property-tax question). "What information is used to determine my assessment?" (57× in history, the most common disambiguated query) borders on legitimate — worth pressure-testing.
 
@@ -335,7 +336,7 @@ From 18 lines to ~6 lines.
 
 **Status:** TABLED (2026-08-27). Option A shipped (#26); this is the follow-on that makes the fix reliable. Deferred pending a decision on the cheaper prompt-nudge alternative vs. the always-on stage.
 
-**Context — why this exists:** Query `77633d5d` ("What exemptions can apply to a mobile home?") rated "mid" because the answer name-dropped **§ 70.11(49)** as plain text with no citation. § 70.11 is a dense enumerated section (~50 subsections packed multi-per-chunk by the chunker), and `get_section`'s semantic ranking silently drops a low-scoring subsection.
+**Context — why this exists:** The mobile-home exemptions query ("What exemptions can apply to a mobile home?") rated "mid" because the answer name-dropped **§ 70.11(49)** as plain text with no citation. § 70.11 is a dense enumerated section (~50 subsections packed multi-per-chunk by the chunker), and `get_section`'s semantic ranking silently drops a low-scoring subsection.
 
 **What already shipped (Option A, PR #26):** `get_section` gained a `subsection` param that fetches the `(N)` chunk verbatim, bypassing ranking. Regression-clean (0 regressions, turns net −1). **But a direct post-deploy test proved A is insufficient alone:** the agent loop is non-deterministic — on one run it went `vector_search → search_document → prepare_answer` (2 turns) and **never called `get_section` at all**, so the `subsection` param never fired and 70.11(49) would again be uncited. A only helps when the agent *chooses* to drill in.
 
@@ -351,7 +352,7 @@ Higher blast radius than A: C1 is **always-on** (every query), not opt-in, so a 
 
 **Content half already fixed:** the 2026-04-29 "prefabricated structures" advisory (§ 70.11(49)) was ingested (Task 39 follow-on), giving a directly linkable source for that exemption independent of A/C1.
 
-**Validation:** Add `77633d5d` ("What exemptions can apply to a mobile home?") to `graph_regression_queries.yaml` with `must_contain: ["70\\.11\\(49\\)|recreational prefabricated"]`; baseline → change → after-compare, watching the turns-delta guardrail and cited-doc drift.
+**Validation:** Add the mobile-home exemptions query ("What exemptions can apply to a mobile home?") to `graph_regression_queries.yaml` with `must_contain: ["70\\.11\\(49\\)|recreational prefabricated"]`; baseline → change → after-compare, watching the turns-delta guardrail and cited-doc drift.
 
 **Key files:**
 - `backend/lambdas/agentic_retrieval/agent_tools/executor.py` — `_find_subsection_chunks` (landed in #26), `get_section` handler
@@ -395,15 +396,31 @@ Property tax is full of terms-of-art where everyday phrasing (e.g. "camping trai
 
 ### Task 61: Content-gap ingestion — treaty pub, Innovation Grant FAQ, assessor directory
 
-**Status:** Open — one reingest cycle. Add to the corpus: the 1854-treaty / Native-American taxation publication (`napt-treaty-update.pdf`), the Innovation Grant common-questions FAQ page (the bot currently falls back to the statute's fewer contract elements), and the assessor-directory PDF (`assrlist.pdf`).
+**Status:** DONE (2026-09-10) for the two content docs; assrlist deliberately dropped. Added `gov_publications-napt-treaty-update` + `faq_pages-slf-ig` to `document_manifest.yaml`, then ran a scoped incremental cycle: category-filtered scrape → `extract --smart` → `embed --smart` → two `--source-filter` loads (one per doc). Verified live against the production graph — both previously-failing ingestion-gap queries now PASS (must_cite + LLM-judge rubric): the treaty answer cites the 1854 pub, the Innovation Grant answer draws the fuller requirement set from the FAQ instead of the statute's shorter list.
+
+**assrlist.pdf NOT ingested (deliberate):** the assessor directory is a large municipality→contact table that embeds poorly as graph chunks, and the #25 defect (`2a4a9aed`, "who is the assessor for Town of Otsego…") was link *fabrication* — the bot invented a dead `revenue.wi.gov/Pages/SLF/assessors.aspx` URL and a courthouse phone number from its training prior, not from any retrieved chunk. That's a citation-link-integrity problem (Task 62), not a content gap; ingesting the directory would not reliably fix it.
+
+**Note — scope expanded at scrape time:** category-scoping the scrape to `faq_pages` + `gov_publications` also detected 13 existing docs whose upstream content had drifted (uploaded as a side effect). Those were extracted + embedded (S3) but, per the "keep it small" decision, NOT loaded into the graph — only the 2 target docs were loaded. The 13 remain a latent extracted/embedded-ahead-of-graph state (same class as Task 64).
 
 ### Task 62: Reliability — client-side answer truncation + citation-link integrity
 
 **Status:** Open. A response reported as "cut off" was verified against server logs to have streamed and persisted in full — so it's a **frontend** stream/render issue, not the Lambda: add a delivered-fully signal + client reconcile. Separately, intermittent citation-link bugs (a statute citation link resolving to the wrong chapter doc; a rendered `doc:` link to a document that wasn't actually retrieved) — add a citation-resolves-to-retrieved-doc validation pass in the answer path.
 
+**Concrete case — #25 (`2a4a9aed`), "who is the assessor for Town of Otsego in columbia county wi":** the bot fabricated a dead `revenue.wi.gov/Pages/SLF/assessors.aspx` link **and** a Columbia County phone number, neither of which appears in any retrieved chunk (model-prior hallucination — the phone is the real Portage courthouse number from training data). DOR asked "where is it grabbing that contact info?" — a corpus grep to confirm it's sourced from *no* ingested doc, plus the link-resolution guard above, is the fix. Ingesting `assrlist.pdf` was considered as a "content" fix and rejected (see Task 61) — it wouldn't stop the model from inventing a URL it was never handed.
+
 ### Task 63: Confidentiality follow-up — residual production queryIds
 
-**Status:** Open. PR #32 replaced production queryIds and feedback framing in the two test YAMLs, but that was HEAD-only, and `docs/tasks.md` itself still references legacy production queryIds. Decide: (1) scrub the remaining queryIds from `docs/tasks.md`, and (2) whether a git-history purge (`git filter-repo` + force-push) is warranted to remove the originals from history in this public repo.
+**Status:** Open (reduced). PR #32 replaced production queryIds and feedback framing in the two test YAMLs; `docs/tasks.md` has now also been scrubbed of its legacy production queryIds (replaced with neutral descriptors). Both scrubs are HEAD-only. Remaining decision: whether a git-history purge (`git filter-repo` + force-push) is warranted to remove the originals from history in this public repo.
+
+---
+
+### Task 64: Reconcile stale-embedding backlog (~1166 docs)
+
+**Status:** Open — surfaced 2026-09-10 during the Task 61 ingest. `embed --smart` reported `Smart mode: 1166/2364 documents have stale embeddings` — i.e. ~1166 docs whose `extracted/{doc_id}.json` is newer than their `embedded/{doc_id}.json`. A prior extract run (likely the corpus refresh) updated extractions that were never re-embedded, so the graph vectors/chunks for those docs lag the latest extraction.
+
+**Not harmful** — retrieval is internally consistent on the older vectors — but it means extraction-side improvements haven't propagated to ~half the corpus. The Task 61 embed run wrote fresh S3 `embedded/` for the stale docs it processed, but only the 2 target docs were **loaded** into the graph, so the graph side of the backlog is unchanged.
+
+**Fix:** a deliberate `embed --smart` (flush all stale to S3) followed by a **full load** (re-upserts ~9.6k vectors + reloads changed chunks, ~30–45 min, broad graph churn). Schedule it as its own pass with a before/after graph-regression baseline — not a drive-by during a small ingest. Worth first spot-checking a sample of the 1166 to confirm the extraction deltas are meaningful (real chunking/heading improvements) vs. volatile no-ops before paying for the full reload.
 
 ---
 
