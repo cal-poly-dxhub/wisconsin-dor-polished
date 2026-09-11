@@ -1,0 +1,140 @@
+{
+  "flowchart_id": "flowcharts-mobile-home",
+  "schema_version": 1,
+  "title": "Determining if a Mobile Home is Exempt or Taxable",
+  "summary": "Decision tree for whether a mobile home, recreational mobile home, or camping trailer is exempt or taxable: RMH definition, parking permit fee, dealer stock-in-trade, motor vehicle, camping trailer, and default real-property assessment.",
+  "statute": "secs. 66.0435, 70.111, 70.112, 70.17(3), Wis. Stats.",
+  "admin_rule": null,
+  "source": {
+    "doc_id": "wpam-wisconsin-property-assessment-manual-2026",
+    "wpam_chapter": "Chapter 18 Personal Property",
+    "wpam_page": "18-22",
+    "pdf_page": 660,
+    "source_url": "https://www.revenue.wi.gov/documents/wpam26.pdf#page=660"
+  },
+  "disclaimer": "This flow chart provides general information and may not apply in every situation. A thorough review of each property is still required.",
+  "router_description": "Determining if a mobile home is exempt or taxable. Decision tree for recreational mobile homes, camping trailers, manufactured homes: exempt vs taxable under sec. 70.11, 70.111, 70.112, 70.17 and parking permit fees 66.0435.",
+  "start_node": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "label": "START"},
+    {
+      "id": "step1",
+      "type": "decision",
+      "step": 1,
+      "question": "Is the property a recreational mobile home (RMH) as defined in sec. 66.0435(1)(hm), Wis. Stats.?",
+      "authorities": [
+        {"kind": "statute", "cite": "sec. 66.0435(1)(hm)", "note": "definition of recreational mobile home"}
+      ]
+    },
+    {
+      "id": "step2",
+      "type": "decision",
+      "step": 2,
+      "question": "Is the property subject to the monthly mobile home parking permit fee under secs. 70.112(7) and 66.0435(3), Wis. Stats.?",
+      "authorities": [
+        {"kind": "statute", "cite": "sec. 70.112(7)", "note": "property subject to the parking permit fee is exempt from property tax"},
+        {"kind": "statute", "cite": "sec. 66.0435(3)", "note": "monthly mobile home parking permit fee"}
+      ]
+    },
+    {
+      "id": "step3",
+      "type": "decision",
+      "step": 3,
+      "question": "Is the property merchant's stock-in-trade (vacant mobile homes for sale by a dealer) under sec. 70.111(17), Wis. Stats.?",
+      "authorities": [
+        {"kind": "statute", "cite": "sec. 70.111(17)", "note": "merchant's stock-in-trade exemption"}
+      ]
+    },
+    {
+      "id": "step4",
+      "type": "decision",
+      "step": 4,
+      "question": "Is the property a motor vehicle (bus or van) under sec. 70.112(5), Wis. Stats.?",
+      "authorities": [
+        {"kind": "statute", "cite": "sec. 70.112(5)", "note": "motor vehicle exemption"}
+      ]
+    },
+    {
+      "id": "step5",
+      "type": "decision",
+      "step": 5,
+      "question": "Is the property a camping trailer that meets all of the requirements under secs. 70.111(19)(a) and 340.01(6m), Wis. Stats.?",
+      "criteria": [
+        "A vehicle with a collapsible or folding structure",
+        "Designed to provide temporary living quarters for recreation, camping or travel use",
+        "Designed to be towed upon a highway by a motor vehicle during the year prior to the assessment date (e.g. towed on the highway during 2024 establishes a trailer is designed to be towed upon a highway for the January 1, 2025 assessment)"
+      ],
+      "authorities": [
+        {"kind": "statute", "cite": "sec. 70.111(19)(a)", "note": "camping trailer exemption"},
+        {"kind": "statute", "cite": "sec. 340.01(6m)", "note": "definition of camping trailer"}
+      ]
+    },
+    {
+      "id": "step6",
+      "type": "decision",
+      "step": 6,
+      "question": "Is the property a camping trailer that is no longer designed to (a) provide temporary living quarters (e.g. changes, additions, attachments, decks or patios that establish use as living quarters that is not temporary) OR (b) be towed upon a highway by a motor vehicle (e.g. changes or modifications to the trailer such that it is no longer designed to be towed upon a highway)?",
+      "authorities": [
+        {"kind": "statute", "cite": "sec. 70.111(28)", "note": "referenced by the outcome for camping trailers no longer designed for temporary living or highway towing"}
+      ]
+    },
+    {
+      "id": "step7",
+      "type": "terminal",
+      "step": 7,
+      "outcome": "taxable",
+      "label": "Property is taxable",
+      "question": "The property does not meet any of the above requirements.",
+      "action": "The property does not meet any of the above requirements. The property is taxable under sec. 70.17(3), Wis. Stats., which requires real property assessment of mobile homes unless they are subject to a parking permit fee or qualify for exemption under state law.",
+      "authorities": [
+        {"kind": "statute", "cite": "sec. 70.17(3)", "note": "real property assessment of mobile homes"}
+      ]
+    },
+    {
+      "id": "outcome_exempt_rmh",
+      "type": "terminal",
+      "outcome": "exempt",
+      "label": "Property is exempt",
+      "action": "Property is exempt, including steps and a platform not exceeding 50 sq. ft. that lead to the doorway."
+    },
+    {"id": "outcome_exempt_permit", "type": "terminal", "outcome": "exempt", "label": "Property is exempt", "action": "Property is exempt (subject to the monthly mobile home parking permit fee)."},
+    {"id": "outcome_exempt_stock", "type": "terminal", "outcome": "exempt", "label": "Property is exempt", "action": "Property is exempt (merchant's stock-in-trade)."},
+    {"id": "outcome_exempt_vehicle", "type": "terminal", "outcome": "exempt", "label": "Property is exempt", "action": "Property is exempt (motor vehicle)."},
+    {
+      "id": "outcome_exempt_camping",
+      "type": "terminal",
+      "outcome": "exempt",
+      "label": "Property is exempt",
+      "action": "Property is exempt. Note: Exemption does not apply to land, additions, attachments, decks or patios."
+    },
+    {
+      "id": "outcome_realpersonal_process",
+      "type": "terminal",
+      "outcome": "further_analysis",
+      "label": "Apply the Real vs. Personal Property process",
+      "action": "Apply the \"Determining Real or Personal Property\" process starting on page 18-1 of the WPAM to determine if taxable real property or exempt personal property under sec. 70.111(28), Wis. Stats."
+    },
+    {
+      "id": "end",
+      "type": "end",
+      "label": "END"
+    }
+  ],
+  "edges": [
+    {"from": "start", "to": "step1"},
+    {"from": "step1", "to": "outcome_exempt_rmh", "branch": "yes", "label": "Yes — Stop"},
+    {"from": "step1", "to": "step2", "branch": "no", "label": "No — Go to Step 2"},
+    {"from": "step2", "to": "outcome_exempt_permit", "branch": "yes", "label": "Yes — Stop"},
+    {"from": "step2", "to": "step3", "branch": "no", "label": "No — Go to Step 3"},
+    {"from": "step3", "to": "outcome_exempt_stock", "branch": "yes", "label": "Yes — Stop"},
+    {"from": "step3", "to": "step4", "branch": "no", "label": "No — Go to Step 4"},
+    {"from": "step4", "to": "outcome_exempt_vehicle", "branch": "yes", "label": "Yes — Stop"},
+    {"from": "step4", "to": "step5", "branch": "no", "label": "No — Go to Step 5"},
+    {"from": "step5", "to": "outcome_exempt_camping", "branch": "yes", "label": "Yes — Stop"},
+    {"from": "step5", "to": "step6", "branch": "no", "label": "No — Go to Step 6"},
+    {"from": "step6", "to": "outcome_realpersonal_process", "branch": "yes", "label": "Yes — Stop"},
+    {"from": "step6", "to": "step7", "branch": "no", "label": "No — Go to Step 7"},
+    {"from": "step7", "to": "end"}
+  ],
+  "references": []
+}

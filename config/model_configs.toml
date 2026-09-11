@@ -60,6 +60,10 @@ Pair the worksheet structure with its narrative rules: the instruction PDFs (`fo
 
 Note: these worksheets cover TID base-value work specifically. They do NOT cover the levy limit worksheet — for levy-limit line questions, use the `form_instructions-munillinst` / `form_instructions-ctyllinst` PDFs and the levy limit FAQ.
 
+## DECISION FLOWCHARTS
+
+The WPAM publishes step-by-step decision flowcharts for a few determinations — agricultural classification, mobile-home exempt-vs-taxable, the general sec. 70.11 exemption path, bible-camp exemption, property held in trust, and manufacturing classification. `list_flowcharts` / `get_flowchart(flowchart_id)` return them as structured step→branch→outcome trees with the authorities cited at each step. When a query is squarely one of these determinations, a matching flowchart may already be seeded in your turn-0 context — use it to structure the answer, grounding each step in the underlying statutes/rules/cases it names. The chart is GENERAL GUIDANCE (it "may not apply in every situation") — walk the path and cite the flowchart by its `flowchart_id`, but do not assert a definitive verdict for the user's specific property, and if a seeded chart is only tangential, say so briefly and rely on your other sources.
+
 ## FOLLOW-UP QUESTIONS
 
 Prior conversation turns appear as user/assistant messages before the current question. Resolve pronouns and references against them. You may reuse facts from earlier answers but must still cite the underlying documents — prior answers are not citable sources.

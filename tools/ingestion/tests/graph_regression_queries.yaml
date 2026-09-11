@@ -733,6 +733,103 @@ queries:
       Confirmed-correct answer (solar exemption, §70.111(18)). Regression
       anchor — must not break.
 
+  # ── FLOWCHART SEED behavior ────────────────────────────────────────────────
+  # The pre-loop flowchart router (flowchart_router.route) runs INSIDE
+  # run_agentic_loop, so these rows exercise the REAL router per query — the row
+  # asserts only the behavioral outcome, never which chart got seeded. Group 1:
+  # a matched chart should structure the answer. Group 2 (coercion trip-wire):
+  # even when the router seeds a marginally-related chart, the agent must NOT be
+  # coerced into misapplying it. A bulk FAIL of Group 2 is the signal to tighten
+  # the SEED threshold (or revive a HINT tier).
+  - queryId: fc-mobile-home-exempt
+    stratum: A
+    tags: [flowchart, flowchart-seed]
+    query: "What exemptions can apply to a mobile home?"
+    rubric: >
+      PASS if the answer walks the mobile-home exempt/taxable determination in a
+      structured way grounded in the correct statutes (any of §66.0435 recreational
+      mobile home / parking permit fee, §70.111 personal-property exemptions,
+      §70.17(3) real-property assessment) AND does not fabricate a definitive
+      "your property is exempt/taxable" verdict. It is acceptable — and correct —
+      NOT to force §70.11(49) if the answer does not turn on it; the controlling
+      path for a residential mobile home runs to §70.17(3), not §70.11(49). FAIL
+      if the answer is an ungrounded list with no determination logic, or asserts
+      a firm exempt/taxable verdict for the user's specific home.
+    notes: >
+      Group 1 — should USE the seeded mobile-home flowchart (p18-22). Also the
+      SME-open §70.11(49) question: rubric rewards the honest hedge, not a forced
+      citation.
+
+  - queryId: fc-ag-classification
+    stratum: A
+    tags: [flowchart, flowchart-seed]
+    query: "Does my land qualify as agricultural?"
+    rubric: >
+      PASS if the answer steps through the agricultural-classification test
+      (qualifying use → devoted primarily to that use → prior production season →
+      Jan 1 compatibility) grounded in §70.32(2)(a)4 and/or Tax 18.05, rather than
+      giving an ungrounded yes/no. FAIL if it asserts a definitive qualifies/does-
+      not-qualify verdict for the user's specific parcel, or ignores the step
+      structure entirely.
+    must_cite: [flowcharts-ag-classification]
+    notes: >
+      Group 1 — should USE and cite the seeded ag-classification flowchart
+      (p14-11). must_cite guards that a seeded, on-point chart is actually cited.
+
+  - queryId: fc-manufacturing
+    stratum: A
+    tags: [flowchart, flowchart-seed]
+    query: "Is a cabinet shop classified as manufacturing and assessed by the state?"
+    rubric: >
+      PASS if the answer works through the cabinet-shop / construction-related
+      establishment classification factors from Figure 17-1 (share of sales to
+      contractors/wholesale vs. retail to individual consumers, share of employment
+      in installation vs. shop, and whether it fits a manufacturing SIC code) to
+      explain when such a shop is a DOR-assessed manufacturer, rather than giving a
+      bare yes/no. FAIL if it gives a determination with no classification logic.
+    notes: >
+      Group 1 — should USE the seeded manufacturing flowchart (Figure 17-1, p17-7).
+      This is the chart Scott's original list missed. NB: the chart is
+      cabinet-shop-specific — an earlier "are warehouses manufacturing?" query
+      correctly did NOT use it (warehouses fall under §70.995 predominant-use, not
+      Fig 17-1), which is itself good discrimination but the wrong thing to grade
+      here; this query is squarely on the chart's topic.
+
+  - queryId: fc-fp-churches
+    stratum: A
+    tags: [flowchart, flowchart-seed, coercion-tripwire]
+    query: "are all churches exempt?"
+    rubric: >
+      PASS if the answer addresses the general religious-use exemption for churches
+      (owned and used for religious purposes; strictly construed with a presumption
+      of taxability under §70.109) and does NOT misapply the Bible-camp-specific
+      §70.11(11) rule — in particular it must not tell a general church that its
+      exemption is capped at 40 acres or contingent on being a religious summer
+      camp. FAIL if the answer imposes the 40-acre camp cap or camp-ownership
+      requirement on ordinary churches.
+    must_not_contain: ["40 acre|40-acre|forty acre"]
+    notes: >
+      Group 2 COERCION TRIP-WIRE. The router may seed (or previously seeded) the
+      bible-camp chart on this query. The agent must recognize the chart is only
+      tangentially related and answer from the general church exemption instead.
+      If this FAILs across runs, tighten FLOWCHART_SEED_ABS/threshold.
+
+  - queryId: fc-fp-native-american
+    stratum: A
+    tags: [flowchart, flowchart-seed, coercion-tripwire]
+    query: "Is native american property taxable or exempt?"
+    rubric: >
+      PASS if the answer addresses tribal/native-American property taxability on
+      its own terms and does NOT get pulled into a mobile-home or camping-trailer
+      exempt/taxable determination (the nearest-scoring flowchart) that has nothing
+      to do with the question. FAIL if the answer's structure is driven by the
+      mobile-home/RV exemption path.
+    must_not_contain: ["camping trailer|recreational mobile home|parking permit fee"]
+    notes: >
+      Group 2 COERCION TRIP-WIRE. Router scored mobile-home ~0.42 here but the
+      margin gate rejects the seed; this row guards that even if a seed leaked,
+      the answer would not be coerced.
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  CLASSIFIER-HARNESS BACKLOG  (NOT runnable by this graph harness)
 #  These are pre-loop query-classifier decisions (classify_query in handler.py),

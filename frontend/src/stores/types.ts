@@ -1,4 +1,4 @@
-import type { FAQ } from '@messages/websocket-interface';
+import type { FAQ, FlowchartContent } from '@messages/websocket-interface';
 
 // Core message types used throughout the application
 export interface MessageUnion {
@@ -42,6 +42,9 @@ export interface Query {
   // start-new-chat / continue-here controls when the classifier thinks the
   // question opens an unrelated subject. Cleared once the user picks or dismisses.
   suggestion?: SuggestionKind;
+  // Interactive decision flowchart seeded for this turn (router SEED). Drives
+  // the "Walk the flowchart" affordance under the answer.
+  flowchart?: FlowchartContent;
 
   error?: QueryError;
 
@@ -161,6 +164,7 @@ export interface ChatStore {
   updateQueryResources: (queryId: string, resources: ResourceItem[]) => void;
 
   setQueryChoices: (queryId: string, choices: string[]) => void;
+  setQueryFlowchart: (queryId: string, flowchart: FlowchartContent) => void;
   setQuerySuggestion: (queryId: string, suggestion: SuggestionKind) => void;
   clearQuerySuggestion: (queryId: string) => void;
   setQueryError: (queryId: string, error: QueryError) => void;

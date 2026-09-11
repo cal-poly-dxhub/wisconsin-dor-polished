@@ -148,6 +148,10 @@ class AgentLoopResult:
     high_confidence_faq: FAQResource | None = None
     # Raw FAQ entries for cited-faq resolution
     faq_entries: list[dict] = field(default_factory=list)
+    # Flowchart seeded by the pre-loop router (dict sidecar + router score), if
+    # any. Delivered to the frontend for the "Walk the flowchart" component.
+    seeded_flowchart: dict | None = None
+    seeded_flowchart_score: float | None = None
 
 
 def run_agentic_loop(
@@ -230,6 +234,39 @@ def run_agentic_loop(
                 "metadata": refine_meta,
             },
         )
+
+    # Pre-loop flowchart router: if the (refined) query is clearly a decision-
+    # procedure question with a matching WPAM flowchart, fetch that chart so it
+    # can be seeded into turn-0 context alongside faq_search / vector_search.
+    # SEED-or-nothing (semantic margin gate); best-effort — never breaks the loop.
+    # Runs INSIDE the loop so the regression harness exercises the real router.
+    flowchart_seed: dict | None = None
+    flowchart_match = None
+    try:
+        from agent_tools.executor import RAW_BUCKET as _RAW_BUCKET
+        from flowchart_router import route as _route_flowchart
+        from flowcharts import get_flowchart as _get_flowchart
+
+        flowchart_match = _route_flowchart(search_query)
+        if flowchart_match.action == "SEED" and flowchart_match.flowchart_id:
+            chart = _get_flowchart(flowchart_match.flowchart_id, raw_bucket=_RAW_BUCKET)
+            if "error" not in chart:
+                flowchart_seed = chart
+                logger.info(
+                    f"Flowchart router SEED: {flowchart_match.flowchart_id} "
+                    f"(score {flowchart_match.top_score:.3f}, "
+                    f"2nd {flowchart_match.second_score:.3f})"
+                )
+            else:
+                logger.info(
+                    f"Flowchart router matched {flowchart_match.flowchart_id} but "
+                    f"sidecar unavailable: {chart.get('error')}"
+                )
+    except Exception:  # noqa: BLE001 — routing is best-effort enrichment
+        logger.warning("flowchart routing failed; no seed", exc_info=True)
+    flowchart_seed_score = (
+        flowchart_match.top_score if (flowchart_seed and flowchart_match) else None
+    )
 
     trace_context = {
         "query_id": query_id,
@@ -446,47 +483,105 @@ def run_agentic_loop(
                 discovery.setdefault(doc_id, "vocab-injection")
             all_chunks.append(chunk)
 
-    # Seed the conversation with both FAQ and vector_search results.
+    # Register the seeded flowchart as a discovered doc (so it is citeable) and
+    # emit a trace event. The "seeded": true flag lets the frontend surface the
+    # interactive "Walk the flowchart" affordance for a router-injected chart.
+    if flowchart_seed:
+        fc_id = flowchart_match.flowchart_id
+        all_doc_ids.add(fc_id)
+        discovery.setdefault(fc_id, "flowchart-seed")
+        fc_src = flowchart_seed.get("source", {})
+        fc_meta = {
+            "seeded": True,
+            "flowchartId": fc_id,
+            "wpamPage": fc_src.get("wpam_page", ""),
+            "sourceUrl": fc_src.get("source_url", ""),
+            "routerScore": round(flowchart_match.top_score, 3),
+        }
+        _record_trace(
+            "tool_result",
+            turn=0,
+            toolName="get_flowchart",
+            status="success",
+            summary=f"Seeded flowchart: {flowchart_seed.get('title', fc_id)}",
+            docIds=[fc_id],
+            docTitles=[flowchart_seed.get("title", fc_id)],
+            metadata=fc_meta,
+        )
+        _emit_safe(
+            ws_server,
+            trace_seq,
+            query_id=query_id,
+            kind="tool_result",
+            turn=0,
+            payload={
+                "toolName": "get_flowchart",
+                "status": "success",
+                "summary": f"Seeded flowchart: {flowchart_seed.get('title', fc_id)}",
+                "docIds": [fc_id],
+                "docTitles": [flowchart_seed.get("title", fc_id)],
+                "metadata": filter_metadata(fc_meta),
+            },
+        )
+
+    # Seed the conversation with FAQ + vector_search results (and, when the
+    # router matched, a flowchart). Each seed is a turn-0 toolUse/toolResult pair
+    # so the model sees them as its own tool calls.
     seed_tool_use_id = "faq_search_turn0"
+    fc_tool_use_id = "get_flowchart_turn0"
+    assistant_tool_uses = [
+        {
+            "toolUse": {
+                "toolUseId": seed_tool_use_id,
+                "name": "faq_search",
+                "input": {"query": search_query},
+            }
+        },
+        {
+            "toolUse": {
+                "toolUseId": vs_tool_use_id,
+                "name": "vector_search",
+                "input": {"query": search_query},
+            }
+        },
+    ]
+    user_tool_results = [
+        {
+            "toolResult": {
+                "toolUseId": seed_tool_use_id,
+                "content": [{"json": faq_result}],
+            }
+        },
+        {
+            "toolResult": {
+                "toolUseId": vs_tool_use_id,
+                "content": [{"json": _compact_for_model(vs_result, "vector_search")}],
+            }
+        },
+    ]
+    if flowchart_seed:
+        assistant_tool_uses.append(
+            {
+                "toolUse": {
+                    "toolUseId": fc_tool_use_id,
+                    "name": "get_flowchart",
+                    "input": {"flowchart_id": flowchart_match.flowchart_id},
+                }
+            }
+        )
+        user_tool_results.append(
+            {
+                "toolResult": {
+                    "toolUseId": fc_tool_use_id,
+                    "content": [{"json": flowchart_seed}],
+                }
+            }
+        )
     messages.extend(
         [
             {"role": "user", "content": [{"text": query}]},
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "toolUse": {
-                            "toolUseId": seed_tool_use_id,
-                            "name": "faq_search",
-                            "input": {"query": search_query},
-                        }
-                    },
-                    {
-                        "toolUse": {
-                            "toolUseId": vs_tool_use_id,
-                            "name": "vector_search",
-                            "input": {"query": search_query},
-                        }
-                    },
-                ],
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "toolResult": {
-                            "toolUseId": seed_tool_use_id,
-                            "content": [{"json": faq_result}],
-                        }
-                    },
-                    {
-                        "toolResult": {
-                            "toolUseId": vs_tool_use_id,
-                            "content": [{"json": _compact_for_model(vs_result, "vector_search")}],
-                        }
-                    },
-                ],
-            },
+            {"role": "assistant", "content": assistant_tool_uses},
+            {"role": "user", "content": user_tool_results},
         ]
     )
 
@@ -508,6 +603,38 @@ def run_agentic_loop(
                             "do NOT contradict the FAQ. Include the FAQ id(s) above "
                             "in your final cited_doc_ids alongside any supporting "
                             "docs you retrieve."
+                        )
+                    }
+                ],
+            }
+        )
+
+    if flowchart_seed:
+        fc_id = flowchart_match.flowchart_id
+        fc_title = flowchart_seed.get("title", fc_id)
+        fc_page = flowchart_seed.get("source", {}).get("wpam_page", "")
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": (
+                            f"A WPAM decision flowchart directly on point was seeded "
+                            f"via get_flowchart: '{fc_title}' ({fc_id}"
+                            f"{f', WPAM page {fc_page}' if fc_page else ''}). It gives "
+                            "the step-by-step determination the user is asking about, "
+                            "with the governing authorities at each step. Use it to "
+                            "structure your answer — walk the relevant path in order — "
+                            "and still run graph traversal to ground each step in the "
+                            "underlying statutes/rules/cases it names. IMPORTANT: the "
+                            "chart is GENERAL GUIDANCE. Carry its disclaimer — it 'may "
+                            "not apply in every situation; a thorough review of each "
+                            "property is still required' — and do NOT assert a "
+                            "definitive exempt/taxable verdict for the user's specific "
+                            "property. If the chart is only tangentially related to "
+                            "what the user actually asked, say so briefly and rely on "
+                            "your other sources instead. Cite the flowchart by its id "
+                            f"({fc_id}) when you use it."
                         )
                     }
                 ],
@@ -694,6 +821,8 @@ def run_agentic_loop(
                 fallback_answer=fallback_answer,
                 high_confidence_faq=high_confidence_faq,
                 faq_entries=faq_entries,
+                seeded_flowchart=flowchart_seed,
+                seeded_flowchart_score=flowchart_seed_score,
             )
 
         tool_results = []
@@ -928,6 +1057,8 @@ def run_agentic_loop(
                     fallback_answer=answer,
                     high_confidence_faq=high_confidence_faq,
                     faq_entries=faq_entries,
+                    seeded_flowchart=flowchart_seed,
+                    seeded_flowchart_score=flowchart_seed_score,
                 )
 
             if tool_name == "prepare_answer":
@@ -995,6 +1126,8 @@ def run_agentic_loop(
                     connection_alive=ws_connection_alive[0],
                     high_confidence_faq=high_confidence_faq,
                     faq_entries=faq_entries,
+                    seeded_flowchart=flowchart_seed,
+                    seeded_flowchart_score=flowchart_seed_score,
                 )
 
             tool_results.append(
@@ -1077,4 +1210,6 @@ def run_agentic_loop(
             fallback_answer=fallback_answer,
             high_confidence_faq=high_confidence_faq,
             faq_entries=faq_entries,
+            seeded_flowchart=flowchart_seed,
+            seeded_flowchart_score=flowchart_seed_score,
         )

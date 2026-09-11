@@ -1,0 +1,113 @@
+{
+  "flowchart_id": "flowcharts-ag-classification",
+  "schema_version": 1,
+  "title": "Determining Agricultural Classification",
+  "summary": "Decision tree for whether land qualifies for agricultural classification: qualifying use, primary use, prior production season, and January 1 compatibility.",
+  "statute": "sec. 70.32(2)(a)4., Wis. Stats.",
+  "admin_rule": "sec. Tax 18.05, Wis. Adm. Code",
+  "source": {
+    "doc_id": "wpam-wisconsin-property-assessment-manual-2026",
+    "wpam_chapter": "Chapter 14 Agricultural Valuation",
+    "wpam_page": "14-11",
+    "pdf_page": 444,
+    "source_url": "https://www.revenue.wi.gov/documents/wpam26.pdf#page=444"
+  },
+  "disclaimer": "This flow chart provides general information and may not apply in every situation. A thorough review of each property is still required.",
+  "router_description": "Determining agricultural classification. Decision tree for whether land qualifies for agricultural classification under sec. 70.32(2)(a)4 based on qualifying use, primary use, production season. Tax 18.05.",
+  "start_node": "start",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "start",
+      "label": "START"
+    },
+    {
+      "id": "step1",
+      "type": "decision",
+      "step": 1,
+      "question": "Is the land's use one of the following qualifying agricultural uses?",
+      "criteria": [
+        "Tilled land devoted to crop production (see WPAM 14-A-12 to 14-A-23)",
+        "Pastured land devoted to livestock production (see WPAM 14-A-23 to 14-A-29)",
+        "Growing short-rotation woody crops, including poplars and willows, using agronomic practices (see WPAM 14-15)",
+        "Growing Christmas trees",
+        "Growing ginseng",
+        "Enrollment in a qualifying government program or easement (see DOR's Tax 18 Conservation Programs publication)"
+      ],
+      "authorities": [
+        {"kind": "admin_rule", "cite": "sec. Tax 18.05", "note": "classification requirements for agricultural use"},
+        {"kind": "gov_pub", "cite": "DOR Tax 18 Conservation Programs publication", "note": "qualifying government programs and easements"}
+      ]
+    },
+    {
+      "id": "step2",
+      "type": "decision",
+      "step": 2,
+      "question": "Was the land devoted primarily to that agricultural use?",
+      "definition": "Tax 18.05(4) defines land devoted primarily to agricultural use as land in an agricultural use for the production season of the prior year, and not in a use that is incompatible with agricultural use on January 1 of the assessment year.",
+      "criteria": [
+        "See WPAM 14-8 to 14-20 for what 'devoted primarily to agricultural use' means, including what information to collect when a crop or pasture use is questionable as to primary use"
+      ],
+      "authorities": [
+        {"kind": "admin_rule", "cite": "sec. Tax 18.05(4)", "note": "definition of 'devoted primarily to agricultural use'"},
+        {"kind": "case_law", "cite": "Nudo Holdings LLC v. City of Kenosha, 2022 WI 17", "note": "agricultural activity alone is not enough; the activity must be the land's primary use; minor and isolated activities do not constitute a primary use"},
+        {"kind": "case_law", "cite": "Thoma v. Village of Slinger, 2018 WI 45", "note": "actual use controls whether land qualifies for agricultural classification"},
+        {"kind": "case_law", "cite": "Ogden Family Trust v. Town of Delafield, 2019 WI 23", "note": "business income (federal income tax Schedule F) cannot be considered when determining if land is devoted primarily to agricultural use"}
+      ]
+    },
+    {
+      "id": "step3",
+      "type": "decision",
+      "step": 3,
+      "question": "Was the land devoted primarily to that use during the prior production season?",
+      "guidance": "Generally, a spring/April planting to a fall/October harvest represents a production season. See WI DATCP agricultural statistics for additional details.",
+      "authorities": [
+        {"kind": "gov_pub", "cite": "WI DATCP agricultural statistics", "note": "reference for production-season timing"}
+      ]
+    },
+    {
+      "id": "step4",
+      "type": "decision",
+      "step": 4,
+      "question": "Was the land compatible with agricultural use on the January 1 assessment date?",
+      "criteria": [
+        "The land's condition is consistent with the production season",
+        "The land is compatible with the associated crop production, animal production, or program activity",
+        "The land contains no development of improvements"
+      ],
+      "authorities": [
+        {"kind": "wpam", "cite": "WPAM 14-21 to 14-24", "note": "classification examples, including parcels with less than 40 acres; see the CQ for additional information"}
+      ]
+    },
+    {
+      "id": "outcome_qualified",
+      "type": "terminal",
+      "outcome": "qualified",
+      "label": "Qualifies for agricultural classification",
+      "action": "Assessor classifies the land agricultural for the assessment year and distributes a Notice of Assessment if appropriate."
+    },
+    {
+      "id": "outcome_not_qualified",
+      "type": "terminal",
+      "outcome": "not_qualified",
+      "label": "Does not qualify for agricultural classification",
+      "action": "Land does not qualify for agricultural classification. The assessor classifies the land according to sec. 70.32, Wis. Stats., for the assessment year and distributes a Notice of Changed Assessment if appropriate."
+    }
+  ],
+  "edges": [
+    {"from": "start", "to": "step1"},
+    {"from": "step1", "to": "step2", "branch": "yes", "label": "Yes"},
+    {"from": "step1", "to": "outcome_not_qualified", "branch": "no", "label": "No"},
+    {"from": "step2", "to": "step3", "branch": "yes", "label": "Yes"},
+    {"from": "step2", "to": "outcome_not_qualified", "branch": "no", "label": "No"},
+    {"from": "step3", "to": "step4", "branch": "yes", "label": "Yes"},
+    {"from": "step3", "to": "outcome_not_qualified", "branch": "no", "label": "No"},
+    {"from": "step4", "to": "outcome_qualified", "branch": "yes", "label": "Yes"},
+    {"from": "step4", "to": "outcome_not_qualified", "branch": "no", "label": "No"}
+  ],
+  "references": [
+    {"label": "DOR's Tax 18 Conservation Programs publication", "kind": "gov_pub"},
+    {"label": "CQ: Agricultural Land Common Questions", "kind": "cq"},
+    {"label": "Notice of Changed Assessment", "kind": "form"}
+  ]
+}

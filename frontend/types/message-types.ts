@@ -125,6 +125,56 @@ export const SuggestionMessageSchema = z.object({
   content: SuggestionContentSchema,
 });
 
+// ── Flowchart (interactive "Walk the flowchart") ──────────────────────────────
+export const FlowchartAuthoritySchema = z.object({
+  kind: z.string(),
+  cite: z.string(),
+  note: optStr,
+});
+
+export const FlowchartNodeSchema = z.object({
+  id: z.string(),
+  type: z.string(), // start | decision | terminal | end | note
+  step: optInt,
+  label: optStr,
+  question: optStr,
+  definition: optStr,
+  guidance: optStr,
+  note: optStr,
+  context: optStr,
+  criteria: z.array(z.string()).optional().default([]),
+  outcome: optStr,
+  action: optStr,
+  authorities: z.array(FlowchartAuthoritySchema).optional().default([]),
+});
+
+export const FlowchartEdgeSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  branch: optStr, // 'yes' | 'no' | undefined (pass-through)
+  label: optStr,
+});
+
+export const FlowchartContentSchema = z.object({
+  flowchartId: z.string(),
+  title: z.string(),
+  summary: optStr,
+  statute: optStr,
+  disclaimer: z.string(),
+  wpamPage: optStr,
+  sourceUrl: optStr,
+  startNode: z.string(),
+  nodes: z.array(FlowchartNodeSchema),
+  edges: z.array(FlowchartEdgeSchema),
+  routerScore: optNum,
+});
+
+export const FlowchartMessageSchema = z.object({
+  responseType: z.literal('flowchart'),
+  queryId: z.string(),
+  content: FlowchartContentSchema,
+});
+
 export const MessageUnionSchema = z.discriminatedUnion('responseType', [
   DocumentsMessageSchema,
   FAQMessageSchema,
@@ -134,6 +184,7 @@ export const MessageUnionSchema = z.discriminatedUnion('responseType', [
   AgentEventSchema,
   ChoicesMessageSchema,
   SuggestionMessageSchema,
+  FlowchartMessageSchema,
 ]);
 
 export const WebSocketMessageSchema = z.object({
@@ -166,6 +217,11 @@ export type ChoicesContent = z.infer<typeof ChoicesContentSchema>;
 export type ChoicesMessage = z.infer<typeof ChoicesMessageSchema>;
 export type SuggestionContent = z.infer<typeof SuggestionContentSchema>;
 export type SuggestionMessage = z.infer<typeof SuggestionMessageSchema>;
+export type FlowchartAuthority = z.infer<typeof FlowchartAuthoritySchema>;
+export type FlowchartNode = z.infer<typeof FlowchartNodeSchema>;
+export type FlowchartEdge = z.infer<typeof FlowchartEdgeSchema>;
+export type FlowchartContent = z.infer<typeof FlowchartContentSchema>;
+export type FlowchartMessage = z.infer<typeof FlowchartMessageSchema>;
 export type MessageUnion = z.infer<typeof MessageUnionSchema>;
 export type WebSocketMessage = z.infer<typeof WebSocketMessageSchema>;
 

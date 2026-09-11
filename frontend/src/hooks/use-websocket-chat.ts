@@ -39,6 +39,7 @@ export function useWebSocketChat(
   const updateQueryResources = useChatStore(
     state => state.updateQueryResources
   );
+  const setQueryFlowchart = useChatStore(state => state.setQueryFlowchart);
   const setQueryError = useChatStore(state => state.setQueryError);
   const setChatState = useChatStore(state => state.setChatState);
   const addQuery = useChatStore(state => state.addQuery);
@@ -110,6 +111,13 @@ export function useWebSocketChat(
                   data: faq,
                 }))
               );
+              break;
+
+            case 'flowchart':
+              console.log(
+                `[WS Timing] flowchart received | id=${message.content.flowchartId}`
+              );
+              setQueryFlowchart(message.queryId, message.content);
               break;
 
             case 'fragment':
@@ -203,6 +211,7 @@ export function useWebSocketChat(
     },
     [
       updateQueryResources,
+      setQueryFlowchart,
       updateQueryStatus,
       appendQueryResponse,
       setChatState,

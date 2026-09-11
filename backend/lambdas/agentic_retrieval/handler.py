@@ -278,6 +278,8 @@ def handler(event: dict, context) -> dict[str, Any]:
                         answer,
                         rag_documents,
                         faq_resource,
+                        seeded_flowchart=result.seeded_flowchart,
+                        seeded_flowchart_score=result.seeded_flowchart_score,
                     )
                 except Exception:
                     logger.info("WebSocket connection lost during finalize; answer saved to DB")
@@ -350,7 +352,14 @@ def handler(event: dict, context) -> dict[str, Any]:
 
                 # 2. Send resource cards (non-fatal if connection is already gone)
                 try:
-                    send_resources(ws_server, user_query.query_id, rag_documents, faq_resource)
+                    send_resources(
+                        ws_server,
+                        user_query.query_id,
+                        rag_documents,
+                        faq_resource,
+                        seeded_flowchart=result.seeded_flowchart,
+                        seeded_flowchart_score=result.seeded_flowchart_score,
+                    )
                 except Exception as res_exc:
                     logger.warning(
                         "send_resources failed (connection likely gone) | exc=%s",

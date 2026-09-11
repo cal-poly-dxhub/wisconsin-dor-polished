@@ -140,6 +140,63 @@ class ChoicesMessage(WebSocketMessage):
     content: ChoicesContent
 
 
+class FlowchartAuthority(WebSocketMessage):
+    kind: str  # statute | admin_rule | case_law | wpam | gov_pub | form | cq
+    cite: str
+    note: str | None = None
+
+
+class FlowchartNode(WebSocketMessage):
+    id: str
+    type: str  # start | decision | terminal | end | note
+    step: int | None = None
+    label: str | None = None
+    question: str | None = None
+    definition: str | None = None
+    guidance: str | None = None
+    note: str | None = None
+    context: str | None = None
+    criteria: list[str] = []
+    outcome: str | None = None  # terminal only: exempt | taxable | qualified | ...
+    action: str | None = None  # terminal only: what the assessor does
+    authorities: list[FlowchartAuthority] = []
+
+
+class FlowchartEdge(WebSocketMessage):
+    from_node: str = Field(alias="from")
+    to_node: str = Field(alias="to")
+    branch: str | None = None  # yes | no | None (pass-through)
+    label: str | None = None
+
+
+class FlowchartContent(WebSocketMessage):
+    flowchart_id: str
+    title: str
+    summary: str | None = None
+    statute: str | None = None
+    disclaimer: str
+    wpam_page: str | None = None
+    source_url: str | None = None
+    start_node: str
+    nodes: list[FlowchartNode]
+    edges: list[FlowchartEdge]
+    router_score: float | None = None
+
+
+class FlowchartMessage(WebSocketMessage):
+    """An interactive decision flowchart seeded for this query.
+
+    Delivered alongside the resource cards so the frontend can render the
+    "Walk the flowchart" affordance. The chart is NOT a graph document — its
+    structure (nodes/edges/authorities) travels here rather than in a citation
+    card.
+    """
+
+    response_type: Literal["flowchart"] = "flowchart"
+    query_id: str
+    content: FlowchartContent
+
+
 class SuggestionContent(WebSocketMessage):
     # `kind` discriminates the suggestion variant so the frontend can render
     # the right controls. Currently only topic-shift (offers new-chat /

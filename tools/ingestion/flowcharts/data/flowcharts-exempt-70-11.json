@@ -1,0 +1,103 @@
+{
+  "flowchart_id": "flowcharts-exempt-70-11",
+  "schema_version": 1,
+  "title": "Determining if Property is Exempt under sec. 70.11",
+  "summary": "General decision tree for property tax exemption under sec. 70.11: annual review of exempt property, owner inquiry, Property Tax Exemption Request (Form PR-230) March 1 filing, and whether the property meets exemption requirements under specific state law.",
+  "statute": "sec. 70.11, Wis. Stats.",
+  "admin_rule": null,
+  "source": {
+    "doc_id": "wpam-wisconsin-property-assessment-manual-2026",
+    "wpam_chapter": "Chapter 19 Property Tax Exemptions",
+    "wpam_page": "19-2",
+    "pdf_page": 666,
+    "source_url": "https://www.revenue.wi.gov/documents/wpam26.pdf#page=666"
+  },
+  "disclaimer": "This flow chart provides general information and may not apply in every situation. A thorough review of each property is still required.",
+  "router_description": "Determining if property is exempt under sec. 70.11. General decision tree for property tax exemption eligibility, Property Tax Exemption Request form PR-230, exemption review, March 1 filing deadline.",
+  "start_node": "start",
+  "notes": "Presumption of taxability: sec. 70.109 provides that exemptions shall be strictly construed with a presumption that the property is taxable, and the burden of proof is on the person who claims the exemption.",
+  "nodes": [
+    {"id": "start", "type": "start", "label": "START"},
+    {
+      "id": "review",
+      "type": "decision",
+      "step": 0,
+      "context": "Property is currently exempt — the assessor completes annual review of exempt property.",
+      "question": "Did the use, occupancy or ownership change between the prior (January 1, 2024) and current assessment date (January 1, 2025)?"
+    },
+    {
+      "id": "step1",
+      "type": "decision",
+      "step": 1,
+      "context": "Property is currently taxable — the assessor receives a property owner inquiry on how to obtain an exemption.",
+      "question": "Is the property described under sub. (1), (2), (18), (21), (27) or (30)?",
+      "authorities": [
+        {"kind": "statute", "cite": "sec. 70.11(1), (2), (18), (21), (27), (30)", "note": "exemptions that do not require a Property Tax Exemption Request filing"}
+      ]
+    },
+    {
+      "id": "step2",
+      "type": "decision",
+      "step": 2,
+      "context": "Distribute the Property Tax Exemption Request (Form PR-230).",
+      "question": "Was the Property Tax Exemption Request provided to the local assessor by March 1?",
+      "authorities": [
+        {"kind": "form", "cite": "Form PR-230 (Property Tax Exemption Request)", "note": "state law provides no extensions to the March 1 filing deadline"}
+      ]
+    },
+    {
+      "id": "step3",
+      "type": "decision",
+      "step": 3,
+      "context": "Determine if property meets exemption requirements under specific state law. Process the \"Property Tax Exemption Request\", form PR-230, if the filing is required by state law.",
+      "question": "Does the property meet the exemption requirements?",
+      "authorities": [
+        {"kind": "statute", "cite": "sec. 70.11", "note": "specific exemption requirements under state law"}
+      ]
+    },
+    {
+      "id": "outcome_maintains",
+      "type": "terminal",
+      "outcome": "exempt",
+      "label": "Property maintains exemption",
+      "action": "Property maintains exemption for the current assessment year."
+    },
+    {
+      "id": "outcome_taxable_deadline",
+      "type": "terminal",
+      "outcome": "taxable",
+      "label": "Property is taxable",
+      "action": "Property is taxable — state law provides no extensions to the March 1 filing deadline."
+    },
+    {
+      "id": "outcome_exempt",
+      "type": "terminal",
+      "outcome": "exempt",
+      "label": "Property is exempt",
+      "action": "Property is exempt."
+    },
+    {
+      "id": "outcome_taxable_listed",
+      "type": "terminal",
+      "outcome": "taxable",
+      "label": "Property is taxable",
+      "action": "If no, the property is taxable; the assessor lists and values the property for the assessment year and distributes a Notice of Changed Assessment if appropriate."
+    }
+  ],
+  "edges": [
+    {"from": "start", "to": "review"},
+    {"from": "review", "to": "step1", "branch": "yes", "label": "Yes — Go to Step 1"},
+    {"from": "review", "to": "outcome_maintains", "branch": "no", "label": "No — Stop"},
+    {"from": "step1", "to": "step3", "branch": "yes", "label": "Yes — Go to Step 3"},
+    {"from": "step1", "to": "step2", "branch": "no", "label": "No — Go to Step 2"},
+    {"from": "step2", "to": "step3", "branch": "yes", "label": "Yes — Go to Step 3"},
+    {"from": "step2", "to": "outcome_taxable_deadline", "branch": "no", "label": "No — Stop"},
+    {"from": "step3", "to": "outcome_exempt", "branch": "yes", "label": "Yes"},
+    {"from": "step3", "to": "outcome_taxable_listed", "branch": "no", "label": "No"}
+  ],
+  "references": [
+    {"label": "Sec. 70.11, Wis. Stats.", "kind": "statute"},
+    {"label": "Property Tax Exemption Request", "kind": "form"},
+    {"label": "Notice of Changed Assessment", "kind": "form"}
+  ]
+}

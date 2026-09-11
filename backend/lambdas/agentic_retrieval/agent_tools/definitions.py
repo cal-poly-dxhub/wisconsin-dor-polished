@@ -449,6 +449,60 @@ TOOL_DEFINITIONS = [
     },
     {
         "toolSpec": {
+            "name": "list_flowcharts",
+            "description": (
+                "List the WPAM decision flowcharts whose structure is available "
+                "for lookup. These are step-by-step decision trees the DOR "
+                "publishes for classification/eligibility procedures: "
+                "agricultural classification, mobile-home exempt-or-taxable, the "
+                "general sec. 70.11 exemption path, bible-camp exemption, "
+                "property held in trust in the public interest, and manufacturing "
+                "classification. Use this when a user asks how a determination is "
+                "made, how to work through eligibility, or 'walk me through' a "
+                "classification or exemption. If a relevant flowchart was already "
+                "seeded into your context, you do NOT need to call this. Returns "
+                "each flowchart_id with its title, summary, statute, and WPAM page."
+            ),
+            "inputSchema": {"json": {"type": "object", "properties": {}}},
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "get_flowchart",
+            "description": (
+                "Retrieve one WPAM decision flowchart as a structured decision "
+                "tree: ordered steps with their yes/no branches, terminal "
+                "outcomes (exempt / taxable / qualifies / assessed by DOR), and "
+                "the authorities printed in each step (statutes, admin rules, "
+                "case law, WPAM pages). Use after list_flowcharts (or when a "
+                "flowchart is on point) to walk a user through a determination "
+                "step by step. IMPORTANT: the chart is GENERAL GUIDANCE — every "
+                "chart carries the DOR's own caveat that it 'may not apply in "
+                "every situation' and 'a thorough review of each property is "
+                "still required'. Present the decision path and its authorities; "
+                "do NOT assert a definitive exempt/taxable verdict for the user's "
+                "specific property. Cite the flowchart by its flowchart_id and "
+                "the WPAM page."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "flowchart_id": {
+                            "type": "string",
+                            "description": (
+                                "The flowchart ID from list_flowcharts "
+                                "(e.g., 'flowcharts-mobile-home')."
+                            ),
+                        },
+                    },
+                    "required": ["flowchart_id"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
             "name": "prepare_answer",
             "description": (
                 "Signal that research is complete and you are ready to write "

@@ -1,0 +1,105 @@
+{
+  "flowchart_id": "flowcharts-bible-camp",
+  "schema_version": 1,
+  "title": "Bible Camps — Determining if Property is Exempt",
+  "summary": "Decision tree for whether Bible camp property is exempt under sec. 70.11(11): Property Tax Exemption Request (Form PR-230) filing, 40-acre exemption limit, religious nonprofit corporation ownership, religious-purpose use, and pecuniary profit.",
+  "statute": "sec. 70.11(11), Wis. Stats.",
+  "admin_rule": null,
+  "source": {
+    "doc_id": "wpam-wisconsin-property-assessment-manual-2026",
+    "wpam_chapter": "Chapter 19 Property Tax Exemptions",
+    "wpam_page": "19-25",
+    "pdf_page": 689,
+    "source_url": "https://www.revenue.wi.gov/documents/wpam26.pdf#page=689"
+  },
+  "disclaimer": "This flow chart provides general information and may not apply in every situation. A thorough review of each property is still required.",
+  "router_description": "Bible camp property tax exemption under sec. 70.11(11). Specifically for a Bible camp or religious summer camp owned by a religious nonprofit corporation, with a 40-acre exemption limit. This is the narrow camp exemption only; it does NOT cover ordinary churches, houses of worship, or the general religious-use exemption under sec. 70.11(4).",
+  "start_node": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "label": "START"},
+    {
+      "id": "step1",
+      "type": "decision",
+      "step": 1,
+      "question": "Was the \"Property Tax Exemption Request\", form PR-230, filed with the municipal assessor where the property is located by March 1?",
+      "authorities": [
+        {"kind": "form", "cite": "Form PR-230 (Property Tax Exemption Request)", "note": "must be filed with the municipal assessor by March 1"}
+      ]
+    },
+    {
+      "id": "step2",
+      "type": "decision",
+      "step": 2,
+      "question": "Does the property exceed 40 acres?",
+      "note": "The law limits the exemption to 40 acres. Acreage above 40 is taxable. See page 19-7 of the WPAM.",
+      "authorities": [
+        {"kind": "statute", "cite": "sec. 70.11(11)", "note": "exemption limited to 40 acres"}
+      ]
+    },
+    {
+      "id": "step3",
+      "type": "decision",
+      "step": 3,
+      "question": "Is the property owned by a religious nonprofit corporation organized under Wisconsin laws?"
+    },
+    {
+      "id": "step4",
+      "type": "decision",
+      "step": 4,
+      "question": "Is the property used for religious purposes?",
+      "note": "See WPAM pages 19-13 to 19-14 and the discussion of religious institutions.",
+      "authorities": [
+        {"kind": "wpam", "cite": "WPAM 19-13 to 19-14", "note": "discussion of religious institutions"}
+      ]
+    },
+    {
+      "id": "step5",
+      "type": "decision",
+      "step": 5,
+      "question": "Is the property used for pecuniary profit of any individual?"
+    },
+    {
+      "id": "outcome_taxable",
+      "type": "terminal",
+      "outcome": "taxable",
+      "label": "Property is taxable",
+      "action": "Property is taxable."
+    },
+    {
+      "id": "outcome_taxable_over40",
+      "type": "terminal",
+      "outcome": "partially_taxable",
+      "label": "Acreage above 40 is taxable",
+      "action": "The law limits the exemption to 40 acres. Acreage above 40 is taxable. See page 19-7 of the WPAM. (Continue evaluating the exemption for the first 40 acres.)"
+    },
+    {
+      "id": "outcome_taxable_profit",
+      "type": "terminal",
+      "outcome": "taxable",
+      "label": "Property is taxable",
+      "action": "Property is taxable and the assessor lists and values the property for the assessment year and distributes a Notice of Changed Assessment if appropriate."
+    },
+    {
+      "id": "outcome_exempt",
+      "type": "terminal",
+      "outcome": "exempt",
+      "label": "Property is exempt",
+      "action": "Property is exempt."
+    }
+  ],
+  "edges": [
+    {"from": "start", "to": "step1"},
+    {"from": "step1", "to": "step2", "branch": "yes", "label": "Yes — Go to Step 2"},
+    {"from": "step1", "to": "outcome_taxable", "branch": "no", "label": "No — Stop"},
+    {"from": "step2", "to": "step3", "branch": "no", "label": "No — Go to Step 3"},
+    {"from": "step2", "to": "outcome_taxable_over40", "branch": "yes", "label": "Yes — Go to Step 3 (acreage above 40 taxable)"},
+    {"from": "outcome_taxable_over40", "to": "step3"},
+    {"from": "step3", "to": "step4", "branch": "yes", "label": "Yes — Go to Step 4"},
+    {"from": "step3", "to": "outcome_taxable", "branch": "no", "label": "No — Stop"},
+    {"from": "step4", "to": "step5", "branch": "yes", "label": "Yes — Go to Step 5"},
+    {"from": "step4", "to": "outcome_taxable", "branch": "no", "label": "No — Stop"},
+    {"from": "step5", "to": "outcome_taxable_profit", "branch": "yes", "label": "Yes"},
+    {"from": "step5", "to": "outcome_exempt", "branch": "no", "label": "No"}
+  ],
+  "references": []
+}

@@ -1,0 +1,85 @@
+{
+  "flowchart_id": "flowcharts-manufacturing",
+  "schema_version": 1,
+  "title": "Manufacturing Classification (Construction-Related Establishment)",
+  "summary": "Decision tree for whether a construction-related establishment (e.g. a cabinet shop) is classified as manufacturing and assessed by the Department of Revenue, based on cabinet-shop status, share of sales to contractors/wholesale, share of employment in installation, and manufacturing SIC code.",
+  "statute": null,
+  "admin_rule": null,
+  "source": {
+    "doc_id": "wpam-wisconsin-property-assessment-manual-2026",
+    "wpam_chapter": "Chapter 17 Manufacturing and Utility Assessment",
+    "wpam_page": "17-7",
+    "pdf_page": 609,
+    "source_url": "https://www.revenue.wi.gov/documents/wpam26.pdf#page=609",
+    "figure": "Figure 17-1"
+  },
+  "disclaimer": "This figure provides general classification guidance. A thorough review of each establishment is still required.",
+  "router_description": "Manufacturing classification. Decision tree for whether a construction-related establishment or cabinet shop is manufacturing, assessed by Department of Revenue, based on sales to contractors, employment in installation, and SIC code.",
+  "start_node": "start",
+  "notes": "Reference guidance from the Manufacturing Division SIC materials: sheet metal, concrete, and terrazzo products and similar construction materials are in the manufacturing division; woodworking in connection with construction, reconditioning/repair, or work performed to individual order is nonmanufacturing; wood kitchen cabinets and bathroom vanities for permanent installation are manufacturing, freestanding cabinets/vanities are Major Group 25, and custom cabinets built for individuals are Retail Trade Industry 5712.",
+  "nodes": [
+    {"id": "start", "type": "start", "label": "Construction Related Establishment"},
+    {
+      "id": "cabinet_shop",
+      "type": "decision",
+      "question": "Is it a Cabinet Shop?"
+    },
+    {
+      "id": "sales_test",
+      "type": "decision",
+      "question": "Is 50% of sales to contractors/wholesale?",
+      "note": "Sale to individual consumers is a retail activity."
+    },
+    {
+      "id": "employment_test",
+      "type": "decision",
+      "question": "Is 50% of employment installation?",
+      "note": "Employment ratio is for shop vs. installation work only, not admin, etc., and for all closely related establishments owned by the same person."
+    },
+    {
+      "id": "sic_test",
+      "type": "decision",
+      "question": "Does it fit a Manufacturing SIC Code?"
+    },
+    {
+      "id": "outcome_not_mfg_sales",
+      "type": "terminal",
+      "outcome": "not_manufacturing",
+      "label": "Not Manufacturing",
+      "action": "Not manufacturing. Sale to individual consumers is a retail activity."
+    },
+    {
+      "id": "outcome_not_mfg_employment",
+      "type": "terminal",
+      "outcome": "not_manufacturing",
+      "label": "Not Manufacturing",
+      "action": "Not manufacturing (50% or more of employment is installation)."
+    },
+    {
+      "id": "outcome_not_mfg_sic",
+      "type": "terminal",
+      "outcome": "not_manufacturing",
+      "label": "Not Manufacturing",
+      "action": "Not manufacturing (does not fit a manufacturing SIC code)."
+    },
+    {
+      "id": "outcome_manufacturer",
+      "type": "terminal",
+      "outcome": "manufacturing",
+      "label": "Manufacturer Assessed by Department of Revenue",
+      "action": "The establishment is a manufacturer assessed by the Department of Revenue."
+    }
+  ],
+  "edges": [
+    {"from": "start", "to": "cabinet_shop"},
+    {"from": "cabinet_shop", "to": "sales_test", "branch": "yes", "label": "Yes"},
+    {"from": "cabinet_shop", "to": "employment_test", "branch": "no", "label": "No"},
+    {"from": "sales_test", "to": "outcome_not_mfg_sales", "branch": "no", "label": "No"},
+    {"from": "sales_test", "to": "employment_test", "branch": "yes", "label": "Yes"},
+    {"from": "employment_test", "to": "outcome_not_mfg_employment", "branch": "yes", "label": "Yes"},
+    {"from": "employment_test", "to": "sic_test", "branch": "no", "label": "No"},
+    {"from": "sic_test", "to": "outcome_not_mfg_sic", "branch": "no", "label": "No"},
+    {"from": "sic_test", "to": "outcome_manufacturer", "branch": "yes", "label": "Yes"}
+  ],
+  "references": []
+}

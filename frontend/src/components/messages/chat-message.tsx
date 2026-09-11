@@ -25,6 +25,7 @@ import { FeedbackModal } from './feedback/feedback-modal';
 import { AnnotationController } from './feedback/annotation-controller';
 import { RetrievalModal } from './retrieval-modal';
 import { ChoiceChips } from './choice-chips';
+import { FlowchartWalkthrough } from './flowchart-walkthrough';
 import { TopicShiftSuggestion } from './topic-shift-suggestion';
 
 type TraceStep = {
@@ -548,6 +549,7 @@ export function ChatMessage({
   const devTrace = useDevTrace();
   const choices = useChatStore(s => s.queries[queryId]?.choices);
   const suggestion = useChatStore(s => s.queries[queryId]?.suggestion);
+  const flowchart = useChatStore(s => s.queries[queryId]?.flowchart);
   const [retrievalModalOpen, setRetrievalModalOpen] = useState(false);
   const isAnnotatingThis = useFeedbackStore(s => s.annotatingQueryId === queryId);
   const annotationActive = useFeedbackStore(s => s.annotatingQueryId !== null);
@@ -772,6 +774,14 @@ export function ChatMessage({
           {choices && choices.length > 0 && streamingComplete && (
             <div className="chat-response-aligned">
               <ChoiceChips queryId={queryId} choices={choices} onSelect={onSendMessage} />
+            </div>
+          )}
+
+          {/* Interactive "Walk the flowchart" affordance when a decision
+              flowchart was seeded for this turn. */}
+          {flowchart && streamingComplete && (
+            <div className="chat-response-aligned">
+              <FlowchartWalkthrough flowchart={flowchart} />
             </div>
           )}
 
