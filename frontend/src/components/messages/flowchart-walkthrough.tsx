@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   GitBranch,
@@ -123,9 +123,19 @@ export function FlowchartWalkthroughModal({
   open,
   onOpenChange,
 }: FlowchartProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
-  // Path of visited node ids; last element is the current node.
-  const [path, setPath] = useState<string[]>([flowchart.startNode]);
+  // The walker body lives in a child that only mounts while the dialog is open,
+  // so its state initializes fresh on every open (no reset-on-open effect, and
+  // no dependence on Radix's onOpenChange, which doesn't fire for external opens).
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        {open && <FlowchartWalker flowchart={flowchart} />}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
+function FlowchartWalker({ flowchart }: FlowchartProps) {
   const nodesById = useMemo(() => {
     const m = new Map<string, FlowchartNode>();
     for (const n of flowchart.nodes) m.set(n.id, n);
@@ -147,10 +157,9 @@ export function FlowchartWalkthroughModal({
     [flowchart.nodes]
   );
 
-  const currentId = path[path.length - 1];
-
-  const startPath = (): string[] => {
-    // Skip a leading start node so the first card is the first decision.
+  // Initial path skips a leading `start` node so the first card is the first
+  // decision, not the empty START pill (which renders nothing).
+  const startPath = useCallback((): string[] => {
     const start = nodesById.get(flowchart.startNode);
     if (start?.type === 'start') {
       const out = edgesFrom.get(flowchart.startNode) ?? [];
@@ -158,7 +167,13 @@ export function FlowchartWalkthroughModal({
       if (next) return [flowchart.startNode, next.to];
     }
     return [flowchart.startNode];
-  };
+  }, [nodesById, edgesFrom, flowchart.startNode]);
+
+  // Path of visited node ids; last element is the current node. Lazily
+  // initialized past the start node — this component mounts fresh on each open.
+  const [path, setPath] = useState<string[]>(startPath);
+
+  const currentId = path[path.length - 1];
 
   const reset = () => setPath(startPath());
   const back = () => setPath(p => (p.length > 1 ? p.slice(0, -1) : p));
@@ -184,15 +199,8 @@ export function FlowchartWalkthroughModal({
         : '';
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={o => {
-        onOpenChange(o);
-        if (o) setPath(startPath());
-      }}
-    >
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
+    <>
+      <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <GitBranch className="h-4 w-4 text-sky-600 dark:text-sky-400" />
             {flowchart.title}
@@ -336,8 +344,7 @@ export function FlowchartWalkthroughModal({
             </a>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }
 
