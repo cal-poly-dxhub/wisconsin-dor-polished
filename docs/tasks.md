@@ -2,25 +2,27 @@
 
 ## TODO
 
-| # | Task | Status (audit 2026-09-10) | Related Responses |
+| # | Task | Status (audit 2026-09-12) | Related Responses |
 |---|------|---------------------------|-------------------|
 | 43 | Prompt rewrite: compress FRAMEWORK APPLICABILITY section | Not started — still verbose 9-tier listing | — |
 | 44 | Prompt rewrite: compress CITATION RULES section | Not started — still ~18 rules | — |
 | 45 | Scholar-sourced case-law dedup pass (docket-number keyed) | One-time pass done; durable prevention (docket in extract.py + load.py secondary key) still needed | dark-store/Lowe's dup |
-| 46 | Backfill case-law titles from opinion-text captions | Consumer side done (extract.py); Scholar-path caption parser still needed | — |
+| 46 | Backfill case-law titles from opinion-text captions | Prod fixed 2026-09-11 (Phase 2 reload rewrote 1139 doubled titles). Root cause was NOT the caption parser: `embed.py` never refreshed metadata from `extracted/`, so every full load re-applied the July-4 cache. Durable fix tracked in 64. 115 Scholar-path bare-citation titles remain (original scope). | — |
 | 47 | Route case-law / flat-structure docs straight to search_document (skip list_sections/get_section) | Not started — tool descriptions still steer to list_sections/get_section first | — |
 | 48 | Investigate WPAM get_section gap — agents re-search doc-globally after get_section on same chapter | Open investigation — no findings recorded; get_section still z-score ranks | — |
 | 49 | Validate Scholar-fetched opinion matches requested citation (prevent citation→text mis-assignment) | One-time purge done; durable citation-match guard still needed | dark-store/Lowe's |
-| 51 | Disambiguation follow-up logic + classifier accuracy (BLOCKED — awaiting Wisconsin validation) | Core logic shipped; accuracy tuning blocked on DOR validation | TID net-new-construction query |
-| 52 | Subsection auto-backfill (C1) — guarantee dense-statute subsections reach the answer without the agent asking | Largely superseded — the §70.11(49) recreational-home gap was solved for the camping-trailer/RV family by vocab-swap (Task 58, PR #33). Always-on C1 stage no longer the primary plan. Mobile-home residual → Task 59 | §70.11(49) recreational-home exemptions |
-| 58 | Vocabulary-bridge (vocab-swap) for citizen-term → statute-term gaps | DONE for the recreational-home family (#33). Map expansion is evidence-gated + legally-validated per entry | §70.11(49) family |
-| 59 | Mobile-home §70.11(49) reliability + legal-applicability question | Open — vocab-swap fixes camping/RV but not mobile-home phrasing; needs DOR SME input | §70.11(49) / §66.0435 / §70.17(3) |
+| 51 | Disambiguation follow-up logic + classifier accuracy (BLOCKED — awaiting Wisconsin validation) | Core logic shipped; chip replies fixed 2026-09-11 (PR #38: chip label resolves to the original question, no re-classification). Accuracy tuning still blocked on DOR's validated list | TID net-new-construction query |
+| 58 | Vocabulary-bridge (vocab-swap) for citizen-term → statute-term gaps | DONE for the recreational-home family (#33). TO BE RETIRED once Task 65 promotes — the query-side map fires on the term not the intent (4 of 15 matching prod queries were not exemption questions) and needs an engineer to maintain | §70.11(49) family |
+| 59 | Mobile-home §70.11(49) reliability + legal-applicability question | End-to-end PASSES on the Task 65 staging graph (§70.11(49) presented as its own exemption section). Raw vector rank for the bare phrase stays low because grounded aliases describe (49) as camper/RV/park-model — consistent with Valeah's 09-10 statement. The legal question (does (49) cover residential mobile homes?) still goes to DOR | §70.11(49) / §66.0435 / §70.17(3) |
 | 60 | DOR/SME content questions (client-side, not retrieval bugs) | Open — carry to DOR: maintenance-vs-revaluation source, residential grade scale + images, BOR interpreter reference, stale mfg-appeal guide | — |
 | 61 | Content-gap ingestion — treaty pub + Innovation Grant FAQ | DONE (2026-09-10) — napt-treaty-update.pdf + slf-ig FAQ ingested & verified (2/2 target queries PASS). assrlist dropped: it's a link-fabrication issue → Task 62 | — |
-| 62 | Reliability — client-side answer truncation + citation-link integrity | Open — truncation is frontend stream/render (server sends full answer); add link-resolves-to-retrieved-doc validation | — |
-| 63 | Confidentiality follow-up — git-history purge decision | Open (reduced) — #32 scrubbed the test YAMLs, docs/tasks.md now scrubbed too (both HEAD-only); only the git-history purge decision remains | — |
-| 64 | Reconcile stale-embedding backlog (~1166 docs) | Open — `embed --smart` found 1166/2364 docs whose extraction is newer than their embedding; deliberate embed + full load needed to propagate to the graph | — |
-| 65 | Document expansion — generated plain-language aliases + gold tester queries prepended to chunk embed input; statute subsection-per-chunk split; staging-graph evaluation | In progress (2026-09-11) — replaces the hand-curated vocab map (Task 58) as the vocabulary-bridge mechanism | camping trailer / mobile home §70.11(49) |
+| 62 | Reliability — client-side answer truncation + citation-link integrity | Open — raised in priority: tester-visible. Truncation is frontend stream/render (server sends full answer). Assessor-directory URL fabrication reproduced by the judge again 09-11; add link-resolves-to-retrieved-doc validation | — |
+| 63 | Confidentiality follow-up — git-history purge decision | Open — decision needed BEFORE the repo moves to DOR's account (handoff = their eyes on history). Folded into Task 66 | — |
+| 64 | Reconcile stale-embedding backlog (~1166 docs) | Half done — 1144 case-law re-embeds landed with the 09-11 title reload; the rest clears with the Task 65 promotion load. Durable fix still needed: make `extracted/` authoritative for doc metadata in embed/load, add a Phase 2 guard against `title == citation`, purge Task-45 loser cache entries (full loads resurrect them), reconcile the 3 ghost `statutes-document-*` ids | — |
+| 65 | Document expansion — generated plain-language aliases + gold tester queries prepended to chunk embed input; statute subsection-per-chunk split; staging-graph evaluation | VALIDATED on staging graph g-vq11cnlk42 (2026-09-12): end-to-end 36/42 vs prod 33/42, 0 PASS→FAIL, mobile-home passes; raw recall doc MRR 0.52→0.72. Promotion pending (Docker rebuild → copy staging caches → full prod load → flip config flags → delete staging graph). See wisdor state_of_play §9 | camping trailer / mobile home §70.11(49) |
+| 66 | Handoff engineering — move to DOR's AWS account as-is (117-user division access) | NEW (from 09-10 DOR meeting) — SSO via Cognito identity provider (Amy/Brad meetings, Darren leads), security assessment / threat model, revisit cost estimate, remove dev-only surfaces (`/admin/*`) from the production build, git-history purge decision (63), AWS account-manager engagement | — |
+| 67 | Annual-refresh runbook for DOR (data-only maintenance, ~20–25% FTE) | NEW (Darren committed on 09-10) — scrape → extract (with aliases) → embed enriched → full load at 128 mCU → scale down → flowchart sidecar manual re-verify → TID worksheet extract. Fold in Task 45 (docket dedup key) and 49 (Scholar citation-match guard) as ingest steps, plus Docker rebuild reminder, costs and timings | — |
+| 68 | DOR meeting 09-17 agenda | NEW — (1) flowcharts SHIPPED (#35), DOR left 09-10 expecting deferral; (2) ask Scott for the draft mobile-home chart with the (49) step-5 branch; (3) Task 59 legal question; (4) Task 60 content items; (5) propose a DOR-authored plain-language→statute glossary as corpus content; (6) three before/after demo queries; (7) image-input request from the 09-04 email (parked) and the 879–900 s latency reports (never root-caused) | — |
 
 ## Done
 
@@ -63,6 +65,7 @@
 | 42 | Markarian hierarchy query fails to ground `statutes-70` (turn-budget exhaustion) |
 | 5 | Replace LLM classification with structural parsers |
 | 21 | Add z-score normalization to search_document result filtering (investigated — declined) |
+| 52 | Subsection auto-backfill (C1) — superseded by the §70.11(49) nudge (#30), vocab-swap (#33), and document expansion (Task 65); closed 2026-09-12 |
 | 40 | Harden inline linking prose — quote verbatim instead of paraphrasing (answerStream "Use Source Language in Link Text" section) |
 | 50 | Rich feedback phase 2 — render richFeedback in the admin activity dashboard (RichFeedbackDisplay in activity-detail.tsx) |
 
