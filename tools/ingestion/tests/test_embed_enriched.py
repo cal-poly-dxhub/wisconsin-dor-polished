@@ -140,3 +140,60 @@ def test_phase_9_reads_prefixed_extracted_case_law_set():
         load.phase_9_cleanup(None, "g", WB, None, cache_prefix="staging/")
     purge = [p for q, p in queries if p and "ids" in p]
     assert purge == [{"ids": ["case-law-stale"]}]  # prod-only doc NOT considered live
+
+
+def test_enriched_mode_embeds_case_law_plain(monkeypatch):
+    """Case law is excluded from enrichment by default: plain text is embedded
+    and the doc records embed_input_mode == 'plain' even when 'enriched' is asked."""
+    from tools.ingestion import embed as embed_mod
+
+    seen = []
+    monkeypatch.setattr(
+        embed_mod, "embed_text", lambda text, model_id, dimension: seen.append(text) or [0.0]
+    )
+    doc = {
+        "doc_id": "case-law-1-wis-2d-1",
+        "doc_type": "case_law",
+        "title": "Smith v. Town",
+        "chunks": [{"text": "Holding text here.", "aliases": {"questions": ["Q?"], "aliases": []}}],
+    }
+    out = embed_mod.embed_chunks(doc, "m", 4, embed_input="enriched")
+    assert seen[0] == "Holding text here."
+    assert out["embed_input_mode"] == "plain"
+    # Opt-in: an empty exclusion set enriches case law too.
+    seen.clear()
+    embed_mod.embed_chunks(
+        dict(doc, chunks=[dict(doc["chunks"][0])]), "m", 4, "enriched", frozenset()
+    )
+    assert seen[0] != "Holding text here." and "Holding text here." in seen[0]
+
+
+def test_enrich_policy_excludes_iaao_old_wpam_and_index_chunks(monkeypatch):
+    from tools.ingestion import embed as embed_mod
+
+    docs = [
+        {"doc_id": "wpam-wisconsin-property-assessment-manual-2026", "doc_type": "manual"},
+        {"doc_id": "wpam-wisconsin-property-assessment-manual-2019", "doc_type": "manual"},
+        {"doc_id": "iaao-standard-on-professional-development", "doc_type": "iaao_standard"},
+    ]
+    superseded = embed_mod.superseded_wpam_doc_ids(docs)
+    assert superseded == {"wpam-wisconsin-property-assessment-manual-2019"}
+    policy = embed_mod.EnrichPolicy(exclude_doc_ids=superseded)
+    assert policy.doc_enriched(docs[0]) is True
+    assert policy.doc_enriched(docs[1]) is False
+    assert policy.doc_enriched(docs[2]) is False
+    good = {"text": "x", "heading": "Chapter 18 Personal Property"}
+    index = {"text": "x", "heading": "Chapter 21 Index of Legal Decisions"}
+    toc = {"text": "x", "metadata": {"heading": "Table of Contents"}}
+    assert policy.chunk_enriched(docs[0], good) is True
+    assert policy.chunk_enriched(docs[0], index) is False
+    assert policy.chunk_enriched(docs[0], toc) is False
+    # chunk_embed_input honors the policy object directly.
+    doc = dict(docs[0], title="WPAM 2026")
+    assert embed_mod.chunk_embed_input(doc, index, "enriched", policy) == "x"
+    assert (
+        embed_mod.chunk_embed_input(
+            doc, dict(good, aliases={"questions": ["Q?"], "aliases": []}), "enriched", policy
+        )
+        != "x"
+    )

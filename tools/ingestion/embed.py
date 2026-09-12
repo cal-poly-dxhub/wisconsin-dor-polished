@@ -103,20 +103,120 @@ def load_extracted_docs(work_bucket: str, cache_prefix: str = "") -> list[dict]:
     return docs
 
 
-def chunk_embed_input(doc: dict, chunk: dict, embed_input: str) -> str:
+# Doc types that are embedded PLAIN even in enriched mode. Case law is
+# deliberately excluded: its analysis/holding chunks are already semantically
+# strong (they once took 13/15 vector_search slots, which is why the authority
+# quota and the CITES-chain case-law backfill exist). Case law should arrive
+# through the statute it interprets, not by matching a citizen's phrasing
+# directly. Aliases are still GENERATED and cached for case law so this can be
+# flipped on later as its own measured step. Override via
+# alias_enrichment.exclude_doc_types in ingest_config.yaml.
+ENRICH_EXCLUDE_DOC_TYPES: frozenset[str] = frozenset(
+    {"case_law", "iaao_standard", "uspap_standard"}
+)
+
+# Chunks whose heading matches one of these are embedded plain: index / table-
+# of-contents chunks are lists of topics, so a generated question like "Are
+# mobile homes exempt?" is technically grounded but semantically empty, and it
+# pulled garbled old-edition WPAM index chunks into the top 10 for exemption
+# queries during the 2026-09-11 staging evaluation.
+ENRICH_EXCLUDE_HEADING_PATTERNS: tuple[str, ...] = (
+    r"index (of|to) legal decisions",
+    r"legal decisions and",
+    r"table of contents",
+    r"^index\b",
+)
+
+
+class EnrichPolicy:
+    """Decides which chunks get the enriched embed input.
+
+    Everything not excluded is enriched. Exclusions (all config-driven via
+    alias_enrichment in ingest_config.yaml):
+      - doc types (case law, IAAO, USPAP by default — see ENRICH_EXCLUDE_DOC_TYPES)
+      - superseded WPAM editions when ``wpam_latest_only`` (older editions exist
+        for historical questions only; enriching them made 2013–2023 copies of
+        the same passage crowd the top 10)
+      - chunks whose heading matches an index / TOC pattern
+    """
+
+    def __init__(
+        self,
+        exclude_doc_types=ENRICH_EXCLUDE_DOC_TYPES,
+        exclude_doc_ids: frozenset[str] = frozenset(),
+        exclude_heading_patterns=ENRICH_EXCLUDE_HEADING_PATTERNS,
+    ):
+        import re
+
+        self.exclude_doc_types = frozenset(exclude_doc_types)
+        self.exclude_doc_ids = frozenset(exclude_doc_ids)
+        self._heading_re = [re.compile(pat, re.IGNORECASE) for pat in exclude_heading_patterns]
+
+    def doc_enriched(self, doc: dict) -> bool:
+        return (
+            doc.get("doc_type") not in self.exclude_doc_types
+            and doc.get("doc_id") not in self.exclude_doc_ids
+        )
+
+    def chunk_enriched(self, doc: dict, chunk: dict) -> bool:
+        if not self.doc_enriched(doc):
+            return False
+        heading = " ".join(
+            str(x)
+            for x in (
+                chunk.get("heading") or (chunk.get("metadata") or {}).get("heading") or "",
+                chunk.get("subheading") or (chunk.get("metadata") or {}).get("subheading") or "",
+            )
+        )
+        return not any(r.search(heading) for r in self._heading_re)
+
+
+def superseded_wpam_doc_ids(docs: list[dict]) -> frozenset[str]:
+    """WPAM doc_ids that are NOT the newest edition present in ``docs``."""
+    from tools.ingestion.lib.wpam_year import extract_wpam_year_from_doc_id
+
+    years = {}
+    for d in docs:
+        y = extract_wpam_year_from_doc_id(d.get("doc_id", ""))
+        if y is not None:
+            years[d["doc_id"]] = y
+    if not years:
+        return frozenset()
+    latest = max(years.values())
+    return frozenset(doc_id for doc_id, y in years.items() if y < latest)
+
+
+def _as_policy(exclude_doc_types) -> "EnrichPolicy":
+    return (
+        exclude_doc_types
+        if isinstance(exclude_doc_types, EnrichPolicy)
+        else EnrichPolicy(exclude_doc_types=exclude_doc_types)
+    )
+
+
+def chunk_embed_input(
+    doc: dict, chunk: dict, embed_input: str, exclude_doc_types=ENRICH_EXCLUDE_DOC_TYPES
+) -> str:
     """The string sent to Titan for one chunk.
 
     ``plain``    → chunk["text"] exactly as before.
     ``enriched`` → title/heading header + gold queries + generated questions +
-                   aliases, then the chunk text (see lib/aliases.compose_embed_input).
+                   aliases, then the chunk text (see lib/aliases.compose_embed_input),
+                   except for doc types in ``exclude_doc_types`` (plain).
     The stored chunk text is never modified.
     """
-    if embed_input == "enriched":
+    if embed_input == "enriched" and _as_policy(exclude_doc_types).chunk_enriched(doc, chunk):
         return compose_embed_input(doc, chunk, chunk.get("aliases"), chunk.get("gold_queries", []))
     return chunk["text"]
 
 
-def embed_chunks(doc: dict, model_id: str, dimension: int, embed_input: str = "plain") -> dict:
+def embed_chunks(
+    doc: dict,
+    model_id: str,
+    dimension: int,
+    embed_input: str = "plain",
+    exclude_doc_types=ENRICH_EXCLUDE_DOC_TYPES,
+) -> dict:
     """Embed all chunks for a single document.
 
     Case-law opinions with extracted text are embedded chunk-by-chunk like the
@@ -134,9 +234,14 @@ def embed_chunks(doc: dict, model_id: str, dimension: int, embed_input: str = "p
     if doc.get("doc_type") == "case_law" and not chunks:
         return doc
 
-    doc["embed_input_mode"] = embed_input
+    effective = (
+        "plain"
+        if embed_input == "enriched" and not _as_policy(exclude_doc_types).doc_enriched(doc)
+        else embed_input
+    )
+    doc["embed_input_mode"] = effective
     for i, chunk in enumerate(chunks):
-        text = chunk_embed_input(doc, chunk, embed_input)
+        text = chunk_embed_input(doc, chunk, embed_input, exclude_doc_types)
         chunk["embed_input_chars"] = len(text)
         chunk["embedding"] = embed_text(text, model_id, dimension)
         if (i + 1) % 50 == 0:
@@ -207,9 +312,27 @@ def main():
     if embed_input not in EMBED_INPUT_MODES:
         parser.error(f"alias_enrichment.embed_input must be one of {EMBED_INPUT_MODES}")
     cache_prefix = args.cache_prefix
-    logger.info(f"Embed input mode: {embed_input}; cache prefix: '{cache_prefix}'")
 
     docs = load_extracted_docs(args.work_bucket, cache_prefix)
+    # Enrichment policy is computed over the FULL corpus (before --source-filter)
+    # so 'latest WPAM edition' is the real latest, not the latest in the subset.
+    ae = config.get("alias_enrichment") or {}
+    exclude_doc_ids = frozenset()
+    if ae.get("wpam_latest_only", True):
+        exclude_doc_ids = superseded_wpam_doc_ids(docs)
+    exclude_doc_types = EnrichPolicy(
+        exclude_doc_types=frozenset(ae.get("exclude_doc_types", sorted(ENRICH_EXCLUDE_DOC_TYPES))),
+        exclude_doc_ids=exclude_doc_ids,
+        exclude_heading_patterns=tuple(
+            ae.get("exclude_heading_patterns", ENRICH_EXCLUDE_HEADING_PATTERNS)
+        ),
+    )
+    logger.info(
+        f"Embed input mode: {embed_input}; cache prefix: '{cache_prefix}'; "
+        f"enrichment excluded doc types: {sorted(exclude_doc_types.exclude_doc_types)}; "
+        f"superseded WPAM editions excluded: {len(exclude_doc_ids)}; "
+        f"heading exclusions: {len(exclude_doc_types._heading_re)}"
+    )
     logger.info(f"Loaded {len(docs)} extracted documents")
 
     if args.source_filter:
@@ -250,7 +373,9 @@ def main():
     embedded_count = 0
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = {
-            executor.submit(embed_chunks, doc, model_id, dimension, embed_input): doc["doc_id"]
+            executor.submit(
+                embed_chunks, doc, model_id, dimension, embed_input, exclude_doc_types
+            ): doc["doc_id"]
             for doc in docs
         }
         for future in as_completed(futures):

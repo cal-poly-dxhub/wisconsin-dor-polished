@@ -129,3 +129,10 @@ alias_enrichment:
   alias_model: "us.amazon.nova-2-lite-v1:0"
   min_chunk_chars: 200                 # chunks shorter than this get no aliases
   workers: 4                           # Bedrock concurrency per document
+  exclude_doc_types: [case_law, iaao_standard, uspap_standard]  # embed: always plain (see embed.py EnrichPolicy)
+  wpam_latest_only: true               # embed: only the newest WPAM edition is enriched
+  exclude_heading_patterns:            # embed: index / TOC chunks stay plain
+    - "index (of|to) legal decisions"
+    - "legal decisions and"
+    - "table of contents"
+    - "^index\\b"
