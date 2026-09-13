@@ -233,6 +233,167 @@ def get_chunk_cap(strategy: str = "") -> int:
     return _CHUNK_CAP_BY_STRATEGY.get(strategy, CHUNK_MAX_CHARS)
 
 
+# One-subsection-per-chunk target for dense enumerated statute / admin-rule
+# sections. A section with 2+ top-level numbered subsections — "(1)", "(4m)",
+# "(49)" at line start — is split at every subsection regardless of the
+# strategy cap, then adjacent *small* subsections are greedy-merged back only
+# up to this target so a run of 100-char subsections still forms a sensible
+# chunk while a 1500-char subsection stands alone. Before this, § 70.11
+# (45)–(49) shared a 3165-char chunk and a query about (49) never ranked.
+STATUTE_SUBSECTION_TARGET_CHARS = int(os.environ.get("STATUTE_SUBSECTION_TARGET_CHARS", "1200"))
+
+# Top-level subsection marker at line start. Must agree with
+# backend/lambdas/agentic_retrieval/agent_tools/executor.py::_SUBSECTION_MARKER_RE
+# (`(?m)^\s*\((?P<marker>\d+[a-z]*)\)\s`), which get_section's subsection mode
+# uses to locate a subsection inside chunk text. The look-ahead additionally
+# requires an uppercase / paren / quote start so a wrapped mid-sentence
+# cross-reference like "(2) of this section" is not taken for a boundary.
+_TOP_LEVEL_SUBSECTION_RE = re.compile(r"^\s*\((?P<marker>\d+[a-z]*)\)\s+(?=[A-Z(“\"‘'])")
+# The same marker appearing inline after a section title, e.g.
+# "70.32 Real estate, how valued.  (1) Real property shall be".
+_INLINE_SUBSECTION_RE = re.compile(r"\s+\((?P<marker>\d+[a-z]*)\)\s+(?=[A-Z(“\"‘'])")
+# Statute sections end with a History note followed by case annotations; none
+# of that belongs to the last subsection.
+_HISTORY_LINE_RE = re.compile(r"^\s*History:")
+_SECTION_NUMBER_RE = re.compile(r"^\s*(?P<prefix>Tax\s+)?(?P<num>\d+\.\d+)")
+
+
+def _marker_sort_key(marker: str) -> tuple[int, str]:
+    m = re.match(r"(\d+)([a-z]*)", marker)
+    return (int(m.group(1)), m.group(2)) if m else (0, marker)
+
+
+def _subsection_label(heading: str, markers: list[str]) -> str | None:
+    """'70.11(49)' for one marker, '70.11(45)–(48)' for a merged run."""
+    if not markers:
+        return None
+    m = _SECTION_NUMBER_RE.match(heading)
+    section = f"{(m.group('prefix') or '').strip()} {m.group('num')}".strip() if m else ""
+    if len(markers) == 1:
+        return f"{section}({markers[0]})"
+    return f"{section}({markers[0]})–({markers[-1]})"
+
+
+def _lift_inline_marker(line: str) -> tuple[str, str | None]:
+    """Move an inline top-level marker onto its own line.
+
+    "70.32 Real estate, how valued.  (1) Real property" ->
+    ("70.32 Real estate, how valued.", "(1) Real property")
+    """
+    if _TOP_LEVEL_SUBSECTION_RE.match(line):
+        return line, None
+    m = _INLINE_SUBSECTION_RE.search(line)
+    if not m:
+        return line, None
+    return line[: m.start()].rstrip(), line[m.start() :].strip()
+
+
+def _segment_by_top_level_subsections(
+    text: str,
+) -> tuple[str, list[tuple[list[str], list[str]]]] | None:
+    """Break a section chunk into (heading, [(markers, lines), ...]) segments.
+
+    Returns None when the section has fewer than two top-level numbered
+    subsection markers, in which case callers keep the legacy behaviour.
+    Segment 0 may be an unlabeled intro (text before the first marker); the
+    trailing History/annotation block is an unlabeled segment as well.
+    Markers must be ascending so "(39) (g); 1979 c. 221" inside a History
+    note or "(27) was enacted" in a case annotation never opens a segment.
+    """
+    heading, _, body = text.partition("\n")
+    heading, lifted = _lift_inline_marker(heading)
+    lines = body.split("\n") if body else []
+    if lifted:
+        lines.insert(0, lifted)
+    elif lines:
+        # Admin rules carry the title on the first body line: "Scope.  (1) ..."
+        first, lifted_first = _lift_inline_marker(lines[0])
+        if lifted_first:
+            lines[0:1] = [first, lifted_first]
+
+    segments: list[tuple[list[str], list[str]]] = [([], [])]
+    last_key: tuple[int, str] | None = None
+    in_annotations = False
+    for line in lines:
+        if not in_annotations and _HISTORY_LINE_RE.match(line):
+            in_annotations = True
+            segments.append(([], [line]))
+            continue
+        m = None if in_annotations else _TOP_LEVEL_SUBSECTION_RE.match(line)
+        if m:
+            key = _marker_sort_key(m.group("marker"))
+            if last_key is None or key > last_key:
+                last_key = key
+                segments.append(([m.group("marker")], [line]))
+                continue
+        segments[-1][1].append(line)
+
+    n_markers = sum(len(markers) for markers, _ in segments)
+    if n_markers < 2:
+        return None
+    if not segments[0][1]:
+        segments.pop(0)
+    return heading, segments
+
+
+def _split_section_by_subsections(
+    text: str, cap: int, target: int | None = None
+) -> list[tuple[str, str | None]]:
+    """Split a statute/admin-rule section chunk into (text, subheading) pieces.
+
+    Dense enumerated sections (2+ top-level subsections) get one chunk per
+    subsection, with adjacent small subsections greedy-merged up to
+    ``target`` and the intro sentence attached to the first piece. Every
+    piece starts with the section heading line and keeps its marker at line
+    start. Pieces still over ``cap`` fall through to the legacy
+    sentence/line splitter. Sections with 0–1 markers keep legacy behaviour.
+    """
+    if target is None:
+        target = STATUTE_SUBSECTION_TARGET_CHARS
+    segmented = _segment_by_top_level_subsections(text)
+    if segmented is None:
+        if len(text) <= cap:
+            return [(text, None)]
+        return [(part, None) for part in _split_statute_section(text, cap=cap)]
+
+    heading, segments = segmented
+    units: list[tuple[list[str], str]] = [
+        (markers, "\n".join(lines).strip()) for markers, lines in segments
+    ]
+    units = [(m, t) for m, t in units if t]
+
+    # Intro text before the first marker rides with the first subsection
+    # unless it is big enough to stand alone.
+    if len(units) > 1 and not units[0][0] and len(units[0][1]) <= target:
+        _, intro = units.pop(0)
+        markers, first = units[0]
+        units[0] = (markers, f"{intro}\n{first}")
+
+    # Greedy-merge adjacent small units up to the (smaller) subsection target.
+    merged: list[tuple[list[str], str]] = []
+    for markers, seg_text in units:
+        if merged and len(merged[-1][1]) + 1 + len(seg_text) <= target:
+            prev_markers, prev_text = merged[-1]
+            merged[-1] = (prev_markers + markers, f"{prev_text}\n{seg_text}")
+        else:
+            merged.append((markers, seg_text))
+
+    # Anything still over the cap falls through to sentence / line splitting;
+    # every resulting piece is re-prefixed with the heading line.
+    body_cap = max(cap - len(heading) - 1, 200)
+    out: list[tuple[str, str | None]] = []
+    for markers, seg_text in merged:
+        label = _subsection_label(heading, markers)
+        pieces = (
+            [seg_text]
+            if len(seg_text) <= body_cap
+            else _split_statute_section(seg_text, cap=body_cap)
+        )
+        for piece in pieces:
+            out.append((f"{heading}\n{piece}", label))
+    return out
+
+
 def _count_chars_in_buffer(buffer: list[tuple[str, int]]) -> int:
     """Approximate char count for a (line, page) buffer joined by newlines."""
     if not buffer:
@@ -519,9 +680,7 @@ def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
         _lines_on_page += 1
 
     # Noise patterns: lines that are just page chrome, not real section starts.
-    _noise_re = re.compile(
-        r"^(MUNICIPAL LAW|TOWNS|Updated \d|^\d+\s+Updated|\d+$)", re.IGNORECASE
-    )
+    _noise_re = re.compile(r"^(MUNICIPAL LAW|TOWNS|Updated \d|^\d+\s+Updated|\d+$)", re.IGNORECASE)
 
     # Walk through line–page mapping directly
     for idx, (line, page_num) in enumerate(line_page_mapping):
@@ -584,21 +743,37 @@ def chunk_document_statute(header_split, file, BUCKET, line_page_mapping):
             }
         )
 
-    # Split oversized sections at subsection/sentence boundaries
+    # One chunk per top-level subsection for dense sections; otherwise split
+    # only oversized sections at subsection/sentence boundaries.
     cap = get_chunk_cap("statute")
     final_chunks: list[dict] = []
     for chunk in merged_chunks:
-        text = chunk["text"]
-        if len(text) <= cap:
-            final_chunks.append(chunk)
-            continue
-        parts = _split_statute_section(text, cap=cap)
-        for part in parts:
-            split_chunk = {k: (dict(v) if isinstance(v, dict) else v) for k, v in chunk.items()}
-            split_chunk["text"] = part
-            final_chunks.append(split_chunk)
+        final_chunks.extend(_apply_subsection_split(chunk, cap))
 
     return final_chunks
+
+
+def _apply_subsection_split(chunk: dict, cap: int) -> list[dict]:
+    """Expand one section chunk into its subsection-level chunks.
+
+    Page metadata is inherited from the parent section (approximate for
+    split parts, as before). ``heading`` is refreshed from the first line so
+    it stays title-only when an inline "(1)" was lifted into the body.
+    """
+    parts = _split_section_by_subsections(chunk["text"], cap=cap)
+    if len(parts) == 1 and parts[0][1] is None and parts[0][0] == chunk["text"]:
+        return [chunk]
+    out: list[dict] = []
+    for part, subheading in parts:
+        split_chunk = {k: (dict(v) if isinstance(v, dict) else v) for k, v in chunk.items()}
+        split_chunk["text"] = part
+        first_line = part.split("\n", 1)[0]
+        if chunk["metadata"].get("heading", "").startswith(first_line):
+            split_chunk["metadata"]["heading"] = first_line
+        if subheading:
+            split_chunk["metadata"]["subheading"] = subheading
+        out.append(split_chunk)
+    return out
 
 
 def chunk_document_admin_rule(header_split, file, BUCKET, line_page_mapping):
@@ -652,8 +827,8 @@ def chunk_document_admin_rule(header_split, file, BUCKET, line_page_mapping):
         start_page, end_page = (min(pages), max(pages)) if pages else (1, 1)
         chunk_text = f"{rule_id}\n{body_text}"
 
-        if len(chunk_text) <= cap:
-            final_chunks.append(
+        final_chunks.extend(
+            _apply_subsection_split(
                 {
                     "text": chunk_text,
                     "metadata": {
@@ -662,22 +837,10 @@ def chunk_document_admin_rule(header_split, file, BUCKET, line_page_mapping):
                         "start_page": start_page,
                         "end_page": end_page,
                     },
-                }
+                },
+                cap,
             )
-        else:
-            parts = _split_statute_section(chunk_text, cap=cap)
-            for part in parts:
-                final_chunks.append(
-                    {
-                        "text": part,
-                        "metadata": {
-                            "doc_id": doc_id,
-                            "heading": rule_id,
-                            "start_page": start_page,
-                            "end_page": end_page,
-                        },
-                    }
-                )
+        )
 
     return final_chunks
 

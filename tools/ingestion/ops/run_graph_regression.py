@@ -111,7 +111,12 @@ def _load_agenticretrieval_from_toml(path: str) -> str:
 
 
 def _phase_b_generate(
-    query: str, answer_context: str, fallback_answer: str, answerstream_prompt: str
+    query: str,
+    answer_context: str,
+    fallback_answer: str,
+    answerstream_prompt: str,
+    retrieved_doc_ids: set[str] | None = None,
+    chunks: list[dict] | None = None,
 ) -> str:
     """Non-streaming Phase-B answer generation from a prebuilt context.
 
@@ -134,10 +139,24 @@ def _phase_b_generate(
             system=[{"text": apply_persona(answerstream_prompt, None)}],
             inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
         )
-        return resp["output"]["message"]["content"][0].get("text", "")
+        text = resp["output"]["message"]["content"][0].get("text", "")
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"  answer generation failed: {exc}")
         return ""
+    # Mirror the Lambda's pre-persist link repair (loop/phase_b.finalize_answer_links)
+    # so the harness grades what production actually emits.
+    if retrieved_doc_ids is not None:
+        from loop.link_repair import repair_citation_links
+
+        by_doc: dict[str, list[dict]] = {}
+        for ch in chunks or []:
+            by_doc.setdefault(ch.get("doc_id", ""), []).append(ch)
+        text, stats = repair_citation_links(text, set(retrieved_doc_ids), by_doc)
+        if stats.get("repointed") or stats.get("stripped"):
+            logger.info(
+                f"  link repair: {stats['repointed']} repointed, {stats['stripped']} stripped"
+            )
+    return text
 
 
 def run_one_query(
@@ -194,7 +213,14 @@ def run_one_query(
             neptune_client=neptune,
         )
     answer_text = _phase_b_generate(
-        query, answer_context, result.fallback_answer or "", answerstream_prompt
+        query,
+        answer_context,
+        result.fallback_answer,
+        answerstream_prompt,
+        retrieved_doc_ids=(
+            set(result.all_doc_ids) | set(cited_doc_ids) | set(result.discovery or {})
+        ),
+        chunks=result.all_chunks,
     )
 
     # Per-cited-doc discovery attribution: which retrieval path surfaced each

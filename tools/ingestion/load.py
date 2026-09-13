@@ -90,15 +90,23 @@ def execute_query(client, graph_id: str, query: str, parameters: dict | None = N
                 raise
 
 
-def load_embedded_docs(work_bucket: str) -> list[dict]:
+def load_embedded_docs(work_bucket: str, cache_prefix: str = "") -> list[dict]:
+    """Load every ``{cache_prefix}embedded/*.json`` from the work bucket.
+
+    Chunks may carry extra fields from document expansion (``aliases``,
+    ``gold_queries``, ``embed_input_chars``) and docs ``embed_input_mode``;
+    phases 5/8 only read the specific fields they need, so these pass through
+    harmlessly and are never written to the graph.
+    """
     keys: list[str] = []
+    prefix = f"{cache_prefix}embedded/"
     paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=work_bucket, Prefix="embedded/"):
+    for page in paginator.paginate(Bucket=work_bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
             if key.endswith(".json"):
                 keys.append(key)
-    logger.info(f"Found {len(keys)} embedded JSONs; downloading in parallel...")
+    logger.info(f"Found {len(keys)} embedded JSONs under '{prefix}'; downloading in parallel...")
 
     def fetch(key: str) -> dict:
         return json.loads(s3.get_object(Bucket=work_bucket, Key=key)["Body"].read())
@@ -893,7 +901,13 @@ def phase_8_vector_upserts(client, graph_id: str, documents: list[dict]):
     logger.info(f"  Upserted {total} chunk vectors")
 
 
-def phase_9_cleanup(client, graph_id: str, work_bucket: str, documents: list[dict] | None = None):
+def phase_9_cleanup(
+    client,
+    graph_id: str,
+    work_bucket: str,
+    documents: list[dict] | None = None,
+    cache_prefix: str = "",
+):
     """Garbage-collect orphan nodes left over from prior loads.
 
     Three specific classes:
@@ -955,12 +969,13 @@ def phase_9_cleanup(client, graph_id: str, work_bucket: str, documents: list[dic
     # (the authoritative document set), not against what was loaded this run.
     # This makes GC self-healing regardless of which subset was loaded.
     extracted_case_ids = set()
+    extracted_prefix = f"{cache_prefix}extracted/"
     paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=work_bucket, Prefix="extracted/case-law-"):
+    for page in paginator.paginate(Bucket=work_bucket, Prefix=f"{extracted_prefix}case-law-"):
         for obj in page.get("Contents", []):
             key = obj["Key"]
             if key.endswith(".json"):
-                doc_id = key.removeprefix("extracted/").removesuffix(".json")
+                doc_id = key.removeprefix(extracted_prefix).removesuffix(".json")
                 extracted_case_ids.add(doc_id)
 
     if extracted_case_ids:
@@ -1015,11 +1030,18 @@ def main():
             "still run but are MERGE-idempotent."
         ),
     )
+    parser.add_argument(
+        "--cache-prefix",
+        default="",
+        help="Prefix for every work-bucket key (embedded/, extracted/). e.g. 'staging/' loads "
+        "staging/embedded/ — pair with a staging --graph-id so production is untouched.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
     client, graph_id = get_neptune_client(args.graph_id)
-    documents = load_embedded_docs(args.work_bucket)
+    logger.info(f"Graph: {graph_id}; cache prefix: '{args.cache_prefix}'")
+    documents = load_embedded_docs(args.work_bucket, args.cache_prefix)
     logger.info(f"Loaded {len(documents)} documents for graph loading")
 
     documents = dedup_case_law_docs(documents)
@@ -1038,7 +1060,13 @@ def main():
         (6, "Case Law CITES", lambda: phase_6_case_law_cites(client, graph_id, documents)),
         (7, "Stub Resolution", lambda: phase_7_stub_resolution(client, graph_id)),
         (8, "Vector Upserts", lambda: phase_8_vector_upserts(client, graph_id, documents)),
-        (9, "Orphan Cleanup", lambda: phase_9_cleanup(client, graph_id, args.work_bucket, documents)),
+        (
+            9,
+            "Orphan Cleanup",
+            lambda: phase_9_cleanup(
+                client, graph_id, args.work_bucket, documents, args.cache_prefix
+            ),
+        ),
     ]
 
     for phase_num, name, fn in phases:

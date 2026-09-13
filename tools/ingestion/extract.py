@@ -17,7 +17,9 @@ import logging
 import os
 import re
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
 from pathlib import Path
 
 import boto3
@@ -30,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 from tools.ingestion.chunking.case_law import select_and_chunk
 from tools.ingestion.chunking.pdfChunker import process_pdf_from_s3
 from tools.ingestion.ingest_case_law import _case_name_from_url
+from tools.ingestion.lib import aliases as alias_lib
 from tools.ingestion.lib.case_annotations import extract_section_for_page
 
 # Local mirror of the statute PDFs the case-law metadata references.
@@ -468,27 +471,314 @@ def list_documents(bucket: str, prefix: str) -> list[dict]:
     return list(docs.values())
 
 
-def _load_cached_classification(work_bucket: str, doc_id: str) -> dict | None:
-    """Load a previously-cached LLM classification from S3, or None if absent."""
+# ---------------------------------------------------------------------------
+# Work-bucket key helpers (cache prefix support)
+#
+# Every key under the work bucket is built through these so a STAGING run with
+# --cache-prefix staging/ reads/writes s3://work-bucket/staging/{classified,
+# extracted,embedded,aliases}/... and never touches the production caches.
+# ---------------------------------------------------------------------------
+
+
+def classified_key(doc_id: str, cache_prefix: str = "") -> str:
+    return f"{cache_prefix}classified/{doc_id}.json"
+
+
+def extracted_key(doc_id: str, cache_prefix: str = "") -> str:
+    return f"{cache_prefix}extracted/{doc_id}.json"
+
+
+def aliases_key(doc_id: str, cache_prefix: str = "") -> str:
+    return f"{cache_prefix}aliases/{doc_id}.json"
+
+
+def manifest_key(cache_prefix: str = "") -> str:
+    return f"{cache_prefix}extracted/manifest.json"
+
+
+def _get_json(bucket: str, key: str) -> dict | None:
     try:
-        obj = s3.get_object(Bucket=work_bucket, Key=f"classified/{doc_id}.json")
+        obj = s3.get_object(Bucket=bucket, Key=key)
         return json.loads(obj["Body"].read())
     except Exception:
         return None
 
 
-def _save_classification(work_bucket: str, doc_id: str, classification: dict) -> None:
-    """Persist LLM classification separately so re-chunking doesn't require reclassification."""
+def _put_json(bucket: str, key: str, data, *, indent: int | None = None) -> None:
     s3.put_object(
-        Bucket=work_bucket,
-        Key=f"classified/{doc_id}.json",
-        Body=json.dumps(classification, default=str).encode("utf-8"),
+        Bucket=bucket,
+        Key=key,
+        Body=json.dumps(data, indent=indent, default=str).encode("utf-8"),
         ContentType="application/json",
     )
 
 
+def _load_cached_classification(
+    work_bucket: str,
+    doc_id: str,
+    cache_prefix: str = "",
+    fallback_prefix: str = "",
+) -> dict | None:
+    """Load a previously-cached LLM classification from S3, or None if absent.
+
+    When running under a cache prefix, a missing ``{prefix}classified/{id}.json``
+    falls back to ``{fallback_prefix}classified/{id}.json`` (the production
+    cache by default) and copies it forward so LLM classification is never
+    re-paid for a staging run.
+    """
+    data = _get_json(work_bucket, classified_key(doc_id, cache_prefix))
+    if data is not None or fallback_prefix == cache_prefix:
+        return data
+    data = _get_json(work_bucket, classified_key(doc_id, fallback_prefix))
+    if data is not None:
+        logger.info(
+            f"  Classification for {doc_id} copied forward from "
+            f"'{fallback_prefix}classified/' to '{cache_prefix}classified/'"
+        )
+        _save_classification(work_bucket, doc_id, data, cache_prefix)
+    return data
+
+
+def _save_classification(
+    work_bucket: str, doc_id: str, classification: dict, cache_prefix: str = ""
+) -> None:
+    """Persist LLM classification separately so re-chunking doesn't require reclassification."""
+    _put_json(work_bucket, classified_key(doc_id, cache_prefix), classification)
+
+
+def _save_extracted(work_bucket: str, result: dict, cache_prefix: str = "") -> None:
+    cache_data = {k: v for k, v in result.items() if k != "full_text"}
+    _put_json(work_bucket, extracted_key(result["doc_id"], cache_prefix), cache_data)
+
+
+# ---------------------------------------------------------------------------
+# Alias enrichment (document expansion)
+# ---------------------------------------------------------------------------
+
+
+class AliasContext:
+    """Flag-gated alias generation settings + run-wide counters."""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        model_id: str = alias_lib.DEFAULT_ALIAS_MODEL,
+        min_chunk_chars: int = alias_lib.MIN_CHUNK_CHARS,
+        workers: int = 3,
+        cache_prefix: str = "",
+    ):
+        self.enabled = enabled
+        self.model_id = model_id
+        self.min_chunk_chars = min_chunk_chars
+        self.workers = max(1, workers)
+        self.cache_prefix = cache_prefix
+        self._lock = threading.Lock()
+        self.totals = {
+            "docs": 0,
+            "cached": 0,
+            "generated": 0,
+            "failed": 0,
+            "skipped_short": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
+
+    @classmethod
+    def from_config(
+        cls, config: dict, *, enabled: bool | None, workers: int, cache_prefix: str
+    ) -> "AliasContext":
+        cfg = config.get("alias_enrichment") or {}
+        return cls(
+            enabled=bool(cfg.get("enabled", False)) if enabled is None else enabled,
+            model_id=cfg.get("alias_model", alias_lib.DEFAULT_ALIAS_MODEL),
+            min_chunk_chars=int(cfg.get("min_chunk_chars", alias_lib.MIN_CHUNK_CHARS)),
+            workers=int(cfg.get("workers", workers) or workers),
+            cache_prefix=cache_prefix,
+        )
+
+    def add(self, stats: dict) -> None:
+        with self._lock:
+            self.totals["docs"] += 1
+            for k in (
+                "cached",
+                "generated",
+                "failed",
+                "skipped_short",
+                "input_tokens",
+                "output_tokens",
+            ):
+                self.totals[k] += int(stats.get(k, 0) or 0)
+
+    def log_totals(self) -> None:
+        t = self.totals
+        gen = t["generated"] or 1
+        logger.info(
+            f"Alias enrichment totals: docs={t['docs']} cached={t['cached']} "
+            f"generated={t['generated']} failed={t['failed']} skipped_short={t['skipped_short']} "
+            f"tokens in/out={t['input_tokens']}/{t['output_tokens']} "
+            f"(avg per generated chunk {t['input_tokens'] / gen:.0f}/{t['output_tokens'] / gen:.0f})"
+        )
+
+
+def enrich_chunks_with_aliases(result: dict, work_bucket: str, ctx: AliasContext) -> dict:
+    """Attach ``chunk["aliases"]`` to every eligible chunk of an extracted doc.
+
+    Cache: ``{prefix}aliases/{doc_id}.json`` is a dict keyed by
+    ``alias_cache_key(chunk_text)`` → {questions, aliases, model,
+    prompt_version, generated_at, usage}. Keyed by CONTENT, so re-chunking a
+    doc reuses aliases for unchanged text. Missing entries are generated in a
+    small thread pool; failures leave the chunk without an ``aliases`` field
+    (never abort the doc).
+
+    Returns per-doc stats {cached, generated, failed, skipped_short, tokens}.
+    """
+    doc_id = result["doc_id"]
+    chunks = result.get("chunks", [])
+    stats = {
+        "cached": 0,
+        "generated": 0,
+        "failed": 0,
+        "skipped_short": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+    }
+    if not chunks:
+        return stats
+
+    cache = _get_json(work_bucket, aliases_key(doc_id, ctx.cache_prefix)) or {}
+    if not isinstance(cache, dict):
+        cache = {}
+
+    todo: list[tuple[int, str]] = []
+    for i, chunk in enumerate(chunks):
+        text = chunk.get("text") or ""
+        if len(text.strip()) < ctx.min_chunk_chars:
+            stats["skipped_short"] += 1
+            chunk.pop("aliases", None)
+            continue
+        key = alias_lib.alias_cache_key(text)
+        entry = cache.get(key)
+        if (
+            entry
+            and isinstance(entry, dict)
+            and entry.get("prompt_version") == alias_lib.PROMPT_VERSION
+        ):
+            chunk["aliases"] = {
+                "questions": list(entry.get("questions") or []),
+                "aliases": list(entry.get("aliases") or []),
+                "cache_key": key,
+            }
+            stats["cached"] += 1
+        else:
+            todo.append((i, key))
+
+    title = result.get("title") or doc_id
+    new_entries: dict[str, dict] = {}
+
+    def _gen(item: tuple[int, str]) -> tuple[int, str, dict]:
+        i, key = item
+        chunk = chunks[i]
+        heading = (chunk.get("metadata") or {}).get("heading") or ""
+        raw = alias_lib.generate_aliases(chunk["text"], title, heading, ctx.model_id)
+        return i, key, raw
+
+    if todo:
+        with ThreadPoolExecutor(max_workers=ctx.workers) as pool:
+            for i, key, raw in pool.map(_gen, todo):
+                if raw.get("error"):
+                    stats["failed"] += 1
+                    chunks[i].pop("aliases", None)
+                    continue
+                filtered = alias_lib.filter_aliases(raw, chunks[i]["text"])
+                usage = raw.get("usage") or {}
+                stats["input_tokens"] += int(usage.get("input_tokens") or 0)
+                stats["output_tokens"] += int(usage.get("output_tokens") or 0)
+                entry = {
+                    "questions": filtered["questions"],
+                    "aliases": filtered["aliases"],
+                    "model": ctx.model_id,
+                    "prompt_version": alias_lib.PROMPT_VERSION,
+                    "generated_at": datetime.now(UTC).isoformat(),
+                    "usage": usage,
+                    "raw_counts": {
+                        "questions": len(raw.get("questions") or []),
+                        "aliases": len(raw.get("aliases") or []),
+                    },
+                }
+                new_entries[key] = entry
+                chunks[i]["aliases"] = {
+                    "questions": entry["questions"],
+                    "aliases": entry["aliases"],
+                    "cache_key": key,
+                }
+                stats["generated"] += 1
+
+    if new_entries:
+        cache.update(new_entries)
+        _put_json(work_bucket, aliases_key(doc_id, ctx.cache_prefix), cache)
+
+    logger.info(
+        f"  Aliases {doc_id}: cached={stats['cached']} generated={stats['generated']} "
+        f"failed={stats['failed']} skipped_short={stats['skipped_short']} "
+        f"tokens in/out={stats['input_tokens']}/{stats['output_tokens']}"
+    )
+    ctx.add(stats)
+    return stats
+
+
+def _doc_fully_enriched(doc: dict, ctx: AliasContext) -> bool:
+    for chunk in doc.get("chunks", []):
+        text = chunk.get("text") or ""
+        if len(text.strip()) < ctx.min_chunk_chars:
+            continue
+        if "aliases" not in chunk:
+            return False
+    return True
+
+
+def backfill_aliases_for_doc(
+    doc_id: str, work_bucket: str, ctx: AliasContext, *, force: bool = False
+) -> dict | None:
+    """``--aliases-only``: enrich an EXISTING extracted JSON without re-extracting.
+
+    Reads ``{prefix}extracted/{doc_id}.json`` (seeding from the unprefixed
+    ``extracted/`` when the prefixed copy is absent), generates missing
+    aliases, and rewrites the extracted file — which bumps its LastModified so
+    ``embed --smart`` picks it up. Docs already fully enriched are left
+    untouched unless ``force``.
+    """
+    prefixed = extracted_key(doc_id, ctx.cache_prefix)
+    doc = _get_json(work_bucket, prefixed)
+    seeded = False
+    if doc is None and ctx.cache_prefix:
+        doc = _get_json(work_bucket, extracted_key(doc_id, ""))
+        seeded = doc is not None
+    if doc is None:
+        logger.warning(f"  No extracted JSON for {doc_id}; skipping")
+        return None
+
+    if not force and not seeded and _doc_fully_enriched(doc, ctx):
+        logger.info(f"  {doc_id}: already enriched, skipping")
+        return doc
+
+    if seeded:
+        logger.info(f"  {doc_id}: seeded from extracted/ into {ctx.cache_prefix}extracted/")
+    enrich_chunks_with_aliases(doc, work_bucket, ctx)
+    _put_json(work_bucket, prefixed, doc)
+    return doc
+
+
 def process_document(
-    doc: dict, raw_bucket: str, work_bucket: str, config: dict, *, reclassify: bool = False
+    doc: dict,
+    raw_bucket: str,
+    work_bucket: str,
+    config: dict,
+    *,
+    reclassify: bool = False,
+    cache_prefix: str = "",
+    classification_fallback_prefix: str = "",
+    alias_ctx: AliasContext | None = None,
 ) -> dict | None:
     """Process a single document: extract text, classify, chunk."""
     doc_id = doc["doc_id"]
@@ -506,14 +796,9 @@ def process_document(
             result = process_case_law_document(doc, raw_bucket, metadata, config)
             if result is None:
                 return None
-            cache_key = f"extracted/{doc_id}.json"
-            cache_data = {k: v for k, v in result.items() if k != "full_text"}
-            s3.put_object(
-                Bucket=work_bucket,
-                Key=cache_key,
-                Body=json.dumps(cache_data, default=str).encode("utf-8"),
-                ContentType="application/json",
-            )
+            if alias_ctx and alias_ctx.enabled:
+                enrich_chunks_with_aliases(result, work_bucket, alias_ctx)
+            _save_extracted(work_bucket, result, cache_prefix)
             return result
 
         if key.endswith(".pdf"):
@@ -558,14 +843,16 @@ def process_document(
         # Classification: reuse cached result unless --reclassify is set.
         classification = None
         if not reclassify:
-            classification = _load_cached_classification(work_bucket, doc_id)
+            classification = _load_cached_classification(
+                work_bucket, doc_id, cache_prefix, classification_fallback_prefix
+            )
             if classification:
                 logger.info(f"  Reusing cached classification for {doc_id}")
 
         if classification is None:
             llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-20250514")
             classification = classify_document(full_text, llm_model)
-            _save_classification(work_bucket, doc_id, classification)
+            _save_classification(work_bucket, doc_id, classification, cache_prefix)
 
         result = {
             "doc_id": doc_id,
@@ -587,14 +874,9 @@ def process_document(
             "chunks": chunks,
         }
 
-        cache_key = f"extracted/{doc_id}.json"
-        cache_data = {k: v for k, v in result.items() if k != "full_text"}
-        s3.put_object(
-            Bucket=work_bucket,
-            Key=cache_key,
-            Body=json.dumps(cache_data, default=str).encode("utf-8"),
-            ContentType="application/json",
-        )
+        if alias_ctx and alias_ctx.enabled:
+            enrich_chunks_with_aliases(result, work_bucket, alias_ctx)
+        _save_extracted(work_bucket, result, cache_prefix)
 
         logger.info(f"  Extracted {doc_id}: {len(chunks)} chunks, type={result['doc_type']}")
         return result
@@ -614,25 +896,91 @@ def deduplicate(documents: list[dict]) -> list[dict]:
     return list(by_id.values())
 
 
-def list_already_extracted(bucket: str) -> set[str]:
+def list_already_extracted(bucket: str, cache_prefix: str = "") -> set[str]:
     """Return set of doc_ids that already have extraction output in the work bucket."""
     extracted = set()
+    prefix = f"{cache_prefix}extracted/"
+    manifest = manifest_key(cache_prefix)
     paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix="extracted/"):
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
-            if key.endswith(".json") and key != "extracted/manifest.json":
-                doc_id = key.removeprefix("extracted/").removesuffix(".json")
+            if key.endswith(".json") and key != manifest:
+                doc_id = key.removeprefix(prefix).removesuffix(".json")
                 extracted.add(doc_id)
     return extracted
 
 
+def run_aliases_only(args, config: dict) -> None:
+    """Backfill aliases onto existing extracted JSONs (no re-extraction, no raw bucket)."""
+    ctx = AliasContext.from_config(
+        config, enabled=True, workers=args.max_workers, cache_prefix=args.cache_prefix
+    )
+    doc_ids = list_already_extracted(args.work_bucket, args.cache_prefix)
+    if args.cache_prefix:
+        # Seed set: anything in production extracted/ that isn't under the prefix yet.
+        doc_ids |= list_already_extracted(args.work_bucket, "")
+    doc_ids_sorted = sorted(doc_ids)
+    if args.source_filter:
+        before = len(doc_ids_sorted)
+        doc_ids_sorted = [d for d in doc_ids_sorted if d.startswith(args.source_filter)]
+        logger.info(
+            f"Source filter '{args.source_filter}': {before} → {len(doc_ids_sorted)} documents"
+        )
+    logger.info(
+        f"Aliases-only backfill: {len(doc_ids_sorted)} documents under "
+        f"s3://{args.work_bucket}/{args.cache_prefix}extracted/ (model={ctx.model_id})"
+    )
+
+    done = 0
+    # Outer pool is 1 wide: the per-doc alias pool already fans out to
+    # ctx.workers Bedrock calls; stacking pools would multiply throttling.
+    for doc_id in doc_ids_sorted:
+        try:
+            backfill_aliases_for_doc(doc_id, args.work_bucket, ctx, force=args.force)
+            done += 1
+        except Exception as exc:  # noqa: BLE001 — keep going, one doc at a time
+            logger.error(f"  FAILED alias backfill {doc_id}: {exc}", exc_info=True)
+    logger.info(f"Aliases-only backfill complete: {done}/{len(doc_ids_sorted)} documents processed")
+    ctx.log_totals()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Extract and classify documents for GraphRAG")
-    parser.add_argument("--raw-bucket", required=True, help="S3 bucket with raw documents")
+    parser.add_argument(
+        "--raw-bucket",
+        default="",
+        help="S3 bucket with raw documents (not needed for --aliases-only)",
+    )
     parser.add_argument("--work-bucket", required=True, help="S3 bucket for intermediate cache")
     parser.add_argument("--config", default="tools/ingestion/config/ingest_config.yaml")
     parser.add_argument("--max-workers", type=int, default=3)
+    parser.add_argument(
+        "--cache-prefix",
+        default="",
+        help="Prefix for every work-bucket key (classified/, extracted/, aliases/, manifest). "
+        "e.g. 'staging/' writes s3://work-bucket/staging/extracted/... and leaves production untouched.",
+    )
+    parser.add_argument(
+        "--classification-fallback-prefix",
+        default="",
+        help="When --cache-prefix is set and {prefix}classified/{id}.json is missing, reuse "
+        "{fallback}classified/{id}.json and copy it forward (default: production, i.e. no prefix). "
+        "Set equal to --cache-prefix to disable the fallback.",
+    )
+    parser.add_argument(
+        "--aliases",
+        action="store_true",
+        help="Generate plain-language questions/synonyms per chunk (document expansion) and "
+        "store them as chunk['aliases']. Also enabled by alias_enrichment.enabled in the config.",
+    )
+    parser.add_argument(
+        "--aliases-only",
+        action="store_true",
+        help="Skip extraction; backfill aliases onto EXISTING extracted JSONs and rewrite them "
+        "(bumps LastModified so `embed --smart` re-embeds). With --cache-prefix, seeds from "
+        "the unprefixed extracted/ when the prefixed copy is absent.",
+    )
     parser.add_argument(
         "--force", action="store_true", help="Re-extract all documents, ignoring cache"
     )
@@ -656,6 +1004,26 @@ def main():
 
     config = load_config(args.config)
 
+    if args.aliases_only:
+        run_aliases_only(args, config)
+        return
+
+    if not args.raw_bucket:
+        parser.error("--raw-bucket is required unless --aliases-only is set")
+
+    alias_ctx = AliasContext.from_config(
+        config,
+        enabled=True if args.aliases else None,
+        workers=args.max_workers,
+        cache_prefix=args.cache_prefix,
+    )
+    if alias_ctx.enabled:
+        logger.info(
+            f"Alias enrichment ENABLED (model={alias_ctx.model_id}, workers={alias_ctx.workers})"
+        )
+    if args.cache_prefix:
+        logger.info(f"Cache prefix: '{args.cache_prefix}' (work-bucket keys are namespaced)")
+
     docs = list_documents(args.raw_bucket, "raw/")
     logger.info(f"Found {len(docs)} documents in raw bucket")
 
@@ -673,7 +1041,7 @@ def main():
         stale = []
         for doc in docs:
             doc_id = doc["doc_id"]
-            ext_key = f"extracted/{doc_id}.json"
+            ext_key = extracted_key(doc_id, args.cache_prefix)
             try:
                 raw_head = s3.head_object(Bucket=args.raw_bucket, Key=doc["key"])
                 ext_head = s3.head_object(Bucket=args.work_bucket, Key=ext_key)
@@ -684,7 +1052,7 @@ def main():
         logger.info(f"Smart mode: {len(stale)}/{len(docs)} documents have stale extractions")
         docs = stale
     else:
-        already_done = list_already_extracted(args.work_bucket)
+        already_done = list_already_extracted(args.work_bucket, args.cache_prefix)
         before = len(docs)
         docs = [d for d in docs if d["doc_id"] not in already_done]
         logger.info(
@@ -701,6 +1069,9 @@ def main():
                 args.work_bucket,
                 config,
                 reclassify=args.reclassify,
+                cache_prefix=args.cache_prefix,
+                classification_fallback_prefix=args.classification_fallback_prefix,
+                alias_ctx=alias_ctx,
             ): doc
             for doc in docs
         }
@@ -711,18 +1082,15 @@ def main():
 
     results = deduplicate(results)
     logger.info(f"Extraction complete: {len(results)} documents after dedup")
+    if alias_ctx.enabled:
+        alias_ctx.log_totals()
 
     manifest = [
         {k: v for k, v in doc.items() if k not in ("full_text", "chunks")} for doc in results
     ]
-    manifest_key = "extracted/manifest.json"
-    s3.put_object(
-        Bucket=args.work_bucket,
-        Key=manifest_key,
-        Body=json.dumps(manifest, indent=2, default=str).encode("utf-8"),
-        ContentType="application/json",
-    )
-    logger.info(f"Manifest saved to s3://{args.work_bucket}/{manifest_key}")
+    mkey = manifest_key(args.cache_prefix)
+    _put_json(args.work_bucket, mkey, manifest, indent=2)
+    logger.info(f"Manifest saved to s3://{args.work_bucket}/{mkey}")
 
 
 if __name__ == "__main__":

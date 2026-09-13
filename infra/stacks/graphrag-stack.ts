@@ -82,6 +82,13 @@ export class GraphRAGStack extends cdk.NestedStack {
     // without VPC configuration (no existing VPC in this project)
     const graph = new neptune.CfnGraph(this, 'WisDorGraph', {
       graphName: 'wis-dor-graphrag',
+      // Resting tier for serving. 32 is the FLOOR for this graph: Neptune
+      // Analytics rejects scaling to 16 ("cannot be scaled down to [16] m-NCUs
+      // due to storage memory constraints", 2026-09-13). Full loads (Phase 8
+      // vector upserts) need 128: scale up via
+      // `aws neptune-graph update-graph --provisioned-memory 128` before a load
+      // and back to 32 after (see CLAUDE.md). ProvisionedMemory is updatable in
+      // place — changing it here never replaces the graph.
       provisionedMemory: 32,
       vectorSearchConfiguration: {
         vectorSearchDimension: 1024,
