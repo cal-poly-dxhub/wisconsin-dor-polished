@@ -82,7 +82,13 @@ export class GraphRAGStack extends cdk.NestedStack {
     // without VPC configuration (no existing VPC in this project)
     const graph = new neptune.CfnGraph(this, 'WisDorGraph', {
       graphName: 'wis-dor-graphrag',
-      provisionedMemory: 32,
+      // Resting tier for serving. The corpus (~23.6k chunks × 1024-dim vectors)
+      // is ~100 MB, and pilot load peaked at 15 queries/hour, so 16 m-NCU is
+      // ample. Full loads (Phase 8 vector upserts) OOM below 128: scale up with
+      // `aws neptune-graph update-graph --provisioned-memory 128` before a load
+      // and back to 16 after (see CLAUDE.md). ProvisionedMemory is updatable in
+      // place — changing it here never replaces the graph.
+      provisionedMemory: 16,
       vectorSearchConfiguration: {
         vectorSearchDimension: 1024,
       },
