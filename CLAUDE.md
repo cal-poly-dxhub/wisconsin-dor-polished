@@ -119,7 +119,7 @@ uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e692
 # Staging / A-B a pipeline change without touching prod caches or the prod graph:
 #   every phase accepts --cache-prefix staging/ (and load --graph-id <other graph>);
 #   raw-recall eval: tools/ingestion/ops/run_recall_probe.py --mode baseline|after --graph-id ...
-# Neptune must be at 128 mCU for a full load (Phase 8 OOMs below that); scale back to 16 after (the CDK resting tier).
+# Neptune must be at 128 mCU for a full load (Phase 8 OOMs below that); scale back to 32 after (16 is rejected: storage memory constraints).
 
 # TID worksheets (.xlsx → structured JSON sidecars for the get_worksheet tool):
 # Separate lightweight local step — NOT part of the Fargate extract/embed/load phases.
