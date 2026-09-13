@@ -196,6 +196,22 @@ cases:
       false OUT_OF_SCOPE. Expected OUT_OF_SCOPE today → PROCEED after transfer-fee
       scope addition.
 
+  # ── assessor hiring / staffing. Refused OUT_OF_SCOPE by every prompt version
+  #    back to at least 2026-09-05 (found 2026-09-13 while smoke-testing prod).
+  #    It IS a DOR SLF topic: municipalities ask DOR how to hire/appoint an
+  #    assessor (chs. 60/61/62, § 73.09 certification, assessor directory).
+  - id: cq-hire-assessor-proceed
+    tags: [oos-false-refusal, assessor-admin]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "we need to hire a new assessor, how do we start the process?"
+
+  - id: cq-town-hire-assessor-proceed
+    tags: [oos-false-refusal, assessor-admin]
+    expected_verdict: PROCEED
+    expected_baseline: failing
+    query: "How does a town hire an assessor?"
+
   # ════════════════════════════════════════════════════════════════════════════
   #  KNOWN-GOOD ANCHORS — guard against OVER-correction. The fix must not turn the
   #  classifier into a rubber stamp (over-PROCEED) NOR make it over-disambiguate.
