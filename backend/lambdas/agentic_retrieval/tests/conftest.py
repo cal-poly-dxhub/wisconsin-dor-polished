@@ -34,6 +34,7 @@ PACKAGE_MODULES = [
     "loop.heartbeat",
     "loop.phase_a",
     "loop.phase_b",
+    "loop.link_repair",
     "agent_tools",
     "agent_tools.definitions",
     "agent_tools.executor",

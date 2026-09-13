@@ -20,8 +20,51 @@ from websocket_utils.utils import WebSocketServer
 from config import AGENTIC_MODEL_ID, bedrock
 
 from .heartbeat import start_heartbeat
+from .link_repair import has_open_link, repair_citation_links
 
 logger = logging.getLogger(__name__)
+
+# Streaming fragments are held back while a `[label](doc:...)` link is still
+# open so each link is repaired whole before it is sent; this cap guarantees
+# a stray unmatched "[" cannot stall the stream.
+_FRAGMENT_HOLD_MAX = 600
+
+
+def group_chunks_by_doc(chunks: list[dict]) -> dict[str, list[dict]]:
+    by_doc: dict[str, list[dict]] = {}
+    for chunk in chunks:
+        by_doc.setdefault(chunk.get("doc_id", "unknown"), []).append(chunk)
+    return by_doc
+
+
+def finalize_answer_links(
+    answer: str,
+    query_id: str,
+    retrieved_doc_ids: set[str] | None,
+    chunks: list[dict] | None,
+) -> str:
+    """Repair conflated citation links in a complete answer and log the result.
+
+    Idempotent — safe to run on text that was already repaired fragment-by-
+    fragment during streaming (it then logs nothing). Used as the single
+    pre-persist pass so the fallback (non-streaming) paths are covered too.
+    """
+    if not answer or retrieved_doc_ids is None:
+        return answer
+    repaired, stats = repair_citation_links(
+        answer, retrieved_doc_ids, group_chunks_by_doc(chunks or [])
+    )
+    if stats["repointed"] or stats["stripped"]:
+        _log(
+            "answer_link_repaired",
+            query_id=query_id,
+            repointed=stats["repointed"],
+            stripped=stats["stripped"],
+            changes=stats["changes"],
+            stage="final",
+        )
+    return repaired
+
 
 _PERSONA_KEY = {
     "government": "personaGovernment",
@@ -255,11 +298,33 @@ def stream_answer(
     trace_seq,
     ws_connection_alive: list[bool],
     persona: str | None = None,
+    retrieved_doc_ids: set[str] | None = None,
+    cited_chunks: list[dict] | None = None,
 ) -> str:
     """Phase B: Stream the answer token-by-token via converse_stream().
 
+    When `retrieved_doc_ids` is given, every fragment is passed through
+    repair_citation_links() before it is sent, and fragments are held back
+    while a markdown link is still open so a link is never split across two
+    fragments. The streamed text and the returned (persisted) text are
+    therefore identical and both repaired.
+
     Returns the full accumulated answer text.
     """
+    repair_enabled = retrieved_doc_ids is not None
+    chunks_by_doc = group_chunks_by_doc(cited_chunks or []) if repair_enabled else {}
+    repair_totals = {"repointed": 0, "stripped": 0}
+    repair_changes: list[dict] = []
+
+    def _prepare_fragment(raw: str) -> str:
+        if not repair_enabled:
+            return raw
+        fixed, stats = repair_citation_links(raw, retrieved_doc_ids, chunks_by_doc)
+        repair_totals["repointed"] += stats["repointed"]
+        repair_totals["stripped"] += stats["stripped"]
+        repair_changes.extend(stats["changes"])
+        return fixed
+
     _emit(
         ws_server,
         trace_seq,
@@ -311,10 +376,16 @@ def stream_answer(
                 delta = event["contentBlockDelta"].get("delta", {})
                 text_chunk = delta.get("text", "")
                 if text_chunk:
-                    answer_text += text_chunk
                     fragment_buffer += text_chunk
 
-                    if len(fragment_buffer) >= _FRAGMENT_MIN_SIZE:
+                    ready = len(fragment_buffer) >= _FRAGMENT_MIN_SIZE and (
+                        not repair_enabled
+                        or not has_open_link(fragment_buffer)
+                        or len(fragment_buffer) >= _FRAGMENT_HOLD_MAX
+                    )
+                    if ready:
+                        fragment_buffer = _prepare_fragment(fragment_buffer)
+                        answer_text += fragment_buffer
                         if ws_connection_alive[0]:
                             frag_msg = FragmentMessage(
                                 query_id=query_id,
@@ -345,6 +416,9 @@ def stream_answer(
     heartbeat_stop.set()
 
     # Flush remaining buffer
+    if fragment_buffer:
+        fragment_buffer = _prepare_fragment(fragment_buffer)
+        answer_text += fragment_buffer
     if fragment_buffer and ws_connection_alive[0]:
         frag_msg = FragmentMessage(
             query_id=query_id,
@@ -368,6 +442,15 @@ def stream_answer(
             ws_connection_alive[0] = False
 
     stream_latency = round((time.perf_counter() - stream_started) * 1000)
+    if repair_totals["repointed"] or repair_totals["stripped"]:
+        _log(
+            "answer_link_repaired",
+            query_id=query_id,
+            repointed=repair_totals["repointed"],
+            stripped=repair_totals["stripped"],
+            changes=repair_changes,
+            stage="stream",
+        )
     _log(
         "answer_stream_complete",
         query_id=query_id,

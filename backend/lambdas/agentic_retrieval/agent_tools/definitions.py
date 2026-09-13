@@ -329,12 +329,20 @@ TOOL_DEFINITIONS = [
         "toolSpec": {
             "name": "find_case_law",
             "description": (
-                "Search for a specific court case by name or citation. "
+                "Resolve a specific court case to its CaseLaw node ID. "
                 "Use this when: (1) the user's question names a specific case, "
-                "OR (2) retrieved chunks mention a case by name but you need "
-                "the case's node ID for citing. Searches CaseLaw node titles "
-                "and citations. Optionally scope to cases connected to a "
-                "specific statute for more targeted results."
+                "OR (2) retrieved chunks or a flowchart mention a case by name "
+                "but you need the node ID for citing. Accepts a case name "
+                "('Thoma v. Village of Slinger', 'Nudo Holdings'), a neutral "
+                "cite ('2018 WI 45', '2025 WI App 43'), or a reporter cite "
+                "('381 Wis. 2d 311') -- one call may combine them. Matching is "
+                "exact on citations and name-token based on titles, so party "
+                "words like 'City of' or 'LLC' are ignored. Returns at most 5 "
+                "hits ranked best-first, each with match_kind "
+                "(reporter|neutral|name). ONE call per case: if it returns a "
+                "hit, use it; if it returns none, the case is not in the graph "
+                "-- do NOT retry with citation or spelling variants. Optionally "
+                "scope to cases connected to a specific statute."
             ),
             "inputSchema": {
                 "json": {

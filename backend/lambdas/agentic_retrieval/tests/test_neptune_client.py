@@ -130,56 +130,93 @@ def test_resolve_case_citations():
         assert params.get("citations") == ["45 Wis. 2d 683", "173 N.W.2d 627"]
 
 
+_CASE_INDEX_ROWS = [
+    {
+        "id": "case-law-45-wis-2d-683",
+        "title": "State ex rel Markarian v. City of Cudahy, 45 Wis. 2d 683",
+        "citation": "45 Wis. 2d 683",
+        "labels": ["CaseLaw"],
+    },
+    {
+        "id": "case-law-2018-wi-4",
+        "title": "2018 WI 4",
+        "citation": "2018 WI 4",
+        "labels": ["CaseLaw"],
+    },
+]
+
+
+def _route_case_queries(scoped_ids: list[str]):
+    """execute_query side_effect: serve the index scan and the statute-scope query."""
+
+    def _side_effect(**kwargs):
+        q = kwargs.get("queryString", "")
+        if "MATCH (n:CaseLaw) RETURN" in q:
+            return {"results": _CASE_INDEX_ROWS}
+        if "-[:CITES]-(n:CaseLaw)" in q:
+            return {"results": [{"id": i} for i in scoped_ids]}
+        return {"results": []}
+
+    return _side_effect
+
+
+def test_find_case_law_matches_in_lambda_against_cached_index():
+    """find_case_law fetches the CaseLaw index once per container and matches locally."""
+    import case_law
+
+    case_law.reset_case_law_index_cache()
+    with patch("graph.neptune_client.boto3") as mock_boto3:
+        mock_neptune = MagicMock()
+        mock_boto3.client.return_value = mock_neptune
+        mock_neptune.execute_query.side_effect = _route_case_queries([])
+
+        from graph.neptune_client import NeptuneClient
+
+        client = NeptuneClient(graph_id="test-graph")
+        hits = client.find_case_law("Markarian v City of Cudahy")
+        assert [h["id"] for h in hits] == ["case-law-45-wis-2d-683"]
+        assert hits[0]["match_kind"] == "name"
+
+        # Neutral cite with a strict boundary: no prefix hit on 2018-wi-4.
+        assert client.find_case_law("2018 WI 45") == []
+        assert [h["id"] for h in client.find_case_law("2018 WI 4")] == ["case-law-2018-wi-4"]
+
+        # Only ONE index scan for all three lookups.
+        scans = [
+            c
+            for c in mock_neptune.execute_query.call_args_list
+            if "MATCH (n:CaseLaw) RETURN" in c.kwargs.get("queryString", "")
+        ]
+        assert len(scans) == 1
+        assert "parameters" not in scans[0].kwargs
+    case_law.reset_case_law_index_cache()
+
+
 def test_find_case_law_with_statute_scope():
-    """find_case_law with statute_id scopes to that statute's CITES edges."""
+    """statute_id restricts hits to cases the statute CITES, falling back to unscoped."""
+    import case_law
+
+    case_law.reset_case_law_index_cache()
     with patch("graph.neptune_client.boto3") as mock_boto3:
         mock_neptune = MagicMock()
         mock_boto3.client.return_value = mock_neptune
-        mock_neptune.execute_query.return_value = {"results": []}
+        mock_neptune.execute_query.side_effect = _route_case_queries(["case-law-2018-wi-4"])
 
         from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
-        client.find_case_law("Markarian", statute_id="WIS-STAT-70.32")
+        # Markarian is not in the statute's CITES set -> unscoped fallback still finds it.
+        hits = client.find_case_law("Markarian", statute_id="WIS-STAT-70.32")
+        assert [h["id"] for h in hits] == ["case-law-45-wis-2d-683"]
 
-        query_arg = mock_neptune.execute_query.call_args.kwargs.get(
-            "queryString"
-        ) or mock_neptune.execute_query.call_args[1].get("queryString")
-        if query_arg is None:
-            query_arg = (
-                mock_neptune.execute_query.call_args[0][0]
-                if mock_neptune.execute_query.call_args[0]
-                else ""
-            )
-        assert "$statute_id" in query_arg
-        assert "CITES" in query_arg
-        assert "toLower(n.title) CONTAINS $term_0" in query_arg
-        params = mock_neptune.execute_query.call_args.kwargs.get("parameters", {})
-        assert params.get("term_0") == "markarian"
-        assert params.get("statute_id") == "WIS-STAT-70.32"
-
-
-def test_find_case_law_splits_multi_word_search():
-    """find_case_law splits 'Markarian v City of Cudahy' into significant terms."""
-    with patch("graph.neptune_client.boto3") as mock_boto3:
-        mock_neptune = MagicMock()
-        mock_boto3.client.return_value = mock_neptune
-        mock_neptune.execute_query.return_value = {"results": []}
-
-        from graph.neptune_client import NeptuneClient
-
-        client = NeptuneClient(graph_id="test-graph")
-        client.find_case_law("Markarian v City of Cudahy")
-
-        params = mock_neptune.execute_query.call_args.kwargs.get("parameters", {})
-        # Collect all term_N values
-        term_values = [v for k, v in params.items() if k.startswith("term_")]
-        assert "markarian" in term_values
-        assert "cudahy" in term_values
-        assert "city" in term_values
-        # Stop words filtered out
-        assert "v" not in term_values
-        assert "of" not in term_values
+        scope_calls = [
+            c
+            for c in mock_neptune.execute_query.call_args_list
+            if "-[:CITES]-(n:CaseLaw)" in c.kwargs.get("queryString", "")
+        ]
+        assert len(scope_calls) == 1
+        assert scope_calls[0].kwargs["parameters"] == {"ids": ["WIS-STAT-70.32"]}
+    case_law.reset_case_law_index_cache()
 
 
 def test_get_neighbors_title_filter():

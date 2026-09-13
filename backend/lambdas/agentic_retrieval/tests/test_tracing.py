@@ -70,6 +70,17 @@ class TestFilterMetadata:
             "totalCandidates": 27,
         }
 
+    def test_flowchart_seed_keys_are_allowlisted(self):
+        # The pre-loop flowchart router emits these on every seeded query;
+        # dropping them used to spam "trace metadata dropped disallowed key(s)".
+        meta = {
+            "flowchartId": "personal-property-exemption",
+            "routerScore": 0.83,
+            "sourceUrl": "https://www.revenue.wi.gov/...#page=20",
+            "wpamPage": 20,
+        }
+        assert filter_metadata(meta) == meta
+
     def test_non_dict_returns_empty(self):
         assert filter_metadata(None) == {}
         assert filter_metadata("not a dict") == {}

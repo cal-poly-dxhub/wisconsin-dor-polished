@@ -713,55 +713,55 @@ def test_extract_citations():
 
 
 
-def test_find_case_law_tool_by_citation():
-    """find_case_law should try citation lookup first."""
+def test_find_case_law_tool_delegates_to_single_resolver():
+    """find_case_law hands the raw search text to the one resolver (cites +
+    names) capped at 5, and surfaces match_kind on each hit."""
     from agent_tools import execute_tool
 
     mock_neptune = MagicMock()
-    mock_neptune.resolve_case_citations.return_value = [
-        {
-            "id": "case-law-45-wis-2d-683",
-            "title": "Markarian",
-            "citation": "45 Wis. 2d 683",
-            "labels": ["CaseLaw"],
-        },
-    ]
-
-    result = execute_tool(
-        "find_case_law",
-        {"search_text": "45 Wis. 2d 683"},
-        mock_neptune,
-    )
-
-    assert len(result["cases"]) == 1
-    assert result["cases"][0]["id"] == "case-law-45-wis-2d-683"
-    mock_neptune.resolve_case_citations.assert_called_once()
-    # Should NOT fall back to find_case_law since citation lookup succeeded
-    mock_neptune.find_case_law.assert_not_called()
-
-
-def test_find_case_law_tool_falls_back_to_title_search():
-    """find_case_law should fall back to title search when no citation found."""
-    from agent_tools import execute_tool
-
-    mock_neptune = MagicMock()
-    mock_neptune.resolve_case_citations.return_value = []
     mock_neptune.find_case_law.return_value = [
         {
             "id": "case-law-45-wis-2d-683",
-            "title": "Markarian v. City of Cudahy",
+            "title": "State ex rel Markarian v. City of Cudahy, 45 Wis. 2d 683",
             "citation": "45 Wis. 2d 683",
             "labels": ["CaseLaw"],
+            "match_kind": "reporter",
+            "match_score": 1.0,
         },
     ]
 
     result = execute_tool(
         "find_case_law",
-        {"search_text": "Markarian", "statute_id": "WIS-STAT-70.32"},
+        {"search_text": "Markarian, 45 Wis. 2d 683", "statute_id": "WIS-STAT-70.32"},
         mock_neptune,
     )
 
-    assert len(result["cases"]) == 1
+    assert [c["id"] for c in result["cases"]] == ["case-law-45-wis-2d-683"]
+    assert result["cases"][0]["match_kind"] == "reporter"
+    assert "note" not in result
     mock_neptune.find_case_law.assert_called_once_with(
-        "Markarian", statute_id="WIS-STAT-70.32", limit=10
+        "Markarian, 45 Wis. 2d 683", statute_id="WIS-STAT-70.32", limit=5
     )
+    mock_neptune.resolve_case_citations.assert_not_called()
+
+
+def test_find_case_law_tool_zero_hits_tells_agent_not_to_retry():
+    from agent_tools import execute_tool
+
+    mock_neptune = MagicMock()
+    mock_neptune.find_case_law.return_value = []
+
+    result = execute_tool("find_case_law", {"search_text": "Ogden Family Trust"}, mock_neptune)
+
+    assert result["cases"] == []
+    assert "not retry" in result["note"].lower() or "do not retry" in result["note"].lower()
+
+
+def test_find_case_law_tool_blank_search_skips_graph():
+    from agent_tools import execute_tool
+
+    mock_neptune = MagicMock()
+    result = execute_tool("find_case_law", {"search_text": "   "}, mock_neptune)
+
+    assert result["cases"] == []
+    mock_neptune.find_case_law.assert_not_called()
