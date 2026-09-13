@@ -95,8 +95,31 @@ AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python tools/ingestion/sc
 # Annual refresh workflow (scrape changed → extract stale → embed → load):
 uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e69250
 ./tools/ingestion/scripts/run_fargate.sh extract --smart
-./tools/ingestion/scripts/run_fargate.sh embed
+./tools/ingestion/scripts/run_fargate.sh embed --smart
 ./tools/ingestion/scripts/run_fargate.sh load
+# Document expansion (Task 65, promoted 2026-09-12) is ON by default via
+# ingest_config.yaml `alias_enrichment` (enabled: true, embed_input: enriched):
+#   - extract generates plain-language "aliases" (questions + synonyms) per chunk
+#     with Nova 2 Lite, cached under s3://{work-bucket}/aliases/{doc_id}.json keyed
+#     by chunk-content hash (only changed chunks cost anything; whole corpus ≈ $10).
+#   - embed prepends title/heading + aliases (+ any gold tester queries) to the
+#     text sent to Titan for STATUTE and ADMIN-RULE chunks only (include_doc_types);
+#     guides, manuals, FAQs, news, case law, IAAO/USPAP embed plain. Stored chunk
+#     text never changes — only the vector.
+#   - statute/admin-rule sections with ≥2 numbered subsections chunk one
+#     subsection per chunk (pdfChunker STATUTE_SUBSECTION_TARGET_CHARS).
+# Optional one-time step (NOT required at refresh): attach up-rated tester
+# queries to the chunk they cited so those phrasings retrieve well. A full
+# re-extract of a document drops its old attachments (they live only in the
+# extracted JSON), so nothing stale carries over.
+#   AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python \
+#     -m tools.ingestion.ops.attach_gold_queries --work-bucket wis-work-bucket-c8e69250 \
+#     --eval-yaml tools/ingestion/tests/recall_eval_queries.yaml
+#   (regenerate the YAML first with tools/ingestion/ops/build_recall_eval.py)
+# Staging / A-B a pipeline change without touching prod caches or the prod graph:
+#   every phase accepts --cache-prefix staging/ (and load --graph-id <other graph>);
+#   raw-recall eval: tools/ingestion/ops/run_recall_probe.py --mode baseline|after --graph-id ...
+# Neptune must be at 128 mCU for a full load (Phase 8 OOMs at 32); scale back after.
 
 # TID worksheets (.xlsx → structured JSON sidecars for the get_worksheet tool):
 # Separate lightweight local step — NOT part of the Fargate extract/embed/load phases.

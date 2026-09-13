@@ -124,8 +124,8 @@ embed_dimension: 1024
 # extract.py --aliases / --aliases-only and embed.py --embed-input override them.
 # See tools/ingestion/lib/aliases.py.
 alias_enrichment:
-  enabled: false                       # extract: generate chunk["aliases"]
-  embed_input: plain                   # embed: plain | enriched
+  enabled: true                        # extract: generate chunk["aliases"] (Task 65, promoted 2026-09-12)
+  embed_input: enriched                # embed: plain | enriched (Task 65, promoted 2026-09-12)
   alias_model: "us.amazon.nova-2-lite-v1:0"
   min_chunk_chars: 200                 # chunks shorter than this get no aliases
   workers: 4                           # Bedrock concurrency per document
