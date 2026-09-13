@@ -145,14 +145,24 @@ class EnrichPolicy:
         exclude_doc_types=ENRICH_EXCLUDE_DOC_TYPES,
         exclude_doc_ids: frozenset[str] = frozenset(),
         exclude_heading_patterns=ENRICH_EXCLUDE_HEADING_PATTERNS,
+        include_doc_types=None,
     ):
+        """``include_doc_types``: when given, ONLY these doc types are enriched
+        (an allowlist evaluated before the exclusions). Staging 2026-09-12 showed
+        enriching guides/manuals pushes them past statutes on statute-expected
+        queries (statute recall@10 0.79 → 0.50), while statutes are the chunks
+        that actually need a plain-language bridge — so production enriches
+        statutes and admin rules only."""
         import re
 
+        self.include_doc_types = frozenset(include_doc_types) if include_doc_types else None
         self.exclude_doc_types = frozenset(exclude_doc_types)
         self.exclude_doc_ids = frozenset(exclude_doc_ids)
         self._heading_re = [re.compile(pat, re.IGNORECASE) for pat in exclude_heading_patterns]
 
     def doc_enriched(self, doc: dict) -> bool:
+        if self.include_doc_types is not None and doc.get("doc_type") not in self.include_doc_types:
+            return False
         return (
             doc.get("doc_type") not in self.exclude_doc_types
             and doc.get("doc_id") not in self.exclude_doc_ids
@@ -321,6 +331,7 @@ def main():
     if ae.get("wpam_latest_only", True):
         exclude_doc_ids = superseded_wpam_doc_ids(docs)
     exclude_doc_types = EnrichPolicy(
+        include_doc_types=ae.get("include_doc_types") or None,
         exclude_doc_types=frozenset(ae.get("exclude_doc_types", sorted(ENRICH_EXCLUDE_DOC_TYPES))),
         exclude_doc_ids=exclude_doc_ids,
         exclude_heading_patterns=tuple(
@@ -329,7 +340,8 @@ def main():
     )
     logger.info(
         f"Embed input mode: {embed_input}; cache prefix: '{cache_prefix}'; "
-        f"enrichment excluded doc types: {sorted(exclude_doc_types.exclude_doc_types)}; "
+        f"enrichment include doc types: {sorted(exclude_doc_types.include_doc_types or [])} "
+        f"(empty = all); excluded: {sorted(exclude_doc_types.exclude_doc_types)}; "
         f"superseded WPAM editions excluded: {len(exclude_doc_ids)}; "
         f"heading exclusions: {len(exclude_doc_types._heading_re)}"
     )

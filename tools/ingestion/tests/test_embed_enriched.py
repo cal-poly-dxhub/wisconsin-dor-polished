@@ -197,3 +197,18 @@ def test_enrich_policy_excludes_iaao_old_wpam_and_index_chunks(monkeypatch):
         )
         != "x"
     )
+
+
+def test_enrich_policy_include_allowlist():
+    from tools.ingestion import embed as embed_mod
+
+    policy = embed_mod.EnrichPolicy(include_doc_types=["statute", "admin_rule"])
+    assert policy.doc_enriched({"doc_id": "statutes-70", "doc_type": "statute"}) is True
+    assert policy.doc_enriched({"doc_id": "admin_rules-tax-18", "doc_type": "admin_rule"}) is True
+    assert policy.doc_enriched({"doc_id": "gov_publications-pb060", "doc_type": "guide"}) is False
+    assert policy.doc_enriched({"doc_id": "wpam-x-2026", "doc_type": "assessment_manual"}) is False
+    # exclusions still apply inside the allowlist
+    policy2 = embed_mod.EnrichPolicy(
+        include_doc_types=["statute"], exclude_doc_ids=frozenset({"statutes-70"})
+    )
+    assert policy2.doc_enriched({"doc_id": "statutes-70", "doc_type": "statute"}) is False
