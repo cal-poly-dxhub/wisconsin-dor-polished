@@ -536,7 +536,11 @@ def run_mode(
     else:
         for i, entry in enumerate(todo, start=1):
             logger.info(f"  [{i}/{len(todo)}] {entry.get('queryId')} — {entry['query'][:70]}")
-            run, g = _one(entry)
+            try:
+                run, g = _one(entry)
+            except Exception as exc:  # noqa: BLE001 — one bad query must not kill the run
+                logger.error(f"  [{i}/{len(todo)}] {entry.get('queryId')} FAILED: {exc}")
+                continue
             runs.append(run)
             grades.append(g)
             logger.info(
