@@ -374,6 +374,10 @@ def process_case_law_document(
             metadata, metadata.get("framework_id", "FW-CASE-LAW"), config
         ),
         "title": title,
+        # Persisted separately from ``title`` so load.py's Phase 2 title guard
+        # (and the extracted/ → embedded/ metadata overlay) can rebuild a named
+        # title without re-deriving it from the URL slug.
+        "case_name": meta_case_name,
         "summary": summary,
         "citation": citation,
         "statute_refs": statute_refs,
