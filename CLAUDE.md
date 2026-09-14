@@ -120,6 +120,10 @@ uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e692
 #   every phase accepts --cache-prefix staging/ (and load --graph-id <other graph>);
 #   raw-recall eval: tools/ingestion/ops/run_recall_probe.py --mode baseline|after --graph-id ...
 # Neptune must be at 128 mCU for a full load (Phase 8 OOMs below that); scale back to 32 after (16 is rejected: storage memory constraints).
+# RUN FULL LOADS OUTSIDE BUSINESS HOURS (after 6 PM Central, or weekends). Reads keep
+# working while Neptune resizes, but Phase 5 deletes and recreates every chunk and
+# Phase 8 rewrites vectors — about 10 minutes during which live queries can get thin
+# or empty answers with no error. Single-doc `--source-filter` loads are safe anytime.
 
 # TID worksheets (.xlsx → structured JSON sidecars for the get_worksheet tool):
 # Separate lightweight local step — NOT part of the Fargate extract/embed/load phases.
