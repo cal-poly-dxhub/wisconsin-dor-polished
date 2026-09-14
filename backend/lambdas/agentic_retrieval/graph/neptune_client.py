@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 import boto3
+from case_law import FIND_CASE_LAW_MAX_RESULTS, get_case_law_index, search_case_law
 
 logger = logging.getLogger(__name__)
 LOG_NEPTUNE_TRACE = os.environ.get("LOG_NEPTUNE_TRACE", "true").lower() == "true"
@@ -633,58 +634,43 @@ class NeptuneClient:
         )
         return results
 
-    _CASE_SEARCH_STOP_WORDS = frozenset(
-        {"v", "vs", "of", "the", "in", "re", "ex", "rel", "et", "al", "state"}
-    )
+    def list_case_law_index(self) -> list[dict]:
+        """Every CaseLaw node's identifying fields (~1.2k rows, ~100 KB).
+
+        Backs the in-Lambda `find_case_law` matcher; cached per warm container
+        by `case_law.get_case_law_index`.
+        """
+        return self.query(
+            "MATCH (n:CaseLaw) "
+            "RETURN n.id AS id, n.title AS title, n.citation AS citation, "
+            "n.doc_type AS doc_type, n.authority_level AS authority_level, "
+            "n.source_url AS source_url, labels(n) AS labels",
+            query_name="list_case_law_index",
+        )
 
     def find_case_law(
-        self, search_text: str, statute_id: str | None = None, limit: int = 10
+        self,
+        search_text: str,
+        statute_id: str | None = None,
+        limit: int = FIND_CASE_LAW_MAX_RESULTS,
     ) -> list[dict]:
-        """Find CaseLaw nodes by title, optionally scoped to a statute.
+        """Resolve a case name, neutral cite, or reporter cite to CaseLaw nodes.
 
-        Splits search_text into significant terms (>2 chars, excluding common
-        legal connectors) and requires ALL terms appear in the title. This
-        handles variations like "Markarian v City" matching
-        "State Ex Rel. Markarian v. City of Cudahy".
+        Matching runs in-Lambda against the cached CaseLaw index (see
+        `case_law.search_case_law`) rather than a Cypher CONTAINS chain: the
+        graph has no text index, so a scan is the cost floor either way, and
+        matching locally lets us normalize party-type words, enforce a strict
+        boundary on neutral cites ("2018 WI 45" never hits `2018-wi-4`), and
+        rank by match quality with a `match_kind` for the trace.
+
+        When `statute_id` is given, results are first restricted to cases the
+        statute CITES; if that yields nothing the unscoped match is returned.
         """
-        terms = [
-            w.lower().rstrip(".,;:")
-            for w in search_text.split()
-            if len(w) > 2 and w.lower().rstrip(".,;:") not in self._CASE_SEARCH_STOP_WORDS
-        ]
-        if not terms:
-            terms = [search_text.lower()]
-
-        # Neptune Analytics doesn't support ALL() predicate, so build AND chain
-        params: dict[str, Any] = {}
-        where_parts: list[str] = []
-        for i, term in enumerate(terms):
-            key = f"term_{i}"
-            params[key] = term
-            where_parts.append(f"toLower(n.title) CONTAINS ${key}")
-        where_clause = " AND ".join(where_parts)
-
+        index = get_case_law_index(self.list_case_law_index)
         if statute_id:
-            params["statute_id"] = statute_id
-            results = self.query(
-                f"MATCH (s {{id: $statute_id}})-[:CITES]-(n:CaseLaw) "
-                f"WHERE {where_clause} "
-                "RETURN n.id AS id, n.title AS title, n.citation AS citation, "
-                "n.doc_type AS doc_type, n.authority_level AS authority_level, "
-                "n.source_url AS source_url, labels(n) AS labels "
-                f"LIMIT {int(limit)}",
-                params,
-                query_name="find_case_law",
-            )
-        else:
-            results = self.query(
-                "MATCH (n:CaseLaw) "
-                f"WHERE {where_clause} "
-                "RETURN n.id AS id, n.title AS title, n.citation AS citation, "
-                "n.doc_type AS doc_type, n.authority_level AS authority_level, "
-                "n.source_url AS source_url, labels(n) AS labels "
-                f"LIMIT {int(limit)}",
-                params,
-                query_name="find_case_law",
-            )
-        return results
+            scoped = self.get_cases_for_subsections([statute_id], limit=10_000)
+            allowed = {c["id"] for c in scoped if c.get("id")}
+            results = search_case_law(search_text, index, limit=limit, allowed_ids=allowed)
+            if results:
+                return results
+        return search_case_law(search_text, index, limit=limit)

@@ -9,7 +9,9 @@ full opinion text only when a question needs the court's actual analysis.
 import hashlib
 import logging
 import re
+import time
 import urllib.parse
+from collections.abc import Callable
 
 import boto3
 from botocore.exceptions import ClientError
@@ -294,6 +296,182 @@ def build_opinion_card(stub_doc_id: str, payload: dict, neptune_client) -> RAGDo
         authority_level=doc_info.get("authority_level") if doc_info else 3,
         edition_year=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# find_case_law resolution: in-Lambda index of (id, title, citation) triples.
+#
+# Neptune openCypher has no full-text index, so every title search is a full
+# CaseLaw label scan anyway (~1.2k nodes). Pulling the whole index once per
+# warm container (~100 KB of id/title/citation, ~0.5 s) and matching here
+# lets us normalize both sides (drop "v.", "LLC", "City of", reporter
+# suffixes), rank by match quality, and enforce a strict end boundary on
+# neutral cites -- none of which a `CONTAINS` chain can express.
+# ---------------------------------------------------------------------------
+
+CASE_INDEX_TTL_SECONDS = 15 * 60
+FIND_CASE_LAW_MAX_RESULTS = 5
+
+_case_index_cache: dict = {"loaded_at": 0.0, "nodes": []}
+
+# "2018 WI 45", "2025 WI App 43"  (public-domain / neutral cites)
+_NEUTRAL_CITE_RE = re.compile(r"\b(\d{4})\s+WI\s+(?:App\s+)?(\d+)\b", re.IGNORECASE)
+
+# Reporter cites: "381 Wis. 2d 311", "985 N.W.2d 69", "766 F.3d 648", "102 S. Ct. 2613"
+_REPORTER_CITE_RE = re.compile(
+    r"\b(\d+)\s+"
+    r"(Wis\.?\s*2d|N\.?\s*W\.?\s*[23]d|F\.?\s*(?:2d|3d|4th)|F\.?\s*Supp\.?(?:\s*[23]d)?"
+    r"|S\.?\s*Ct\.?|U\.?\s*S\.?|L\.?\s*Ed\.?\s*2d)"
+    r"\s+(\d+)\b",
+    re.IGNORECASE,
+)
+
+# Tokens that carry no identifying weight in a case name. Party-type words
+# ("City of", "LLC") and reporter fragments are dropped from BOTH the query
+# and the title so "Nudo Holdings LLC v. City of Kenosha" reduces to
+# {nudo, holdings, kenosha} on each side.
+# fmt: off
+_NAME_STOP_TOKENS = frozenset(
+    {
+        # connectors
+        "v", "vs", "of", "the", "in", "re", "ex", "rel", "et", "al", "and", "for", "a", "an", "on",
+        # party-type / entity words
+        "llc", "inc", "co", "corp", "corporation", "company", "ltd", "lp", "llp",
+        "city", "village", "town", "county", "state", "board", "bd", "review", "dept", "department",
+        "wisconsin",
+        # reporter fragments (in case a cite survives the regex strip)
+        "wis", "wi", "app", "2d", "3d", "4th", "n", "w", "f", "supp", "s", "ct", "u", "l", "ed",
+    }
+)
+# fmt: on
+
+
+def _name_tokens(text: str) -> list[str]:
+    """Normalized identifying tokens of a case name (order preserved, deduped)."""
+    lowered = re.sub(r"[^a-z0-9]+", " ", text.lower())
+    seen: set[str] = set()
+    out: list[str] = []
+    for tok in lowered.split():
+        if len(tok) < 2 or tok.isdigit() or tok in _NAME_STOP_TOKENS or tok in seen:
+            continue
+        seen.add(tok)
+        out.append(tok)
+    return out
+
+
+def _strip_cites(text: str) -> str:
+    text = _REPORTER_CITE_RE.sub(" ", text)
+    return _NEUTRAL_CITE_RE.sub(" ", text)
+
+
+def parse_case_search(search_text: str) -> dict:
+    """Split a find_case_law query into reporter slugs, neutral slugs, and name tokens.
+
+    Slugs are the exact `case-law-...` doc_ids the cites resolve to, so lookup
+    is equality on id -- "2018 WI 45" can never match `case-law-2018-wi-4`.
+    """
+    reporter = [citation_to_doc_id(m.group(0)) for m in _REPORTER_CITE_RE.finditer(search_text)]
+    neutral = [citation_to_doc_id(m.group(0)) for m in _NEUTRAL_CITE_RE.finditer(search_text)]
+    name_tokens = _name_tokens(_strip_cites(search_text))
+    return {"reporter": reporter, "neutral": neutral, "name_tokens": name_tokens}
+
+
+def _name_match_quality(query_tokens: list[str], title_tokens: list[str]) -> float | None:
+    """Score a name match in (0, 1]; 1.0 is an exact normalized match; None is no match.
+
+    Match rule: every query token of >= 4 chars appears in the title, OR at
+    least 2 query tokens appear in the title. Token equality (not substring)
+    is deliberate: "Thoma" must not hit "Thomas G Miller".
+    """
+    qs, ts = set(query_tokens), set(title_tokens)
+    if not qs or not ts:
+        return None
+    overlap = qs & ts
+    long_q = {t for t in qs if len(t) >= 4}
+    if not ((long_q and long_q <= ts) or len(overlap) >= 2):
+        return None
+    if qs == ts:
+        return 1.0
+    # Partial: how much of the query matched, and how much of the title it explains.
+    return min(0.99, round(0.5 * len(overlap) / len(qs) + 0.5 * len(overlap) / len(ts), 3))
+
+
+def search_case_law(
+    search_text: str,
+    nodes: list[dict],
+    limit: int = FIND_CASE_LAW_MAX_RESULTS,
+    allowed_ids: set[str] | None = None,
+) -> list[dict]:
+    """Resolve a case name / neutral cite / reporter cite against the CaseLaw index.
+
+    Returns at most `limit` node dicts, each annotated with `match_kind`
+    (reporter | neutral | name) and `match_score`, ranked best-first:
+    exact cite hits, then exact-normalized name hits, then partial names.
+    """
+    parsed = parse_case_search(search_text)
+    reporter_ids = set(parsed["reporter"])
+    neutral_ids = set(parsed["neutral"])
+    q_tokens = parsed["name_tokens"]
+    if not (reporter_ids or neutral_ids or q_tokens):
+        return []
+
+    best: dict[str, tuple[tuple, dict]] = {}
+
+    def consider(node: dict, kind: str, score: float, rank: int) -> None:
+        node_id = node.get("id") or ""
+        key = (rank, -score, node_id)
+        current = best.get(node_id)
+        if current is None or key < current[0]:
+            best[node_id] = (key, {**node, "match_kind": kind, "match_score": score})
+
+    for node in nodes:
+        node_id = node.get("id") or ""
+        if not node_id or (allowed_ids is not None and node_id not in allowed_ids):
+            continue
+        cite_slug = citation_to_doc_id(node.get("citation") or "") if node.get("citation") else ""
+        if node_id in reporter_ids or cite_slug in reporter_ids:
+            consider(node, "reporter", 1.0, 0)
+            continue
+        if node_id in neutral_ids or cite_slug in neutral_ids:
+            consider(node, "neutral", 1.0, 0)
+            continue
+        if q_tokens:
+            title = node.get("title") or ""
+            title_tokens = _name_tokens(extract_case_name(title))
+            quality = _name_match_quality(q_tokens, title_tokens)
+            if quality is not None:
+                consider(node, "name", quality, 1 if quality >= 1.0 else 2)
+
+    ranked = sorted(best.values(), key=lambda item: item[0])
+    return [hit for _, hit in ranked[:limit]]
+
+
+def get_case_law_index(loader: Callable[[], list[dict]], now: float | None = None) -> list[dict]:
+    """The cached (id, title, citation, ...) index of every CaseLaw node.
+
+    Loaded once per warm container and refreshed after CASE_INDEX_TTL_SECONDS
+    so a graph reload shows up without a cold start. If a refresh fails and a
+    previous copy exists, the stale copy is served.
+    """
+    now = time.monotonic() if now is None else now
+    if _case_index_cache["nodes"] and now - _case_index_cache["loaded_at"] < CASE_INDEX_TTL_SECONDS:
+        return _case_index_cache["nodes"]
+    try:
+        nodes = loader()
+    except Exception:
+        if _case_index_cache["nodes"]:
+            logger.warning("CaseLaw index refresh failed; serving stale copy", exc_info=True)
+            return _case_index_cache["nodes"]
+        raise
+    _case_index_cache["nodes"] = nodes
+    _case_index_cache["loaded_at"] = now
+    logger.info(f"CaseLaw index loaded: {len(nodes)} nodes")
+    return nodes
+
+
+def reset_case_law_index_cache() -> None:
+    _case_index_cache["nodes"] = []
+    _case_index_cache["loaded_at"] = 0.0
 
 
 def apply_case_law_links(

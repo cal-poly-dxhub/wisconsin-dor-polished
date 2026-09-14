@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 import boto3
-from case_law import fetch_case_opinion
+from case_law import FIND_CASE_LAW_MAX_RESULTS, fetch_case_opinion
 from flowcharts import get_flowchart as load_flowchart
 from flowcharts import list_flowcharts as list_flowchart_registry
 from graph.neptune_client import NeptuneClient
@@ -770,27 +770,33 @@ def execute_tool(
         return {"documents": docs}
 
     elif tool_name == "find_case_law":
-        search_text = tool_input.get("search_text", "")
+        search_text = (tool_input.get("search_text") or "").strip()
         statute_id = tool_input.get("statute_id")
-        # Try citation-based lookup first (most reliable)
-        citations = extract_citations(search_text)
+        # One resolver handles reporter cites, neutral cites, and case names
+        # against the cached CaseLaw index; each hit carries `match_kind`.
         cases: list[dict] = []
-        if citations:
-            cases = neptune.resolve_case_citations(citations)
-        # Fall back to title substring search
-        if not cases and search_text:
-            cases = neptune.find_case_law(search_text, statute_id=statute_id, limit=10)
+        if search_text:
+            cases = neptune.find_case_law(
+                search_text, statute_id=statute_id, limit=FIND_CASE_LAW_MAX_RESULTS
+            )
         _log_tool_event(
             "find_case_law_complete",
             tool_name=tool_name,
             search_text=search_text,
             statute_id=statute_id,
-            citations_extracted=len(citations),
             case_count=len(cases),
-            case_ids=[c.get("id") for c in cases[:10]],
+            case_ids=[c.get("id") for c in cases],
+            match_kinds=[c.get("match_kind") for c in cases],
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
-        return {"cases": cases}
+        result: dict[str, Any] = {"cases": cases}
+        if not cases:
+            result["note"] = (
+                "No CaseLaw node matches this name or citation. Do not retry with "
+                "spelling or citation variants; the case is not in the graph. You may "
+                "still discuss it in prose, but do not cite a node ID for it."
+            )
+        return result
 
     elif tool_name == "fetch_case_opinion":
         if not RAW_BUCKET:

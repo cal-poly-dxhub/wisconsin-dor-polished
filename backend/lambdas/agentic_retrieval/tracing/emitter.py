@@ -77,6 +77,11 @@ ALLOWED_METADATA_KEYS = frozenset(
         "diversityCapPerDoc",
         "seeded",
         "filtered",
+        # Flowchart seed (pre-loop router) — see flowchart_router.py.
+        "flowchartId",
+        "routerScore",
+        "sourceUrl",
+        "wpamPage",
     }
 )
 

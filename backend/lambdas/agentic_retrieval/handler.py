@@ -21,7 +21,12 @@ from chat_history import get_chat_history, save_chat_history
 from config_validator import validate_env_and_log
 from faq import build_cited_faq_resource
 from loop.phase_a import run_agentic_loop
-from loop.phase_b import apply_persona, build_answer_context, stream_answer
+from loop.phase_b import (
+    apply_persona,
+    build_answer_context,
+    finalize_answer_links,
+    stream_answer,
+)
 from prompt import ANSWER_STREAM_SYSTEM_PROMPT
 from rag_documents import build_rag_documents
 from step_function_types.errors import ValidationError, report_error
@@ -289,6 +294,12 @@ def handler(event: dict, context) -> dict[str, Any]:
             # 1. Build resources from cited_doc_ids
             cited = set(result.cited_doc_ids)
             cited_chunks = [c for c in result.all_chunks if c.get("doc_id") in cited]
+            # Everything Phase A touched (cited + discovered + any chunk's doc):
+            # the citation-link repair may repoint a conflated statute/admin-rule
+            # link to any of these, but never to a doc outside this set.
+            retrieved_doc_ids = (
+                cited | set(result.discovery) | {c.get("doc_id") for c in result.all_chunks}
+            )
             cited_discovery = {k: v for k, v in result.discovery.items() if k in cited}
             for cid in cited:
                 cited_discovery.setdefault(cid, "fetched")
@@ -386,6 +397,8 @@ def handler(event: dict, context) -> dict[str, Any]:
                         trace_seq,
                         ws_connection_alive,
                         persona=persona,
+                        retrieved_doc_ids=retrieved_doc_ids,
+                        cited_chunks=result.all_chunks,
                     )
                 except Exception as phase_b_exc:
                     logger.error(
@@ -446,6 +459,12 @@ def handler(event: dict, context) -> dict[str, Any]:
                 except Exception as exc:
                     logger.error(f"Phase B non-streaming fallback failed: {exc}")
                     answer = "(Answer generation failed — please retry)"
+
+            # Single pre-persist repair pass (idempotent after the in-stream
+            # repair; covers the non-streaming converse() fallbacks).
+            answer = finalize_answer_links(
+                answer, user_query.query_id, retrieved_doc_ids, result.all_chunks
+            )
 
         # Persist the flowchart in the SAME camelCase wire shape the frontend
         # consumes live, so resume hydration and the live path are identical.

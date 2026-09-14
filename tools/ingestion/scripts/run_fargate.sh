@@ -13,11 +13,22 @@
 #   --start-phase <N>         (load only) Resume from sub-phase N
 #   --stop-after-phase <N>    (load only) Stop after sub-phase N
 #   --max-workers <N>         Override default worker count
+#   --cache-prefix <p>        Namespace every work-bucket key (e.g. "staging/") so a
+#                             staging run never touches production classified/extracted/embedded/
+#   --graph-id <id>           (load only) Override the task definition's GRAPH_ID
+#   --aliases                 (extract only) Generate chunk aliases (document expansion)
+#   --aliases-only            (extract only) Backfill aliases onto existing extracted JSONs
+#   --embed-input <mode>      (embed only) plain | enriched
 #
 # Examples:
 #   ./run_fargate.sh extract
 #   ./run_fargate.sh extract --source-filter wpam- --force
 #   ./run_fargate.sh load --start-phase 5 --stop-after-phase 8
+#
+#   # Staging document-expansion run (production caches untouched):
+#   ./run_fargate.sh extract --aliases-only --cache-prefix staging/
+#   ./run_fargate.sh embed --cache-prefix staging/ --embed-input enriched --force
+#   ./run_fargate.sh load --cache-prefix staging/ --graph-id <staging-graph-id>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,6 +52,11 @@ RECLASSIFY=""
 START_PHASE=""
 STOP_AFTER_PHASE=""
 MAX_WORKERS=""
+CACHE_PREFIX=""
+GRAPH_ID_OVERRIDE=""
+ALIASES=""
+ALIASES_ONLY=""
+EMBED_INPUT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -51,9 +67,27 @@ while [[ $# -gt 0 ]]; do
     --start-phase) START_PHASE="$2"; shift 2 ;;
     --stop-after-phase) STOP_AFTER_PHASE="$2"; shift 2 ;;
     --max-workers) MAX_WORKERS="$2"; shift 2 ;;
+    --cache-prefix) CACHE_PREFIX="$2"; shift 2 ;;
+    --graph-id) GRAPH_ID_OVERRIDE="$2"; shift 2 ;;
+    --aliases) ALIASES="true"; shift ;;
+    --aliases-only) ALIASES_ONLY="true"; shift ;;
+    --embed-input) EMBED_INPUT="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+if [[ -n "$EMBED_INPUT" && ! "$EMBED_INPUT" =~ ^(plain|enriched)$ ]]; then
+  echo "--embed-input must be 'plain' or 'enriched' (got '$EMBED_INPUT')"; exit 1
+fi
+if [[ -n "$CACHE_PREFIX" && "$CACHE_PREFIX" != */ ]]; then
+  echo "--cache-prefix should end with '/' (got '$CACHE_PREFIX'); appending"
+  CACHE_PREFIX="${CACHE_PREFIX}/"
+fi
+if [[ "$PHASE" == "load" && -n "$CACHE_PREFIX" && -z "$GRAPH_ID_OVERRIDE" ]]; then
+  echo "WARNING: loading '$CACHE_PREFIX' embeddings into the task definition's default (production) graph."
+  echo "         Pass --graph-id <staging-graph-id> for a staging load. Continuing in 10s (Ctrl-C to abort)..."
+  sleep 10
+fi
 
 # Fetch stack outputs
 echo "Fetching stack outputs from $STACK_NAME..."
@@ -112,6 +146,13 @@ ENV_OVERRIDES='[{"name":"PHASE","value":"'"$PHASE"'"}'
 [[ -n "$START_PHASE" ]] && ENV_OVERRIDES+=',{"name":"START_PHASE","value":"'"$START_PHASE"'"}'
 [[ -n "$STOP_AFTER_PHASE" ]] && ENV_OVERRIDES+=',{"name":"STOP_AFTER_PHASE","value":"'"$STOP_AFTER_PHASE"'"}'
 [[ -n "$MAX_WORKERS" ]] && ENV_OVERRIDES+=',{"name":"MAX_WORKERS","value":"'"$MAX_WORKERS"'"}'
+[[ -n "$CACHE_PREFIX" ]] && ENV_OVERRIDES+=',{"name":"CACHE_PREFIX","value":"'"$CACHE_PREFIX"'"}'
+# Container-level env overrides take precedence over the task definition's
+# environment, so this replaces the default GRAPH_ID for this run only.
+[[ -n "$GRAPH_ID_OVERRIDE" ]] && ENV_OVERRIDES+=',{"name":"GRAPH_ID","value":"'"$GRAPH_ID_OVERRIDE"'"}'
+[[ -n "$ALIASES" ]] && ENV_OVERRIDES+=',{"name":"ALIASES","value":"true"}'
+[[ -n "$ALIASES_ONLY" ]] && ENV_OVERRIDES+=',{"name":"ALIASES_ONLY","value":"true"}'
+[[ -n "$EMBED_INPUT" ]] && ENV_OVERRIDES+=',{"name":"EMBED_INPUT","value":"'"$EMBED_INPUT"'"}'
 ENV_OVERRIDES+=']'
 
 # Convert subnet IDs to JSON array
@@ -127,6 +168,11 @@ echo "  Task Definition: $TASK_DEF_ARN"
 [[ -n "$FORCE" ]] && echo "  Force: true"
 [[ -n "$SMART" ]] && echo "  Smart: true"
 [[ -n "$RECLASSIFY" ]] && echo "  Reclassify: true"
+[[ -n "$CACHE_PREFIX" ]] && echo "  Cache Prefix: $CACHE_PREFIX"
+[[ -n "$GRAPH_ID_OVERRIDE" ]] && echo "  Graph ID (override): $GRAPH_ID_OVERRIDE"
+[[ -n "$ALIASES" ]] && echo "  Aliases: true"
+[[ -n "$ALIASES_ONLY" ]] && echo "  Aliases-only: true"
+[[ -n "$EMBED_INPUT" ]] && echo "  Embed Input: $EMBED_INPUT"
 echo ""
 
 TASK_ARN=$(aws ecs run-task \

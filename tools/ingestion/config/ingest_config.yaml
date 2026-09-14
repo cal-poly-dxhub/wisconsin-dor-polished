@@ -116,3 +116,24 @@ statute_families:
 bedrock_embed_model: "amazon.titan-embed-text-v2:0"
 bedrock_llm_model: "us.anthropic.claude-sonnet-4-6"
 embed_dimension: 1024
+
+# --- Document expansion (chunk aliases) ---
+# Prepends, at EMBED time only, a short block of gold queries + generated
+# plain-language questions + everyday synonyms to each chunk's text before it
+# is sent to Titan. Stored chunk text never changes. Both switches default off;
+# extract.py --aliases / --aliases-only and embed.py --embed-input override them.
+# See tools/ingestion/lib/aliases.py.
+alias_enrichment:
+  enabled: true                        # extract: generate chunk["aliases"] (Task 65, promoted 2026-09-12)
+  embed_input: enriched                # embed: plain | enriched (Task 65, promoted 2026-09-12)
+  alias_model: "us.amazon.nova-2-lite-v1:0"
+  min_chunk_chars: 200                 # chunks shorter than this get no aliases
+  workers: 4                           # Bedrock concurrency per document
+  include_doc_types: [statute, admin_rule]  # embed: ONLY these are enriched (allowlist; empty = all). Guides/manuals stay plain — see EnrichPolicy
+  exclude_doc_types: [case_law, iaao_standard, uspap_standard]  # embed: always plain (see embed.py EnrichPolicy)
+  wpam_latest_only: true               # embed: only the newest WPAM edition is enriched
+  exclude_heading_patterns:            # embed: index / TOC chunks stay plain
+    - "index (of|to) legal decisions"
+    - "legal decisions and"
+    - "table of contents"
+    - "^index\\b"
