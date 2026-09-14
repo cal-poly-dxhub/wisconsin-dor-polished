@@ -341,10 +341,12 @@ def _auto_refine(query: str, chat_history: list[dict[str, str]] | None) -> tuple
     target_year: int | None = None
     refined = query
     try:
+        from streaming.bedrock import converse_inference_kwargs
+
         response = bedrock.converse(
             modelId=REFINEMENT_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"maxTokens": 256, "temperature": 0.0},
+            **converse_inference_kwargs(REFINEMENT_MODEL_ID, 256),
         )
         message = response["output"]["message"]
         raw = " ".join(

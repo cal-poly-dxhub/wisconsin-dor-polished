@@ -8,6 +8,8 @@ and mapping responses back to the Converse-compatible shape that main.py expects
 
 import json
 import logging
+import os
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -31,13 +33,53 @@ def _convert_tool_definitions(
     return tools
 
 
+# ── Model-aware sampling policy ─────────────────────────────────────────────
+# Claude Sonnet 5 / Opus 5 / Opus 4.7+ / Fable reject `temperature` (400:
+# "`temperature` is deprecated for this model") and run adaptive thinking by
+# default; depth is controlled with output_config.effort. Claude 4.6 and older
+# take temperature and have no effort knob. AGENTIC_EFFORT applies only to the
+# models that support it (default "medium": this workload is a tool loop over
+# retrieved text, where lower effort means fewer, more consolidated tool calls).
+_NO_TEMPERATURE_MODELS = re.compile(r"(sonnet-5|opus-5|opus-4-[789]|fable|mythos)", re.I)
+
+
+def model_sampling(model_id: str) -> tuple[bool, str | None]:
+    """Return (accepts_temperature, effort) for a Bedrock model id."""
+    if _NO_TEMPERATURE_MODELS.search(model_id or ""):
+        return False, os.environ.get("AGENTIC_EFFORT", "medium")
+    return True, None
+
+
+def apply_sampling(body: dict[str, Any], model_id: str, inference_config: dict[str, Any]) -> None:
+    """Add temperature / output_config.effort to an Anthropic Messages body per model."""
+    accepts_temperature, effort = model_sampling(model_id)
+    if accepts_temperature and inference_config.get("temperature") is not None:
+        body["temperature"] = inference_config["temperature"]
+    if effort:
+        body["output_config"] = {"effort": effort}
+
+
+def converse_inference_kwargs(model_id: str, max_tokens: int, temperature: float = 0.0) -> dict:
+    """kwargs for a plain bedrock.converse() call, honoring the same policy."""
+    accepts_temperature, effort = model_sampling(model_id)
+    cfg: dict[str, Any] = {"maxTokens": max_tokens}
+    if accepts_temperature:
+        cfg["temperature"] = temperature
+    out: dict[str, Any] = {"inferenceConfig": cfg}
+    if effort:
+        out["additionalModelRequestFields"] = {"output_config": {"effort": effort}}
+    return out
+
+
 def _convert_content_to_messages(
     converse_content: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Convert a single message's content blocks from Converse to Messages format."""
     blocks = []
     for block in converse_content:
-        if "text" in block:
+        if "_anthropic_raw" in block:
+            blocks.append(block["_anthropic_raw"])
+        elif "text" in block:
             blocks.append({"type": "text", "text": block["text"]})
         elif "toolUse" in block:
             tu = block["toolUse"]
@@ -93,7 +135,11 @@ def _convert_response_content(
     """Convert Anthropic Messages response content to Converse format."""
     blocks = []
     for block in anthropic_content:
-        if block["type"] == "text":
+        if block["type"] in ("thinking", "redacted_thinking"):
+            # Preserve verbatim so the next turn can replay it (adaptive-thinking
+            # models require the thinking block that preceded a tool_use).
+            blocks.append({"_anthropic_raw": block})
+        elif block["type"] == "text":
             blocks.append({"text": block["text"]})
         elif block["type"] == "tool_use":
             blocks.append(
@@ -164,8 +210,7 @@ def converse_with_cache(
         "messages": converted_messages,
     }
 
-    if inference_config.get("temperature") is not None:
-        body["temperature"] = inference_config["temperature"]
+    apply_sampling(body, model_id, inference_config)
 
     # System prompt with cache breakpoint
     if system:
@@ -236,8 +281,7 @@ def converse_stream_with_cache(
         "messages": converted_messages,
     }
 
-    if inference_config.get("temperature") is not None:
-        body["temperature"] = inference_config["temperature"]
+    apply_sampling(body, model_id, inference_config)
 
     if system:
         system_blocks = []
