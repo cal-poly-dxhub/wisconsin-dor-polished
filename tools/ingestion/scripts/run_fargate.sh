@@ -9,7 +9,8 @@
 # Options:
 #   --source-filter <prefix>  Only process docs matching this prefix
 #   --force                   Re-process all (ignore cache)
-#   --smart                   (extract only) Only re-extract docs with stale cache
+#   --smart                   (extract, embed) Only re-process docs whose cache is stale
+#   --reclassify              (extract only) Force LLM reclassification even if cached
 #   --start-phase <N>         (load only) Resume from sub-phase N
 #   --stop-after-phase <N>    (load only) Stop after sub-phase N
 #   --max-workers <N>         Override default worker count

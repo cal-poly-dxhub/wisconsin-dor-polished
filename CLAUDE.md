@@ -231,7 +231,7 @@ Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM 
 
 **Ingestion config:** `tools/ingestion/config/ingest_config.yaml` — defines frameworks, doc types, chunking params, source-to-framework mappings.
 
-**Document manifest:** `tools/ingestion/config/document_manifest.yaml` — single source of truth for all 198 corpus URLs across all categories. The scraper reads this file; all entries are plain URL strings (no overrides). `make_doc_id()` in `scrape_documents.py` derives stable S3 keys from category + URL with special handling for statutes (chapter number), admin rules (Tax chapter), WPAM (year), IAAO (CamelCase splitting + typo fix), and USPAP.
+**Document manifest:** `tools/ingestion/config/document_manifest.yaml` — single source of truth for every corpus URL (~1,000 entries; news pages dominate). The scraper reads this file; all entries are plain URL strings (no overrides). `make_doc_id()` in `scrape_documents.py` derives stable S3 keys from category + URL with special handling for statutes (chapter number), admin rules (Tax chapter), WPAM (year), IAAO (CamelCase splitting + typo fix), and USPAP.
 
 ### PDF Processing Pipeline (`tools/ingestion/chunking/`)
 

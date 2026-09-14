@@ -460,7 +460,7 @@ def main():
     uploaded = stats["new"] + stats["changed"] + stats["forced"]
     if uploaded > 0 and not args.dry_run:
         logger.info(
-            "\n%d documents uploaded — run extract with --force to re-process them.",
+            "\n%d documents uploaded — run `extract --smart` to re-process only the changed ones (--force re-extracts everything).",
             uploaded,
         )
 

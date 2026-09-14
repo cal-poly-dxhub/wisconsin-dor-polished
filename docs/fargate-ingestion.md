@@ -124,9 +124,9 @@ the run. It forwards all CLI args verbatim to every phase.
 
 ## Load Sub-Phases
 
-`load.py` runs **9 sequential sub-phases**, numbered 1–9 with a 1:1 mapping to
+`load.py` runs **10 sequential sub-phases**, numbered 1–10 (Phase 10 = integrity checks, added 2026-09-14) with a 1:1 mapping to
 their `phase_N_*` functions (there is no CLI-step vs. function offset).
-`--start-phase`/`--stop-after-phase` take integers in `[1, 9]`.
+`--start-phase`/`--stop-after-phase` take integers in `[1, 10]`.
 
 | # | Name | What it does |
 |--:|------|--------------|
@@ -241,7 +241,7 @@ from the nested stack's own outputs. The run scripts discover all of these via
 valid values and exits 1). Also confirm the image is pushed.
 
 **Out of memory (exit code 137):**
-The memory pressure is in the load phase's Chunk Nodes step (Phase 5), which
+The memory pressure is in the Vector Upserts step (Phase 8; scale Neptune to 128 m-NCU first), which
 UNWINDs chunk-text payloads into Neptune. It is guarded by module constants in
 `load.py` — `PHASE_5_BATCH_SIZE`, `PHASE_5_MAX_PAIRS_PER_FLUSH`, and
 `PHASE_5_MAX_BYTES_PER_FLUSH = 50_000` (cumulative-text-byte cap per flush). These
