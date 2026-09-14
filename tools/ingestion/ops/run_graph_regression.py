@@ -372,9 +372,7 @@ def verify_case_ids_exist(case_ids: list[str]) -> dict[str, bool]:
     return existence
 
 
-def grade(
-    entry: dict, run: dict, case_existence: dict[str, bool], run_judge: bool = True
-) -> dict:
+def grade(entry: dict, run: dict, case_existence: dict[str, bool], run_judge: bool = True) -> dict:
     """Grade one run against its golden-set expectations.
 
     Gating checks (determine overall pass):
@@ -396,15 +394,11 @@ def grade(
 
     # --- Legacy prose regexes: retained as advisory/provenance only (non-gating).
     must_contain = entry.get("must_contain", []) or []
-    fact_hits = {
-        pat: bool(re.search(pat, answer, re.IGNORECASE)) for pat in must_contain
-    }
+    fact_hits = {pat: bool(re.search(pat, answer, re.IGNORECASE)) for pat in must_contain}
     fact_pass = all(fact_hits.values())
 
     must_not_contain = entry.get("must_not_contain", []) or []
-    notcontain_hits = {
-        pat: bool(re.search(pat, answer, re.IGNORECASE)) for pat in must_not_contain
-    }
+    notcontain_hits = {pat: bool(re.search(pat, answer, re.IGNORECASE)) for pat in must_not_contain}
     notcontain_pass = not any(notcontain_hits.values())
 
     cited_cases = _cited_case_ids(run["cited_doc_ids"])
@@ -465,6 +459,7 @@ def run_mode(
     out_path: str | None = None,
     answerstream_prompt: str | None = None,
     agenticretrieval_prompt: str | None = None,
+    workers: int = 1,
 ) -> None:
     entries = load_queries()
     if ids:
@@ -502,8 +497,7 @@ def run_mode(
         f"{len(done_ids)} skipped as done)..."
     )
 
-    for i, entry in enumerate(todo, start=1):
-        logger.info(f"  [{i}/{len(todo)}] {entry.get('queryId')} — {entry['query'][:70]}")
+    def _one(entry: dict) -> tuple[dict, dict]:
         run = run_one_query(
             entry,
             answerstream_prompt=answerstream_prompt,
@@ -511,16 +505,47 @@ def run_mode(
         )
         case_existence = verify_case_ids_exist(_cited_case_ids(run["cited_doc_ids"]))
         run["case_existence"] = case_existence
-        g = grade(entry, run, case_existence)
-        runs.append(run)
-        grades.append(g)
-        logger.info(
-            f"      cited={len(run['cited_doc_ids'])} "
-            f"cite_pass={g['cite_pass']} fact_pass={g['fact_pass']} "
-            f"halluc={len(g['hallucinated_case_ids'])} ({run['latency_ms']}ms)"
-        )
-        # Checkpoint after every query — mid-run kill/crash loses at most one query.
-        _checkpoint(out_path, mode, runs, grades)
+        return run, grade(entry, run, case_existence)
+
+    # Queries are independent (run_one_query is self-contained; the Lambda
+    # modules' caches — flowchart vectors, case-law index — are read-mostly and
+    # safe to populate from several threads). Each query is ~45 s of waiting on
+    # Bedrock/Neptune, so a small pool cuts wall clock almost linearly; keep it
+    # modest (4–6) to stay under Bedrock's per-model request rate.
+    if workers > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        logger.info(f"  parallel: {workers} workers")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_one, e): e for e in todo}
+            for i, fut in enumerate(as_completed(futures), start=1):
+                entry = futures[fut]
+                try:
+                    run, g = fut.result()
+                except Exception as exc:  # noqa: BLE001 — one bad query must not kill the run
+                    logger.error(f"  [{i}/{len(todo)}] {entry.get('queryId')} FAILED: {exc}")
+                    continue
+                runs.append(run)
+                grades.append(g)
+                logger.info(
+                    f"  [{i}/{len(todo)}] {entry.get('queryId')} cited={len(run['cited_doc_ids'])} "
+                    f"cite_pass={g['cite_pass']} judge={g.get('judge_verdict')} "
+                    f"({run['latency_ms']}ms)"
+                )
+                _checkpoint(out_path, mode, runs, grades)  # main thread only — no lock needed
+    else:
+        for i, entry in enumerate(todo, start=1):
+            logger.info(f"  [{i}/{len(todo)}] {entry.get('queryId')} — {entry['query'][:70]}")
+            run, g = _one(entry)
+            runs.append(run)
+            grades.append(g)
+            logger.info(
+                f"      cited={len(run['cited_doc_ids'])} "
+                f"cite_pass={g['cite_pass']} fact_pass={g['fact_pass']} "
+                f"halluc={len(g['hallucinated_case_ids'])} ({run['latency_ms']}ms)"
+            )
+            # Checkpoint after every query — mid-run kill/crash loses at most one query.
+            _checkpoint(out_path, mode, runs, grades)
 
     logger.info(f"\nWrote {out_path} ({len(runs)} queries total)")
     _print_grade_summary(mode, entries, grades)
@@ -580,8 +605,7 @@ def phase_b_only(
         if g:
             new_grades.append(g)
             logger.info(
-                f"      judge={g.get('judge_verdict') or '-'} "
-                f"({g.get('judge_reason', '')[:100]})"
+                f"      judge={g.get('judge_verdict') or '-'} ({g.get('judge_reason', '')[:100]})"
             )
     _checkpoint(out_path, data.get("mode", mode), new_runs, new_grades)
     logger.info(f"\nRe-ran Phase B for {out_path}")
@@ -674,9 +698,7 @@ def compare() -> None:
         # A regression = a fact that was present at baseline but lost after,
         # OR a must_cite doc dropped for a control stratum (B/D/E),
         # OR a newly hallucinated case.
-        lost_facts = [
-            p for p, ok in ag["fact_hits"].items() if bg["fact_hits"].get(p) and not ok
-        ]
+        lost_facts = [p for p, ok in ag["fact_hits"].items() if bg["fact_hits"].get(p) and not ok]
         lost_cites = []
         if stratum in ("B", "D", "E"):
             lost_cites = [
@@ -840,6 +862,13 @@ def main() -> None:
         help="Ignore any existing partial output and re-run every query from scratch",
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Run this many golden-set queries concurrently (default 1). 4–6 is a safe "
+        "range for Bedrock rate limits; results are checkpointed as they complete.",
+    )
+    parser.add_argument(
         "--only",
         default="",
         help="Run just this queryId (for debugging a single query)",
@@ -896,9 +925,7 @@ def main() -> None:
         )
     agenticretrieval_prompt = None
     if args.candidate_agenticretrieval:
-        agenticretrieval_prompt = _load_agenticretrieval_from_toml(
-            args.candidate_agenticretrieval
-        )
+        agenticretrieval_prompt = _load_agenticretrieval_from_toml(args.candidate_agenticretrieval)
         logger.info(
             f"Using CANDIDATE agenticRetrieval from {args.candidate_agenticretrieval} "
             f"({len(agenticretrieval_prompt)} chars) for the Phase-A loop."
@@ -931,6 +958,7 @@ def main() -> None:
         out_path=out_path,
         answerstream_prompt=answerstream_prompt,
         agenticretrieval_prompt=agenticretrieval_prompt,
+        workers=args.workers,
     )
 
 
