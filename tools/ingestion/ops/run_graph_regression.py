@@ -133,11 +133,13 @@ def _phase_b_generate(
     if not answer_context:
         return ""
     try:
+        from streaming.bedrock import converse_inference_kwargs
+
         resp = bedrock.converse(
             modelId=AGENTIC_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": answer_context}]}],
             system=[{"text": apply_persona(answerstream_prompt, None)}],
-            inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+            **converse_inference_kwargs(AGENTIC_MODEL_ID, 4096),
         )
         text = resp["output"]["message"]["content"][0].get("text", "")
     except Exception as exc:  # noqa: BLE001
