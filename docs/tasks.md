@@ -442,3 +442,13 @@ Property tax is full of terms-of-art where everyday phrasing (e.g. "camping trai
 
 **Key files:** `tools/ingestion/lib/aliases.py`, `extract.py` (`--aliases`, `--aliases-only`, `--cache-prefix`), `embed.py` (`--embed-input enriched`), `load.py` (`--cache-prefix`), `chunking/pdfChunker.py` (subsection split), `ops/attach_gold_queries.py`, `ops/build_recall_eval.py`, `ops/run_recall_probe.py`.
 
+
+### Decision: agent model stays Sonnet 4.6 — Sonnet 5 evaluated and rejected (2026-09-14)
+
+**Test:** full 42-case regression harness (`ops/run_graph_regression.py`) on the production graph, judge unchanged, `AGENTIC_MODEL_ID=us.anthropic.claude-sonnet-5` at `AGENTIC_EFFORT=medium`. Baseline = production Sonnet 4.6 the same day.
+
+**Result:** 28/42 vs 32/42. Sonnet 5 used 257 research turns to 4.6's 442 and answered ~25% faster, but the savings came from stopping early: it lost § 70.11(49) on all three mobile-home / camping-trailer cases (the exact regression Task 65 fixed), plus § 70.46, § 70.56, § 70.995 and the three-factor test on other cases. It gained 5 cases (appeal-assessed-value, clerk-correct-roll-error, appeal-land-classification, fc-fp-churches, hire-assessor) — those are prompt-weakness hints for 4.6, not model wins. Phase-A token spend was only ~15% lower because most input is cache reads.
+
+**Why not pursue it:** agent LLM cost is ~$0.17/query, negligible against the fixed ~$3k/month infra; the bot's value is thoroughness; testing closes 2026-09-24 and a model swap mid-window would force a prompt re-tune and harness re-baseline. Revisit only with a high-effort run and a prompt pass, and only if per-token price is materially lower.
+
+**Kept:** model-aware sampling in `streaming/bedrock.py` (Sonnet 5 / Opus 5 reject `temperature`; effort via `output_config`), so a future swap is an env-var change. Artifacts: `~/Work/DxHub/wisdor/feedback-analysis/logs-2026-09-14/graph_regression_after_sonnet5.json` and `harness_sonnet5_compare.log`.
