@@ -19,15 +19,12 @@ from agent_tools.stages import (
     diversity_cap,
     neptune_search,
     statute_backfill,
-    vocab_injection,
-    vocab_swap,
     wpam_dedup,
 )
 from agent_tools.stages.base import StageContext
 
 VECTOR_SEARCH_STAGES = [
     auto_refine,
-    vocab_swap,
     neptune_search,
     wpam_dedup,
     diversity_cap,
@@ -38,7 +35,6 @@ VECTOR_SEARCH_STAGES = [
     statute_backfill,
     caselaw_backfill,
     broad_discovery,
-    vocab_injection,
 ]
 
 
@@ -86,7 +82,6 @@ def run_vector_search(
         statute_backfill_count=len(ctx.statute_backfill),
         caselaw_backfill_count=len(ctx.caselaw_backfill),
         broad_discovery_count=len(ctx.broad_discovery),
-        vocab_discovery_count=len(ctx.vocab_discovery),
         latency_ms=round((time.perf_counter() - started) * 1000),
         **_executor._query_fields(ctx.refined_query),
     )
@@ -119,6 +114,4 @@ def run_vector_search(
         result["broad_discovery"] = ctx.broad_discovery
     if ctx.broad_trace:
         result.update(ctx.broad_trace)
-    if ctx.vocab_discovery:
-        result["vocab_discovery"] = ctx.vocab_discovery
     return result
