@@ -28,7 +28,6 @@ def test_vector_search_stages_order_matches_original_monolith():
 
     assert names == [
         "auto_refine",
-        "vocab_swap",
         "neptune_search",
         "wpam_dedup",
         "diversity_cap",
@@ -39,7 +38,6 @@ def test_vector_search_stages_order_matches_original_monolith():
         "statute_backfill",
         "caselaw_backfill",
         "broad_discovery",
-        "vocab_injection",
     ]
 
 

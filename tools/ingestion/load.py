@@ -1,9 +1,9 @@
 """
 Phase 5: Load embedded documents into Neptune Analytics graph.
 
-Implements 9 sequential sub-phases:
+Implements 10 sequential sub-phases:
 1. Scaffold (frameworks + hierarchy)
-2. Document nodes
+2. Document nodes (with the case-law title sink guard)
 3. Statute hierarchy (PART_OF)
 4. Hierarchy links (sub-document + universal)
 5. Chunk nodes
@@ -11,6 +11,11 @@ Implements 9 sequential sub-phases:
 7. Stub resolution (DEFINED_BY edges from stubs to statute chunks)
 8. Vector upserts
 9. Orphan cleanup
+10. Integrity checks (doubled case-law titles → non-zero exit; orphan chunks logged)
+
+Document-level metadata (title, summary, citation, ...) is overlaid from
+``extracted/`` onto each ``embedded/`` doc at load time (``DOC_METADATA_KEYS``),
+and doc_ids listed in ``{cache_prefix}dedup/losers.json`` are skipped.
 
 Usage:
     python -m tools.ingestion.load \
@@ -90,13 +95,91 @@ def execute_query(client, graph_id: str, query: str, parameters: dict | None = N
                 raise
 
 
-def load_embedded_docs(work_bucket: str, cache_prefix: str = "") -> list[dict]:
+# Document-level fields that ``extract.py`` writes and phases 2/4/6 read. The
+# ``embedded/`` copy of these is a snapshot taken when the doc was last
+# EMBEDDED, so any metadata fix made at extract time (title repair, new
+# source_url, reclassified doc_type, ...) never reaches the graph unless the
+# doc is also re-embedded. ``extracted/`` is therefore authoritative for these
+# keys and is overlaid onto the embedded doc at load time. Embedding data
+# (``chunks``, ``doc_embedding``, ``embed_input_mode``) is NEVER overlaid —
+# chunk text and vectors must stay the pair that was actually embedded.
+DOC_METADATA_KEYS: tuple[str, ...] = (
+    "title",
+    "summary",
+    "citation",
+    "case_name",
+    "source_url",
+    "doc_type",
+    "framework_id",
+    "authority_level",
+    "effective_date",
+    "statute_refs",
+    "admin_rule_refs",
+    "implements_refs",
+    "topics",
+    "s3_key",
+    "_parent_id",
+)
+
+_EMBEDDING_KEYS: frozenset[str] = frozenset({"chunks", "doc_embedding", "embed_input_mode"})
+assert not _EMBEDDING_KEYS & set(DOC_METADATA_KEYS)
+
+
+def losers_key(cache_prefix: str = "") -> str:
+    """Where ``ops/purge_dedup_losers.py`` records doc_ids that must never load."""
+    return f"{cache_prefix}dedup/losers.json"
+
+
+def load_dedup_losers(work_bucket: str, cache_prefix: str = "") -> set[str]:
+    """Return the set of loser doc_ids recorded by the dedup purge, if any.
+
+    The file is ``{"losers": {doc_id: {...}}}`` (or a bare list of ids). A
+    missing file means no losers — the pre-purge world.
+    """
+    try:
+        body = s3.get_object(Bucket=work_bucket, Key=losers_key(cache_prefix))["Body"].read()
+    except Exception as e:  # noqa: BLE001 — NoSuchKey shapes differ across clients/fakes
+        if "NoSuchKey" in type(e).__name__ or "NoSuchKey" in str(e) or "404" in str(e):
+            return set()
+        raise
+    data = json.loads(body)
+    losers = data.get("losers", data) if isinstance(data, dict) else data
+    return set(losers.keys()) if isinstance(losers, dict) else set(losers)
+
+
+def overlay_extracted_metadata(embedded: dict, extracted: dict | None) -> bool:
+    """Copy ``DOC_METADATA_KEYS`` from the extracted doc onto the embedded doc.
+
+    Only keys present in ``extracted`` are copied; embedding data is untouched.
+    Returns True when the title changed (the regression this guards against).
+    """
+    if not extracted:
+        return False
+    old_title = embedded.get("title")
+    for key in DOC_METADATA_KEYS:
+        if key in extracted:
+            embedded[key] = extracted[key]
+    return embedded.get("title") != old_title
+
+
+def load_embedded_docs(
+    work_bucket: str,
+    cache_prefix: str = "",
+    metadata_overlay: bool = True,
+    skip_losers: bool = True,
+) -> list[dict]:
     """Load every ``{cache_prefix}embedded/*.json`` from the work bucket.
 
     Chunks may carry extra fields from document expansion (``aliases``,
     ``gold_queries``, ``embed_input_chars``) and docs ``embed_input_mode``;
     phases 5/8 only read the specific fields they need, so these pass through
     harmlessly and are never written to the graph.
+
+    ``metadata_overlay`` (default on): document-level fields are refreshed from
+    ``{cache_prefix}extracted/{doc_id}.json`` when it exists — see
+    ``DOC_METADATA_KEYS``. ``skip_losers`` (default on): doc_ids recorded in
+    ``{cache_prefix}dedup/losers.json`` are dropped so a full load cannot
+    resurrect nodes an ops dedup pass deleted.
     """
     keys: list[str] = []
     prefix = f"{cache_prefix}embedded/"
@@ -108,8 +191,32 @@ def load_embedded_docs(work_bucket: str, cache_prefix: str = "") -> list[dict]:
                 keys.append(key)
     logger.info(f"Found {len(keys)} embedded JSONs under '{prefix}'; downloading in parallel...")
 
+    losers = load_dedup_losers(work_bucket, cache_prefix) if skip_losers else set()
+    if losers:
+        before = len(keys)
+        keys = [k for k in keys if k.removeprefix(prefix).removesuffix(".json") not in losers]
+        logger.info(
+            f"Dedup losers: skipping {before - len(keys)} embedded JSON(s) listed in "
+            f"'{losers_key(cache_prefix)}' ({len(losers)} ids recorded)"
+        )
+
+    extracted_prefix = f"{cache_prefix}extracted/"
+
     def fetch(key: str) -> dict:
-        return json.loads(s3.get_object(Bucket=work_bucket, Key=key)["Body"].read())
+        doc = json.loads(s3.get_object(Bucket=work_bucket, Key=key)["Body"].read())
+        if not metadata_overlay:
+            return doc
+        doc_id = doc.get("doc_id") or key.removeprefix(prefix).removesuffix(".json")
+        try:
+            raw = s3.get_object(Bucket=work_bucket, Key=f"{extracted_prefix}{doc_id}.json")
+        except Exception as e:  # noqa: BLE001
+            if "NoSuchKey" in type(e).__name__ or "NoSuchKey" in str(e) or "404" in str(e):
+                doc["_metadata_overlay"] = "missing"
+                return doc
+            raise
+        extracted = json.loads(raw["Body"].read())
+        doc["_metadata_overlay"] = "title_changed" if overlay_extracted_metadata(doc, extracted) else "applied"
+        return doc
 
     docs: list[dict] = []
     with ThreadPoolExecutor(max_workers=32) as pool:
@@ -117,6 +224,17 @@ def load_embedded_docs(work_bucket: str, cache_prefix: str = "") -> list[dict]:
             docs.append(doc)
             if i % 500 == 0 or i == len(keys):
                 logger.info(f"  Loaded {i}/{len(keys)} embedded JSONs")
+
+    if metadata_overlay:
+        states = [d.pop("_metadata_overlay", "missing") for d in docs]
+        applied = sum(1 for s in states if s != "missing")
+        title_changed = sum(1 for s in states if s == "title_changed")
+        logger.info(
+            f"Metadata overlay from '{extracted_prefix}': applied to {applied}/{len(docs)} docs, "
+            f"title changed for {title_changed}, no extracted copy for {len(docs) - applied}"
+        )
+    else:
+        logger.info("Metadata overlay DISABLED (--no-metadata-overlay): embedded/ metadata is used as-is")
     return docs
 
 
@@ -220,6 +338,54 @@ def resolve_authority_level(doc: dict, config: dict) -> int | None:
     return framework_levels.get(doc.get("framework_id"))
 
 
+def _case_name_for(doc: dict) -> str:
+    """Best available case name: persisted ``case_name``, else the CourtListener URL slug."""
+    from tools.ingestion.ingest_case_law import _case_name_from_url
+
+    name = (doc.get("case_name") or "").strip()
+    if not name or name == (doc.get("citation") or "").strip():
+        name = _case_name_from_url(doc.get("source_url") or "")
+    return name.strip()
+
+
+def repair_case_law_title(doc: dict) -> tuple[str, str | None]:
+    """Sink guard for case-law titles written by Phase 2.
+
+    Returns ``(title, repair_kind)`` where ``repair_kind`` is None when the
+    title was fine, ``"named"`` when a bare/doubled/empty/numeric title was
+    replaced by ``"{case_name}, {citation}"``, or ``"collapsed"`` when a
+    doubled ``"{citation}, {citation}"`` title had no name available and was
+    collapsed to the bare citation (strictly better, and it keeps the Phase 10
+    doubled-title assertion honest).
+
+    Bad shapes (all seen in production, see docs/tasks.md Task 46/64):
+      - ``title == citation``            (bare reporter cite, no name)
+      - ``title == "{cit}, {cit}"``      (legacy doubled cite)
+      - empty title / title starts with a digit (a cite, or a cite with junk)
+    """
+    title = (doc.get("title") or "").strip()
+    citation = (doc.get("citation") or "").strip()
+    doubled = f"{citation}, {citation}" if citation else None
+
+    bad = (
+        not title
+        or (citation and title == citation)
+        or (doubled is not None and title == doubled)
+        or title[:1].isdigit()
+    )
+    if not bad:
+        return title, None
+
+    case_name = _case_name_for(doc)
+    if case_name and case_name != citation and not case_name[:1].isdigit():
+        if title.startswith(case_name):
+            return title, None  # e.g. "123 Main St LLC v. City, 5 Wis. 2d 1" — already named
+        return (f"{case_name}, {citation}" if citation else case_name), "named"
+    if doubled is not None and title == doubled:
+        return citation, "collapsed"
+    return title or doc.get("doc_id", ""), None
+
+
 def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config: dict):
     logger.info("Phase 2: Creating document nodes...")
 
@@ -228,10 +394,23 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
     doc_type_to_label = config.get("doc_types", {})
     count = 0
     wpam_year_misses = 0
+    case_law_titles_repaired = 0
+    case_law_titles_collapsed = 0
 
     for doc in documents:
         doc_type = doc.get("doc_type", "guide")
         label = doc_type_to_label.get(doc_type, "Guide")
+
+        if doc_type == "case_law":
+            new_title, kind = repair_case_law_title(doc)
+            if kind == "named":
+                case_law_titles_repaired += 1
+                logger.info(
+                    f"  Phase 2 title guard: {doc['doc_id']}: {doc.get('title')!r} -> {new_title!r}"
+                )
+            elif kind == "collapsed":
+                case_law_titles_collapsed += 1
+            doc["title"] = new_title
 
         edition_year = None
         if doc.get("framework_id") == "FW-WPAM":
@@ -280,6 +459,10 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
 
     if wpam_year_misses:
         logger.warning(f"Phase 2: {wpam_year_misses} WPAM docs loaded without edition_year")
+    logger.info(
+        f"  Phase 2 title guard: case_law_titles_repaired={case_law_titles_repaired} "
+        f"case_law_titles_collapsed={case_law_titles_collapsed}"
+    )
     logger.info(f"  Created {count} document nodes")
 
 
@@ -1011,6 +1194,74 @@ def phase_9_cleanup(
         else:
             logger.info("  No stale CaseLaw nodes found")
 
+    # 4. Recorded dedup losers of ANY label (ops/purge_dedup_losers.py writes
+    #    {prefix}dedup/losers.json). The CaseLaw sweep above already covers
+    #    case-law losers once their extracted/ copy is gone; this catches the
+    #    rest (e.g. ghost statutes-document-* ids) and is a no-op when the
+    #    file is absent.
+    losers = sorted(load_dedup_losers(work_bucket, cache_prefix))
+    if losers:
+        removed = 0
+        for i in range(0, len(losers), 100):
+            batch = losers[i : i + 100]
+            result = execute_query(
+                client, graph_id,
+                "UNWIND $ids AS lid "
+                "MATCH (d {id: lid}) "
+                "OPTIONAL MATCH (ch:Chunk)-[:EXTRACTED_FROM]->(d) "
+                "DETACH DELETE ch, d "
+                "RETURN count(DISTINCT d) AS deleted",
+                {"ids": batch},
+            )
+            removed += result.get("results", [{}])[0].get("deleted", 0)
+        logger.info(
+            f"  Dedup losers: removed {removed} node(s) (+ chunks) of the {len(losers)} ids "
+            f"recorded in '{losers_key(cache_prefix)}'"
+        )
+
+
+class IntegrityCheckFailed(RuntimeError):
+    """Raised by Phase 10 when a hard post-load invariant is violated."""
+
+
+def phase_10_integrity_checks(client, graph_id: str) -> dict:
+    """Post-load assertions over the live graph.
+
+    Hard failure (non-zero exit): any CaseLaw node whose title is the legacy
+    doubled ``"{cit}, {cit}"`` shape — the Phase 2 guard makes this impossible
+    for docs loaded this run, so a hit means a stale node or a regression.
+    Informational: bare-citation titles (``title == citation``; ~115
+    Scholar-sourced nodes legitimately have no recoverable name) and orphan
+    chunks (no EXTRACTED_FROM parent — should be 0 after Phase 9).
+    """
+    logger.info("Phase 10: Integrity checks...")
+
+    def _count(query: str, field: str) -> int:
+        res = execute_query(client, graph_id, query)
+        rows = res.get("results", [])
+        return int(rows[0].get(field, 0)) if rows else 0
+
+    doubled = _count(
+        "MATCH (c:CaseLaw) WHERE c.title = c.citation + ', ' + c.citation RETURN count(c) AS n",
+        "n",
+    )
+    bare = _count("MATCH (c:CaseLaw) WHERE c.title = c.citation RETURN count(c) AS n", "n")
+    orphans = _count(
+        "MATCH (c:Chunk) WHERE NOT (c)-[:EXTRACTED_FROM]->() RETURN count(c) AS n", "n"
+    )
+    stats = {"doubled_titles": doubled, "bare_citation_titles": bare, "orphan_chunks": orphans}
+    logger.info(
+        f"  case-law doubled titles={doubled} (must be 0); bare-citation titles={bare} "
+        f"(informational); orphan chunks={orphans}"
+    )
+    if orphans:
+        logger.warning(f"  {orphans} orphan Chunk nodes have no EXTRACTED_FROM parent")
+    if doubled:
+        raise IntegrityCheckFailed(
+            f"{doubled} CaseLaw node(s) carry a doubled '{{citation}}, {{citation}}' title"
+        )
+    return stats
+
 
 def main():
     parser = argparse.ArgumentParser(description="Load documents into Neptune Analytics graph")
@@ -1036,12 +1287,30 @@ def main():
         help="Prefix for every work-bucket key (embedded/, extracted/). e.g. 'staging/' loads "
         "staging/embedded/ — pair with a staging --graph-id so production is untouched.",
     )
+    parser.add_argument(
+        "--no-metadata-overlay",
+        action="store_true",
+        help="Do NOT refresh document-level metadata (title, summary, citation, ...) from "
+        "extracted/ — use the snapshot inside embedded/ as-is. Default overlays, because "
+        "embedded/ is only rewritten on re-embed and stale titles regressed the graph 4x.",
+    )
+    parser.add_argument(
+        "--no-skip-losers",
+        action="store_true",
+        help="Load doc_ids recorded in {cache-prefix}dedup/losers.json anyway (default skips "
+        "them so a full load cannot resurrect nodes a dedup pass deleted).",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
     client, graph_id = get_neptune_client(args.graph_id)
     logger.info(f"Graph: {graph_id}; cache prefix: '{args.cache_prefix}'")
-    documents = load_embedded_docs(args.work_bucket, args.cache_prefix)
+    documents = load_embedded_docs(
+        args.work_bucket,
+        args.cache_prefix,
+        metadata_overlay=not args.no_metadata_overlay,
+        skip_losers=not args.no_skip_losers,
+    )
     logger.info(f"Loaded {len(documents)} documents for graph loading")
 
     documents = dedup_case_law_docs(documents)
@@ -1067,6 +1336,7 @@ def main():
                 client, graph_id, args.work_bucket, documents, args.cache_prefix
             ),
         ),
+        (10, "Integrity Checks", lambda: phase_10_integrity_checks(client, graph_id)),
     ]
 
     for phase_num, name, fn in phases:
@@ -1074,7 +1344,11 @@ def main():
             logger.info(f"Skipping Phase {phase_num}: {name}")
             continue
         logger.info(f"\n{'=' * 60}\nPhase {phase_num}: {name}\n{'=' * 60}")
-        fn()
+        try:
+            fn()
+        except IntegrityCheckFailed as e:
+            logger.error(f"Phase {phase_num} FAILED: {e}")
+            raise SystemExit(1) from e
         if args.stop_after_phase is not None and phase_num >= args.stop_after_phase:
             logger.info(f"Stopping after Phase {phase_num} per --stop-after-phase.")
             return

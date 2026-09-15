@@ -104,7 +104,6 @@ def _compact_for_model(result: dict, tool_name: str) -> dict:
             "statute_backfill",
             "caselaw_backfill",
             "broad_discovery",
-            "vocab_discovery",
         ):
             compacted[key] = [
                 {k: v for k, v in chunk.items() if k in _CHUNK_FIELDS_FOR_MODEL and v is not None}
@@ -475,12 +474,6 @@ def run_agentic_loop(
             if doc_id:
                 all_doc_ids.add(doc_id)
                 discovery.setdefault(doc_id, "broad-discovery")
-            all_chunks.append(chunk)
-        for chunk in vs_result.get("vocab_discovery", []):
-            doc_id = chunk.get("doc_id", "")
-            if doc_id:
-                all_doc_ids.add(doc_id)
-                discovery.setdefault(doc_id, "vocab-injection")
             all_chunks.append(chunk)
 
     # Register the seeded flowchart as a discovered doc (so it is citeable) and
@@ -916,14 +909,6 @@ def run_agentic_loop(
                     if doc_id:
                         all_doc_ids.add(doc_id)
                         discovery.setdefault(doc_id, "broad-discovery")
-                    all_chunks.append(chunk)
-                # Vocab-injection arm: additive docs surfaced by expanding a
-                # trigger term (e.g. "camping trailer") with statute vocabulary.
-                for chunk in result.get("vocab_discovery", []):
-                    doc_id = chunk.get("doc_id", "")
-                    if doc_id:
-                        all_doc_ids.add(doc_id)
-                        discovery.setdefault(doc_id, "vocab-injection")
                     all_chunks.append(chunk)
 
             if tool_name in ("search_document", "get_section") and "chunks" in result:

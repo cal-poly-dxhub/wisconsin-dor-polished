@@ -8,6 +8,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -265,6 +266,142 @@ def embed_chunks(
     return doc
 
 
+def _effective_mode(doc: dict, embed_input: str, policy) -> str:
+    return (
+        "plain"
+        if embed_input == "enriched" and not _as_policy(policy).doc_enriched(doc)
+        else embed_input
+    )
+
+
+def chunk_fingerprints(
+    doc: dict, embed_input: str = "plain", exclude_doc_types=ENRICH_EXCLUDE_DOC_TYPES
+) -> list[str]:
+    """sha256 of the exact string Titan would receive for each chunk.
+
+    In ``plain`` mode this is the sha256 of ``chunk["text"]``. In ``enriched``
+    mode the header/aliases/gold queries are part of the input, so a changed
+    alias (or title, via the header) correctly reads as "vector would move".
+    """
+    return [
+        hashlib.sha256(
+            chunk_embed_input(doc, chunk, embed_input, exclude_doc_types).encode("utf-8")
+        ).hexdigest()
+        for chunk in doc.get("chunks", [])
+    ]
+
+
+def try_metadata_refresh(
+    extracted: dict,
+    embedded: dict | None,
+    embed_input: str = "plain",
+    exclude_doc_types=ENRICH_EXCLUDE_DOC_TYPES,
+) -> dict | None:
+    """Metadata-only refresh for ``--smart``: reuse existing vectors when nothing
+    that feeds Titan changed.
+
+    Returns a new embedded doc (the EXTRACTED doc — fresh title/summary/citation/
+    source_url/... — with the existing per-chunk ``embedding`` /
+    ``embed_input_chars`` and ``doc_embedding`` copied over) when:
+      - an embedded copy exists,
+      - chunk count matches,
+      - every chunk's embed input (see ``chunk_fingerprints``) is identical,
+      - every embedded chunk actually carries an embedding,
+      - the embedded copy was produced in the same effective embed-input mode.
+    Returns None otherwise → caller falls through to a full re-embed.
+
+    Rationale: ``embedded/{doc_id}.json`` is only rewritten on re-embed, so
+    extract-time metadata fixes never propagated and the graph regressed on
+    case-law titles 4x. This lets ``embed --smart`` flush those fixes for the
+    price of two S3 calls per doc instead of a Titan call per chunk.
+    """
+    if not embedded:
+        return None
+    ext_chunks = extracted.get("chunks", [])
+    emb_chunks = embedded.get("chunks", [])
+    if len(ext_chunks) != len(emb_chunks):
+        return None
+    if _effective_mode(extracted, embed_input, exclude_doc_types) != embedded.get(
+        "embed_input_mode", "plain"
+    ):
+        return None
+    if ext_chunks:
+        # Embeddings are compared on the stored chunk (its text + aliases), so
+        # the old fingerprint is computed over the embedded copy with the OLD
+        # title in the header — a title change under enriched mode therefore
+        # forces a re-embed, which is the correct outcome (the vector moves).
+        if chunk_fingerprints(extracted, embed_input, exclude_doc_types) != chunk_fingerprints(
+            embedded, embed_input, exclude_doc_types
+        ):
+            return None
+        if any(not c.get("embedding") for c in emb_chunks):
+            return None
+    elif extracted.get("doc_type") == "case_law":
+        # Chunk-less case-law stubs are never embedded; embed_chunks() returns
+        # them unchanged, so the refreshed copy is simply the extracted doc.
+        return dict(extracted)
+    if "doc_embedding" not in embedded:
+        return None
+
+    refreshed = dict(extracted)
+    refreshed["chunks"] = [
+        {**ext, "embedding": emb["embedding"], "embed_input_chars": emb.get("embed_input_chars")}
+        for ext, emb in zip(ext_chunks, emb_chunks, strict=True)
+    ]
+    refreshed["doc_embedding"] = embedded["doc_embedding"]
+    refreshed["embed_input_mode"] = embedded.get("embed_input_mode", "plain")
+    return refreshed
+
+
+def refresh_metadata_only(
+    work_bucket: str,
+    cache_prefix: str,
+    stale_docs: list[dict],
+    embed_input: str = "plain",
+    exclude_doc_types=ENRICH_EXCLUDE_DOC_TYPES,
+    max_workers: int = 16,
+) -> tuple[list[dict], int]:
+    """Apply ``try_metadata_refresh`` to every stale doc.
+
+    Docs whose vectors could be reused are rewritten to ``embedded/`` with the
+    fresh metadata and dropped from the returned list; the rest are returned
+    for a full re-embed. Returns ``(docs_still_needing_embed, refreshed_count)``.
+    """
+
+    def _fetch_embedded(doc: dict) -> dict | None:
+        try:
+            body = s3.get_object(
+                Bucket=work_bucket, Key=embedded_key(doc["doc_id"], cache_prefix)
+            )["Body"].read()
+        except Exception as e:  # noqa: BLE001 — missing embedded copy → full embed
+            if "NoSuchKey" in type(e).__name__ or "NoSuchKey" in str(e) or "404" in str(e):
+                return None
+            raise
+        return json.loads(body)
+
+    remaining: list[dict] = []
+    refreshed_count = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for doc, embedded in zip(stale_docs, pool.map(_fetch_embedded, stale_docs), strict=True):
+            refreshed = try_metadata_refresh(doc, embedded, embed_input, exclude_doc_types)
+            if refreshed is None:
+                remaining.append(doc)
+                continue
+            s3.put_object(
+                Bucket=work_bucket,
+                Key=embedded_key(doc["doc_id"], cache_prefix),
+                Body=json.dumps(refreshed, default=str).encode("utf-8"),
+                ContentType="application/json",
+            )
+            refreshed_count += 1
+            if refreshed.get("title") != (embedded or {}).get("title"):
+                logger.info(
+                    f"  metadata refresh {doc['doc_id']}: title "
+                    f"{(embedded or {}).get('title')!r} -> {refreshed.get('title')!r}"
+                )
+    return remaining, refreshed_count
+
+
 def list_already_embedded(bucket: str, cache_prefix: str = "") -> set[str]:
     """Return set of doc_ids that already have embedding output in the work bucket."""
     embedded = set()
@@ -310,6 +447,13 @@ def main():
         "--source-filter",
         default="",
         help="Only embed doc_ids matching this prefix (e.g., 'wpam-' to re-embed WPAM only).",
+    )
+    parser.add_argument(
+        "--no-metadata-refresh",
+        action="store_true",
+        help="With --smart: always re-embed stale docs, even when only document metadata "
+        "changed (default reuses the existing vectors when every chunk's embed input is "
+        "byte-identical and just rewrites embedded/ with the fresh metadata).",
     )
     args = parser.parse_args()
 
@@ -370,6 +514,14 @@ def main():
             except ClientError:
                 stale.append(doc)
         logger.info(f"Smart mode: {len(stale)}/{len(docs)} documents have stale embeddings")
+        if not args.no_metadata_refresh:
+            stale, metadata_refreshed = refresh_metadata_only(
+                args.work_bucket, cache_prefix, stale, embed_input, exclude_doc_types
+            )
+            logger.info(
+                f"Smart mode: metadata_refreshed={metadata_refreshed} (vectors reused, no Titan "
+                f"calls); {len(stale)} documents still need a full re-embed"
+            )
         docs = stale
     else:
         already_done = list_already_embedded(args.work_bucket, cache_prefix)
