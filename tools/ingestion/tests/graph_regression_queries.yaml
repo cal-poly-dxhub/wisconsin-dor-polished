@@ -806,7 +806,10 @@ queries:
       §70.11(11) rule — in particular it must not tell a general church that its
       exemption is capped at 40 acres or contingent on being a religious summer
       camp. FAIL if the answer imposes the 40-acre camp cap or camp-ownership
-      requirement on ordinary churches.
+      requirement on ordinary churches. NOTE: §70.11(4)(a) itself limits the
+      exempt land to "not exceeding 10 acres" necessary for the location and
+      convenience of the buildings — mentioning that 10-acre limit is CORRECT
+      and must not be treated as a misapplied cap.
     must_not_contain: ["40 acre|40-acre|forty acre"]
     notes: >
       Group 2 COERCION TRIP-WIRE. The router may seed (or previously seeded) the
