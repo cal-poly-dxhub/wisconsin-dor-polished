@@ -470,3 +470,17 @@ Property tax is full of terms-of-art where everyday phrasing (e.g. "camping trai
 **Also shipped:** `scrape_documents.py --only DOC_ID` (single-document refresh with `--force`); `load.py` Phase 7 restricted to the loaded documents on `--source-filter` (single-doc load 15 min → 2.5 min from a laptop); ECR image rebuilt.
 
 **Not in corpus / for DOR:** "clear height" (likely Volume 3 commercial, unpublished); *Prime Leather Finishing* (not on CourtListener as a Wisconsin case — probably a Tax Appeals Commission decision; need the cite).
+
+### Task 70: Loose ends from the 2026-09-10 → 09-15 feedback review
+
+**Status:** Open (small). Source: feedback investigation 2026-09-16 (22 rated: 15 up, 7 down/mid; no hallucinations, no wrong-doc citations) cross-checked against what shipped 09-11 → 09-15.
+
+Already fixed and re-verified in the harness but **not yet re-rated by testers**: LC-667 (Task 69), residential grade scale (Task 69, Vol 2), mobile home / camping trailer (Task 65), assessment-date and hire-an-assessor classifier refusals (09-13), Native American property (Task 61), case-law card titles (Task 64). Ask testers to re-rate on Thursday.
+
+Remaining, in priority order:
+1. **Image requests should still deliver the text.** `gq-cape-cod-grades` ("pictures examples of cape cod with the various grades") still refuses as image-incapable and surfaces no grade material even though Volume 2 now has it and citation cards deep-link the photo pages. Prompt tweak in `agenticRetrieval`: on an image/picture request, say it can't display images, then answer the underlying content question and link the WPAM Volume 2 example pages.
+2. **Name-a-body scoping.** "Can the BOA increase an assessment…" got a BOR-first dual-track answer. Prompt tweak: when the user names a specific body (BOA / BOR / TAC), lead with that body; mention the other only as a contrast.
+3. **Classifier miss:** "What is the maximum number of Innovation Grant applications that a private entity can submit?" (09-15) was refused as out of scope although 8 sibling IG questions passed. Add a "private entity / transferee" example to the classifier's in-scope list in `config/model_configs.toml` and push with `tools/upload_model_configs.py`.
+4. **Assessment-date golden case.** The 09-13 classifier fix for "what time of day on January 1…" (5 thumbs-down on 09-09) has no harness case; add one (stratum A) so it can't silently regress.
+5. **DOR content:** *Prime Leather Finishing* citation (not a Wisconsin appellate case on CourtListener; likely Tax Appeals Commission); SL-405 window date conflict (news 2025-07-02 "through March 31, 2026" vs FAQ Phase 2 "March 31, 2027"); "clear height" (Volume 3, unpublished). All on the Sep 17 agenda.
+6. Style only, no action: "modular offices" (correct but hedged), "does it matter if sustained" (verbose follow-up), text-rewording request (one clean rewrite would have served better).
