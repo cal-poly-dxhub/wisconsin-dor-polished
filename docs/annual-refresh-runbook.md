@@ -287,6 +287,12 @@ uv run python -c "import yaml; d=yaml.safe_load(open('tools/ingestion/config/doc
 **What:** shows what the scraper *would* download, without touching anything. Use it to
 confirm your new URLs were picked up and spelled correctly.
 
+Manifest entries are plain URL strings. Use the dict form `{url, doc_id, title,
+effective_date}` only when the derived id or title would be wrong — e.g. WPAM Volume 2 is
+registered with a year-less `doc_id` so it is never treated as a competing *edition* of
+Volume 1, and with an explicit `title` because its opening pages don't name it. To re-upload
+a single document even if unchanged: `--only <doc_id> --force` (with its `--category`).
+
 **Time:** under 1 minute. **Cost:** none.
 
 ```bash
