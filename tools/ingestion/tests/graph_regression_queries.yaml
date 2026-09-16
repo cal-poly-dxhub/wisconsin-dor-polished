@@ -889,3 +889,32 @@ queries:
       Task 60(b): previously assumed to be proprietary cost-manual material; DOR
       publishes a redacted Volume 2 (wpamvol2.pdf) that carries the grade
       definitions, factors, and example photos (link via page anchors).
+
+  - queryId: gq-grade-d-house-example
+    stratum: B
+    tags: [ingestion-gap]
+    query: "What does a Grade D house look like?"
+    rubric: >
+      PASS only if the answer describes Grade D (fair quality) dwellings per the
+      WPAM Volume 2 grade definitions (cheaper materials / workmanship, minimal
+      architectural treatment — below the C average) and cites WPAM Volume 2
+      (the example-photo pages carry captions like "Bungalow, Grade D"). FAIL if
+      it says no grade information is available or invents a scale.
+    must_cite: [wpam-volume-2-residential-apartments-agricultural]
+    must_contain: ["Grade D|grade D|D grade"]
+
+  - queryId: gq-wpam-clear-height-absent
+    stratum: B
+    tags: [ingestion-gap, negative]
+    query: "How does the Wisconsin Property Assessment Manual define a building's clear height?"
+    rubric: >
+      PASS only if the answer states that the retrievable WPAM text (Volumes 1
+      and 2) does not contain a definition of "clear height" and does NOT
+      fabricate one. It may mention that construction/measurement terms live in
+      WPAM commercial cost material DOR does not publish. FAIL if the answer
+      invents a clear-height definition or attributes one to a WPAM page.
+    must_cite: []
+    must_contain: []
+    notes: >
+      Negative control for the Volume 2 ingest: Volume 2 has appraisal/architectural
+      glossaries but no "clear height" entry; the bot must not over-reach.
