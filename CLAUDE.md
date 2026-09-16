@@ -78,7 +78,13 @@ aws logs tail /ecs/wis-dor-ingestion --follow --profile <your-profile> --region 
 ```bash
 # Document manifest (single source of truth): tools/ingestion/config/document_manifest.yaml
 # The scraper reads this manifest, downloads each URL, compares content hashes
-# against S3, and only uploads changed documents.
+# against S3, and only uploads changed documents. Entries are plain URL strings,
+# or {url, doc_id, title, effective_date} dicts when the derived id/title is wrong
+# (e.g. WPAM Volume 2 — a companion volume registered with a year-less doc_id so it
+# is never edition-deduped against Volume 1; see docs/tasks.md Task 69).
+# Refresh ONE document (re-upload even if unchanged):
+#   ... scrape_documents.py --bucket wis-raw-bucket-c8e69250 --category wpam \
+#         --only wpam-volume-2-residential-apartments-agricultural --force
 
 # Dry run — see what changed without modifying anything:
 AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python tools/ingestion/scrape_documents.py \

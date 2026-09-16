@@ -198,6 +198,12 @@ MISSING_SOURCE_RULES: tuple[MissingRule, ...] = (
         "70.32(2)",
         "Expected the ag / undeveloped / ag-forest classification rules (s. 70.32(2), ag guide)",
     ),
+    MissingRule(
+        r"lottery-home\.aspx|\bLC-?667\b",
+        ("complex_inquiry_pages-lottery-home",),
+        None,
+        "Expected the Lottery and Gaming Credit forms page (LC-667 eligibility questionnaire)",
+    ),
 )
 
 # Signals that a comment is describing a MISSING source (vs. a wrong answer).

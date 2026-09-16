@@ -278,6 +278,7 @@ def process_document(
     stats: dict,
     failures: list,
     effective_date_override: str | None = None,
+    title_override: str | None = None,
 ) -> None:
     """Download, check, and upload a single document.
 
@@ -315,6 +316,11 @@ def process_document(
         effective_date = effective_date_override or extract_news_date(url)
         if effective_date:
             metadata["effective_date"] = effective_date
+        # A manifest `title:` wins over the LLM-classified title at extract time
+        # (extract.py reads metadata["title"] first). Use it when the PDF's
+        # opening pages don't name the document (e.g. WPAM Volume 2).
+        if title_override:
+            metadata["title"] = title_override
 
         doc_key = upload_to_s3(bucket, prefix, doc_id, data, content_type, metadata)
         stats[status] += 1
@@ -367,6 +373,12 @@ def main():
         help="Only scrape this category (repeatable)",
     )
     parser.add_argument(
+        "--only",
+        action="append",
+        default=None,
+        help="Only scrape this doc_id (repeatable); combine with --force to refresh one document",
+    )
+    parser.add_argument(
         "--sleep",
         type=float,
         default=0.5,
@@ -405,12 +417,16 @@ def main():
                 url = entry["url"]
                 explicit_id = entry.get("doc_id")
                 effective_date_override = entry.get("effective_date")
+                title_override = entry.get("title")
             else:
                 url = entry
                 explicit_id = None
                 effective_date_override = None
+                title_override = None
 
             doc_id = make_doc_id(category, url, explicit_id)
+            if args.only and doc_id not in args.only:
+                continue
             processed += 1
 
             if args.dry_run:
@@ -440,6 +456,7 @@ def main():
                 stats=stats,
                 failures=failures,
                 effective_date_override=effective_date_override,
+                title_override=title_override,
             )
 
     logger.info("\n%sComplete: %d processed", "DRY RUN " if args.dry_run else "", processed)

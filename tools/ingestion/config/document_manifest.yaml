@@ -83,6 +83,15 @@ categories:
       - https://www.revenue.wi.gov/documents/wpam24.pdf
       - https://www.revenue.wi.gov/documents/wpam25.pdf
       - https://www.revenue.wi.gov/documents/wpam26.pdf
+      # WPAM Volume 2 (Residential, Apartments and Agricultural — DOR's redacted
+      # public edition). Explicit doc_id WITHOUT a year: it is a companion volume,
+      # not an annual edition, so it must stay out of the edition_year dedup that
+      # picks one WPAM chunk per heading (a year in the id would make it compete
+      # with Volume 1 of the same year). Still starts with "wpam-" so it gets the
+      # WPAM framework (authority 5) and the WPAM section chunker.
+      - url: https://www.revenue.wi.gov/documents/wpamvol2.pdf
+        doc_id: wpam-volume-2-residential-apartments-agricultural
+        title: "Wisconsin Property Assessment Manual, Volume 2 – Residential, Apartments and Agricultural (2026)"
 
   faq_pages:
     framework_id: FW-FAQ
@@ -256,6 +265,9 @@ categories:
       - https://www.revenue.wi.gov/Pages/Training/assessor-certification.aspx
       - https://www.revenue.wi.gov/Pages/Training/assess-recert.aspx
       - https://www.revenue.wi.gov/Pages/Apps/assessor-inquiry.aspx
+      # Lottery and Gaming Credit forms index (LC-100, LC-400, LC-667 questionnaire,
+      # online portal). Tester feedback 2026-09-14: "What is the LC-667" had no source.
+      - https://www.revenue.wi.gov/Pages/Form/lottery-home.aspx
 
 
   news_pages:

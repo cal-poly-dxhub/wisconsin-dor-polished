@@ -215,7 +215,9 @@ def load_embedded_docs(
                 return doc
             raise
         extracted = json.loads(raw["Body"].read())
-        doc["_metadata_overlay"] = "title_changed" if overlay_extracted_metadata(doc, extracted) else "applied"
+        doc["_metadata_overlay"] = (
+            "title_changed" if overlay_extracted_metadata(doc, extracted) else "applied"
+        )
         return doc
 
     docs: list[dict] = []
@@ -234,7 +236,9 @@ def load_embedded_docs(
             f"title changed for {title_changed}, no extracted copy for {len(docs) - applied}"
         )
     else:
-        logger.info("Metadata overlay DISABLED (--no-metadata-overlay): embedded/ metadata is used as-is")
+        logger.info(
+            "Metadata overlay DISABLED (--no-metadata-overlay): embedded/ metadata is used as-is"
+        )
     return docs
 
 
@@ -466,11 +470,6 @@ def phase_2_document_nodes(client, graph_id: str, documents: list[dict], config:
     logger.info(f"  Created {count} document nodes")
 
 
-
-
-
-
-
 def phase_3_statute_hierarchy(client, graph_id: str):
     """Build (Section)-[:PART_OF]->(Chapter) and (Sub)-[:PART_OF]->(Section).
 
@@ -560,8 +559,6 @@ def phase_3_statute_hierarchy(client, graph_id: str):
         f"  Created {len(section_to_chapter)} section→chapter and "
         f"{len(sub_to_parent)} subsection→parent edges"
     )
-
-
 
 
 def phase_4_hierarchy_links(client, graph_id: str, documents: list[dict]):
@@ -863,13 +860,21 @@ def phase_5_chunk_nodes(client, graph_id: str, documents: list[dict]):
     logger.info(f"  Created {total_chunks} chunk nodes, {cite_edges} chunk-level CITES edges")
 
 
-def phase_7_stub_resolution(client, graph_id: str):
+def phase_7_stub_resolution(client, graph_id: str, only_doc_ids: set[str] | None = None):
     """Wire DEFINED_BY edges from statute stubs to their matching statute chunks.
 
     Stubs like WIS-STAT-70.32 become routing nodes that point to the actual
     chunk(s) containing that section's text, matched by chunk heading prefix.
+
+    ``only_doc_ids`` (set on a ``--source-filter`` load) restricts resolution to
+    stubs that target one of the documents being loaded. Phase 5 only purges and
+    recreates chunks of those documents, so DEFINED_BY edges into every other
+    document are still valid — re-resolving all ~8.5k stubs (one query each)
+    is what made a single-document load take 15 minutes from a laptop.
     """
     logger.info("Phase 7: Wiring DEFINED_BY edges from stubs to statute chunks...")
+    if only_doc_ids is not None:
+        logger.info(f"  Restricted to stubs targeting {len(only_doc_ids)} loaded document(s)")
 
     result = execute_query(
         client, graph_id, "MATCH (s:Statute) WHERE s.stub = true RETURN s.id AS id"
@@ -892,54 +897,59 @@ def phase_7_stub_resolution(client, graph_id: str):
         # Strip subsection qualifiers — chunk headings are section-level only
         # e.g. "70.47(1)" → "70.47", "70.111 (27)" → "70.111"
         match_section = re.split(r"[\s(]", section, maxsplit=1)[0]
-        parsed.append({
-            "stub_id": stub_id,
-            "doc_id": f"statutes-{chapter}",
-            "section": match_section,
-        })
+        if only_doc_ids is not None and f"statutes-{chapter}" not in only_doc_ids:
+            continue
+        parsed.append(
+            {
+                "stub_id": stub_id,
+                "doc_id": f"statutes-{chapter}",
+                "section": match_section,
+            }
+        )
 
     if not parsed:
         logger.info("  No section-level stubs to resolve")
-        return
+    else:
+        logger.info(f"  {len(parsed)} section-level stubs to resolve")
 
-    logger.info(f"  {len(parsed)} section-level stubs to resolve")
+        # Group by chapter doc to reduce query count
+        by_doc: dict[str, list[dict]] = {}
+        for entry in parsed:
+            by_doc.setdefault(entry["doc_id"], []).append(entry)
 
-    # Group by chapter doc to reduce query count
-    by_doc: dict[str, list[dict]] = {}
-    for entry in parsed:
-        by_doc.setdefault(entry["doc_id"], []).append(entry)
+        pairs: list[dict] = []
+        for doc_id, entries in by_doc.items():
+            for entry in entries:
+                result = execute_query(
+                    client,
+                    graph_id,
+                    "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: $doc_id}) "
+                    "WHERE c.heading STARTS WITH $section "
+                    "RETURN c.id AS chunk_id",
+                    {"doc_id": doc_id, "section": entry["section"]},
+                )
+                for row in result.get("results", []):
+                    pairs.append({"stub_id": entry["stub_id"], "chunk_id": row["chunk_id"]})
 
-    pairs: list[dict] = []
-    for doc_id, entries in by_doc.items():
-        for entry in entries:
-            result = execute_query(
+        resolved_count = len({p["stub_id"] for p in pairs})
+
+        flush_cap = 200
+        edges_created = 0
+        for start in range(0, len(pairs), flush_cap):
+            batch = pairs[start : start + flush_cap]
+            execute_query(
                 client,
                 graph_id,
-                "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: $doc_id}) "
-                "WHERE c.heading STARTS WITH $section "
-                "RETURN c.id AS chunk_id",
-                {"doc_id": doc_id, "section": entry["section"]},
+                "UNWIND $rows AS row "
+                "MATCH (s:Statute {id: row.stub_id}), (c:Chunk {id: row.chunk_id}) "
+                "MERGE (s)-[:DEFINED_BY]->(c)",
+                {"rows": batch},
             )
-            for row in result.get("results", []):
-                pairs.append({"stub_id": entry["stub_id"], "chunk_id": row["chunk_id"]})
+            edges_created += len(batch)
 
-    resolved_count = len({p["stub_id"] for p in pairs})
-
-    flush_cap = 200
-    edges_created = 0
-    for start in range(0, len(pairs), flush_cap):
-        batch = pairs[start : start + flush_cap]
-        execute_query(
-            client,
-            graph_id,
-            "UNWIND $rows AS row "
-            "MATCH (s:Statute {id: row.stub_id}), (c:Chunk {id: row.chunk_id}) "
-            "MERGE (s)-[:DEFINED_BY]->(c)",
-            {"rows": batch},
+        logger.info(
+            f"  Wired {edges_created} DEFINED_BY edges for {resolved_count}/{len(parsed)} stubs"
         )
-        edges_created += len(batch)
-
-    logger.info(f"  Wired {edges_created} DEFINED_BY edges for {resolved_count}/{len(parsed)} stubs")
 
     # --- AdminRule stub resolution ---
     # Same pattern: normalize dirty stub IDs to section level, match against
@@ -991,15 +1001,18 @@ def phase_7_stub_resolution(client, graph_id: str):
         if not result_pair:
             continue
         doc_id, section = result_pair
+        if only_doc_ids is not None and doc_id not in only_doc_ids:
+            continue
         # Dedup: multiple dirty stubs (18.05(1)(a), 18.05(1)(b)) normalize to same section
-        key = (stub["id"], doc_id, section)
         if (doc_id, section) not in seen_pairs:
             seen_pairs.add((doc_id, section))
-        ar_parsed.append({
-            "stub_id": stub["id"],
-            "doc_id": doc_id,
-            "section": section,
-        })
+        ar_parsed.append(
+            {
+                "stub_id": stub["id"],
+                "doc_id": doc_id,
+                "section": section,
+            }
+        )
 
     if not ar_parsed:
         logger.info("  No AdminRule section-level stubs to resolve")
@@ -1038,7 +1051,9 @@ def phase_7_stub_resolution(client, graph_id: str):
                 {"rows": batch},
             )
 
-        logger.info(f"  Wired {len(ar_pairs)} DEFINED_BY edges for {ar_resolved}/{len(ar_parsed)} AdminRule stubs")
+        logger.info(
+            f"  Wired {len(ar_pairs)} DEFINED_BY edges for {ar_resolved}/{len(ar_parsed)} AdminRule stubs"
+        )
 
 
 PHASE_8_WORKERS = 8
@@ -1163,7 +1178,8 @@ def phase_9_cleanup(
 
     if extracted_case_ids:
         all_graph_cases = execute_query(
-            client, graph_id,
+            client,
+            graph_id,
             "MATCH (c:CaseLaw) RETURN c.id AS id",
         )
         graph_case_ids = {r["id"] for r in all_graph_cases.get("results", [])}
@@ -1178,7 +1194,8 @@ def phase_9_cleanup(
             for i in range(0, len(stale_ids), batch_size):
                 batch = stale_ids[i : i + batch_size]
                 result = execute_query(
-                    client, graph_id,
+                    client,
+                    graph_id,
                     "UNWIND $ids AS cid "
                     "MATCH (c:CaseLaw {id: cid}) "
                     # Delete the node's chunks too — a bare DETACH DELETE on the
@@ -1205,7 +1222,8 @@ def phase_9_cleanup(
         for i in range(0, len(losers), 100):
             batch = losers[i : i + 100]
             result = execute_query(
-                client, graph_id,
+                client,
+                graph_id,
                 "UNWIND $ids AS lid "
                 "MATCH (d {id: lid}) "
                 "OPTIONAL MATCH (ch:Chunk)-[:EXTRACTED_FROM]->(d) "
@@ -1327,7 +1345,15 @@ def main():
         (4, "Hierarchy Links", lambda: phase_4_hierarchy_links(client, graph_id, documents)),
         (5, "Chunk Nodes", lambda: phase_5_chunk_nodes(client, graph_id, documents)),
         (6, "Case Law CITES", lambda: phase_6_case_law_cites(client, graph_id, documents)),
-        (7, "Stub Resolution", lambda: phase_7_stub_resolution(client, graph_id)),
+        (
+            7,
+            "Stub Resolution",
+            lambda: phase_7_stub_resolution(
+                client,
+                graph_id,
+                only_doc_ids={d["doc_id"] for d in documents} if args.source_filter else None,
+            ),
+        ),
         (8, "Vector Upserts", lambda: phase_8_vector_upserts(client, graph_id, documents)),
         (
             9,
