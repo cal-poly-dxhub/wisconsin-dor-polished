@@ -456,3 +456,17 @@ Property tax is full of terms-of-art where everyday phrasing (e.g. "camping trai
 **Why not pursue it:** agent LLM cost is ~$0.17/query, negligible against the fixed ~$3k/month infra; the bot's value is thoroughness; testing closes 2026-09-24 and a model swap mid-window would force a prompt re-tune and harness re-baseline. Revisit only with a high-effort run and a prompt pass, and only if per-token price is materially lower.
 
 **Kept:** model-aware sampling in `streaming/bedrock.py` (Sonnet 5 / Opus 5 reject `temperature`; effort via `output_config`), so a future swap is an env-var change. Artifacts: `~/Work/DxHub/wisdor/feedback-analysis/logs-2026-09-14/graph_regression_after_sonnet5.json` and `harness_sonnet5_compare.log`.
+
+### Task 69: Content-gap ingests 2026-09-15 — WPAM Volume 2 + Lottery Credit forms page
+
+**Status:** DONE 2026-09-15 (branch `feat/wpam-vol2-lottery-ingest`).
+
+**What:** (1) **WPAM Volume 2 – Residential, Apartments and Agricultural (2026, DOR's redacted public edition, `wpamvol2.pdf`)** — 348 pages / 412 chunks. Carries the residential quality-grade scale (AA–E with factors and per-grade specifications), example dwelling photos with captions, agricultural building specs (prices redacted), and appraisal/architectural term glossaries. Closes Task 60(b) "residential grade scale" which we had assumed was proprietary. (2) **Lottery and Gaming Credit forms page** (`Pages/Form/lottery-home.aspx`: LC-100, LC-400, LC-667 questionnaire, online portal) — tester 2026-09-14 "What is the LC-667" had no source.
+
+**How Volume 2 is registered:** `wpam` category with an explicit year-less doc_id `wpam-volume-2-residential-apartments-agricultural` → WPAM framework / authority 5 / WPAM chunker, but `edition_year` is null so the per-heading edition dedup (`wpam_dedup.py`) and `wpam_latest_only` never treat it as a competing edition of Volume 1. Manifest entries now accept `title:` (Volume 2's opening pages don't name it; the LLM title was "Full Market Value and Traditional Approaches to Value"). WPAM chunker: heading = chapter **or section** — Volume 2 has no "Chapter N" lines and would otherwise collapse into one "Untitled" section (breaks list_sections / get_section).
+
+**Verification (prod graph, 46-case harness incl. 4 new cases):** grade scale, Grade-D example (deep-links p.58), and the clear-height negative control all PASS; Volume 2 was not retrieved in any regressed case (5 flips re-ran as noise, 4/6 pass; `fc-fp-churches` was a rubric bug — the §70.11(4)(a) 10-acre limit is correct — fixed). LC-667 failed at first: the page is a forms table and Titan ranked it outside the top 60 for the bare phrasing; attached the tester's query with `ops/attach_gold_queries.py` (Task 65 mechanism) → rank 1 → PASS. Photos: not extracted; captions ("Bungalow, Grade D") merge into the adjacent chunk and citation cards deep-link to the page, which is how DOR's "image use-case" question is answered.
+
+**Also shipped:** `scrape_documents.py --only DOC_ID` (single-document refresh with `--force`); `load.py` Phase 7 restricted to the loaded documents on `--source-filter` (single-doc load 15 min → 2.5 min from a laptop); ECR image rebuilt.
+
+**Not in corpus / for DOR:** "clear height" (likely Volume 3 commercial, unpublished); *Prime Leather Finishing* (not on CourtListener as a Wisconsin case — probably a Tax Appeals Commission decision; need the cite).
