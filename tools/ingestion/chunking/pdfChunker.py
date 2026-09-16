@@ -976,12 +976,18 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
 
         pages = {page for _, page in buffer}
         sp, ep = (min(pages), max(pages)) if pages else (1, 1)
+        # Heading = chapter when the document has "Chapter N" structure (WPAM
+        # Volume 1). Companion volumes (Volume 2: Residential, Apartments and
+        # Agricultural) have no chapter lines — only ALL-CAPS section titles —
+        # so fall back to the section; otherwise every chunk lands under a
+        # single "Untitled" heading and list_sections / get_section can't
+        # navigate the document.
         chunks.append(
             {
                 "text": text,
                 "metadata": {
                     "doc_id": doc_id,
-                    "heading": chapter or "Untitled",
+                    "heading": chapter or section or "Untitled",
                     "subheading": section or None,
                     "start_page": sp,
                     "end_page": ep,
