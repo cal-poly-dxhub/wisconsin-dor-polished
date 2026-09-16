@@ -1728,3 +1728,12 @@ cases:
   - not-in-graph:gov_publications-2026-property-assessment-guide
   - not-in-graph:gov_publications-2026-property-owners-guide
   source_rows: 3
+- id: re-0119
+  tier: gold_missing
+  query: What is the LC-667
+  expected_doc_ids:
+  - complex_inquiry_pages-lottery-home
+  note_hints:
+  - https://www.revenue.wi.gov/Pages/Form/lottery-home.aspx
+  # 2026-09-14 thumbs-down naming the missing source; page ingested 2026-09-15 and this
+  # query attached to its chunks via ops/attach_gold_queries.py (raw rank 60+ -> 1).
