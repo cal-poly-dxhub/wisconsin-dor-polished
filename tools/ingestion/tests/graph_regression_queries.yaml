@@ -855,3 +855,37 @@ queries:
 #  per-report URLs change) is not ingestible now; revisit if a curated
 #  resource-link map is built.
 # ══════════════════════════════════════════════════════════════════════════════
+
+  # --- Content-gap ingests 2026-09-15 (WPAM Volume 2, Lottery Credit forms page) ---
+  - queryId: gq-lc-667-form
+    stratum: B
+    tags: [ingestion-gap]
+    query: "What is the LC-667"
+    rubric: >
+      PASS only if the answer identifies the LC-667 as the Lottery and Gaming
+      Credit Eligibility Questionnaire that a property owner completes after
+      receiving a Lottery and Gaming Credit Parcel Audit Notice (and ideally
+      points to DOR's lottery credit forms page). FAIL if the answer says the
+      form is unknown / out of scope, or describes a different form.
+    must_cite: [complex_inquiry_pages-lottery-home]
+    must_contain: ["LC-667", "questionnaire|audit"]
+    notes: >
+      Tester 2026-09-14: "I expected to see information on the LC-667 because all
+      other LC forms are listed" — the forms index page was not in the corpus.
+
+  - queryId: gq-residential-grade-scale
+    stratum: B
+    tags: [ingestion-gap]
+    query: "What is the residential quality grade scale used in the Wisconsin Property Assessment Manual and what do the grades mean?"
+    rubric: >
+      PASS only if the answer lays out the WPAM Volume 2 residential quality
+      grade classifications (AA very best, A excellent, B good, C average,
+      D fair, E poor) as a scale used to grade dwelling quality, citing
+      WPAM Volume 2. FAIL if it says the grade scale is not available / is
+      proprietary, or invents a different scale.
+    must_cite: [wpam-volume-2-residential-apartments-agricultural]
+    must_contain: ["AA", "Excellent|excellent", "Poor|poor"]
+    notes: >
+      Task 60(b): previously assumed to be proprietary cost-manual material; DOR
+      publishes a redacted Volume 2 (wpamvol2.pdf) that carries the grade
+      definitions, factors, and example photos (link via page anchors).
