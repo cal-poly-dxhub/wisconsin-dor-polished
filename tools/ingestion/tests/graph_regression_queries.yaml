@@ -1211,8 +1211,9 @@ queries:
       PASS if the answer treats "Agricultural" as the reply to the prior
       question and gives the agricultural-classification appeal path — assessor /
       open book, then a written objection to the Board of Review under ch. 70 —
-      grounded in the agricultural use-value rules (§70.32(2)(a)4 and/or Tax 18)
-      with citations. FAIL if the answer asks the user again which classification
+      grounded in the agricultural classification rules (§70.32(2) — the
+      agricultural definition and/or use-value standard — and/or Tax 18) with
+      citations. FAIL if the answer asks the user again which classification
       they mean, treats "Agricultural" as a new standalone topic and ignores the
       prior turn, or refuses it as too vague.
     must_cite: [statutes-70]
