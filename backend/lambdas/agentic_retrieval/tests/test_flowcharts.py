@@ -75,7 +75,93 @@ def test_get_flowchart_loads_and_caches():
 def test_get_flowchart_unknown_id():
     r = flowcharts.get_flowchart("flowcharts-bogus", raw_bucket="b", s3_client=_FakeS3({}))
     assert "error" in r
-    assert "available" in r
+    # The error lists the valid ids so the model can retry without a
+    # list_flowcharts round-trip.
+    assert set(r["available"]) == {f["flowchart_id"] for f in flowcharts.FLOWCHART_REGISTRY}
+    assert "list_flowcharts" in r["error"]
+
+
+class TestIdResolution:
+    """Near-miss ids resolve instead of burning a turn on 'Unknown flowchart'."""
+
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [
+            ("flowcharts-trust-public", "flowcharts-trust-public"),
+            # The id the agent actually guessed in production (Wednesday trace).
+            ("flowcharts-trust-public-interest", "flowcharts-trust-public"),
+            ("mobile-home", "flowcharts-mobile-home"),
+            ("flowcharts-mobile-homes", "flowcharts-mobile-home"),
+            ("FLOWCHARTS-BIBLE-CAMP", "flowcharts-bible-camp"),
+            ("flowcharts_ag_classification", "flowcharts-ag-classification"),
+            ("flowcharts-exempt-70-11-general", "flowcharts-exempt-70-11"),
+            ("  flowcharts-manufacturing  ", "flowcharts-manufacturing"),
+        ],
+    )
+    def test_resolves(self, given, expected):
+        assert flowcharts.resolve_flowchart_id(given) == expected
+
+    @pytest.mark.parametrize("given", ["", "   ", "worksheets-tidbase", "flowcharts-nonsense-xyz"])
+    def test_unresolvable(self, given):
+        assert flowcharts.resolve_flowchart_id(given) is None
+
+    def test_near_miss_loads_the_chart_and_says_so(self):
+        s3 = _s3_with("flowcharts-trust-public")
+        r = flowcharts.get_flowchart(
+            "flowcharts-trust-public-interest", raw_bucket="b", s3_client=s3
+        )
+        assert "error" not in r
+        assert r["flowchart_id"] == "flowcharts-trust-public"
+        assert r["resolved_from"] == "flowcharts-trust-public-interest"
+        # The cached sidecar is never annotated with the caller's typo.
+        assert "resolved_from" not in flowcharts._cache["flowcharts-trust-public"]
+        exact = flowcharts.get_flowchart("flowcharts-trust-public", raw_bucket="b", s3_client=s3)
+        assert "resolved_from" not in exact
+
+
+class TestCitationFields:
+    """The fields a cited flowchart needs to become a citation card."""
+
+    def test_fields_from_sidecar(self):
+        f = flowcharts.flowchart_citation_fields(
+            "flowcharts-trust-public", raw_bucket="b", s3_client=_s3_with("flowcharts-trust-public")
+        )
+        assert f["flowchart_id"] == "flowcharts-trust-public"
+        assert f["title"] == "Property Held in Trust in Public Interest"
+        # source_url + pdf_page are what give the inline citation its anchor.
+        assert f["source_url"].startswith("https://")
+        assert isinstance(f["pdf_page"], int) and f["pdf_page"] > 0
+        assert f["wpam_page"]
+        assert "thorough review" in f["disclaimer"]
+
+    def test_accepts_a_near_miss_id(self):
+        f = flowcharts.flowchart_citation_fields(
+            "flowcharts-trust-public-interest",
+            raw_bucket="b",
+            s3_client=_s3_with("flowcharts-trust-public"),
+        )
+        assert f["flowchart_id"] == "flowcharts-trust-public"
+
+    def test_empty_for_unknown_id(self):
+        assert flowcharts.flowchart_citation_fields("nope-at-all", raw_bucket="b") == {}
+
+    def test_empty_when_sidecar_missing(self):
+        assert (
+            flowcharts.flowchart_citation_fields(
+                "flowcharts-mobile-home", raw_bucket="b", s3_client=_FakeS3({})
+            )
+            == {}
+        )
+
+
+@pytest.mark.parametrize("fc", [f["flowchart_id"] for f in flowcharts.FLOWCHART_REGISTRY])
+def test_every_sidecar_carries_a_page_anchor(fc):
+    """Citation anchors depend on source.pdf_page + source.source_url being authored."""
+    doc = flowcharts.get_flowchart(fc, raw_bucket="b", s3_client=_s3_with(fc))
+    src = doc["source"]
+    assert isinstance(src.get("pdf_page"), int) and src["pdf_page"] > 0, fc
+    assert src.get("source_url", "").startswith("https://"), fc
+    assert src["source_url"].endswith(f"#page={src['pdf_page']}"), fc
 
 
 def test_get_flowchart_missing_sidecar_is_graceful():

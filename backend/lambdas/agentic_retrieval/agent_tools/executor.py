@@ -860,11 +860,14 @@ def execute_tool(
         flowchart_id = tool_input.get("flowchart_id", "")
         if not flowchart_id:
             return {"error": "flowchart_id is required"}
+        # A near-miss id ("flowcharts-trust-public-interest") resolves to the
+        # registered chart instead of burning a turn on "Unknown flowchart".
         result = load_flowchart(flowchart_id, raw_bucket=RAW_BUCKET)
         _log_tool_event(
             "get_flowchart_complete",
             tool_name=tool_name,
             flowchart_id=flowchart_id,
+            resolved_flowchart_id=result.get("flowchart_id", ""),
             node_count=len(result.get("nodes", [])) if "nodes" in result else 0,
             has_error=bool(result.get("error")),
             latency_ms=round((time.perf_counter() - started) * 1000),

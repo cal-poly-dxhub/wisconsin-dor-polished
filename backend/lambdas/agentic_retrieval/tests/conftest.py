@@ -64,6 +64,8 @@ PACKAGE_MODULES = [
     "tracing.summaries",
     "case_law",
     "chat_history",
+    "flowcharts",
+    "flowchart_router",
     "disambiguation",
     "faq",
     "prompt",

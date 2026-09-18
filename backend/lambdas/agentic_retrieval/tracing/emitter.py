@@ -83,6 +83,7 @@ ALLOWED_METADATA_KEYS = frozenset(
         # Flowchart seed (pre-loop router) — see flowchart_router.py.
         "flowchartId",
         "routerScore",
+        "routerMatchedOn",
         "sourceUrl",
         "wpamPage",
     }
