@@ -53,6 +53,7 @@ ANSWER_STREAM_SYSTEM_PROMPT: str = _load_prompt("answerStream", "ANSWER_STREAM_P
 DISAMBIGUATION_CLASSIFIER_PROMPT: str = _load_prompt(
     "disambiguationClassifier", "DISAMBIGUATION_CLASSIFIER_FALLBACK"
 )
+ADEQUACY_JUDGE_PROMPT: str = _load_prompt("adequacyJudge", "ADEQUACY_JUDGE_FALLBACK")
 
 PERSONA_PROMPTS: dict[str, str] = {}
 for _persona_id, _fallback_attr in [

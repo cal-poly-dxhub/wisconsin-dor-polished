@@ -16,6 +16,7 @@ import logging
 from typing import Any
 
 import pydantic
+from adequacy_judge import judge_answer_plan, resolve_pending_clarification
 from case_law import fetch_case_opinion, is_case_law_stub
 from chat_history import get_chat_history, save_chat_history
 from config_validator import validate_env_and_log
@@ -32,6 +33,7 @@ from rag_documents import build_rag_documents
 from step_function_types.errors import ValidationError, report_error
 from step_function_types.models import UserQuery
 from streaming.delivery import send_resources, send_resources_and_finalize
+from tracing.emitter import filter_metadata as _filter_metadata
 from tracing.runtime import emit as _emit
 from tracing.runtime import log_event as _log
 from tracing.runtime import query_fields as _query_fields
@@ -44,10 +46,12 @@ from websocket_utils.models import (
 from websocket_utils.utils import get_ws_connection_from_session
 
 from config import (
+    ADEQUACY_JUDGE_ENABLED,
     AGENTIC_MODEL_ID,
     ENABLE_DISAMBIGUATION,
     ENABLE_TOPIC_SHIFT,
     RAW_BUCKET,
+    SCOPE_GATE_ENABLED,
     bedrock,
     neptune,
 )
@@ -92,6 +96,27 @@ def handler(event: dict, context) -> dict[str, Any]:
 
         chat_history = get_chat_history(session_id)
 
+        # If the previous turn ended with a clarification from the adequacy
+        # judge and this message answers it (a chip label, or a short typed
+        # value), fold the answer back into the question that prompted it so
+        # classification, retrieval, and the flowchart router all see the real
+        # question. Deterministic and keyed on stored state — a no-op (and
+        # therefore byte-for-byte the old behaviour) when no clarification is
+        # pending. The raw user message is still what gets persisted.
+        effective_query, clarification_reply = resolve_pending_clarification(
+            user_query.query, chat_history
+        )
+        if clarification_reply:
+            _log(
+                "clarification_reply_resolved",
+                request_id=request_id,
+                query_id=user_query.query_id,
+                session_id=user_query.session_id,
+                mode=clarification_reply["mode"],
+                axis=clarification_reply["axis"],
+                **_query_fields(effective_query),
+            )
+
         ws_server = None
         if session_id:
             try:
@@ -134,6 +159,13 @@ def handler(event: dict, context) -> dict[str, Any]:
         # gates ONLY the TOPIC_SHIFT verdict — OUT_OF_SCOPE and DISAMBIGUATE
         # still apply, so a generic "continue here" question still gets clarified
         # — while ensuring the nudge fires at most once and can't loop.
+        #
+        # With the adequacy judge on and the scope gate off, the OUT_OF_SCOPE
+        # and DISAMBIGUATE short-circuits are skipped entirely: every query
+        # runs the research loop and the judge decides afterwards, with the
+        # corpus in front of it. TOPIC_SHIFT is unaffected — it is about
+        # conversation continuity, not scope, and keeps its own flag.
+        _skip_scope_short_circuit = ADEQUACY_JUDGE_ENABLED and not SCOPE_GATE_ENABLED
         if ENABLE_DISAMBIGUATION:
             from disambiguation import (
                 CLARIFICATION_QUESTION,
@@ -148,7 +180,7 @@ def handler(event: dict, context) -> dict[str, Any]:
 
             allow_topic_shift = ENABLE_TOPIC_SHIFT and not user_query.suppress_topic_shift
             verdict = classify_query(
-                user_query.query, chat_history, allow_topic_shift=allow_topic_shift
+                effective_query, chat_history, allow_topic_shift=allow_topic_shift
             )
             _phase_label = {
                 VERDICT_OUT_OF_SCOPE: "Query is outside property tax scope",
@@ -167,7 +199,12 @@ def handler(event: dict, context) -> dict[str, Any]:
                 },
             )
 
-            if verdict in (VERDICT_OUT_OF_SCOPE, VERDICT_DISAMBIGUATE, VERDICT_TOPIC_SHIFT):
+            _short_circuit_verdicts = (
+                (VERDICT_TOPIC_SHIFT,)
+                if _skip_scope_short_circuit
+                else (VERDICT_OUT_OF_SCOPE, VERDICT_DISAMBIGUATE, VERDICT_TOPIC_SHIFT)
+            )
+            if verdict in _short_circuit_verdicts:
                 _log(
                     "disambiguation_short_circuit",
                     request_id=request_id,
@@ -228,7 +265,7 @@ def handler(event: dict, context) -> dict[str, Any]:
         # === Phase A: Research Loop ===
         persona = user_query.persona
         result = run_agentic_loop(
-            user_query.query,
+            effective_query,
             chat_history=chat_history,
             query_id=user_query.query_id,
             session_id=user_query.session_id,
@@ -236,6 +273,61 @@ def handler(event: dict, context) -> dict[str, Any]:
             ws_server=ws_server,
             trace_seq=trace_seq,
         )
+
+        # === Adequacy judge (between Phase A and Phase B) ===
+        # Reads the question, the conversation, the answer plan, and the TEXT
+        # of the cited chunks, and records a short structured finding. Phase B
+        # always streams; the finding is injected into its context and the
+        # answerStream prompt makes the finding win where the two conflict.
+        # Fail-open by construction — judge_answer_plan never raises.
+        finding = None
+        if ADEQUACY_JUDGE_ENABLED:
+            _judge_cited = set(result.cited_doc_ids)
+            finding = judge_answer_plan(
+                effective_query,
+                chat_history,
+                # The fallback paths (clarify tool, turn budget exhausted,
+                # model answered in prose) produce no plan — judge the text
+                # they did produce.
+                result.fallback_answer
+                if result.fallback_answer is not None
+                else result.answer_plan,
+                [c for c in result.all_chunks if c.get("doc_id") in _judge_cited],
+                result.discovery,
+            )
+            _log(
+                "adequacy_judged",
+                request_id=request_id,
+                query_id=user_query.query_id,
+                session_id=user_query.session_id,
+                verdict=finding.verdict,
+                clarification_offered=finding.clarification is not None,
+                latency_ms=finding.latency_ms,
+                model_id=finding.model_id,
+                rationale=finding.rationale,
+            )
+            _emit(
+                ws_server,
+                trace_seq,
+                query_id=user_query.query_id,
+                kind="phase",
+                payload={
+                    "phase": "adequacy_judged",
+                    "label": {
+                        "ANSWER": "Cited material supports the answer",
+                        "CLARIFY": "Sources diverge on a fact the user did not give",
+                        "DECLINE": "Nothing retrieved bears on the question",
+                    }.get(finding.verdict, "Adequacy checked"),
+                    "result": finding.verdict.lower(),
+                    "metadata": _filter_metadata(
+                        {
+                            "latencyMs": finding.latency_ms,
+                            "clarificationOffered": finding.clarification is not None,
+                            "judgeModelId": finding.model_id,
+                        }
+                    ),
+                },
+            )
 
         if result.fallback_answer is not None:
             # Edge case: clarify tool, turn budget exhausted, or model responded
@@ -388,6 +480,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                     result.answer_plan,
                     chat_history=chat_history,
                     neptune_client=neptune,
+                    finding=finding,
                 )
                 try:
                     answer = stream_answer(
@@ -427,9 +520,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                                 "Phase B fallback: generated answer via non-streaming converse()"
                             )
                         except Exception as fallback_exc:
-                            logger.error(
-                                f"Phase B non-streaming fallback failed: {fallback_exc}"
-                            )
+                            logger.error(f"Phase B non-streaming fallback failed: {fallback_exc}")
                             answer = "(Answer generation failed — please retry)"
             else:
                 # No WebSocket — generate answer without streaming for DB save
@@ -442,6 +533,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                     result.answer_plan,
                     chat_history=chat_history,
                     neptune_client=neptune,
+                    finding=finding,
                 )
                 try:
                     response = bedrock.converse(
@@ -466,6 +558,39 @@ def handler(event: dict, context) -> dict[str, Any]:
                 answer, user_query.query_id, retrieved_doc_ids, result.all_chunks
             )
 
+        # Streaming is done. If the judge asked for a clarification, offer its
+        # options as chips using the existing generic `choices` wire type (the
+        # frontend renders them after the stream completes — no frontend
+        # change). The question itself is already the last line of the answer;
+        # these are just the buttons.
+        pending_clarification = None
+        if finding is not None and finding.clarification and finding.clarification.options:
+            pending_clarification = {
+                **finding.clarification.to_dict(),
+                # Store the RESOLVED query so a chain of clarifications keeps
+                # accumulating context rather than resetting to the raw message.
+                "original_query": effective_query,
+            }
+            if ws_server:
+                try:
+                    choices_msg = ChoicesMessage(
+                        query_id=user_query.query_id,
+                        content=ChoicesContent(choices=finding.clarification.options),
+                    )
+                    ws_server.client.post_to_connection(
+                        ConnectionId=ws_server.connection_id,
+                        Data=json.dumps(
+                            {
+                                "streamId": "choices",
+                                "body": choices_msg.model_dump(by_alias=True),
+                            }
+                        ),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to send adequacy-judge clarification choices", exc_info=True
+                    )
+
         # Persist the flowchart in the SAME camelCase wire shape the frontend
         # consumes live, so resume hydration and the live path are identical.
         persisted_flowchart = None
@@ -485,6 +610,7 @@ def handler(event: dict, context) -> dict[str, Any]:
             faq_resource=faq_resource,
             trace_log=result.trace_log,
             seeded_flowchart=persisted_flowchart,
+            clarification=pending_clarification,
         )
 
         return {"successful": True}

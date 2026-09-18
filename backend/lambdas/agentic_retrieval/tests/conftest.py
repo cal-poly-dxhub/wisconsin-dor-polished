@@ -28,6 +28,7 @@ for _p in (_LAMBDA_ROOT, _LAYERS_ROOT):
 # so a re-import re-executes module-level client init under the test's patches.
 PACKAGE_MODULES = [
     "handler",
+    "adequacy_judge",
     "config",
     "config_validator",
     "loop",
@@ -103,5 +104,21 @@ def _fresh_modules(*names: str, env: dict[str, str] | None = None):
 
 @pytest.fixture
 def fresh_modules():
-    """Fixture handing tests the fresh-import helper (see _fresh_modules)."""
-    return _fresh_modules
+    """Fixture handing tests the fresh-import helper (see _fresh_modules).
+
+    Restores ``sys.modules`` afterwards so the purge is scoped to the test that
+    asked for it. Without this, a fresh-import test leaves the package's
+    modules replaced (or absent) for every test module that ran a top-level
+    ``from <pkg module> import name`` at collection time — those names then
+    point at a module object that is no longer the one ``patch("mod.ATTR")``
+    reaches, and the failure depends on file ordering.
+    """
+    saved = {name: sys.modules.get(name) for name in PACKAGE_MODULES}
+    try:
+        yield _fresh_modules
+    finally:
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
