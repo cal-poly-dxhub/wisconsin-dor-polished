@@ -128,6 +128,16 @@ FINDING_TOOL_CONFIG: dict[str, Any] = {
                     "json": {
                         "type": "object",
                         "properties": {
+                            "relevant_material_found": {
+                                "type": "boolean",
+                                "description": (
+                                    "true if ANY retrieved chunk bears on the subject of the "
+                                    "question (the topic, a neighbouring topic, the body or "
+                                    "procedure asked about) — even when the specific item "
+                                    "asked for (a case, a term, a number) is not there. false "
+                                    "only when the retrieval is noise relative to the question."
+                                ),
+                            },
                             "verdict": {
                                 "type": "string",
                                 "enum": list(_VERDICTS),
@@ -181,7 +191,13 @@ FINDING_TOOL_CONFIG: dict[str, Any] = {
                                 ),
                             },
                         },
-                        "required": ["verdict", "supported", "unsupported", "rationale"],
+                        "required": [
+                            "relevant_material_found",
+                            "verdict",
+                            "supported",
+                            "unsupported",
+                            "rationale",
+                        ],
                     }
                 },
             }
@@ -346,6 +362,15 @@ def parse_finding(payload: dict[str, Any]) -> Finding:
     if verdict not in _VERDICTS:
         logger.warning("Adequacy judge returned unknown verdict %r; treating as ANSWER", verdict)
         verdict = VERDICT_ANSWER
+    # Structural guard: DECLINE means "nothing retrieved bears on the question".
+    # If the judge itself says relevant material exists, the verdict is really
+    # an honest-no ANSWER — the specific item is missing, not the subject. The
+    # rationale becomes the unsupported line so Phase B says what is missing.
+    if verdict == VERDICT_DECLINE and payload.get("relevant_material_found") is True:
+        logger.info("Adequacy judge DECLINE with relevant material present; coercing to ANSWER")
+        verdict = VERDICT_ANSWER
+        if not str(payload.get("unsupported", "")).strip():
+            payload = dict(payload, unsupported=str(payload.get("rationale", "")).strip())
 
     clarification: Clarification | None = None
     if verdict == VERDICT_CLARIFY:

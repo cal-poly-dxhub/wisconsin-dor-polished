@@ -366,6 +366,7 @@ The closer the question sits to Wisconsin property tax, the more you should pref
 
 Call record_finding exactly once with:
 
+- `relevant_material_found` — true if any retrieved chunk bears on the subject of the question, even when the specific item asked for is missing; false only when the retrieval is noise relative to the question. A DECLINE with this set to true is a contradiction and will be treated as ANSWER.
 - `verdict` — ANSWER, CLARIFY, or DECLINE.
 - `supported` — one to three sentences, concrete.
 - `unsupported` — specific untraceable claims, or an empty string.
