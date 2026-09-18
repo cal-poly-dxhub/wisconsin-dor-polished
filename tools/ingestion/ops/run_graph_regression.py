@@ -348,7 +348,8 @@ def run_one_query(
         judge_mod = _load_adequacy_judge()
         if judge_mod is not None:
             cited_set = set(cited_doc_ids)
-            cited_chunks = [c for c in result.all_chunks if c.get("doc_id") in cited_set]
+            # Cited first, then the rest of what was retrieved (mirrors handler.py).
+            cited_chunks = sorted(result.all_chunks, key=lambda c: c.get("doc_id") not in cited_set)
             try:
                 finding = judge_mod.judge_answer_plan(
                     query,

@@ -48,7 +48,10 @@ logger = logging.getLogger(__name__)
 # Haiku 4.5 by default: the judge reads a bounded slice of already-retrieved
 # text and emits a handful of short fields, so a small model is the right
 # trade. Override per-environment with ADEQUACY_JUDGE_MODEL_ID.
-JUDGE_MODEL_ID = os.environ.get("ADEQUACY_JUDGE_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+MAX_CLARIFICATION_OPTIONS = 6  # 5 real alternatives + the escape option
+JUDGE_MODEL_ID = os.environ.get(
+    "ADEQUACY_JUDGE_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+)
 
 VERDICT_ANSWER = "ANSWER"
 VERDICT_CLARIFY = "CLARIFY"
@@ -226,6 +229,10 @@ def _chunk_header(chunk: dict, discovery: dict[str, str]) -> str:
         end_page = chunk.get("end_page")
         same = not end_page or end_page == page
         bits.append(f"page={page}" if same else f"pages={page}-{end_page}")
+    if chunk.get("_judge_cited") is True:
+        bits.append("CITED BY THE PLAN")
+    elif chunk.get("_judge_cited") is False:
+        bits.append("retrieved, not cited")
     tag = discovery.get(doc_id)
     if tag:
         bits.append(f"found_via={tag}")
@@ -245,6 +252,9 @@ def _format_evidence(cited_chunks: list[dict], discovery: dict[str, str], budget
             "willing to stand behind.)"
         )
 
+    # Group by document in FIRST-SEEN order: callers put cited documents first,
+    # then everything else retrieved, so the budget favours what the plan
+    # stands on while still exposing the branches it did not pick.
     by_doc: dict[str, list[dict]] = {}
     for chunk in cited_chunks:
         by_doc.setdefault(chunk.get("doc_id", "unknown"), []).append(chunk)
@@ -252,7 +262,7 @@ def _format_evidence(cited_chunks: list[dict], discovery: dict[str, str], budget
     parts: list[str] = []
     used = 0
     dropped = 0
-    for doc_id in sorted(by_doc):
+    for doc_id in by_doc:
         for chunk in by_doc[doc_id]:
             text = (chunk.get("text") or "").strip()
             if len(text) > _MAX_CHUNK_CHARS:
@@ -344,6 +354,10 @@ def parse_finding(payload: dict[str, Any]) -> Finding:
         ]
         question = str(payload.get("clarification_question") or "").strip()
         axis = str(payload.get("clarification_axis") or "").strip()
+        if len(options) > MAX_CLARIFICATION_OPTIONS:
+            # Keep the escape option (always last) and the first N-1 real ones —
+            # a long menu of chips is worse than a short one.
+            options = options[: MAX_CLARIFICATION_OPTIONS - 1] + [options[-1]]
         if question and len(options) >= 2:
             clarification = Clarification(axis=axis, question=question, options=options)
         else:
@@ -373,6 +387,7 @@ def judge_answer_plan(
     discovery: dict[str, str] | None,
     *,
     model_id: str | None = None,
+    cited_doc_ids: set[str] | None = None,
 ) -> Finding:
     """Judge one answer plan against the material it cites.
 
@@ -394,6 +409,11 @@ def judge_answer_plan(
     started = time.perf_counter()
     resolved_model = model_id or JUDGE_MODEL_ID
     try:
+        if cited_doc_ids is not None and cited_chunks:
+            cited_chunks = sorted(
+                (dict(c, _judge_cited=(c.get("doc_id") in cited_doc_ids)) for c in cited_chunks),
+                key=lambda c: not c["_judge_cited"],
+            )
         context = build_judge_context(
             query,
             chat_history or [],

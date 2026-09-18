@@ -292,7 +292,9 @@ def handler(event: dict, context) -> dict[str, Any]:
                 result.fallback_answer
                 if result.fallback_answer is not None
                 else result.answer_plan,
-                [c for c in result.all_chunks if c.get("doc_id") in _judge_cited],
+                # Cited chunks first, then everything else retrieved: the judge
+                # must see the branches the plan did NOT pick to detect divergence.
+                sorted(result.all_chunks, key=lambda c: c.get("doc_id") not in _judge_cited),
                 result.discovery,
             )
             _log(
