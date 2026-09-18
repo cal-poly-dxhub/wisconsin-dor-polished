@@ -367,6 +367,11 @@ def run_one_query(
     # Phase B: build context (independent of answerStream) then generate the
     # answer text non-streaming with the (possibly candidate) answerStream prompt.
     answer_context = ""
+    if finding is not None and result.fallback_answer:
+        # Mirrors handler.py: under a finding the fallback text becomes the plan
+        # and Phase B writes the answer (one prose path).
+        result.answer_plan = result.fallback_answer
+        result.fallback_answer = None
     if not result.fallback_answer:
         ctx_kwargs: dict = {}
         if finding is not None:

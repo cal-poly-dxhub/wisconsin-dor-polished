@@ -333,6 +333,14 @@ def handler(event: dict, context) -> dict[str, Any]:
                 },
             )
 
+        if finding is not None and result.fallback_answer is not None:
+            # One prose path: with the judge on, a fallback (the model refused
+            # or clarified in its own words, or ran out of turns) is treated as
+            # the answer PLAN and written by Phase B under the finding, so a
+            # DECLINE is two plain sentences and an honest-no keeps its shape.
+            result.answer_plan = result.fallback_answer
+            result.fallback_answer = None
+
         if result.fallback_answer is not None:
             # Edge case: clarify tool, turn budget exhausted, or model responded
             # with text instead of calling prepare_answer. No Phase B needed.
