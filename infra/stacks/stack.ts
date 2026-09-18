@@ -44,7 +44,13 @@ export class WisconsinBotStack extends cdk.Stack {
         sessionsTable: sessionsStack.sessionsTable,
         chatHistoryTable: sessionsStack.chatHistoryTable,
         websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
-        neptuneGraphId: graphRAGStack.neptuneGraphId,
+        // Blue/green graph promotion: `-c neptuneGraphIdOverride=g-xxxx` points
+        // the retrieval Lambda (env + IAM scope) at a graph loaded outside this
+        // stack, e.g. a re-indexed staging graph. Omit to use the stack's own
+        // graph. Ingestion (Fargate) always targets the stack's own graph.
+        neptuneGraphId:
+          (this.node.tryGetContext('neptuneGraphIdOverride') as string | undefined) ??
+          graphRAGStack.neptuneGraphId,
         neptuneGraphEndpoint: graphRAGStack.neptuneGraphEndpoint,
         rawBucketName: graphRAGStack.rawBucketName,
         faqKnowledgeBaseId: graphRAGStack.faqKnowledgeBaseId,
