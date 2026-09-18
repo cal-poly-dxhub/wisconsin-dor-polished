@@ -55,6 +55,28 @@ class TestWpamIsProbablyToc:
         ]
         assert wpam_is_probably_toc(lines) is False
 
+    def test_leader_dots_without_page_numbers_kept(self):
+        # WPAM Volume 2 lays its cost tables out with dot leaders. They run to
+        # a unit or a price, never a page number, and are real content.
+        lines = [
+            "RC1 - Carport . . . . . . . . . . . . . . . . . . . . SF",
+            "RC2 - Attached garage . . . . . . . . . . . . . . . . SF",
+            "RP1 - Plastic liner pool . . . . . . . . . . . . . . . SF",
+            "SP1 - Diving board . . . . . . . . . . . . . . . . . QTY",
+            "1000 gallon tank . . . . . . . . . . . . . . . . . . . $",
+        ]
+        assert wpam_is_probably_toc(lines) is False
+
+    def test_few_entry_lines_in_a_long_chunk_kept(self):
+        # Three TOC-shaped lines buried in 30 lines of prose is not a TOC.
+        lines = [
+            *PROSE_LINES,
+            "Introduction . . . . . . . . . . . . . . . . 1-1",
+            "Assessment Process . . . . . . . . . . . . 2-1",
+            "Property Tax Cycle . . . . . . . . . . . . 3-1",
+        ]
+        assert wpam_is_probably_toc(lines) is False
+
     def test_bare_page_reference_block_flagged(self):
         # A TOC column whose leader dots did not survive extraction.
         lines = ["1-1", "2-14", "3-7", "4-22", "Overview", "Valuation"]

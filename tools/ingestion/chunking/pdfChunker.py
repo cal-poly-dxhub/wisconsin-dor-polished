@@ -222,6 +222,15 @@ _LEADER_IN_LINE = re.compile(r"(?:\.[ \t\xa0]*){5,}\.")
 _WPAM_PAGE_REF_RE = re.compile(r"\b\d+-\d+\b")
 _WPAM_PAGE_REF_MAX_CHARS = 12
 
+# A table-of-contents entry: a dot-leader run that ENDS the line at a page
+# number ("Board of Review ......... 20-3"). The trailing number is what
+# separates a TOC from the dot-leader *cost tables* that make up most of WPAM
+# Volume 2, whose leaders run to a unit or a price instead
+# ("RC1 - Carport . . . . . . SF", "1000 gallon . . . . . . $").
+_TOC_ENTRY_LINE = re.compile(
+    r"(?:\.[ \t\xa0]*){5,}\.[ \t\xa0]*\d{1,4}(?:\s*-\s*\d{1,4})?[ \t\xa0]*$"
+)
+
 # Titan Embed Text v2 silently truncates inputs past 8000 characters in
 # embed.py. Any chunk larger than this was partially vector-invisible:
 # stored in Neptune, shown at retrieval, but the tail bytes were not part of
@@ -868,16 +877,22 @@ def wpam_is_probably_toc(body_lines: list[str]) -> bool:
       mentioning an appendix.
 
     A real TOC page is recognised by its shape instead:
-      (a) three or more lines carrying a dot-leader run, or
+      (a) at least three TOC *entry* lines — a dot-leader run ending at a
+          page number — and those making up more than 30% of the chunk, or
       (b) a majority-ish of *short* page-reference lines — bare "7-40"
           style entries, never prose that happens to contain a range.
+
+    (a) deliberately tests for the trailing page number rather than the
+    leader dots alone: WPAM Volume 2 lays its cost tables out with dot
+    leaders too ("RC1 - Carport . . . . . . SF"), and a leaders-only test
+    discarded ~50K characters of real pricing content from that volume.
     """
     lines = [line for line in body_lines if line.strip()]
     if len(lines) < 2:
         return False
 
-    leader_lines = sum(1 for line in lines if _LEADER_IN_LINE.search(line))
-    if leader_lines >= 3:
+    toc_entries = sum(1 for line in lines if _TOC_ENTRY_LINE.search(line))
+    if toc_entries >= 3 and toc_entries / len(lines) > 0.3:
         return True
 
     # Bare page references only: a running footer ("7-40") or a TOC entry
