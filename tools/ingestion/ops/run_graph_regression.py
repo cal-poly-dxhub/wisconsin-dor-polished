@@ -348,8 +348,8 @@ def run_one_query(
         judge_mod = _load_adequacy_judge()
         if judge_mod is not None:
             cited_set = set(cited_doc_ids)
-            # Cited first, then the rest of what was retrieved (mirrors handler.py).
-            cited_chunks = sorted(result.all_chunks, key=lambda c: c.get("doc_id") not in cited_set)
+            # Everything retrieved (mirrors handler.py); the judge labels cited vs not.
+            cited_chunks = list(result.all_chunks)
             try:
                 finding = judge_mod.judge_answer_plan(
                     query,
@@ -357,6 +357,7 @@ def run_one_query(
                     result.answer_plan,
                     cited_chunks,
                     result.discovery,
+                    cited_doc_ids=cited_set,
                 )
                 finding_dict = finding_to_dict(finding)
             except Exception as exc:  # noqa: BLE001 — a flaky judge must not kill the run
