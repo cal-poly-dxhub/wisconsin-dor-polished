@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 # Haiku 4.5 by default: the judge reads a bounded slice of already-retrieved
 # text and emits a handful of short fields, so a small model is the right
 # trade. Override per-environment with ADEQUACY_JUDGE_MODEL_ID.
-JUDGE_MODEL_ID = os.environ.get("ADEQUACY_JUDGE_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001")
+JUDGE_MODEL_ID = os.environ.get("ADEQUACY_JUDGE_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
 VERDICT_ANSWER = "ANSWER"
 VERDICT_CLARIFY = "CLARIFY"

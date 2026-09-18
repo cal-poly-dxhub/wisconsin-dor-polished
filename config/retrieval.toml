@@ -272,7 +272,7 @@ stage = "loop"
 model_override = false
 
 [env.ADEQUACY_JUDGE_MODEL_ID]
-default = "us.anthropic.claude-haiku-4-5-20251001"
+default = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 type = "string"
 description = "Bedrock model used by the adequacy judge"
 stage = "loop"

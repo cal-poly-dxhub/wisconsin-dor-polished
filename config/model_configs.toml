@@ -394,7 +394,7 @@ Decision order:
 Respond with ONLY one word: OUT_OF_SCOPE, DISAMBIGUATE, TOPIC_SHIFT, or PROCEED — nothing else."""
 
 [disambiguationClassifier.config]
-modelId = "us.anthropic.claude-haiku-4-5-20251001"
+modelId = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 system = []
 
 [disambiguationClassifier.config.inferenceConfig]
@@ -480,7 +480,7 @@ Call record_finding exactly once with:
 Write `supported` and `rationale` as notes to a colleague who will do the writing: plain, specific, no hedging about your own confidence, no meta-commentary about the plan's tone or structure. The user never sees any of it."""
 
 [adequacyJudge.config]
-modelId = "us.anthropic.claude-haiku-4-5-20251001"
+modelId = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 system = []
 
 [adequacyJudge.config.inferenceConfig]
