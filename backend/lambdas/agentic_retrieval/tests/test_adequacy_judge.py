@@ -638,6 +638,13 @@ class TestHandlerClarificationDelivery:
         monkeypatch.setattr(handler, "build_rag_documents", lambda *a, **kw: [])
         monkeypatch.setattr(handler, "build_cited_faq_resource", lambda *a, **kw: None)
         monkeypatch.setattr(handler.asyncio, "run", lambda coro: coro.close())
+        # Under a finding the fallback text becomes the plan and Phase B writes
+        # the answer (one prose path) — stub Phase B so only the choices
+        # message reaches the socket in these delivery tests.
+        monkeypatch.setattr(handler, "build_answer_context", lambda *a, **kw: "ctx")
+        monkeypatch.setattr(handler, "send_resources", MagicMock())
+        monkeypatch.setattr(handler, "stream_answer", MagicMock(return_value="answer"))
+        monkeypatch.setattr(handler, "finalize_answer_links", lambda answer, *a, **kw: answer)
         run_loop = MagicMock(return_value=_loop_result())
         monkeypatch.setattr(handler, "run_agentic_loop", run_loop)
         monkeypatch.setattr(handler, "judge_answer_plan", MagicMock(return_value=finding))
