@@ -235,6 +235,9 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
     doc_ids: list[str] = []
     summary_text = ""
     metadata: dict[str, Any] = {}
+    # Titles for doc_ids that are not Neptune documents (flowchart sidecars);
+    # skips a pointless graph lookup that could only return the bare id.
+    doc_titles_override: list[str] | None = None
 
     if "error" in result:
         return {
@@ -631,8 +634,37 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
                 "sheetNames": [s.get("sheet") for s in sheets][:12],
             }
 
+    elif tool_name == "list_flowcharts":
+        n = len(result.get("flowcharts", []))
+        summary_text = f"Listed {n} decision {'flowchart' if n == 1 else 'flowcharts'}"
+
+    elif tool_name == "get_flowchart":
+        # Mirrors the router-seeded flowchart trace (phase_a) so a chart the
+        # agent fetched itself shows up the same way in the trace panel.
+        fc_id = result.get("flowchart_id", "")
+        fc_title = result.get("title") or fc_id
+        fc_src = result.get("source", {}) or {}
+        summary_text = f"Got flowchart: {fc_title}"
+        doc_ids = [fc_id] if fc_id else []
+        doc_titles_override = [fc_title] if fc_id else []
+        metadata = {
+            "flowchartId": fc_id,
+            "wpamPage": fc_src.get("wpam_page", ""),
+            "sourceUrl": fc_src.get("source_url", ""),
+        }
+
     else:
         summary_text = f"{tool_name} complete"
+
+    if doc_titles_override is not None:
+        return {
+            "status": status,
+            "summary_text": summary_text,
+            "doc_ids": doc_ids,
+            "doc_titles": doc_titles_override,
+            "metadata": metadata,
+            "raw": raw,
+        }
 
     doc_titles: list[str] = []
     for doc_id in doc_ids:

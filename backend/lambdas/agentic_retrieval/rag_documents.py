@@ -9,12 +9,54 @@ from case_law import (
     collapse_case_law_by_title,
     is_case_law_stub,
 )
+from flowcharts import FLOWCHART_DOC_PREFIX, flowchart_citation_fields
 from step_function_types.models import ChunkSnippet, RAGDocument
 
 logger = logging.getLogger(__name__)
 
 _NON_DOCUMENT_LABELS = frozenset({"Chunk", "Topic", "Framework"})
 _SNIPPET_MAX_CHARS = 200
+# The WPAM is authority level 5; a flowchart card IS a WPAM page.
+_WPAM_AUTHORITY_LEVEL = 5
+
+
+def build_flowchart_card(flowchart_id: str, discovery_tag: str) -> RAGDocument | None:
+    """Citation card for a cited WPAM decision flowchart, or None if unavailable.
+
+    A flowchart has no Neptune node, so without this the model's
+    ``[label](doc:flowcharts-<id>#page=N)`` citation resolves to nothing and the
+    link is dropped in the UI (the frontend builds its doc_id -> URL map from
+    the citation cards). The card points at the printed chart in the WPAM PDF —
+    ``source.source_url`` anchored at ``source.pdf_page`` — which is also what
+    gives the inline citation its page anchor. It is complementary to, not a
+    replacement for, the interactive "Walk the flowchart" payload: the title
+    names the WPAM page so the two read as different affordances.
+    """
+    fields = flowchart_citation_fields(flowchart_id)
+    if not fields:
+        return None
+    page = fields.get("pdf_page")
+    wpam_page = fields.get("wpam_page")
+    title = fields["title"]
+    if wpam_page:
+        title = f"{title} (WPAM {wpam_page})"
+    content = fields.get("summary") or ""
+    if fields.get("disclaimer"):
+        content = f"{content}\n\n{fields['disclaimer']}".strip()
+    content_hash = hashlib.sha256(fields["flowchart_id"].encode()).hexdigest()[:7]
+    return RAGDocument(
+        document_id=f"{fields['flowchart_id']}-{content_hash}",
+        title=title,
+        content=content,
+        source=fields.get("source_url") or "",
+        source_url=fields.get("source_url"),
+        s3_key=None,
+        start_page=page,
+        end_page=page,
+        discovery_tag=discovery_tag,
+        authority_level=_WPAM_AUTHORITY_LEVEL,
+        edition_year=None,
+    )
 
 
 def _generate_source_label(chunk: dict, doc_info: dict | None) -> str:
@@ -170,6 +212,18 @@ def build_rag_documents(
 
     represented_doc_ids = {k.split("::")[0] for k in docs_by_id.keys()}
     for doc_id in doc_ids - represented_doc_ids:
+        # Flowcharts are sidecars, not graph nodes — build their card from the
+        # registry + sidecar instead of looking for a Neptune document.
+        if doc_id.startswith(FLOWCHART_DOC_PREFIX):
+            card = build_flowchart_card(doc_id, discovery.get(doc_id, "unknown"))
+            if card:
+                docs_by_id[doc_id] = card
+            else:
+                logger.warning(
+                    "cited flowchart %s has no sidecar/source_url; no citation card", doc_id
+                )
+            continue
+
         doc_info = neptune_client.get_document(doc_id)
         if not doc_info:
             continue

@@ -240,3 +240,90 @@ class TestBuildRagDocuments:
         card = docs[0]
         assert card.content == "Full opinion text here."
         assert card.discovery_tag == "opinion-fetched"
+
+
+class TestFlowchartCitationCard:
+    """A cited flowchart is a sidecar, not a graph node — it still needs a card.
+
+    Without one the model's ``[label](doc:flowcharts-<id>#page=N)`` citation has
+    no doc_id -> URL entry in the frontend's map and the link is dropped, which
+    is how an agent-fetched chart ended up cited as a bare WPAM reference with
+    no page anchor.
+    """
+
+    _FIELDS = {
+        "flowchart_id": "flowcharts-trust-public",
+        "title": "Property Held in Trust in Public Interest",
+        "summary": "Decision tree for sec. 70.11(20).",
+        "statute": "sec. 70.11(20), Wis. Stats.",
+        "disclaimer": "This flow chart ... a thorough review of each property is still required.",
+        "wpam_page": "19-27",
+        "pdf_page": 691,
+        "source_url": "https://www.revenue.wi.gov/documents/wpam26.pdf#page=691",
+        "doc_id": "wpam-wisconsin-property-assessment-manual-2026",
+    }
+
+    @pytest.fixture
+    def sidecar(self, monkeypatch):
+        """Stub the sidecar lookup (S3) with the shape the real one returns.
+
+        Patched in the function's own globals rather than on sys.modules: other
+        test files re-import this package under fresh_modules, so the module
+        object in sys.modules is not always the one this function closes over.
+        """
+        monkeypatch.setitem(
+            build_rag_documents.__globals__,
+            "flowchart_citation_fields",
+            lambda fid, *a, **k: dict(self._FIELDS),
+        )
+
+    @pytest.fixture
+    def _no_sidecar(self, monkeypatch):
+        monkeypatch.setitem(
+            build_rag_documents.__globals__,
+            "flowchart_citation_fields",
+            lambda fid, *a, **k: {},
+        )
+
+    @staticmethod
+    def _cards(tag: str):
+        neptune = MagicMock()
+        neptune.get_document.return_value = None
+        docs = build_rag_documents(
+            [],
+            {"flowcharts-trust-public"},
+            {"flowcharts-trust-public": tag} if tag else {},
+            neptune_client=neptune,
+        )
+        return docs, neptune
+
+    def test_card_carries_the_page_anchor(self, sidecar):
+        docs, neptune = self._cards("flowchart-tool")
+        assert len(docs) == 1
+        card = docs[0]
+        # document_id keeps the raw flowchart id as its prefix so the frontend's
+        # `doc:<raw id>` lookup (it strips the -<7 hex> suffix) resolves.
+        assert card.document_id.startswith("flowcharts-trust-public-")
+        assert card.source_url == "https://www.revenue.wi.gov/documents/wpam26.pdf#page=691"
+        assert card.start_page == 691 and card.end_page == 691
+        assert card.discovery_tag == "flowchart-tool"
+        assert card.authority_level == 5
+        assert "WPAM 19-27" in card.title
+        assert "thorough review" in card.content
+        # A flowchart is never looked up in the graph.
+        neptune.get_document.assert_not_called()
+
+    def test_seeded_and_tool_fetched_cards_match_but_for_the_tag(self, sidecar):
+        seeded = self._cards("flowchart-seed")[0][0]
+        fetched = self._cards("flowchart-tool")[0][0]
+        assert seeded.document_id == fetched.document_id
+        assert seeded.source_url == fetched.source_url
+        assert seeded.start_page == fetched.start_page
+        assert (seeded.discovery_tag, fetched.discovery_tag) == (
+            "flowchart-seed",
+            "flowchart-tool",
+        )
+
+    def test_missing_sidecar_yields_no_card(self, _no_sidecar):
+        docs, _ = self._cards("flowchart-seed")
+        assert docs == []

@@ -56,6 +56,28 @@ def _is_document_neighbor(neighbor: dict) -> bool:
     return not any(label in _NON_DOCUMENT_LABELS for label in labels)
 
 
+# A reply this short is a chip selection ("Not certain — general information")
+# or a one-liner follow-up, not a question in its own right: the flowchart
+# router should also consider the question it answers, one turn back.
+_FOLLOWUP_MAX_WORDS = 6
+
+
+def _prior_user_question(query: str, chat_history: list[dict] | None) -> str | None:
+    """The question underneath a chip reply / short follow-up, if there is one.
+
+    Returns the previous turn's user query when the current message is too short
+    to carry the topic on its own (the disambiguation chip flow is the common
+    case: the user's real question is one turn back, and the current message is
+    a property-type choice). None otherwise.
+    """
+    if not chat_history:
+        return None
+    if len((query or "").split()) > _FOLLOWUP_MAX_WORDS:
+        return None
+    prior = (chat_history[-1] or {}).get("query") or ""
+    return prior.strip() or None
+
+
 _CHUNK_FIELDS_FOR_MODEL = frozenset(
     {
         "chunk_id",
@@ -147,8 +169,12 @@ class AgentLoopResult:
     high_confidence_faq: FAQResource | None = None
     # Raw FAQ entries for cited-faq resolution
     faq_entries: list[dict] = field(default_factory=list)
-    # Flowchart seeded by the pre-loop router (dict sidecar + router score), if
-    # any. Delivered to the frontend for the "Walk the flowchart" component.
+    # The decision flowchart in play for this answer (raw sidecar dict), if any:
+    # either seeded by the pre-loop router — then seeded_flowchart_score carries
+    # the router's top cosine — or fetched by the agent itself mid-loop via
+    # get_flowchart, in which case the score is None. Both paths deliver it to
+    # the frontend for the "Walk the flowchart" component and persist it to chat
+    # history; a router seed wins when both happen.
     seeded_flowchart: dict | None = None
     seeded_flowchart_score: float | None = None
 
@@ -234,26 +260,45 @@ def run_agentic_loop(
             },
         )
 
-    # Pre-loop flowchart router: if the (refined) query is clearly a decision-
-    # procedure question with a matching WPAM flowchart, fetch that chart so it
-    # can be seeded into turn-0 context alongside faq_search / vector_search.
-    # SEED-or-nothing (semantic margin gate); best-effort — never breaks the loop.
+    # Pre-loop flowchart router: if the question is clearly a decision-procedure
+    # question with a matching WPAM flowchart, fetch that chart so it can be
+    # seeded into turn-0 context alongside faq_search / vector_search.
+    # SEED-or-nothing (semantic gate); best-effort — never breaks the loop.
     # Runs INSIDE the loop so the regression harness exercises the real router.
+    #
+    # Candidates are scored in priority order, the user's OWN words first: an
+    # auto-refined query is a good retrieval string but a poor routing signal
+    # (measured: "how do I apply for an exemption from property tax?" seeds at
+    # 0.688; its refinement "Wisconsin property tax exemption application" does
+    # not seed at all). When the current message is a chip reply or one-liner
+    # follow-up, the real question is the previous turn's — score that too.
     flowchart_seed: dict | None = None
+    flowchart_seed_score: float | None = None
+    flowchart_id_seeded: str | None = None
     flowchart_match = None
     try:
         from agent_tools.executor import RAW_BUCKET as _RAW_BUCKET
         from flowchart_router import route as _route_flowchart
         from flowcharts import get_flowchart as _get_flowchart
 
-        flowchart_match = _route_flowchart(search_query)
+        fc_candidates: list[tuple[str, str]] = [("original", query)]
+        prior_question = _prior_user_question(query, chat_history)
+        if prior_question:
+            fc_candidates.append(("history", prior_question))
+        if search_query != query:
+            fc_candidates.append(("refined", search_query))
+
+        flowchart_match = _route_flowchart(query, candidates=fc_candidates)
         if flowchart_match.action == "SEED" and flowchart_match.flowchart_id:
             chart = _get_flowchart(flowchart_match.flowchart_id, raw_bucket=_RAW_BUCKET)
             if "error" not in chart:
                 flowchart_seed = chart
+                flowchart_seed_score = flowchart_match.top_score
+                flowchart_id_seeded = flowchart_match.flowchart_id
                 logger.info(
                     f"Flowchart router SEED: {flowchart_match.flowchart_id} "
-                    f"(score {flowchart_match.top_score:.3f}, "
+                    f"(matched on {flowchart_match.matched_on}, "
+                    f"score {flowchart_match.top_score:.3f}, "
                     f"2nd {flowchart_match.second_score:.3f})"
                 )
             else:
@@ -261,11 +306,15 @@ def run_agentic_loop(
                     f"Flowchart router matched {flowchart_match.flowchart_id} but "
                     f"sidecar unavailable: {chart.get('error')}"
                 )
+        elif flowchart_match.top_chart:
+            logger.info(
+                f"Flowchart router no seed: best {flowchart_match.top_chart} "
+                f"(matched on {flowchart_match.matched_on}, "
+                f"score {flowchart_match.top_score:.3f}, "
+                f"2nd {flowchart_match.second_score:.3f})"
+            )
     except Exception:  # noqa: BLE001 — routing is best-effort enrichment
         logger.warning("flowchart routing failed; no seed", exc_info=True)
-    flowchart_seed_score = (
-        flowchart_match.top_score if (flowchart_seed and flowchart_match) else None
-    )
 
     trace_context = {
         "query_id": query_id,
@@ -480,7 +529,7 @@ def run_agentic_loop(
     # emit a trace event. The "seeded": true flag lets the frontend surface the
     # interactive "Walk the flowchart" affordance for a router-injected chart.
     if flowchart_seed:
-        fc_id = flowchart_match.flowchart_id
+        fc_id = flowchart_id_seeded
         all_doc_ids.add(fc_id)
         discovery.setdefault(fc_id, "flowchart-seed")
         fc_src = flowchart_seed.get("source", {})
@@ -490,6 +539,7 @@ def run_agentic_loop(
             "wpamPage": fc_src.get("wpam_page", ""),
             "sourceUrl": fc_src.get("source_url", ""),
             "routerScore": round(flowchart_match.top_score, 3),
+            "routerMatchedOn": flowchart_match.matched_on,
         }
         _record_trace(
             "tool_result",
@@ -558,7 +608,7 @@ def run_agentic_loop(
                 "toolUse": {
                     "toolUseId": fc_tool_use_id,
                     "name": "get_flowchart",
-                    "input": {"flowchart_id": flowchart_match.flowchart_id},
+                    "input": {"flowchart_id": flowchart_id_seeded},
                 }
             }
         )
@@ -603,7 +653,7 @@ def run_agentic_loop(
         )
 
     if flowchart_seed:
-        fc_id = flowchart_match.flowchart_id
+        fc_id = flowchart_id_seeded
         fc_title = flowchart_seed.get("title", fc_id)
         fc_page = flowchart_seed.get("source", {}).get("wpam_page", "")
         messages.append(
@@ -936,6 +986,22 @@ def run_agentic_loop(
                     if d.get("id"):
                         all_doc_ids.add(d["id"])
                         discovery.setdefault(d["id"], "framework-list")
+
+            # A chart the model fetched itself is registered exactly like a
+            # router-seeded one: discoverable (so a cited flowcharts-* id gets a
+            # citation card anchored at the chart's WPAM page) and delivered as
+            # the flowchart payload (so "Walk the flowchart" appears and the
+            # chart is persisted to chat history). A router seed wins if both
+            # happen — it is the chart the answer was structured around.
+            if tool_name == "get_flowchart" and "error" not in result:
+                fetched_fc_id = result.get("flowchart_id") or ""
+                if fetched_fc_id:
+                    all_doc_ids.add(fetched_fc_id)
+                    discovery.setdefault(fetched_fc_id, "flowchart-tool")
+                    if flowchart_seed is None:
+                        flowchart_seed = result
+                        flowchart_seed_score = None
+                        logger.info(f"Flowchart fetched by agent: {fetched_fc_id}")
 
             if tool_name == "fetch_case_opinion" and result.get("found"):
                 citation = result.get("citation", "")
