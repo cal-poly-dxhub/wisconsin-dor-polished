@@ -175,8 +175,13 @@ function FlowchartWalker({ flowchart }: FlowchartProps) {
 
   const currentId = path[path.length - 1];
 
+  // Depth of the first real card (step 1) — the leading `start` node makes this
+  // 2, not 1, when there's a START pill to skip. Back can't go below this.
+  const initialDepth = useMemo(() => startPath().length, [startPath]);
+  const canGoBack = path.length > initialDepth;
+
   const reset = () => setPath(startPath());
-  const back = () => setPath(p => (p.length > 1 ? p.slice(0, -1) : p));
+  const back = () => setPath(p => (p.length > initialDepth ? p.slice(0, -1) : p));
 
   // Advance along the edge whose branch matches (or the sole pass-through edge).
   const advance = (branch?: 'yes' | 'no') => {
@@ -211,7 +216,7 @@ function FlowchartWalker({ flowchart }: FlowchartProps) {
         </DialogHeader>
 
         {stepLabel && (
-          <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+          <div className="mt-4 flex items-center justify-between text-xs font-medium text-muted-foreground">
             <span>{stepLabel}</span>
             {node?.step != null && (
               <div className="flex gap-1">
@@ -237,11 +242,11 @@ function FlowchartWalker({ flowchart }: FlowchartProps) {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -12 }}
             transition={{ duration: 0.18 }}
-            className="min-h-[9rem]"
+            className="mt-4 min-h-[9rem]"
           >
             {node && (isDecision || node.type === 'note') && (
               <div className="space-y-3">
-                <p className="text-sm font-medium leading-relaxed">
+                <p className="text-lg font-semibold leading-snug tracking-tight">
                   {node.question ?? node.label}
                 </p>
                 {node.definition && (
@@ -278,19 +283,21 @@ function FlowchartWalker({ flowchart }: FlowchartProps) {
           </motion.div>
         </AnimatePresence>
 
-        <div className="mt-1 space-y-3">
+        <div className="mt-5 space-y-3">
           {isDecision && (
             <div className="flex gap-2">
               <Button
+                variant="outline"
                 onClick={() => advance('yes')}
-                className="flex-1 gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+                className="flex-1 gap-1.5 border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/50 dark:hover:text-emerald-200"
               >
                 <CheckCircle2 className="h-4 w-4" />
                 Yes
               </Button>
               <Button
+                variant="outline"
                 onClick={() => advance('no')}
-                className="flex-1 gap-1.5 bg-rose-600 hover:bg-rose-700"
+                className="flex-1 gap-1.5 border-rose-300 bg-rose-50 text-rose-800 hover:bg-rose-100 hover:text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/50 dark:hover:text-rose-200"
               >
                 <XCircle className="h-4 w-4" />
                 No
@@ -309,7 +316,7 @@ function FlowchartWalker({ flowchart }: FlowchartProps) {
               variant="ghost"
               size="sm"
               onClick={back}
-              disabled={path.length <= 1}
+              disabled={!canGoBack}
               className="gap-1.5 text-xs text-muted-foreground"
             >
               <ArrowLeft className="h-3.5 w-3.5" />

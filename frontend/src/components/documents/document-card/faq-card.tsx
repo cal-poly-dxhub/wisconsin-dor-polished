@@ -22,7 +22,7 @@ const FAQ_KIND_META = SOURCE_KIND_META.faq;
 
 const faqCardVariants = cva(
   // No hover/focus border-colour change — it would out-specify the
-  // `border-l-<hue>` accent from the kind tint. See document-card.tsx.
+  // kind tint. See document-card.tsx.
   'group cursor-pointer font-sans transition-[color,background-color,border-color,box-shadow] duration-200 ease-in-out hover:shadow-md focus-within:ring-2 focus-within:ring-primary/30',
   {
     variants: {

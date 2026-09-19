@@ -46,7 +46,7 @@ export interface Document {
 
 const documentCardVariants = cva(
   // NOTE: no hover/focus border-colour change here — it would win on
-  // specificity over the per-kind `border-l-<hue>` accent and wash it out.
+  // specificity over the per-kind tint (cards carry no accent border by design).
   // Hover feedback comes from the per-kind background tint plus the shadow.
   'group cursor-pointer font-sans transition-[color,background-color,border-color,box-shadow] duration-200 ease-in-out border-black/10 dark:border-border hover:shadow-md focus-within:ring-2 focus-within:ring-primary/30 shadow-none dark:shadow-sm',
   {

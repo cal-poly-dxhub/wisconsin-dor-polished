@@ -40,62 +40,62 @@ export interface SourceKindMeta {
 export const SOURCE_KIND_META: Record<SourceKind, SourceKindMeta> = {
   constitution: {
     label: 'Constitution',
-    card: 'border-l-2 border-l-indigo-500/70 bg-indigo-500/[0.04] hover:bg-indigo-500/[0.08] dark:border-l-indigo-400/70 dark:bg-indigo-400/[0.07] dark:hover:bg-indigo-400/[0.12]',
+    card: 'bg-indigo-500/[0.04] hover:bg-indigo-500/[0.08] dark:bg-indigo-400/[0.07] dark:hover:bg-indigo-400/[0.12]',
     accent: 'text-indigo-700 dark:text-indigo-300',
   },
   statute: {
     label: 'Statute',
-    card: 'border-l-2 border-l-blue-500/70 bg-blue-500/[0.04] hover:bg-blue-500/[0.08] dark:border-l-blue-400/70 dark:bg-blue-400/[0.07] dark:hover:bg-blue-400/[0.12]',
+    card: 'bg-blue-500/[0.04] hover:bg-blue-500/[0.08] dark:bg-blue-400/[0.07] dark:hover:bg-blue-400/[0.12]',
     accent: 'text-blue-700 dark:text-blue-300',
   },
   'case-law': {
     label: 'Case Law',
-    card: 'border-l-2 border-l-violet-500/70 bg-violet-500/[0.04] hover:bg-violet-500/[0.08] dark:border-l-violet-400/70 dark:bg-violet-400/[0.07] dark:hover:bg-violet-400/[0.12]',
+    card: 'bg-violet-500/[0.04] hover:bg-violet-500/[0.08] dark:bg-violet-400/[0.07] dark:hover:bg-violet-400/[0.12]',
     accent: 'text-violet-700 dark:text-violet-300',
   },
   'admin-rule': {
     label: 'Admin Rule',
-    card: 'border-l-2 border-l-teal-500/70 bg-teal-500/[0.04] hover:bg-teal-500/[0.08] dark:border-l-teal-400/70 dark:bg-teal-400/[0.07] dark:hover:bg-teal-400/[0.12]',
+    card: 'bg-teal-500/[0.04] hover:bg-teal-500/[0.08] dark:bg-teal-400/[0.07] dark:hover:bg-teal-400/[0.12]',
     accent: 'text-teal-700 dark:text-teal-300',
   },
   wpam: {
     label: 'WPAM',
-    card: 'border-l-2 border-l-green-500/70 bg-green-500/[0.04] hover:bg-green-500/[0.08] dark:border-l-green-400/70 dark:bg-green-400/[0.07] dark:hover:bg-green-400/[0.12]',
+    card: 'bg-green-500/[0.04] hover:bg-green-500/[0.08] dark:bg-green-400/[0.07] dark:hover:bg-green-400/[0.12]',
     accent: 'text-green-700 dark:text-green-300',
   },
   'gov-pub': {
     label: 'Gov. Publication',
-    card: 'border-l-2 border-l-amber-500/70 bg-amber-500/[0.04] hover:bg-amber-500/[0.08] dark:border-l-amber-400/70 dark:bg-amber-400/[0.07] dark:hover:bg-amber-400/[0.12]',
+    card: 'bg-amber-500/[0.04] hover:bg-amber-500/[0.08] dark:bg-amber-400/[0.07] dark:hover:bg-amber-400/[0.12]',
     accent: 'text-amber-700 dark:text-amber-300',
   },
   form: {
     label: 'Form Instructions',
-    card: 'border-l-2 border-l-amber-500/70 bg-amber-500/[0.04] hover:bg-amber-500/[0.08] dark:border-l-amber-400/70 dark:bg-amber-400/[0.07] dark:hover:bg-amber-400/[0.12]',
+    card: 'bg-amber-500/[0.04] hover:bg-amber-500/[0.08] dark:bg-amber-400/[0.07] dark:hover:bg-amber-400/[0.12]',
     accent: 'text-amber-700 dark:text-amber-300',
   },
   faq: {
     label: 'FAQ',
-    card: 'border-l-2 border-l-slate-400/70 bg-slate-500/[0.04] hover:bg-slate-500/[0.08] dark:border-l-slate-400/60 dark:bg-slate-300/[0.06] dark:hover:bg-slate-300/[0.10]',
+    card: 'bg-slate-500/[0.04] hover:bg-slate-500/[0.08] dark:bg-slate-300/[0.06] dark:hover:bg-slate-300/[0.10]',
     accent: 'text-slate-600 dark:text-slate-300',
   },
   news: {
     label: 'DOR News',
-    card: 'border-l-2 border-l-slate-400/70 bg-slate-500/[0.04] hover:bg-slate-500/[0.08] dark:border-l-slate-400/60 dark:bg-slate-300/[0.06] dark:hover:bg-slate-300/[0.10]',
+    card: 'bg-slate-500/[0.04] hover:bg-slate-500/[0.08] dark:bg-slate-300/[0.06] dark:hover:bg-slate-300/[0.10]',
     accent: 'text-slate-600 dark:text-slate-300',
   },
   iaao: {
     label: 'IAAO Standard',
-    card: 'border-l-2 border-l-rose-500/70 bg-rose-500/[0.04] hover:bg-rose-500/[0.08] dark:border-l-rose-400/70 dark:bg-rose-400/[0.07] dark:hover:bg-rose-400/[0.12]',
+    card: 'bg-rose-500/[0.04] hover:bg-rose-500/[0.08] dark:bg-rose-400/[0.07] dark:hover:bg-rose-400/[0.12]',
     accent: 'text-rose-700 dark:text-rose-300',
   },
   uspap: {
     label: 'USPAP Standard',
-    card: 'border-l-2 border-l-rose-500/70 bg-rose-500/[0.04] hover:bg-rose-500/[0.08] dark:border-l-rose-400/70 dark:bg-rose-400/[0.07] dark:hover:bg-rose-400/[0.12]',
+    card: 'bg-rose-500/[0.04] hover:bg-rose-500/[0.08] dark:bg-rose-400/[0.07] dark:hover:bg-rose-400/[0.12]',
     accent: 'text-rose-700 dark:text-rose-300',
   },
   other: {
     label: 'Source',
-    card: 'border-l-2 border-l-slate-400/70 bg-slate-500/[0.04] hover:bg-slate-500/[0.08] dark:border-l-slate-400/60 dark:bg-slate-300/[0.06] dark:hover:bg-slate-300/[0.10]',
+    card: 'bg-slate-500/[0.04] hover:bg-slate-500/[0.08] dark:bg-slate-300/[0.06] dark:hover:bg-slate-300/[0.10]',
     accent: 'text-slate-600 dark:text-slate-300',
   },
 };

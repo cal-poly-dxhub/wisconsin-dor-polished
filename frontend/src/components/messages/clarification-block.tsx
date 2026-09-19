@@ -64,7 +64,7 @@ export function ClarificationBlock({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, ease: 'easeOut' }}
-      className="mt-5 overflow-hidden rounded-xl border border-border/70 border-l-[3px] border-l-primary/70 bg-muted/40 px-4 py-3.5"
+      className="mt-5 overflow-hidden rounded-xl border border-border/70 bg-muted/40 px-4 py-3.5"
     >
       <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         {label}
