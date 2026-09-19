@@ -1,6 +1,7 @@
 """Integration tests for handler.py and loop.phase_a.run_agentic_loop."""
 
 import itertools
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -476,8 +477,16 @@ class TestPreLoopClassification:
         finalize.assert_called_once()
         args, kwargs = finalize.call_args
         assert kwargs.get("rag_documents", args[3] if len(args) > 3 else None) == []
-        # Disambiguation offers property-type choices over the WebSocket.
+        # Disambiguation offers property-type choices over the WebSocket,
+        # tagged as the legacy pre-loop path. No question travels with them —
+        # the canned answer text already asks it.
         assert mock_ws.client.post_to_connection.call_count == 1
+        body = json.loads(mock_ws.client.post_to_connection.call_args.kwargs["Data"])["body"]
+        assert body["responseType"] == "choices"
+        assert body["content"]["choices"] == disambiguation.PROPERTY_TYPE_CHOICES
+        assert body["content"]["kind"] == "disambiguation"
+        assert body["content"]["question"] is None
+        assert body["content"]["axis"] is None
 
     def test_topic_shift_suggests_without_sources(self, fresh_modules, monkeypatch):
         handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(

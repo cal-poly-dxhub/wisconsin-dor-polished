@@ -347,7 +347,12 @@ describe('useWebSocketChat Hook Tests', () => {
     const choicesMessage: MessageUnion = {
       responseType: 'choices',
       queryId,
-      content: { choices: ['Residential', 'Commercial', 'Agricultural'] },
+      content: {
+        choices: ['Residential', 'Commercial', 'Agricultural'],
+        question: 'What kind of property is it?',
+        axis: 'property classification',
+        kind: 'clarification',
+      },
     };
 
     act(() => {
@@ -356,5 +361,12 @@ describe('useWebSocketChat Hook Tests', () => {
 
     const query = useChatStore.getState().queries[queryId];
     expect(query.choices).toEqual(['Residential', 'Commercial', 'Agricultural']);
+    // The question/axis/kind ride along with the options so the turn renders
+    // as one clarification block above the source cards.
+    expect(query.clarification).toEqual({
+      question: 'What kind of property is it?',
+      axis: 'property classification',
+      kind: 'clarification',
+    });
   });
 });

@@ -184,7 +184,12 @@ export function useWebSocketChat(
             case 'choices':
               useChatStore.getState().setQueryChoices(
                 message.queryId,
-                message.content.choices
+                message.content.choices,
+                {
+                  question: message.content.question,
+                  axis: message.content.axis,
+                  kind: message.content.kind,
+                }
               );
               break;
 

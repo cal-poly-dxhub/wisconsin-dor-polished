@@ -7,6 +7,7 @@ import type {
   ChatStore,
   ConnectionState,
   Query,
+  QueryClarification,
   QueryError,
   ResourceItem,
   QueryStatus,
@@ -117,10 +118,17 @@ export const useChatStore = create<ChatStore>()(
         }
       }),
 
-    setQueryChoices: (queryId: string, choices: string[]) =>
+    setQueryChoices: (
+      queryId: string,
+      choices: string[],
+      clarification?: QueryClarification
+    ) =>
       set(state => {
         if (state.queries[queryId]) {
           state.queries[queryId].choices = choices;
+          // Keep the question/axis/kind next to the options so the turn can be
+          // rendered as one clarification block.
+          state.queries[queryId].clarification = clarification;
         }
       }),
 

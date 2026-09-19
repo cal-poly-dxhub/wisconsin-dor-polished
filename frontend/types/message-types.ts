@@ -107,6 +107,15 @@ export const AgentEventSchema = z.object({
 
 export const ChoicesContentSchema = z.object({
   choices: z.array(z.string()),
+  // Clarification framing that travels with the chips. `question` is absent on
+  // the legacy pre-loop disambiguation path (its canned answer already asks);
+  // `axis` names the fact being asked about and labels the block.
+  question: optStr,
+  axis: optStr,
+  kind: z
+    .enum(['clarification', 'disambiguation'])
+    .nullish()
+    .transform(v => v ?? undefined),
 });
 
 export const ChoicesMessageSchema = z.object({

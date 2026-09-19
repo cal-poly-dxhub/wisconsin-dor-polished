@@ -25,7 +25,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { FeedbackModal } from './feedback/feedback-modal';
 import { AnnotationController } from './feedback/annotation-controller';
 import { RetrievalModal } from './retrieval-modal';
-import { ChoiceChips } from './choice-chips';
+import { ClarificationBlock } from './clarification-block';
 import { FlowchartBanner, FlowchartSourceCard } from './flowchart-walkthrough';
 import { TopicShiftSuggestion } from './topic-shift-suggestion';
 
@@ -555,6 +555,7 @@ export function ChatMessage({
   const agentTrace = useChatStore(s => s.queries[queryId]?.agentTrace);
   const devTrace = useDevTrace();
   const choices = useChatStore(s => s.queries[queryId]?.choices);
+  const clarification = useChatStore(s => s.queries[queryId]?.clarification);
   const suggestion = useChatStore(s => s.queries[queryId]?.suggestion);
   const flowchart = useChatStore(s => s.queries[queryId]?.flowchart);
   const [retrievalModalOpen, setRetrievalModalOpen] = useState(false);
@@ -643,10 +644,23 @@ export function ChatMessage({
     return (
       <div className="chat-response-aligned">
         <StreamResponse content={response} streamingComplete={streamingComplete} docUrls={docUrls} docTones={docTones} />
+        {/* The clarification sits between the answer and the sources: the open
+            fork is read right after the prose that left it open, instead of
+            being stranded below the source grid. */}
+        {choices && choices.length > 0 && streamingComplete && (
+          <ClarificationBlock
+            queryId={queryId}
+            choices={choices}
+            question={clarification?.question}
+            axis={clarification?.axis}
+            kind={clarification?.kind}
+            onSelect={onSendMessage}
+          />
+        )}
         <InlineSources items={items ?? []} streamingComplete={streamingComplete} citationsByDoc={citationsByDoc} flowchart={flowchart} />
       </div>
     );
-  }, [response, streamingComplete, items, docUrls, docTones, citationsByDoc, flowchart]);
+  }, [response, streamingComplete, items, docUrls, docTones, citationsByDoc, flowchart, choices, clarification, queryId, onSendMessage]);
 
   const containerClassName = useMemo(
     () => `font-sans ${isAnnotatingThis ? 'annotate-active' : ''} ${className || ''}`,
@@ -782,12 +796,8 @@ export function ChatMessage({
           {/* Response Paragraph */}
           {memoizedResponse}
 
-          {/* Choice chips for disambiguation */}
-          {choices && choices.length > 0 && streamingComplete && (
-            <div className="chat-response-aligned">
-              <ChoiceChips queryId={queryId} choices={choices} onSelect={onSendMessage} />
-            </div>
-          )}
+          {/* The clarification block (question + chips) renders inside
+              memoizedResponse, above the source cards. */}
 
           {/* Soft, dismissible suggestion for a topic shift */}
           {suggestion === 'topic-shift' && streamingComplete && (

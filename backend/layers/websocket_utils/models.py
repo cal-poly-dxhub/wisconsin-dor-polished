@@ -132,6 +132,25 @@ class AgentEventMessage(WebSocketMessage):
 
 class ChoicesContent(WebSocketMessage):
     choices: list[str]
+    # Framing for the chips. The frontend renders the question and the options
+    # together as one clarification block, so the question travels HERE rather
+    # than being restated as the last line of the streamed answer.
+    #
+    # - `question` — the single question to put to the user. Absent on the
+    #   legacy pre-loop disambiguation path, whose canned answer text already
+    #   carries the question.
+    # - `axis` — short noun phrase naming the fact being asked about
+    #   ("property classification", "assessment year"); used as the block's
+    #   label when present.
+    # - `kind` — which path produced these options: the post-retrieval
+    #   adequacy judge ("clarification") or the pre-loop property-type
+    #   classifier ("disambiguation").
+    #
+    # All three are single words, so the camelCase alias generator leaves the
+    # wire names unchanged (`question` / `axis` / `kind`).
+    question: str | None = None
+    axis: str | None = None
+    kind: Literal["clarification", "disambiguation"] | None = None
 
 
 class ChoicesMessage(WebSocketMessage):
