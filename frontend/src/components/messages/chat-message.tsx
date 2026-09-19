@@ -8,6 +8,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DocumentCard, type Document } from '../documents/document-card/document-card';
 import { FAQCard } from '../documents/document-card/faq-card';
+import { SourceGroupGrid, type SourceEntry } from '../documents/document-card/source-group-grid';
+import { classifySourceKind } from '../documents/document-card/source-taxonomy';
 import { appendPageFragment, chooseSourceTarget } from '../documents/document-card/source-target';
 import { parseInlineCitations, type InlineCitation } from '@/lib/parse-inline-citations';
 import { useDevTrace } from '@/hooks/use-dev-trace';
@@ -298,8 +300,47 @@ export function InlineSources({ items, streamingComplete, citationsByDoc, flowch
 
   if ((!items.length && !flowchart) || !streamingComplete || annotationActive) return null;
 
-  const docCount = items.filter(i => i.type === 'document').length;
-  const faqCount = items.filter(i => i.type === 'faq').length;
+  // Build the cards once, then let SourceGroupGrid bucket them by authority.
+  const entries: SourceEntry[] = [];
+  let docCount = 0;
+  let faqCount = 0;
+  for (const item of items) {
+    if (item.type === 'document') {
+      const doc = item.data as Document;
+      const rawId = doc.documentId.replace(/-[a-f0-9]{7}$/, '');
+      let citations = citationsByDoc?.get(rawId);
+      // Statute sections share a rawId (e.g. "statutes-70") but are
+      // split into per-section cards with distinct page ranges. Filter
+      // citations to only those within this card's page range.
+      if (citations && doc.startPage != null && doc.endPage != null && rawId.startsWith('statutes-')) {
+        citations = citations.filter(c => c.page >= doc.startPage! && c.page <= doc.endPage!);
+      }
+      // Suppress statute section cards that received zero inline citations
+      // after page-range filtering — they were backfilled but never referenced in prose.
+      if (rawId.startsWith('statutes-') && (!citations || citations.length === 0)) {
+        continue;
+      }
+      entries.push({
+        key: `doc-${doc.documentId}`,
+        kind: classifySourceKind(doc),
+        node: (
+          <DocumentCard document={doc} citations={citations?.length ? citations : undefined} />
+        ),
+      });
+      docCount += 1;
+      continue;
+    }
+    const faq = item.data as FAQ;
+    entries.push({
+      key: `faq-${faq.faqId}`,
+      kind: 'faq',
+      node: <FAQCard faq={faq} />,
+    });
+    faqCount += 1;
+  }
+
+  // Counts describe what is actually in the grid — suppressed statute-section
+  // cards must not inflate the header, or it will disagree with the group counts.
   const parts: string[] = [];
   if (docCount > 0) parts.push(`${docCount} document${docCount === 1 ? '' : 's'}`);
   if (faqCount > 0) parts.push(`${faqCount} FAQ${faqCount === 1 ? '' : 's'}`);
@@ -324,45 +365,10 @@ export function InlineSources({ items, streamingComplete, citationsByDoc, flowch
         </svg>
       </button>
       {open && (
-        <div className="inline-sources-row grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-2.5">
-          {flowchart && (
-            <div key="flowchart">
-              <FlowchartSourceCard flowchart={flowchart} />
-            </div>
-          )}
-          {items.map(item => {
-            const key =
-              item.type === 'document'
-                ? `doc-${(item.data as Document).documentId}`
-                : `faq-${(item.data as FAQ).faqId}`;
-            if (item.type === 'document') {
-              const doc = item.data as Document;
-              const rawId = doc.documentId.replace(/-[a-f0-9]{7}$/, '');
-              let citations = citationsByDoc?.get(rawId);
-              // Statute sections share a rawId (e.g. "statutes-70") but are
-              // split into per-section cards with distinct page ranges. Filter
-              // citations to only those within this card's page range.
-              if (citations && doc.startPage != null && doc.endPage != null && rawId.startsWith('statutes-')) {
-                citations = citations.filter(c => c.page >= doc.startPage! && c.page <= doc.endPage!);
-              }
-              // Suppress statute section cards that received zero inline citations
-              // after page-range filtering — they were backfilled but never referenced in prose.
-              if (rawId.startsWith('statutes-') && (!citations || citations.length === 0)) {
-                return null;
-              }
-              return (
-                <div key={key}>
-                  <DocumentCard document={doc} citations={citations?.length ? citations : undefined} />
-                </div>
-              );
-            }
-            return (
-              <div key={key}>
-                <FAQCard faq={item.data as FAQ} />
-              </div>
-            );
-          })}
-        </div>
+        <SourceGroupGrid
+          entries={entries}
+          leading={flowchart ? <FlowchartSourceCard flowchart={flowchart} /> : undefined}
+        />
       )}
     </div>
   );
