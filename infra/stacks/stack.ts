@@ -51,7 +51,6 @@ export class WisconsinBotStack extends cdk.Stack {
         neptuneGraphId:
           (this.node.tryGetContext('neptuneGraphIdOverride') as string | undefined) ??
           graphRAGStack.neptuneGraphId,
-        neptuneGraphEndpoint: graphRAGStack.neptuneGraphEndpoint,
         rawBucketName: graphRAGStack.rawBucketName,
         faqKnowledgeBaseId: graphRAGStack.faqKnowledgeBaseId,
         faqUrlTable: graphRAGStack.faqUrlTable,

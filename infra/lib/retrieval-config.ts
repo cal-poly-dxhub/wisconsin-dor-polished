@@ -63,16 +63,3 @@ export function getRetrievalEnv(overrides: Record<string, string> = {}): Record<
   }
   return { ...env, ...overrides };
 }
-
-/** Read a single documented env var's default, for one-off use in a stack. */
-export function getRetrievalEnvDefault(key: string): string | undefined {
-  const config = loadRetrievalConfig();
-  const entry = config.env?.[key];
-  return entry === undefined ? undefined : String(entry.default);
-}
-
-/** Expose tool_params (model-controlled retrieval knobs) for tooling/docs use. */
-export function getRetrievalToolParams(): Record<string, Record<string, RetrievalToolParamEntry>> {
-  const config = loadRetrievalConfig();
-  return config.tool_params ?? {};
-}
