@@ -125,7 +125,9 @@ uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e692
 # Staging / A-B a pipeline change without touching prod caches or the prod graph:
 #   every phase accepts --cache-prefix staging/ (and load --graph-id <other graph>);
 #   raw-recall eval: tools/ingestion/ops/run_recall_probe.py --mode baseline|after --graph-id ...
-# Neptune must be at 128 mCU for a full load (Phase 8 OOMs below that); scale back to 32 after (16 is rejected: storage memory constraints).
+# Neptune must be at 128 mCU for a full load (Phase 8 OOMs below that); scale back to 32 after.
+# 16 m-NCU is rejected ("storage memory constraints") — confirmed 2026-09-18 on a FRESH graph too,
+# so it is the corpus size, not reload bloat; 32 is the floor.
 # RUN FULL LOADS OUTSIDE BUSINESS HOURS (after 6 PM Central, or weekends). Reads keep
 # working while Neptune resizes, but Phase 5 deletes and recreates every chunk and
 # Phase 8 rewrites vectors — about 10 minutes during which live queries can get thin
