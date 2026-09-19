@@ -79,22 +79,6 @@ export class IngestionStack extends cdk.NestedStack {
       })
     );
 
-    // Textract staging bucket (legacy name from initial development)
-    taskRole.addToPolicy(
-      new iam.PolicyStatement({
-        actions: [
-          's3:GetObject',
-          's3:PutObject',
-          's3:ListBucket',
-          's3:DeleteObject',
-        ],
-        resources: [
-          'arn:aws:s3:::textract-chunk-result-dhgoel',
-          'arn:aws:s3:::textract-chunk-result-dhgoel/*',
-        ],
-      })
-    );
-
     taskRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['bedrock:InvokeModel'],
@@ -161,7 +145,13 @@ export class IngestionStack extends cdk.NestedStack {
         WORK_BUCKET: props.workBucketName,
         GRAPH_ID: props.neptuneGraphId,
         MAX_WORKERS: '3',
-        TEXTRACT_STAGING_BUCKET: 'textract-chunk-result-dhgoel',
+        // TEXTRACT_STAGING_BUCKET is intentionally NOT set: the bucket it
+        // used to name (a personal dev bucket) no longer exists, and the task
+        // role no longer grants it. The Textract fallback in
+        // tools/ingestion/chunking/pdfChunker.py must fail closed (skip
+        // Textract) when this var is unset rather than fall back to a
+        // hard-coded bucket name. Set it here, and re-grant the bucket above,
+        // if Textract fallback is ever wanted again.
       },
     });
 

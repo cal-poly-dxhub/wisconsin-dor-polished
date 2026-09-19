@@ -22,9 +22,12 @@ describe('canvas pane map', () => {
   test('pane map has no entry for tools the backend no longer exposes', () => {
     // `refine_query` became the auto_refine stage; `clarify` is executable but
     // absent from TOOL_DEFINITIONS, so the model can never call it.
+    // `get_authority_chain` / `list_framework_docs` were retired outright.
     expect(TOOL_PANES.refine_query).toBeUndefined();
     expect(TOOL_PANES.clarify).toBeUndefined();
     expect(TOOL_PANES.cite_documents).toBeUndefined();
+    expect(TOOL_PANES.get_authority_chain).toBeUndefined();
+    expect(TOOL_PANES.list_framework_docs).toBeUndefined();
   });
 });
 

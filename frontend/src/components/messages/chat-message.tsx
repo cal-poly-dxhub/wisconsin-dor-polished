@@ -61,9 +61,6 @@ const TOOL_VERBS: Record<string, string> = {
   get_document: 'Fetching document',
   faq_search: 'Checking FAQs for',
   fetch_case_opinion: 'Fetching opinion for',
-  get_authority_chain: 'Tracing authority chain from',
-  list_framework_docs: 'Listing framework documents for',
-  refine_query: 'Refining query',
   answer: 'Answering',
 };
 

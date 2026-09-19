@@ -278,7 +278,6 @@ export interface VectorSearchBaseData {
   scoreBuckets?: Record<string, number>;
   targetWpamYear?: number;
   caseLawCount?: number;
-  autoEnrichedCount?: number;
   statuteBackfill?: { chunkId: string; docId: string; sourceRank: number; heading?: string }[];
   caselawBackfill?: { caseId: string; title: string; citation: string; summary: string; relevanceScore?: number; contentRole?: string; citedStubs?: string[] }[];
   caselawBackfillMeta?: { stubsSearched?: string[]; candidateCount?: number; fetchSaturated?: boolean; fetchK?: number; latencyMs?: number };

@@ -303,8 +303,6 @@ const TOOL_LABELS: Record<string, string> = {
   get_section: 'Get Section',
   get_document: 'Get Document',
   get_neighbors: 'Graph Neighbors',
-  get_authority_chain: 'Authority Chain',
-  list_framework_docs: 'Framework Documents',
   find_case_law: 'Case Law Search',
   fetch_case_opinion: 'Fetch Case Opinion',
   list_worksheets: 'Worksheet Registry',
@@ -329,12 +327,10 @@ function getToolIcon(toolName?: string) {
     case 'search_document':
       return <FileText className="h-4 w-4" />;
     case 'get_neighbors':
-    case 'get_authority_chain':
       return <Network className="h-4 w-4" />;
     case 'get_section':
     case 'list_sections':
     case 'get_document':
-    case 'list_framework_docs':
     case 'fetch_case_opinion':
     case 'list_worksheets':
     case 'get_worksheet':

@@ -53,7 +53,9 @@ describe('InitialVectorSearchPane', () => {
     const scoreCount = (html.match(/Score distribution/g) || []).length;
     expect(scoreCount).toBeGreaterThanOrEqual(2);
     expect(html).not.toContain('Pipeline');
-    expect(html).toContain('Additive merge only');
+    // The broad arm contributes additive chunks, so its "chunks by source"
+    // section renders the additive-merge heading rather than the plain one.
+    expect(html).toContain('Chunks by source — additive merge only');
     expect(html).toContain('chunks to model</span>');
   });
 

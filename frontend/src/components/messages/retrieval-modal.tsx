@@ -52,20 +52,16 @@ type PipelineItem =
 const TOOL_TITLES: Record<string, string> = {
   reasoning: 'Thinking',
   faq_search: 'FAQ Search',
-  refine_query: 'Query Refinement',
   vector_search: 'Vector Search',
   search_document: 'Document Search',
   list_sections: 'List Sections',
   get_section: 'Get Section',
   get_document: 'Get Document',
   get_neighbors: 'Graph Neighbors',
-  get_authority_chain: 'Authority Chain',
-  list_framework_docs: 'Framework Documents',
   find_case_law: 'Case Law Search',
   fetch_case_opinion: 'Fetch Case Opinion',
   prepare_answer: 'Answer Synthesis',
   answer: 'Answer Synthesis',
-  cite_documents: 'Cite Documents',
 };
 
 function stripQuotes(s: string): string {
@@ -96,25 +92,6 @@ function CardContextLine({ card }: { card: PipelineCard }) {
   const call = card.callSummary;
 
   switch (card.toolName) {
-    case 'refine_query': {
-      const refined = typeof m.refinedQuery === 'string' ? m.refinedQuery : '';
-      const original = stripQuotes(call);
-      if (refined && card.status === 'complete') {
-        return (
-          <ActionLead>
-            Rewriting the query to <Emphasis>&ldquo;{refined}&rdquo;</Emphasis>
-          </ActionLead>
-        );
-      }
-      if (original) {
-        return (
-          <ActionLead>
-            Rewriting the query <Emphasis>&ldquo;{original}&rdquo;</Emphasis>
-          </ActionLead>
-        );
-      }
-      return null;
-    }
     case 'faq_search': {
       const query = stripQuotes(call);
       if (!query) return null;
@@ -205,30 +182,12 @@ function CardContextLine({ card }: { card: PipelineCard }) {
         </ActionLead>
       );
     }
-    case 'get_authority_chain': {
-      const source = call;
-      if (!source) return null;
-      return (
-        <ActionLead>
-          Tracing authority from <Emphasis>{source}</Emphasis>
-        </ActionLead>
-      );
-    }
     case 'get_document': {
       const target = call;
       if (!target) return null;
       return (
         <ActionLead>
           Fetching <Emphasis>{target}</Emphasis>
-        </ActionLead>
-      );
-    }
-    case 'list_framework_docs': {
-      const framework = call;
-      if (!framework) return null;
-      return (
-        <ActionLead>
-          Listing documents in <Emphasis>{framework}</Emphasis>
         </ActionLead>
       );
     }
@@ -734,42 +693,6 @@ function GraphNeighborsViz({ card }: { card: PipelineCard }) {
   );
 }
 
-function AuthorityChainViz({ card }: { card: PipelineCard }) {
-  const m = card.metadata;
-  const chainLength = typeof m.chainLength === 'number' ? m.chainLength : 0;
-
-  if (chainLength === 0 && card.status !== 'pending') {
-    return <p className="text-xs text-muted-foreground/60 mt-2">No chain found</p>;
-  }
-  if (card.status === 'pending') return null;
-
-  return (
-    <FadeIn>
-      <div className="flex items-center gap-1">
-        {Array.from({ length: chainLength }).map((_, i) => (
-          <motion.div
-            key={i}
-            className="flex items-center gap-1"
-            initial={{ opacity: 0, x: -4 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.2, delay: i * 0.08 }}
-          >
-            <div className="h-3 w-3 rounded-[3px] bg-foreground/60"
-              style={{ opacity: 1 - i * 0.15 }}
-            />
-            {i < chainLength - 1 && (
-              <span className="text-xs text-muted-foreground/40">→</span>
-            )}
-          </motion.div>
-        ))}
-        <span className="text-xs text-muted-foreground/60 ml-1">
-          {chainLength} step{chainLength !== 1 ? 's' : ''}
-        </span>
-      </div>
-    </FadeIn>
-  );
-}
-
 function SynthesisViz({ trace }: { trace: AgentTraceEvent[] }) {
   const loopComplete = trace.find(e => e.kind === 'loop_complete');
   const discoveryCounts = (loopComplete?.payload?.discoveryCounts as Record<string, number>) ?? {};
@@ -1051,11 +974,8 @@ function CardVisualization({ card, trace }: { card: PipelineCard; trace: AgentTr
       return <GetSectionViz card={card} />;
     case 'get_neighbors':
       return <GraphNeighborsViz card={card} />;
-    case 'get_authority_chain':
-      return <AuthorityChainViz card={card} />;
     case 'answer':
     case 'prepare_answer':
-    case 'cite_documents':
       return <SynthesisViz trace={trace} />;
     default:
       return <GenericToolViz card={card} />;
@@ -1067,17 +987,6 @@ function CardVisualization({ card, trace }: { card: PipelineCard; trace: AgentTr
 function CardInfoContent({ card }: { card: PipelineCard }) {
   const m = card.metadata;
   const latencyMs = typeof m.latencyMs === 'number' ? m.latencyMs : 0;
-
-  if (card.toolName === 'refine_query') {
-    if (latencyMs > 0 && card.status === 'complete') {
-      return (
-        <FadeIn>
-          <p className="text-xs text-muted-foreground/50">{latencyMs}ms</p>
-        </FadeIn>
-      );
-    }
-    return null;
-  }
 
   if (card.toolName === 'list_sections') {
     const headings = Array.isArray(m.sectionHeadings) ? (m.sectionHeadings as string[]) : [];
@@ -1124,7 +1033,7 @@ function CardInfoContent({ card }: { card: PipelineCard }) {
 function CardPanel({ card, trace, index }: { card: PipelineCard; trace: AgentTraceEvent[]; index: number }) {
   const title = TOOL_TITLES[card.toolName] ?? card.toolName;
   const isThinking = card.toolName === 'reasoning';
-  const hasInfoContent = ['refine_query', 'list_sections', 'search_document'].includes(card.toolName);
+  const hasInfoContent = ['list_sections', 'search_document'].includes(card.toolName);
 
   return (
     <div className="h-full p-6 flex flex-col">
