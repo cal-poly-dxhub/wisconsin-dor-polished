@@ -53,7 +53,19 @@ def extract_textract_data_local(local_pdf_path: str):
 
 
 def extract_textract_data(s3, s3_file, bucket_name, media_bucket_name):
-    """Extract structured text data using Textract."""
+    """Extract structured text data using Textract.
+
+    ``media_bucket_name`` is the staging bucket Textract writes its async
+    output to (``TEXTRACT_STAGING_BUCKET``). It has no default anywhere: a
+    caller that has not configured one must skip the fallback rather than
+    reach this function, so an empty value is a programming error, not a
+    condition to paper over with a guessed bucket name.
+    """
+    if not media_bucket_name:
+        raise ValueError(
+            "extract_textract_data needs a Textract staging bucket; "
+            "TEXTRACT_STAGING_BUCKET is not set."
+        )
 
     extractor = Textractor(region_name=_get_region())
 

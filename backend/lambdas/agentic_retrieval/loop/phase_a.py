@@ -95,6 +95,7 @@ _CHUNK_FIELDS_FOR_MODEL = frozenset(
     }
 )
 
+
 def _compact_for_model(result: dict, tool_name: str) -> dict:
     """Strip fields from tool results that the model doesn't need for reasoning.
 

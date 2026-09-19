@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import logging
 import os
 import re
 from collections import OrderedDict
@@ -31,9 +32,26 @@ from tools.ingestion.chunking.wpam_chunk_filter import (
     repair_wpam_subheadings,
 )
 
+logger = logging.getLogger(__name__)
+
 config = Config(read_timeout=600, retries={"max_attempts": 5})
 
-MEDIA_BUCKET_NAME = os.environ.get("TEXTRACT_STAGING_BUCKET", "textract-chunk-result-dhgoel")
+# Staging bucket Textract writes its async output to. There is deliberately NO
+# default: the Fargate task role no longer grants any bucket for this, so a
+# baked-in name could only produce an AccessDenied (or, worse, a cross-account
+# write). Unset means the Textract fallback is skipped entirely and whatever
+# PyMuPDF produced is kept -- see textract_staging_bucket().
+MEDIA_BUCKET_NAME = os.environ.get("TEXTRACT_STAGING_BUCKET", "").strip()
+
+
+def textract_staging_bucket() -> str:
+    """Return the configured Textract staging bucket, or "" when unset.
+
+    Read through this rather than off the module constant so a test (or a
+    caller that sets the env var late) sees the current value.
+    """
+    return (os.environ.get("TEXTRACT_STAGING_BUCKET", "") or MEDIA_BUCKET_NAME).strip()
+
 
 # Debug flag to control chunk logging
 DEBUG = True  # Set to False to disable chunk logging
@@ -50,10 +68,12 @@ def _get_s3():
         _s3 = boto3.client("s3")
         session = boto3.session.Session()
         _region_name = session.region_name
-        try:
-            _ensure_bucket_exists(_s3, MEDIA_BUCKET_NAME)
-        except Exception:
-            pass
+        staging_bucket = textract_staging_bucket()
+        if staging_bucket:
+            try:
+                _ensure_bucket_exists(_s3, staging_bucket)
+            except Exception:
+                pass
     return _s3
 
 
@@ -1254,8 +1274,10 @@ def extract_raw_text_from_pdf_s3(bucket_name: str, s3_file_path: str) -> str:
     local_pdf_path = download_pdf_from_s3(_get_s3(), bucket_name, s3_file_path)
 
     # Try PyMuPDF first
+    pymupdf_text = None
     try:
         raw_text = extract_raw_text_with_pymupdf(local_pdf_path)
+        pymupdf_text = raw_text
         if raw_text and len(raw_text.split()) >= 10:
             print(
                 f"Extracted raw text with PyMuPDF from {os.path.basename(s3_file_path)} successfully."
@@ -1266,14 +1288,27 @@ def extract_raw_text_from_pdf_s3(bucket_name: str, s3_file_path: str) -> str:
         print(f"PyMuPDF raw text extraction failed ({e}), falling back to Textract...")
 
     # Textract fallback
-    s3_uri = f"s3://{bucket_name}/{s3_file_path}"
-    if not MEDIA_BUCKET_NAME:
-        raise ValueError("MEDIA_BUCKET_NAME environment variable is not set.")
+    staging_bucket = textract_staging_bucket()
+    if not staging_bucket:
+        if pymupdf_text is None:
+            raise RuntimeError(
+                f"PyMuPDF could not read {s3_file_path} and the Textract fallback is "
+                "unavailable: TEXTRACT_STAGING_BUCKET is not set."
+            )
+        logger.warning(
+            "TEXTRACT_STAGING_BUCKET is not set; skipping the Textract fallback for %s "
+            "and keeping the PyMuPDF raw text as-is (%d chars). Set the env var to a "
+            "bucket the task role can write to if you want the fallback back.",
+            s3_file_path,
+            len(pymupdf_text),
+        )
+        return pymupdf_text
 
+    s3_uri = f"s3://{bucket_name}/{s3_file_path}"
     textract_output_path = None
     try:
         document, local_pdf_path, textract_output_path = extract_textract_data(
-            _get_s3(), s3_uri, bucket_name, MEDIA_BUCKET_NAME
+            _get_s3(), s3_uri, bucket_name, staging_bucket
         )
         raw_text = extract_raw_text_from_document(document)
 
@@ -1319,8 +1354,10 @@ def process_pdf_from_s3(
     textract_output_path = None
     used_textract = False
 
+    pymupdf_result = None
     try:
         header_split, line_page_mapping = extract_with_pymupdf(local_pdf_path, is_statute)
+        pymupdf_result = (header_split, line_page_mapping)
         if not extraction_looks_good(header_split, line_page_mapping):
             print(f"PyMuPDF quality gate failed for {doc_id}, falling back to Textract...")
             header_split = None
@@ -1328,14 +1365,30 @@ def process_pdf_from_s3(
         print(f"PyMuPDF extraction failed for {doc_id} ({e}), falling back to Textract...")
 
     # --- Textract fallback ---
-    if header_split is None:
-        if not MEDIA_BUCKET_NAME:
-            raise ValueError("MEDIA_BUCKET_NAME environment variable is not set.")
+    if header_split is None and not textract_staging_bucket():
+        # No staging bucket configured, so there is nowhere for Textract to
+        # write its async output. Keep whatever PyMuPDF produced rather than
+        # attempting an S3 write that can only fail.
+        if pymupdf_result is None:
+            raise RuntimeError(
+                f"PyMuPDF could not read {doc_id} and the Textract fallback is "
+                "unavailable: TEXTRACT_STAGING_BUCKET is not set."
+            )
+        logger.warning(
+            "TEXTRACT_STAGING_BUCKET is not set; skipping the Textract fallback for %s "
+            "and keeping the PyMuPDF extraction as-is even though it failed the quality "
+            "gate. Set the env var to a bucket the task role can write to if you want "
+            "the fallback back.",
+            doc_id,
+        )
+        header_split, line_page_mapping = pymupdf_result
 
+    if header_split is None:
+        staging_bucket = textract_staging_bucket()
         s3_uri = f"s3://{bucket_name}/{s3_file_path}"
         try:
             document, local_pdf_path, textract_output_path = extract_textract_data(
-                _get_s3(), s3_uri, bucket_name, MEDIA_BUCKET_NAME
+                _get_s3(), s3_uri, bucket_name, staging_bucket
             )
             header_split, line_page_mapping, flowchart_chunks = process_document(
                 document, local_pdf_path

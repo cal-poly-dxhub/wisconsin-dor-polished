@@ -82,8 +82,7 @@ def test_matches_the_scrapers_manifest_block(manifest_categories, category):
     a document ingested from the admin page must be indistinguishable from the
     same document scraped from the manifest."""
     assert category in manifest_categories, (
-        f"{category} is offered by /admin/ingest but is not a category in "
-        "document_manifest.yaml"
+        f"{category} is offered by /admin/ingest but is not a category in document_manifest.yaml"
     )
     expected = manifest_categories[category]
     entry = INGEST_CATEGORIES[category]
