@@ -55,7 +55,8 @@ describe('classifySourceKind', () => {
     for (const group of SOURCE_GROUPS) {
       for (const kind of group.kinds) {
         expect(SOURCE_KIND_META[kind].label.length).toBeGreaterThan(0);
-        expect(SOURCE_KIND_META[kind].card).toContain('border-l-2');
+        expect(SOURCE_KIND_META[kind].card).toContain('bg-');
+        expect(SOURCE_KIND_META[kind].card).not.toContain('border-l');
         expect(SOURCE_KIND_META[kind].accent).toContain('dark:');
       }
     }
