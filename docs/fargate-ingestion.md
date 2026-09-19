@@ -138,13 +138,14 @@ their `phase_N_*` functions (there is no CLI-step vs. function offset).
 | 6 | Case Law CITES | `(Statute)-[:CITES]->(CaseLaw)` reverse edges |
 | 7 | Stub Resolution | `DEFINED_BY` edges from Statute/AdminRule stubs to matching chunks |
 | 8 | Vector Upserts | `neptune.algo.vectors.upsert` per chunk (parallel, 8 workers) |
-| 9 | Orphan Cleanup | GC orphan Statute stubs, orphan Topics, stale CaseLaw nodes |
+| 9 | Orphan Cleanup | GC orphan Statute stubs and stale CaseLaw nodes |
 
 > There is no longer a semantic-edge / topic-clustering phase — an earlier
 > "Phase 9" that classified `RELATED_TO`/`SUPPLEMENTS`/`SUPERSEDES`/`CONFLICTS_WITH`
-> edges via an LLM was removed. Current Phase 9 is orphan cleanup.
-> `ops/delete_semantic_edges.py` deletes the old edges from a live graph that was
-> loaded before the removal.
+> edges via an LLM was removed. Current Phase 9 is orphan cleanup. The one-shot
+> `ops/delete_semantic_edges.py`, which stripped those edges from a graph loaded
+> before the removal, was deleted on 2026-09-19; every live graph has been
+> reloaded since.
 
 ## Monitoring
 

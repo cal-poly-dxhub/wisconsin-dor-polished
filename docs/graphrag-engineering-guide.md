@@ -95,8 +95,6 @@ The loop drives Bedrock via `converse_with_cache` (`streaming/bedrock.py`), whic
 | `get_section` | Chunks from a specific section by exact heading match. Two modes (see below). |
 | `get_document` | Node lookup by ID; falls back to vector search on miss. |
 | `get_neighbors` | Graph traversal from a node; accepts an `edge_types` filter; optionally semantically ranked. |
-| `get_authority_chain` | Walk the governance hierarchy up to the root framework. |
-| `list_framework_docs` | Enumerate all documents in a framework. |
 | `find_case_law` | Search CaseLaw nodes by name/citation, optionally scoped to a statute. |
 | `fetch_case_opinion` | Fetch full opinion `.txt` from S3 for a case-law stub. |
 | `prepare_answer` | **Terminal tool.** Claude declares `cited_doc_ids` + `answer_plan`. The loop exits. |
@@ -171,11 +169,11 @@ The answer context is a structured prompt built from: prior conversation, the us
 | `DERIVED_FROM` | Framework → Framework | Authority precedence chain |
 | `COVERS_TOPIC` | Doc → Topic | Semantic grouping |
 
-> **Written vs. queried.** The load pipeline writes all of these. At *retrieval*
-> time the Neptune client mainly queries `CITES`, `BELONGS_TO`, `PART_OF`,
-> `DERIVED_FROM`, `EXTRACTED_FROM`, and `DEFINED_BY`. `IMPLEMENTS`, `HAS_SUBSECTION`,
-> and `COVERS_TOPIC` are written and available to `get_neighbors`/`get_authority_chain`
-> but aren't hard-wired into any retrieval query. Document nodes carry doc-type
+> **Written vs. queried.** At *retrieval* time the Neptune client mainly queries
+> `CITES`, `BELONGS_TO`, `PART_OF`, `DERIVED_FROM`, `EXTRACTED_FROM`, and
+> `DEFINED_BY`. `IMPLEMENTS`, `HAS_SUBSECTION`, and `COVERS_TOPIC` are in this
+> table but **no load phase writes them** — `get_neighbors` no longer offers
+> them as `edge_types` options. Document nodes carry doc-type
 > labels (`Statute`, `CaseLaw`, `AssessmentManual`, …) but are matched generically
 > by `id` in most queries; `Topic` is used only as a filter set, and "stub" is a
 > node **property** (`n.stub = true`), not a label.
@@ -194,7 +192,6 @@ These constraints recur across the codebase and explain otherwise-baffling patte
 
 Neptune Analytics rejects `$parameters` inside `CALL` procedure arguments and in variable-length path bounds. So:
 - `vector_search` inlines the 1024-float embedding and `topK` as string literals into Cypher.
-- `get_authority_chain` inlines `max_depth`.
 - Load Phase 8 (vector upserts) inlines each embedding and upserts one vector per query, parallelized over 8 threads.
 
 ### No WHERE on topKByEmbedding
@@ -468,10 +465,7 @@ Docker image must be `--platform linux/amd64` (Fargate requirement on Apple Sili
 | Script | Purpose |
 | --- | --- |
 | `purge_orphan_chunks.py` | Delete Chunk nodes whose index ≥ current chunk count (orphans from a prior, larger load) |
-| `cleanup_orphan_chunks.py` | Sibling of the above — delete Neptune chunks beyond the expected per-doc range |
 | `clean_stale_extracts.py` | Delete `extracted/`+`embedded/` artifacts for missing/drifted raw docs |
-| `cleanup_legacy_docs.py` | Audit/backfill legacy doc nodes lacking a public `source_url` |
-| `delete_semantic_edges.py` | Delete the removed semantic-edge layer (`RELATED_TO`/`SUPPLEMENTS`/…) from the live graph |
 | `seed_faq_url_table.py` | Seed `FaqUrlTable` from `documents/faqs.json` |
 | `extract_faq_qa_pairs.py` | Scrape FAQ pages into single Q&A files for the Bedrock FAQ KB |
 
