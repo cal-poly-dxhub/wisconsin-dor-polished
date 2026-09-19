@@ -26,6 +26,7 @@ from loop.phase_b import (
     apply_persona,
     build_answer_context,
     finalize_answer_links,
+    statute_section_pages,
     stream_answer,
 )
 from prompt import ANSWER_STREAM_SYSTEM_PROMPT
@@ -467,6 +468,9 @@ def handler(event: dict, context) -> dict[str, Any]:
             )
 
             answer = ""  # Will be populated by streaming or fallback
+            # chapter -> {section -> page} for the writer's index AND the
+            # deterministic page fill in the link repair (cached per container).
+            section_pages = statute_section_pages(cited_chunks, cited, neptune, result.answer_plan)
             if ws_server and result.connection_alive:
                 ws_connection_alive = [result.connection_alive]
 
@@ -509,6 +513,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                         persona=persona,
                         retrieved_doc_ids=retrieved_doc_ids,
                         cited_chunks=result.all_chunks,
+                        section_pages=section_pages,
                     )
                 except Exception as phase_b_exc:
                     logger.error(
@@ -572,7 +577,11 @@ def handler(event: dict, context) -> dict[str, Any]:
             # Single pre-persist repair pass (idempotent after the in-stream
             # repair; covers the non-streaming converse() fallbacks).
             answer = finalize_answer_links(
-                answer, user_query.query_id, retrieved_doc_ids, result.all_chunks
+                answer,
+                user_query.query_id,
+                retrieved_doc_ids,
+                result.all_chunks,
+                section_pages=section_pages,
             )
 
         # Streaming is done. If the judge asked for a clarification, offer its

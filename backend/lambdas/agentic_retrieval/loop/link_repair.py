@@ -123,6 +123,7 @@ def repair_citation_links(
     chunks_by_doc: dict[str, list[dict]],
     *,
     known_statute_chapters: frozenset[str] = KNOWN_STATUTE_CHAPTERS,
+    section_pages: dict[str, dict[str, int]] | None = None,
 ) -> tuple[str, dict]:
     """Repair conflated statute / admin-rule links in a Markdown answer.
 
@@ -130,8 +131,22 @@ def repair_citation_links(
     ``{"repointed": int, "stripped": int, "changes": [{...}, ...]}`` and each
     change records ``kind``, ``text``, ``from`` and ``to`` (``to`` is None for
     a strip). Links whose text has no section number are never touched.
+
+    ``section_pages`` (chapter -> {section -> first page}, from
+    ``phase_b.statute_section_pages``) lets a statute link written WITHOUT a
+    page, e.g. ``[§ 74.37](doc:statutes-74)``, get its ``#page=N`` filled in
+    (``kind="paged"``) so the reader lands on the section instead of page 1 of
+    the chapter PDF. Pages are never invented: no index entry, no fragment.
     """
     changes: list[dict] = []
+    section_pages = section_pages or {}
+
+    def _index_page(chapter: str, sections: list[str]) -> int | None:
+        pages = section_pages.get(chapter) or {}
+        for sec in sections:
+            if sec in pages:
+                return pages[sec]
+        return None
 
     def _fix(m: re.Match) -> str:
         text, doc_id = m.group(1), m.group(2)
@@ -155,13 +170,27 @@ def repair_citation_links(
         if chapter is None:
             return original
         if target and target.group(1) == chapter:
-            return original
+            if m.group(3):
+                return original
+            # Right chapter, no page: fill it from the retrieved chunks or the
+            # chapter's section index (the writer was shown the same index).
+            sections = _section_numbers_in_text(text, chapter)
+            page = resolve_section_page(chapter, sections, chunks_by_doc.get(doc_id))
+            if page is None:
+                page = _index_page(chapter, sections)
+            if page is None:
+                return original
+            changes.append(
+                {"kind": "paged", "text": text, "from": doc_id, "to": f"{doc_id}#page={page}"}
+            )
+            return f"[{text}](doc:{doc_id}#page={page})"
 
         want = f"statutes-{chapter}"
         if want in retrieved_doc_ids or chapter in known_statute_chapters:
-            resolved = resolve_section_page(
-                chapter, _section_numbers_in_text(text, chapter), chunks_by_doc.get(want)
-            )
+            sections = _section_numbers_in_text(text, chapter)
+            resolved = resolve_section_page(chapter, sections, chunks_by_doc.get(want))
+            if resolved is None:
+                resolved = _index_page(chapter, sections)
             fragment = f"#page={resolved}" if resolved else ""
             changes.append({"kind": "repointed", "text": text, "from": doc_id, "to": want})
             return f"[{text}](doc:{want}{fragment})"
@@ -173,6 +202,7 @@ def repair_citation_links(
     stats = {
         "repointed": sum(1 for c in changes if c["kind"] == "repointed"),
         "stripped": sum(1 for c in changes if c["kind"] == "stripped"),
+        "paged": sum(1 for c in changes if c["kind"] == "paged"),
         "changes": changes,
     }
     return repaired, stats

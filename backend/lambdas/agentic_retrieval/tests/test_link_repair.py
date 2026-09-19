@@ -67,6 +67,7 @@ class TestRealExamples:
         assert stats == {
             "repointed": 0,
             "stripped": 1,
+            "paged": 0,
             "changes": [
                 {"kind": "stripped", "text": "§ 340.01(6m)", "from": "statutes-70", "to": None}
             ],
@@ -140,7 +141,7 @@ class TestStatuteRules:
         answer = "Under [§ 70.32(2)(c)1g](doc:statutes-70#page=24), agricultural land means..."
         out, stats = _repair(answer)
         assert out == answer
-        assert stats == {"repointed": 0, "stripped": 0, "changes": []}
+        assert stats == {"repointed": 0, "stripped": 0, "paged": 0, "changes": []}
 
     def test_unretrieved_and_unknown_chapter_is_stripped(self):
         out, stats = _repair("[§ 61.19](doc:statutes-62)", known_statute_chapters=frozenset())
@@ -191,14 +192,14 @@ class TestUntouched:
         )
         out, stats = _repair(answer)
         assert out == answer
-        assert stats == {"repointed": 0, "stripped": 0, "changes": []}
+        assert stats == {"repointed": 0, "stripped": 0, "paged": 0, "changes": []}
 
     def test_plain_text_and_external_links_untouched(self):
         answer = "See § 70.32 (plain) and [DOR](https://www.revenue.wi.gov/x.pdf#page=3)."
         assert _repair(answer)[0] == answer
 
     def test_empty_answer(self):
-        assert _repair("") == ("", {"repointed": 0, "stripped": 0, "changes": []})
+        assert _repair("") == ("", {"repointed": 0, "stripped": 0, "paged": 0, "changes": []})
 
 
 class TestHelpers:
@@ -309,3 +310,57 @@ class TestFinalizeAnswerLinks:
             phase_b.finalize_answer_links("[§ 61.19](doc:statutes-62)", "q", None, [])
             == "[§ 61.19](doc:statutes-62)"
         )
+
+
+class TestSectionPageFill:
+    """A statute link written without a page gets `#page=N` from the chapter's
+    section index (phase_b.statute_section_pages) — never invented."""
+
+    INDEX = {"74": {"74.35": 8, "74.37": 9}, "70": {"70.47": 38}}
+
+    def test_bare_statute_link_gets_page_from_index(self):
+        out, stats = repair_citation_links(
+            "Under [§ 74.37](doc:statutes-74), you may file a claim.",
+            RETRIEVED,
+            {},
+            section_pages=self.INDEX,
+        )
+        assert "[§ 74.37](doc:statutes-74#page=9)" in out
+        assert stats["paged"] == 1
+        assert stats["changes"][0]["kind"] == "paged"
+
+    def test_subsection_uses_parent_section_page(self):
+        out, _ = repair_citation_links(
+            "[s. 70.47(7)(a)](doc:statutes-70)", RETRIEVED, {}, section_pages=self.INDEX
+        )
+        assert "(doc:statutes-70#page=38)" in out
+
+    def test_existing_page_is_left_alone(self):
+        text = "[§ 74.37](doc:statutes-74#page=12)"
+        out, stats = repair_citation_links(text, RETRIEVED, {}, section_pages=self.INDEX)
+        assert out == text and stats["paged"] == 0
+
+    def test_no_index_entry_means_no_fragment(self):
+        text = "[§ 74.99](doc:statutes-74)"
+        out, stats = repair_citation_links(text, RETRIEVED, {}, section_pages=self.INDEX)
+        assert out == text and stats["paged"] == 0
+
+    def test_retrieved_chunk_heading_beats_index(self):
+        chunks = {
+            "statutes-74": [
+                {"heading": "74.37 Claim on excessive assessment.", "start_page": 11, "text": ""}
+            ]
+        }
+        out, _ = repair_citation_links(
+            "[§ 74.37](doc:statutes-74)", RETRIEVED, chunks, section_pages=self.INDEX
+        )
+        assert "#page=11" in out
+
+    def test_repointed_link_falls_back_to_index_page(self):
+        out, stats = repair_citation_links(
+            "[§ 74.37](doc:gov_publications-2026-agricultural-assessment-guide#page=4)",
+            RETRIEVED,
+            {},
+            section_pages=self.INDEX,
+        )
+        assert "(doc:statutes-74#page=9)" in out and stats["repointed"] == 1

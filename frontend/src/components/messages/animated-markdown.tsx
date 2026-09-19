@@ -141,7 +141,17 @@ function resolveTone(
   return classifySource(extractText(children), resolvedHref);
 }
 
-function resolveHref(href: string | undefined, docUrls?: Record<string, string>): string | undefined {
+// "§ 74.37", "s. 70.32(2)(c)", "74.37" -> "74.37" when it belongs to `chapter`.
+function sectionFromLabel(label: string, chapter: string): string | undefined {
+  const m = label.match(new RegExp(`(?<![\\d.])${chapter}\\.(\\d+)`));
+  return m ? `${chapter}.${m[1]}` : undefined;
+}
+
+function resolveHref(
+  href: string | undefined,
+  docUrls?: Record<string, string>,
+  label = ''
+): string | undefined {
   if (!href) return href;
   if (href.startsWith(DOC_HREF_PREFIX) && docUrls) {
     const rest = href.slice(DOC_HREF_PREFIX.length);
@@ -149,8 +159,17 @@ function resolveHref(href: string | undefined, docUrls?: Record<string, string>)
     const docId = hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
     const pageOverride = hashIdx >= 0 ? parseInt(rest.slice(hashIdx + 6), 10) : NaN;
     let baseUrl = docUrls[docId];
+    const statuteMatch = docId.match(STATUTE_DOC_RE);
+    if (statuteMatch && Number.isNaN(pageOverride)) {
+      // A statute link with no page (the chapter was not among the retrieved
+      // documents and the writer had no page to give). Send the reader to the
+      // legislature's per-section page when the label names a section, e.g.
+      // "§ 74.37" -> docs.legis.wisconsin.gov/document/statutes/74.37, instead
+      // of page 1 of a 60-page chapter PDF.
+      const section = sectionFromLabel(label, statuteMatch[1]);
+      if (section) return `https://docs.legis.wisconsin.gov/document/statutes/${section}`;
+    }
     if (!baseUrl) {
-      const statuteMatch = docId.match(STATUTE_DOC_RE);
       if (statuteMatch) {
         baseUrl = `https://docs.legis.wisconsin.gov/statutes/statutes/${statuteMatch[1]}.pdf`;
       } else {
@@ -177,7 +196,7 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
     if (!animate) {
       return {
         a: ({ children, href }) => {
-          const resolved = resolveHref(href, docUrls);
+          const resolved = resolveHref(href, docUrls, extractText(children));
           if (!resolved) return <span>{children}</span>;
           const tone = resolveTone(href, children, resolved, docTones);
           return <SourceLink href={resolved} tone={tone}>{children}</SourceLink>;
@@ -203,7 +222,7 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
       ),
       em: ({ children, ...props }) => <em {...props}>{wrap(children, 'em')}</em>,
       a: ({ children, href }) => {
-        const resolved = resolveHref(href, docUrls);
+        const resolved = resolveHref(href, docUrls, extractText(children));
         if (!resolved) return <span>{children}</span>;
         const tone = resolveTone(href, children, resolved, docTones);
         return <SourceLink href={resolved} tone={tone}>{children}</SourceLink>;

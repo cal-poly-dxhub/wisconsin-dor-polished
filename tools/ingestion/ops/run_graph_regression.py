@@ -255,6 +255,7 @@ def _phase_b_generate(
     answerstream_prompt: str,
     retrieved_doc_ids: set[str] | None = None,
     chunks: list[dict] | None = None,
+    section_pages: dict[str, dict[str, int]] | None = None,
 ) -> str:
     """Non-streaming Phase-B answer generation from a prebuilt context.
 
@@ -291,10 +292,13 @@ def _phase_b_generate(
         by_doc: dict[str, list[dict]] = {}
         for ch in chunks or []:
             by_doc.setdefault(ch.get("doc_id", ""), []).append(ch)
-        text, stats = repair_citation_links(text, set(retrieved_doc_ids), by_doc)
-        if stats.get("repointed") or stats.get("stripped"):
+        text, stats = repair_citation_links(
+            text, set(retrieved_doc_ids), by_doc, section_pages=section_pages
+        )
+        if stats.get("repointed") or stats.get("stripped") or stats.get("paged"):
             logger.info(
-                f"  link repair: {stats['repointed']} repointed, {stats['stripped']} stripped"
+                f"  link repair: {stats['repointed']} repointed, {stats['stripped']} stripped, "
+                f"{stats.get('paged', 0)} paged"
             )
     return text
 
@@ -316,7 +320,7 @@ def run_one_query(
     # Imported lazily so --compare-only works without AWS/Neptune configured.
     import loop.phase_a as _phase_a
     from loop.phase_a import run_agentic_loop
-    from loop.phase_b import build_answer_context
+    from loop.phase_b import build_answer_context, statute_section_pages
     from prompt import ANSWER_STREAM_SYSTEM_PROMPT
 
     from config import neptune
@@ -396,6 +400,9 @@ def run_one_query(
             set(result.all_doc_ids) | set(cited_doc_ids) | set(result.discovery or {})
         ),
         chunks=result.all_chunks,
+        section_pages=statute_section_pages(
+            result.all_chunks, set(cited_doc_ids), neptune, result.answer_plan
+        ),
     )
 
     # Per-cited-doc discovery attribution: which retrieval path surfaced each

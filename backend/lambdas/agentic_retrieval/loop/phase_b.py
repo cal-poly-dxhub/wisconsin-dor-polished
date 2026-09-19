@@ -21,7 +21,7 @@ from websocket_utils.utils import WebSocketServer
 from config import AGENTIC_MODEL_ID, bedrock
 
 from .heartbeat import start_heartbeat
-from .link_repair import has_open_link, repair_citation_links
+from .link_repair import KNOWN_STATUTE_CHAPTERS, has_open_link, repair_citation_links
 
 if TYPE_CHECKING:  # pragma: no cover — import only for the type annotation
     from adequacy_judge import Finding
@@ -32,6 +32,89 @@ logger = logging.getLogger(__name__)
 # open so each link is repaired whole before it is sent; this cap guarantees
 # a stray unmatched "[" cannot stall the stream.
 _FRAGMENT_HOLD_MAX = 600
+
+
+# Section listings for statute chapters are static for the life of a container;
+# cache them so the page index can be built once for the context and once for
+# the link repair without a second round of Neptune queries.
+_SECTIONS_CACHE: dict[str, list[dict]] = {}
+
+
+def _list_sections_cached(neptune_client: NeptuneClient, doc_id: str) -> list[dict]:
+    if doc_id not in _SECTIONS_CACHE:
+        try:
+            _SECTIONS_CACHE[doc_id] = neptune_client.list_document_sections(doc_id) or []
+        except Exception:
+            return []
+    return _SECTIONS_CACHE[doc_id]
+
+
+def _section_pages_for_chapter(chapter: str, sections: list[dict]) -> dict[str, int]:
+    """Map canonical section numbers ("70.32") to their first page.
+
+    Uses the same heading test as the statute chunker (rejects cross
+    references like "70.32 (2) (a) 6..." that appear inside other sections),
+    with a loose fallback for headings that only start with the number.
+    """
+    section_pattern = re.compile(rf"^({re.escape(chapter)}\.\d+[A-Za-z\-]*)(?:\s+[A-Z]|\s*$)")
+    loose_pattern = re.compile(rf"^{re.escape(chapter)}\.\d+")
+    canonical: dict[str, int] = {}
+    loose: dict[str, int] = {}
+    for sec in sections:
+        heading = sec.get("heading", "")
+        first_page = sec.get("first_page")
+        if not heading or first_page is None:
+            continue
+        m = section_pattern.match(heading)
+        if m:
+            canonical.setdefault(m.group(1), first_page)
+        else:
+            m2 = loose_pattern.match(heading)
+            if m2:
+                loose.setdefault(m2.group(0), first_page)
+    return {**loose, **canonical}
+
+
+def _referenced_sections(chapter: str, blob: str) -> set[str]:
+    """Section numbers of `chapter` mentioned anywhere in `blob` ("70. 32" OCR
+    spacing normalised)."""
+    found = re.findall(rf"{re.escape(chapter)}\.\s*\d+[A-Za-z\-]*", blob)
+    return {f.replace(" ", "") for f in found}
+
+
+def statute_section_pages(
+    cited_chunks: list[dict],
+    cited_doc_ids: set[str],
+    neptune_client: NeptuneClient | None,
+    answer_plan: str = "",
+) -> dict[str, dict[str, int]]:
+    """chapter -> {section -> first page} for every statute chapter the answer
+    may cite: chapters in `cited_doc_ids` plus any known corpus chapter whose
+    sections are referenced in the cited chunk text or the answer plan.
+
+    Feeds both the "Section Page Index" shown to the writer and the
+    deterministic page fill in link_repair, so a `[§ 74.37](doc:statutes-74)`
+    written without a page still lands on the right page.
+    """
+    if not neptune_client:
+        return {}
+    blob = " ".join(c.get("text", "") for c in cited_chunks) + " " + (answer_plan or "")
+    chapters: set[str] = set()
+    for doc_id in cited_doc_ids:
+        m = re.match(r"^statutes-(\d+)$", doc_id)
+        if m:
+            chapters.add(m.group(1))
+    for chap, _sec in re.findall(r"(\d+)\.\s*(\d+)", blob):
+        if chap in KNOWN_STATUTE_CHAPTERS:
+            chapters.add(chap)
+    out: dict[str, dict[str, int]] = {}
+    for chapter in sorted(chapters):
+        pages = _section_pages_for_chapter(
+            chapter, _list_sections_cached(neptune_client, f"statutes-{chapter}")
+        )
+        if pages:
+            out[chapter] = pages
+    return out
 
 
 def group_chunks_by_doc(chunks: list[dict]) -> dict[str, list[dict]]:
@@ -46,6 +129,7 @@ def finalize_answer_links(
     query_id: str,
     retrieved_doc_ids: set[str] | None,
     chunks: list[dict] | None,
+    section_pages: dict[str, dict[str, int]] | None = None,
 ) -> str:
     """Repair conflated citation links in a complete answer and log the result.
 
@@ -56,14 +140,15 @@ def finalize_answer_links(
     if not answer or retrieved_doc_ids is None:
         return answer
     repaired, stats = repair_citation_links(
-        answer, retrieved_doc_ids, group_chunks_by_doc(chunks or [])
+        answer, retrieved_doc_ids, group_chunks_by_doc(chunks or []), section_pages=section_pages
     )
-    if stats["repointed"] or stats["stripped"]:
+    if stats["repointed"] or stats["stripped"] or stats.get("paged"):
         _log(
             "answer_link_repaired",
             query_id=query_id,
             repointed=stats["repointed"],
             stripped=stats["stripped"],
+            paged=stats.get("paged", 0),
             changes=stats["changes"],
             stage="final",
         )
@@ -131,6 +216,9 @@ def build_answer_context(
         doc_id = chunk.get("doc_id", "unknown")
         chunks_by_doc.setdefault(doc_id, []).append(chunk)
 
+    all_text_blob = " ".join(c.get("text", "") for c in cited_chunks) + " " + (answer_plan or "")
+    section_pages = statute_section_pages(cited_chunks, cited_doc_ids, neptune_client, answer_plan)
+
     for doc_id in sorted(cited_doc_ids):
         doc_chunks = chunks_by_doc.get(doc_id, [])
         # Get document metadata
@@ -170,66 +258,23 @@ def build_answer_context(
                     parts.append(f"\n**Chunk{page_ref}:**")
                     parts.append(chunk.get("text", "")[:2000])
 
-        # For statute docs, include a section→page index so the model
-        # can look up correct page numbers for sections not in the
-        # retrieved chunks.
-        if doc_id.startswith("statutes-") and neptune_client:
-            try:
-                sections = neptune_client.list_document_sections(doc_id)
-                if sections:
-                    # Extract numeric chapter (e.g. "70" from "statutes-70")
-                    chapter_match = re.match(r"statutes-(\d+)", doc_id)
-                    chapter = (
-                        chapter_match.group(1) if chapter_match else doc_id.replace("statutes-", "")
-                    )
-                    # Same pattern the statute chunker uses to identify
-                    # canonical section headings (rejects cross-references
-                    # like "70.32 (2) (a) 6..." that appear inside other
-                    # sections).
-                    section_pattern = re.compile(
-                        rf"^({re.escape(chapter)}\.\d+[A-Za-z\-]*)(?:\s+[A-Z]|\s*$)"
-                    )
-                    # Fallback: any heading starting with the section number
-                    # (used when no canonical heading exists)
-                    loose_pattern = re.compile(rf"^{re.escape(chapter)}\.\d+")
-                    index_lines = []
-                    seen_sections: dict[str, int] = {}
-                    fallback_sections: dict[str, int] = {}
-                    for sec in sections:
-                        heading = sec.get("heading", "")
-                        first_page = sec.get("first_page")
-                        if not heading or first_page is None:
-                            continue
-                        m = section_pattern.match(heading)
-                        if m:
-                            sec_num = m.group(1)
-                            if sec_num not in seen_sections:
-                                seen_sections[sec_num] = first_page
-                        else:
-                            m2 = loose_pattern.match(heading)
-                            if m2:
-                                sec_num = m2.group(0)
-                                if sec_num not in fallback_sections:
-                                    fallback_sections[sec_num] = first_page
-                    merged = {**fallback_sections, **seen_sections}
-                    # Search ALL cited chunks for statute section references,
-                    # not just chunks from this statute. Other documents (guides,
-                    # WPAM, admin rules) frequently reference statute sections,
-                    # and the model needs page numbers for those references.
-                    all_text_blob = " ".join(c.get("text", "") for c in cited_chunks)
-                    referenced = set(
-                        re.findall(rf"{re.escape(chapter)}\.\d+[A-Za-z\-]*", all_text_blob)
-                    )
-                    for sec_num, page in merged.items():
-                        if sec_num in referenced:
-                            index_lines.append(f"- § {sec_num} → page {page}")
-                    if index_lines:
-                        parts.append(
-                            "\n**Section Page Index** (use these page numbers for `#page=N` citations; subsections like 70.32(2)(c)1g use the parent section's page, e.g. § 70.32 → page 23 means all 70.32(...) subsections start at page 23):"
-                        )
-                        parts.extend(index_lines)
-            except Exception:
-                pass
+        # For statute docs, include a section->page index so the model can
+        # look up correct page numbers for sections not in the retrieved
+        # chunks (built once via statute_section_pages, cached per container).
+        chapter_match = re.match(r"^statutes-(\d+)$", doc_id)
+        if chapter_match and chapter_match.group(1) in section_pages:
+            chapter = chapter_match.group(1)
+            referenced = _referenced_sections(chapter, all_text_blob)
+            index_lines = [
+                f"- § {sec_num} -> page {page}"
+                for sec_num, page in section_pages[chapter].items()
+                if sec_num in referenced
+            ]
+            if index_lines:
+                parts.append(
+                    "\n**Section Page Index** (use these page numbers for `#page=N` citations; subsections like 70.32(2)(c)1g use the parent section's page, e.g. § 70.32 -> page 23 means all 70.32(...) subsections start at page 23):"
+                )
+                parts.extend(index_lines)
 
         # Include case opinion text if available
         if doc_id in fetched_opinions:
@@ -239,70 +284,23 @@ def build_answer_context(
 
         parts.append("")
 
-    # Fallback: build section page indexes for statute chapters referenced
-    # in cited chunks but not explicitly in cited_doc_ids. The agent often
-    # discovers statutes via get_neighbors but doesn't fetch them directly.
-    if neptune_client and cited_chunks:
-        all_text_blob = " ".join(c.get("text", "") for c in cited_chunks)
-        # Match patterns like "70.32", "73.03", "74.485" — real statute refs.
-        # Also handles OCR artifacts with spaces: "70. 32", "73. 03".
-        raw_refs = re.findall(r"(\d+)\.\s*(\d+)", all_text_blob)
-        referenced_chapters: set[str] = set()
-        for chap, _sec in raw_refs:
-            doc_id_candidate = f"statutes-{chap}"
-            if doc_id_candidate not in cited_doc_ids and int(chap) >= 70:
-                referenced_chapters.add(chap)
-
-        for chapter in sorted(referenced_chapters):
-            stat_doc_id = f"statutes-{chapter}"
-            try:
-                sections = neptune_client.list_document_sections(stat_doc_id)
-                if not sections:
-                    continue
-                section_pattern = re.compile(
-                    rf"^({re.escape(chapter)}\.\d+[A-Za-z\-]*)(?:\s+[A-Z]|\s*$)"
-                )
-                loose_pattern = re.compile(rf"^{re.escape(chapter)}\.\d+")
-                seen_sections: dict[str, int] = {}
-                fallback_sections: dict[str, int] = {}
-                for sec in sections:
-                    heading = sec.get("heading", "")
-                    first_page = sec.get("first_page")
-                    if not heading or first_page is None:
-                        continue
-                    m = section_pattern.match(heading)
-                    if m:
-                        sec_num = m.group(1)
-                        if sec_num not in seen_sections:
-                            seen_sections[sec_num] = first_page
-                    else:
-                        m2 = loose_pattern.match(heading)
-                        if m2:
-                            sec_num = m2.group(0)
-                            if sec_num not in fallback_sections:
-                                fallback_sections[sec_num] = first_page
-                merged = {**fallback_sections, **seen_sections}
-                # Filter to sections actually referenced in chunk text
-                referenced = set(
-                    re.findall(rf"{re.escape(chapter)}\.\s*\d+[A-Za-z\-]*", all_text_blob)
-                )
-                # Normalize OCR spaces: "70. 32" → "70.32"
-                referenced_normalized = {r.replace(" ", "") for r in referenced}
-                index_lines = []
-                for sec_num, page in merged.items():
-                    if sec_num in referenced_normalized:
-                        index_lines.append(f"- § {sec_num} → page {page}")
-                if index_lines:
-                    parts.append(f"### Statute Chapter {chapter} — Section Page Index")
-                    parts.append(
-                        "(Link directly with `doc:statutes-"
-                        + chapter
-                        + "#page=N`; subsections use the parent section's page)"
-                    )
-                    parts.extend(index_lines)
-                    parts.append("")
-            except Exception:
-                pass
+    # Section page indexes for statute chapters referenced in the cited
+    # chunks or the plan but not in cited_doc_ids. The agent often learns of
+    # a statute from a guide or a case stub without fetching the chapter.
+    for chapter, pages in section_pages.items():
+        if f"statutes-{chapter}" in cited_doc_ids:
+            continue
+        referenced = _referenced_sections(chapter, all_text_blob)
+        index_lines = [f"- § {s_} -> page {p_}" for s_, p_ in pages.items() if s_ in referenced]
+        if index_lines:
+            parts.append(f"### Statute Chapter {chapter}: Section Page Index")
+            parts.append(
+                "(Link directly with `doc:statutes-"
+                + chapter
+                + "#page=N`; subsections use the parent section's page)"
+            )
+            parts.extend(index_lines)
+            parts.append("")
 
     parts.append(
         f"\n## Documents to Cite\nYou MUST cite these document IDs: {sorted(cited_doc_ids)}"
@@ -320,6 +318,7 @@ def stream_answer(
     persona: str | None = None,
     retrieved_doc_ids: set[str] | None = None,
     cited_chunks: list[dict] | None = None,
+    section_pages: dict[str, dict[str, int]] | None = None,
 ) -> str:
     """Phase B: Stream the answer token-by-token via converse_stream().
 
@@ -339,9 +338,12 @@ def stream_answer(
     def _prepare_fragment(raw: str) -> str:
         if not repair_enabled:
             return raw
-        fixed, stats = repair_citation_links(raw, retrieved_doc_ids, chunks_by_doc)
+        fixed, stats = repair_citation_links(
+            raw, retrieved_doc_ids, chunks_by_doc, section_pages=section_pages
+        )
         repair_totals["repointed"] += stats["repointed"]
         repair_totals["stripped"] += stats["stripped"]
+        repair_totals["paged"] = repair_totals.get("paged", 0) + stats.get("paged", 0)
         repair_changes.extend(stats["changes"])
         return fixed
 
@@ -462,12 +464,13 @@ def stream_answer(
             ws_connection_alive[0] = False
 
     stream_latency = round((time.perf_counter() - stream_started) * 1000)
-    if repair_totals["repointed"] or repair_totals["stripped"]:
+    if repair_totals["repointed"] or repair_totals["stripped"] or repair_totals.get("paged"):
         _log(
             "answer_link_repaired",
             query_id=query_id,
             repointed=repair_totals["repointed"],
             stripped=repair_totals["stripped"],
+            paged=repair_totals.get("paged", 0),
             changes=repair_changes,
             stage="stream",
         )
