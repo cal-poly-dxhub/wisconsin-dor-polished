@@ -1,4 +1,5 @@
-"""extract.py: --aliases-only backfill, classification fallback, cache-prefix keys."""
+"""extract.py: --aliases-only backfill, classification fallback, cache-prefix keys,
+and the policy gate that keeps alias generation to the doc types the embed uses."""
 
 import json
 from unittest.mock import patch
@@ -10,8 +11,19 @@ from tools.ingestion.tests.fake_s3 import FakeS3
 WB = "work"
 DOC_ID = "news_pages-test-doc"
 
+# Production-shaped alias_enrichment config (see ingest_config.yaml).
+CFG = {
+    "alias_enrichment": {
+        "enabled": True,
+        "include_doc_types": ["statute", "admin_rule", "advisory"],
+        "exclude_doc_types": ["case_law", "iaao_standard", "uspap_standard"],
+        "wpam_latest_only": True,
+        "exclude_heading_patterns": ["table of contents"],
+    }
+}
 
-def _doc(n_long=2, n_short=1):
+
+def _doc(n_long=2, n_short=1, doc_id=DOC_ID, doc_type="advisory"):
     chunks = [
         {
             "text": f"Chunk {i} " + "long content about board of review " * 12,
@@ -20,7 +32,7 @@ def _doc(n_long=2, n_short=1):
         for i in range(n_long)
     ]
     chunks += [{"text": "tiny", "metadata": {}} for _ in range(n_short)]
-    return {"doc_id": DOC_ID, "title": "Test Doc", "doc_type": "advisory", "chunks": chunks}
+    return {"doc_id": doc_id, "title": "Test Doc", "doc_type": doc_type, "chunks": chunks}
 
 
 def _fake_generate(chunk_text, doc_title, heading, model_id, examples=None, **_):
@@ -128,6 +140,7 @@ def test_rechunked_text_reuses_cache_by_content():
         "generated": 1,
         "failed": 0,
         "skipped_short": 0,
+        "skipped_policy": 0,
         "input_tokens": 500,
         "output_tokens": 60,
     }
@@ -185,6 +198,135 @@ def test_list_already_extracted_with_prefix_ignores_manifest_and_other_prefixes(
     with patch.object(extract, "s3", fake):
         assert extract.list_already_extracted(WB, "staging/") == {"b", "c"}
         assert extract.list_already_extracted(WB, "") == {"a"}
+
+
+# --------------------------------------------------------------------------
+# Policy gate: generation must match what embed.py will actually use
+# --------------------------------------------------------------------------
+
+
+def test_excluded_doc_type_costs_nothing_at_extract():
+    """case_law is never enriched at embed → never generated at extract."""
+    fake = FakeS3()
+    doc = _doc(n_long=2, n_short=1, doc_id="case-law-state-v-smith", doc_type="case_law")
+    ctx = extract.AliasContext.from_config(CFG, enabled=True, workers=2, cache_prefix="")
+
+    with patch.object(extract, "s3", fake), patch.object(al, "generate_aliases") as gen:
+        stats = extract.enrich_chunks_with_aliases(doc, WB, ctx)
+
+    assert gen.call_count == 0
+    assert stats["skipped_policy"] == 3
+    assert stats["generated"] == 0 and stats["cached"] == 0 and stats["skipped_short"] == 0
+    assert all("aliases" not in c for c in doc["chunks"])
+    assert fake.keys(WB) == []  # the alias cache isn't even read
+    assert ctx.totals["skipped_policy"] == 3 and ctx.totals["docs"] == 1
+
+
+def test_doc_type_outside_include_allowlist_is_skipped():
+    fake = FakeS3()
+    guide = _doc(n_long=2, n_short=0, doc_id="gov_publications-pb060", doc_type="guide")
+    ctx = extract.AliasContext.from_config(CFG, enabled=True, workers=2, cache_prefix="")
+    with patch.object(extract, "s3", fake), patch.object(al, "generate_aliases") as gen:
+        assert extract.enrich_chunks_with_aliases(guide, WB, ctx)["skipped_policy"] == 2
+    assert gen.call_count == 0
+
+    # ...while an allowlisted type still generates.
+    statute = _doc(n_long=2, n_short=0, doc_id="statutes-70", doc_type="statute")
+    with (
+        patch.object(extract, "s3", fake),
+        patch.object(al, "generate_aliases", side_effect=_fake_generate) as gen,
+    ):
+        stats = extract.enrich_chunks_with_aliases(statute, WB, ctx)
+    assert gen.call_count == 2
+    assert stats["generated"] == 2 and stats["skipped_policy"] == 0
+
+
+def test_empty_include_doc_types_means_all_but_excluded():
+    cfg = {"alias_enrichment": {"include_doc_types": [], "exclude_doc_types": ["case_law"]}}
+    ctx = extract.AliasContext.from_config(cfg, enabled=True, workers=1, cache_prefix="")
+    assert ctx.doc_allowed({"doc_id": "gov_publications-pb060", "doc_type": "guide"}) is True
+    assert ctx.doc_allowed({"doc_id": "wpam-x-2026", "doc_type": "assessment_manual"}) is True
+    assert ctx.doc_allowed({"doc_id": "case-law-x", "doc_type": "case_law"}) is False
+
+
+def test_superseded_wpam_edition_is_skipped_but_latest_is_not():
+    cfg = {"alias_enrichment": {"include_doc_types": [], "wpam_latest_only": True}}
+    corpus = ["wpam-manual-2019", "wpam-manual-2026", "statutes-70"]
+    ctx = extract.AliasContext.from_config(
+        cfg, enabled=True, workers=1, cache_prefix="", corpus_doc_ids=corpus
+    )
+    fake = FakeS3()
+    old = _doc(n_long=1, n_short=0, doc_id="wpam-manual-2019", doc_type="assessment_manual")
+    new = _doc(n_long=1, n_short=0, doc_id="wpam-manual-2026", doc_type="assessment_manual")
+
+    with patch.object(extract, "s3", fake), patch.object(al, "generate_aliases") as gen:
+        assert extract.enrich_chunks_with_aliases(old, WB, ctx)["skipped_policy"] == 1
+    assert gen.call_count == 0
+
+    with (
+        patch.object(extract, "s3", fake),
+        patch.object(al, "generate_aliases", side_effect=_fake_generate) as gen,
+    ):
+        assert extract.enrich_chunks_with_aliases(new, WB, ctx)["generated"] == 1
+    assert gen.call_count == 1
+
+    # Without a corpus the edition rule can't be evaluated — doc types still are.
+    ctx_no_corpus = extract.AliasContext.from_config(cfg, enabled=True, workers=1, cache_prefix="")
+    assert ctx_no_corpus.doc_allowed(old) is True
+
+
+def test_index_heading_chunk_is_skipped_inside_an_allowed_doc():
+    fake = FakeS3()
+    doc = _doc(n_long=2, n_short=0, doc_id="statutes-70", doc_type="statute")
+    doc["chunks"][1]["metadata"]["heading"] = "Table of Contents"
+    ctx = extract.AliasContext.from_config(CFG, enabled=True, workers=1, cache_prefix="")
+    with (
+        patch.object(extract, "s3", fake),
+        patch.object(al, "generate_aliases", side_effect=_fake_generate) as gen,
+    ):
+        stats = extract.enrich_chunks_with_aliases(doc, WB, ctx)
+    assert gen.call_count == 1
+    assert stats["generated"] == 1 and stats["skipped_policy"] == 1
+    assert "aliases" in doc["chunks"][0] and "aliases" not in doc["chunks"][1]
+
+
+def test_backfill_skips_excluded_doc_without_rewriting_it():
+    """--aliases-only must not touch (or re-date) a doc the embed won't enrich."""
+    fake = FakeS3()
+    doc = _doc(n_long=2, n_short=1, doc_id="case-law-x", doc_type="case_law")
+    fake.put_bytes(WB, "extracted/case-law-x.json", json.dumps(doc).encode())
+    ctx = extract.AliasContext.from_config(CFG, enabled=True, workers=1, cache_prefix="")
+
+    with patch.object(extract, "s3", fake), patch.object(al, "generate_aliases") as gen:
+        out = extract.backfill_aliases_for_doc("case-law-x", WB, ctx)
+
+    assert gen.call_count == 0
+    assert out["doc_id"] == "case-law-x"
+    assert fake.puts == []  # no rewrite → no needless re-embed under --smart
+    assert ctx.totals["skipped_policy"] == 3
+
+
+def test_policy_none_keeps_pre_gate_behavior():
+    """A directly constructed AliasContext (no policy) generates for everything."""
+    fake = FakeS3()
+    doc = _doc(n_long=1, n_short=0, doc_id="case-law-x", doc_type="case_law")
+    ctx = extract.AliasContext(enabled=True)
+    with (
+        patch.object(extract, "s3", fake),
+        patch.object(al, "generate_aliases", side_effect=_fake_generate) as gen,
+    ):
+        stats = extract.enrich_chunks_with_aliases(doc, WB, ctx)
+    assert gen.call_count == 1 and stats["generated"] == 1 and stats["skipped_policy"] == 0
+
+
+def test_log_totals_includes_skipped_policy(caplog):
+    ctx = extract.AliasContext(enabled=True)
+    ctx.add({"generated": 2, "input_tokens": 10, "output_tokens": 4})
+    ctx.add({"skipped_policy": 7})
+    with caplog.at_level("INFO"):
+        ctx.log_totals()
+    assert "skipped_policy=7" in caplog.text
+    assert ctx.totals["docs"] == 2 and ctx.totals["generated"] == 2
 
 
 def test_alias_context_from_config_flag_precedence():

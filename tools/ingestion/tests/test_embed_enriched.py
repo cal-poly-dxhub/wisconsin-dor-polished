@@ -212,3 +212,46 @@ def test_enrich_policy_include_allowlist():
         include_doc_types=["statute"], exclude_doc_ids=frozenset({"statutes-70"})
     )
     assert policy2.doc_enriched({"doc_id": "statutes-70", "doc_type": "statute"}) is False
+
+
+def test_extract_generation_and_embed_use_agree_on_one_policy():
+    """The extract-side gate and the embed-side gate are the SAME policy object
+    built from the same config — generating aliases the embed discards is pure
+    Bedrock spend."""
+    from tools.ingestion import embed as embed_mod
+    from tools.ingestion import extract as extract_mod
+
+    cfg = {
+        "alias_enrichment": {
+            "include_doc_types": ["statute", "advisory"],
+            "exclude_doc_types": ["case_law"],
+            "wpam_latest_only": True,
+            "exclude_heading_patterns": ["table of contents"],
+        }
+    }
+    corpus = [
+        {"doc_id": "statutes-70", "doc_type": "statute"},
+        {"doc_id": "news_pages-advisory", "doc_type": "advisory"},
+        {"doc_id": "case-law-x", "doc_type": "case_law"},
+        {"doc_id": "gov_publications-pb060", "doc_type": "guide"},
+        {"doc_id": "wpam-manual-2019", "doc_type": "assessment_manual"},
+        {"doc_id": "wpam-manual-2026", "doc_type": "assessment_manual"},
+    ]
+    policy = embed_mod.policy_from_config(cfg, corpus)
+    ctx = extract_mod.AliasContext.from_config(
+        cfg,
+        enabled=True,
+        workers=1,
+        cache_prefix="",
+        corpus_doc_ids=[d["doc_id"] for d in corpus],
+    )
+    assert [d["doc_id"] for d in corpus if policy.doc_enriched(d)] == [
+        "statutes-70",
+        "news_pages-advisory",
+    ]
+    toc = {"text": "x", "metadata": {"heading": "Table of Contents"}}
+    body = {"text": "x", "metadata": {"heading": "Assessment"}}
+    for doc in corpus:
+        assert ctx.doc_allowed(doc) is policy.doc_enriched(doc)
+        for chunk in (toc, body):
+            assert ctx.chunk_allowed(doc, chunk) is policy.chunk_enriched(doc, chunk)
