@@ -561,7 +561,14 @@ def _save_extracted(work_bucket: str, result: dict, cache_prefix: str = "") -> N
 
 
 class AliasContext:
-    """Flag-gated alias generation settings + run-wide counters."""
+    """Flag-gated alias generation settings + run-wide counters.
+
+    ``policy`` is the SAME ``EnrichPolicy`` the embed applies (built by
+    ``alias_lib.policy_from_config``): chunks it excludes are never sent to
+    Bedrock here, because the embed would discard their aliases anyway. None
+    means "no gating" (every chunk >= min_chunk_chars is generated) — the
+    pre-gate behaviour, kept for direct constructions in tests/ad-hoc use.
+    """
 
     def __init__(
         self,
@@ -571,12 +578,14 @@ class AliasContext:
         min_chunk_chars: int = alias_lib.MIN_CHUNK_CHARS,
         workers: int = 3,
         cache_prefix: str = "",
+        policy: "alias_lib.EnrichPolicy | None" = None,
     ):
         self.enabled = enabled
         self.model_id = model_id
         self.min_chunk_chars = min_chunk_chars
         self.workers = max(1, workers)
         self.cache_prefix = cache_prefix
+        self.policy = policy
         self._lock = threading.Lock()
         self.totals = {
             "docs": 0,
@@ -584,14 +593,24 @@ class AliasContext:
             "generated": 0,
             "failed": 0,
             "skipped_short": 0,
+            "skipped_policy": 0,
             "input_tokens": 0,
             "output_tokens": 0,
         }
 
     @classmethod
     def from_config(
-        cls, config: dict, *, enabled: bool | None, workers: int, cache_prefix: str
+        cls,
+        config: dict,
+        *,
+        enabled: bool | None,
+        workers: int,
+        cache_prefix: str,
+        corpus_doc_ids=None,
     ) -> "AliasContext":
+        """``corpus_doc_ids``: every doc_id in the run, BEFORE --source-filter,
+        so the policy's ``wpam_latest_only`` rule sees the real latest edition.
+        Omit it and that rule is not applied (doc-type rules still are)."""
         cfg = config.get("alias_enrichment") or {}
         return cls(
             enabled=bool(cfg.get("enabled", False)) if enabled is None else enabled,
@@ -599,7 +618,15 @@ class AliasContext:
             min_chunk_chars=int(cfg.get("min_chunk_chars", alias_lib.MIN_CHUNK_CHARS)),
             workers=int(cfg.get("workers", workers) or workers),
             cache_prefix=cache_prefix,
+            policy=alias_lib.policy_from_config(config, corpus_doc_ids),
         )
+
+    def doc_allowed(self, doc: dict) -> bool:
+        """False when the embed would ignore this doc's aliases entirely."""
+        return self.policy is None or self.policy.doc_enriched(doc)
+
+    def chunk_allowed(self, doc: dict, chunk: dict) -> bool:
+        return self.policy is None or self.policy.chunk_enriched(doc, chunk)
 
     def add(self, stats: dict) -> None:
         with self._lock:
@@ -609,6 +636,7 @@ class AliasContext:
                 "generated",
                 "failed",
                 "skipped_short",
+                "skipped_policy",
                 "input_tokens",
                 "output_tokens",
             ):
@@ -620,6 +648,7 @@ class AliasContext:
         logger.info(
             f"Alias enrichment totals: docs={t['docs']} cached={t['cached']} "
             f"generated={t['generated']} failed={t['failed']} skipped_short={t['skipped_short']} "
+            f"skipped_policy={t['skipped_policy']} "
             f"tokens in/out={t['input_tokens']}/{t['output_tokens']} "
             f"(avg per generated chunk {t['input_tokens'] / gen:.0f}/{t['output_tokens'] / gen:.0f})"
         )
@@ -635,7 +664,13 @@ def enrich_chunks_with_aliases(result: dict, work_bucket: str, ctx: AliasContext
     small thread pool; failures leave the chunk without an ``aliases`` field
     (never abort the doc).
 
-    Returns per-doc stats {cached, generated, failed, skipped_short, tokens}.
+    Chunks the embed would never enrich (``ctx.policy`` — doc type outside
+    ``include_doc_types``, an excluded type, a superseded WPAM edition, an
+    index/TOC heading) are skipped without a Bedrock call and counted in
+    ``skipped_policy``.
+
+    Returns per-doc stats
+    {cached, generated, failed, skipped_short, skipped_policy, tokens}.
     """
     doc_id = result["doc_id"]
     chunks = result.get("chunks", [])
@@ -644,10 +679,25 @@ def enrich_chunks_with_aliases(result: dict, work_bucket: str, ctx: AliasContext
         "generated": 0,
         "failed": 0,
         "skipped_short": 0,
+        "skipped_policy": 0,
         "input_tokens": 0,
         "output_tokens": 0,
     }
     if not chunks:
+        return stats
+
+    if not ctx.doc_allowed(result):
+        # Whole document is outside the enrichment policy: no Bedrock calls and
+        # no alias-cache read. Any aliases carried in from an earlier run are
+        # dropped, since the embed ignores them.
+        stats["skipped_policy"] = len(chunks)
+        for chunk in chunks:
+            chunk.pop("aliases", None)
+        logger.info(
+            f"  Aliases {doc_id}: skipped {len(chunks)} chunks "
+            f"(doc_type={result.get('doc_type')!r} outside alias policy)"
+        )
+        ctx.add(stats)
         return stats
 
     cache = _get_json(work_bucket, aliases_key(doc_id, ctx.cache_prefix)) or {}
@@ -657,6 +707,10 @@ def enrich_chunks_with_aliases(result: dict, work_bucket: str, ctx: AliasContext
     todo: list[tuple[int, str]] = []
     for i, chunk in enumerate(chunks):
         text = chunk.get("text") or ""
+        if not ctx.chunk_allowed(result, chunk):
+            stats["skipped_policy"] += 1
+            chunk.pop("aliases", None)
+            continue
         if len(text.strip()) < ctx.min_chunk_chars:
             stats["skipped_short"] += 1
             chunk.pop("aliases", None)
@@ -725,6 +779,7 @@ def enrich_chunks_with_aliases(result: dict, work_bucket: str, ctx: AliasContext
     logger.info(
         f"  Aliases {doc_id}: cached={stats['cached']} generated={stats['generated']} "
         f"failed={stats['failed']} skipped_short={stats['skipped_short']} "
+        f"skipped_policy={stats['skipped_policy']} "
         f"tokens in/out={stats['input_tokens']}/{stats['output_tokens']}"
     )
     ctx.add(stats)
@@ -734,7 +789,7 @@ def enrich_chunks_with_aliases(result: dict, work_bucket: str, ctx: AliasContext
 def _doc_fully_enriched(doc: dict, ctx: AliasContext) -> bool:
     for chunk in doc.get("chunks", []):
         text = chunk.get("text") or ""
-        if len(text.strip()) < ctx.min_chunk_chars:
+        if len(text.strip()) < ctx.min_chunk_chars or not ctx.chunk_allowed(doc, chunk):
             continue
         if "aliases" not in chunk:
             return False
@@ -761,6 +816,14 @@ def backfill_aliases_for_doc(
     if doc is None:
         logger.warning(f"  No extracted JSON for {doc_id}; skipping")
         return None
+
+    if not ctx.doc_allowed(doc):
+        # Outside the embed's enrichment policy: no generation, and no rewrite
+        # either (rewriting would bump LastModified and force a needless
+        # re-embed of a document whose vectors cannot change).
+        logger.info(f"  {doc_id}: doc_type={doc.get('doc_type')!r} outside alias policy; skipping")
+        ctx.add({"skipped_policy": len(doc.get("chunks", []))})
+        return doc
 
     if not force and not seeded and _doc_fully_enriched(doc, ctx):
         logger.info(f"  {doc_id}: already enriched, skipping")
@@ -917,14 +980,20 @@ def list_already_extracted(bucket: str, cache_prefix: str = "") -> set[str]:
 
 def run_aliases_only(args, config: dict) -> None:
     """Backfill aliases onto existing extracted JSONs (no re-extraction, no raw bucket)."""
-    ctx = AliasContext.from_config(
-        config, enabled=True, workers=args.max_workers, cache_prefix=args.cache_prefix
-    )
     doc_ids = list_already_extracted(args.work_bucket, args.cache_prefix)
     if args.cache_prefix:
         # Seed set: anything in production extracted/ that isn't under the prefix yet.
         doc_ids |= list_already_extracted(args.work_bucket, "")
     doc_ids_sorted = sorted(doc_ids)
+    # Policy is built over the FULL set (before --source-filter) so
+    # 'latest WPAM edition' is the real latest, not the latest in the subset.
+    ctx = AliasContext.from_config(
+        config,
+        enabled=True,
+        workers=args.max_workers,
+        cache_prefix=args.cache_prefix,
+        corpus_doc_ids=doc_ids_sorted,
+    )
     if args.source_filter:
         before = len(doc_ids_sorted)
         doc_ids_sorted = [d for d in doc_ids_sorted if d.startswith(args.source_filter)]
@@ -1015,21 +1084,29 @@ def main():
     if not args.raw_bucket:
         parser.error("--raw-bucket is required unless --aliases-only is set")
 
-    alias_ctx = AliasContext.from_config(
-        config,
-        enabled=True if args.aliases else None,
-        workers=args.max_workers,
-        cache_prefix=args.cache_prefix,
-    )
-    if alias_ctx.enabled:
-        logger.info(
-            f"Alias enrichment ENABLED (model={alias_ctx.model_id}, workers={alias_ctx.workers})"
-        )
     if args.cache_prefix:
         logger.info(f"Cache prefix: '{args.cache_prefix}' (work-bucket keys are namespaced)")
 
     docs = list_documents(args.raw_bucket, "raw/")
     logger.info(f"Found {len(docs)} documents in raw bucket")
+
+    # Alias policy is built over the FULL raw listing (before --source-filter)
+    # so 'latest WPAM edition' is the real latest, not the latest in the subset.
+    alias_ctx = AliasContext.from_config(
+        config,
+        enabled=True if args.aliases else None,
+        workers=args.max_workers,
+        cache_prefix=args.cache_prefix,
+        corpus_doc_ids=[d["doc_id"] for d in docs],
+    )
+    if alias_ctx.enabled:
+        policy = alias_ctx.policy
+        logger.info(
+            f"Alias enrichment ENABLED (model={alias_ctx.model_id}, workers={alias_ctx.workers}); "
+            f"generating for doc types: {sorted(policy.include_doc_types or [])} (empty = all); "
+            f"excluded: {sorted(policy.exclude_doc_types)}; "
+            f"superseded WPAM editions excluded: {len(policy.exclude_doc_ids)}"
+        )
 
     if args.source_filter:
         before = len(docs)

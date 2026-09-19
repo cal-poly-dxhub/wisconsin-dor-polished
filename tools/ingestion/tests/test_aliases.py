@@ -279,3 +279,46 @@ def test_generate_aliases_never_raises_on_hard_failure():
     assert out["questions"] == [] and out["aliases"] == []
     assert out["error"] == "RuntimeError"
     assert client.converse.call_count == 1  # non-throttle → no retry
+
+
+# --------------------------------------------------------------------------
+# policy_from_config (the one policy extract and embed share)
+# --------------------------------------------------------------------------
+
+
+def test_policy_from_config_defaults_and_overrides():
+    default = al.policy_from_config({})
+    assert default.include_doc_types is None  # no allowlist → all types
+    assert default.exclude_doc_types == al.ENRICH_EXCLUDE_DOC_TYPES
+    assert default.exclude_doc_ids == frozenset()  # no corpus → no edition rule
+    assert default.doc_enriched({"doc_id": "gov_publications-pb060", "doc_type": "guide"})
+    assert not default.doc_enriched({"doc_id": "case-law-x", "doc_type": "case_law"})
+
+    cfg = {
+        "alias_enrichment": {
+            "include_doc_types": ["statute"],
+            "exclude_doc_types": ["uspap_standard"],
+            "wpam_latest_only": True,
+        }
+    }
+    policy = al.policy_from_config(cfg, ["wpam-manual-2019", "wpam-manual-2026", "statutes-70"])
+    assert policy.include_doc_types == frozenset({"statute"})
+    assert policy.exclude_doc_types == frozenset({"uspap_standard"})
+    assert policy.exclude_doc_ids == frozenset({"wpam-manual-2019"})
+    assert policy.doc_enriched({"doc_id": "statutes-70", "doc_type": "statute"})
+    assert not policy.doc_enriched({"doc_id": "gov_publications-pb060", "doc_type": "guide"})
+
+    # wpam_latest_only off → no edition exclusions even with a corpus.
+    off = al.policy_from_config(
+        {"alias_enrichment": {"wpam_latest_only": False}},
+        ["wpam-manual-2019", "wpam-manual-2026"],
+    )
+    assert off.exclude_doc_ids == frozenset()
+
+
+def test_superseded_wpam_doc_ids_accepts_ids_or_dicts():
+    ids = ["wpam-manual-2019", "wpam-manual-2023", "wpam-manual-2026", "statutes-70"]
+    expected = {"wpam-manual-2019", "wpam-manual-2023"}
+    assert al.superseded_wpam_doc_ids(ids) == expected
+    assert al.superseded_wpam_doc_ids([{"doc_id": i} for i in ids]) == expected
+    assert al.superseded_wpam_doc_ids(["statutes-70"]) == frozenset()

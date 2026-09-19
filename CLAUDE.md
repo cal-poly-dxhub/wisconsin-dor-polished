@@ -107,7 +107,12 @@ uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e692
 # ingest_config.yaml `alias_enrichment` (enabled: true, embed_input: enriched):
 #   - extract generates plain-language "aliases" (questions + synonyms) per chunk
 #     with Nova 2 Lite, cached under s3://{work-bucket}/aliases/{doc_id}.json keyed
-#     by chunk-content hash (only changed chunks cost anything; whole corpus ≈ $10).
+#     by chunk-content hash (only changed chunks cost anything).
+#   - extract generates ONLY for the doc types the embed actually enriches: both
+#     phases share one EnrichPolicy (tools/ingestion/lib/aliases.py, built from
+#     alias_enrichment), so case law / WPAM / guides / superseded editions /
+#     index-TOC chunks cost nothing and are logged as skipped_policy. Full-corpus
+#     pass ≈ $2.70 instead of ≈ $10.30.
 #   - embed prepends title/heading + aliases (+ any gold tester queries) to the
 #     text sent to Titan for STATUTE and ADMIN-RULE chunks only (include_doc_types);
 #     guides, manuals, FAQs, news, case law, IAAO/USPAP embed plain. Stored chunk

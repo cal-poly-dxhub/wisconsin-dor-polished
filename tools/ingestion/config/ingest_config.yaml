@@ -129,10 +129,13 @@ alias_enrichment:
   alias_model: "us.amazon.nova-2-lite-v1:0"
   min_chunk_chars: 200                 # chunks shorter than this get no aliases
   workers: 4                           # Bedrock concurrency per document
-  include_doc_types: [statute, admin_rule, advisory]  # embed: ONLY these are enriched (allowlist; empty = all). advisory = DOR news pages (added 2026-09-14 so e.g. the 4/29/26 §70.11(49) advisory is reachable from "camping trailer"). Guides/manuals stay plain — see EnrichPolicy
-  exclude_doc_types: [case_law, iaao_standard, uspap_standard]  # embed: always plain (see embed.py EnrichPolicy)
-  wpam_latest_only: true               # embed: only the newest WPAM edition is enriched
-  exclude_heading_patterns:            # embed: index / TOC chunks stay plain
+  # The four keys below are ONE policy (lib/aliases.py EnrichPolicy) applied twice:
+  # embed only enriches what they allow, and extract only GENERATES for the same
+  # set — anything excluded is never sent to Bedrock (logged as skipped_policy).
+  include_doc_types: [statute, admin_rule, advisory]  # ONLY these are enriched/generated (allowlist; empty = all). advisory = DOR news pages (added 2026-09-14 so e.g. the 4/29/26 §70.11(49) advisory is reachable from "camping trailer"). Guides/manuals stay plain — see EnrichPolicy
+  exclude_doc_types: [case_law, iaao_standard, uspap_standard]  # always plain, never generated
+  wpam_latest_only: true               # only the newest WPAM edition is enriched
+  exclude_heading_patterns:            # index / TOC chunks stay plain
     - "index (of|to) legal decisions"
     - "legal decisions and"
     - "table of contents"
