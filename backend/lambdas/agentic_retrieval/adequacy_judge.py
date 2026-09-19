@@ -138,6 +138,20 @@ FINDING_TOOL_CONFIG: dict[str, Any] = {
                                     "only when the retrieval is noise relative to the question."
                                 ),
                             },
+                            "question_omits_the_fact": {
+                                "type": "boolean",
+                                "description": (
+                                    "Read the USER QUESTION itself — and, for a follow-up, the "
+                                    "prior conversation — NOT the answer plan and NOT the cited "
+                                    "material. Does the question fail to state the fact a "
+                                    "clarification would ask for? 'how is my land valued' never "
+                                    "says which kind of land, so true; 'how is my agricultural "
+                                    "land valued' already says it, so false. Same for the "
+                                    "activity, the body, or the year a fork would turn on: if "
+                                    "the question names it, false. Set true only when that fact "
+                                    "is genuinely absent from the question and the conversation."
+                                ),
+                            },
                             "verdict": {
                                 "type": "string",
                                 "enum": list(_VERDICTS),
@@ -193,6 +207,7 @@ FINDING_TOOL_CONFIG: dict[str, Any] = {
                         },
                         "required": [
                             "relevant_material_found",
+                            "question_omits_the_fact",
                             "verdict",
                             "supported",
                             "unsupported",
@@ -371,6 +386,20 @@ def parse_finding(payload: dict[str, Any]) -> Finding:
         verdict = VERDICT_ANSWER
         if not str(payload.get("unsupported", "")).strip():
             payload = dict(payload, unsupported=str(payload.get("rationale", "")).strip())
+
+    # Structural guard: CLARIFY requires that the user did NOT give the fact.
+    # The judge reliably spots the fork in the material and then asks for a fact
+    # the question already stated ("how do I appeal my agricultural
+    # classification" → "what kind of property?"). If the judge itself says the
+    # question states the fact, there is nothing to ask: answer it. A missing or
+    # null flag does NOT coerce — the guard only fires on an explicit false, so
+    # the judge's own verdict stands whenever the field is absent.
+    if verdict == VERDICT_CLARIFY and payload.get("question_omits_the_fact") is False:
+        logger.info(
+            "adequacy_judge_clarify_suppressed | the question already states the fact; "
+            "coercing CLARIFY to ANSWER"
+        )
+        verdict = VERDICT_ANSWER
 
     clarification: Clarification | None = None
     if verdict == VERDICT_CLARIFY:

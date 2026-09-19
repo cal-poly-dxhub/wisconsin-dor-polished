@@ -205,6 +205,116 @@ class TestJudgeAnswerPlan:
         assert finding.verdict == "DECLINE"
 
 
+CLARIFY_PAYLOAD = {
+    "verdict": "CLARIFY",
+    "supported": "Objections go to different bodies by classification.",
+    "unsupported": "",
+    "rationale": "The cited chunks fork on classification.",
+    "clarification_axis": "property classification",
+    "clarification_question": "How is the property classified?",
+    "clarification_options": ["Agricultural", "Manufacturing", "Answer in general terms"],
+}
+
+
+class TestStructuralGuards:
+    """The two schema fields that override a contradictory verdict."""
+
+    def test_decline_with_relevant_material_is_coerced_to_answer(self, fresh_modules):
+        (aj,) = fresh_modules("adequacy_judge")
+        finding = aj.parse_finding(
+            {
+                "relevant_material_found": True,
+                "verdict": "DECLINE",
+                "supported": "Board of Assessors material was retrieved.",
+                "unsupported": "",
+                "rationale": "The named case itself is not in the material.",
+            }
+        )
+        assert finding.verdict == "ANSWER"
+        # The rationale becomes the unsupported line so Phase B says what is missing.
+        assert finding.unsupported == "The named case itself is not in the material."
+
+    def test_decline_stands_when_no_relevant_material(self, fresh_modules):
+        (aj,) = fresh_modules("adequacy_judge")
+        finding = aj.parse_finding(
+            {
+                "relevant_material_found": False,
+                "verdict": "DECLINE",
+                "supported": "Wisconsin property tax only.",
+                "unsupported": "",
+                "rationale": "Nothing retrieved bears on the question.",
+            }
+        )
+        assert finding.verdict == "DECLINE"
+
+    def test_clarify_is_coerced_when_the_question_states_the_fact(self, fresh_modules):
+        (aj,) = fresh_modules("adequacy_judge")
+        finding = aj.parse_finding(
+            dict(CLARIFY_PAYLOAD, question_omits_the_fact=False, relevant_material_found=True)
+        )
+        # "how do I appeal my agricultural classification" already named the fact.
+        assert finding.verdict == "ANSWER"
+        assert finding.clarification is None
+        assert finding.rationale == "The cited chunks fork on classification."
+        assert finding.supported == "Objections go to different bodies by classification."
+
+    def test_clarify_stands_when_the_question_omits_the_fact(self, fresh_modules):
+        (aj,) = fresh_modules("adequacy_judge")
+        finding = aj.parse_finding(
+            dict(CLARIFY_PAYLOAD, question_omits_the_fact=True, relevant_material_found=True)
+        )
+        assert finding.verdict == "CLARIFY"
+        assert finding.clarification is not None
+        assert finding.clarification.axis == "property classification"
+
+    def test_clarify_stands_when_the_flag_is_missing(self, fresh_modules):
+        """Fail open toward the judge's own verdict — only an explicit false coerces."""
+        (aj,) = fresh_modules("adequacy_judge")
+        finding = aj.parse_finding(dict(CLARIFY_PAYLOAD))
+        assert finding.verdict == "CLARIFY"
+        assert finding.clarification is not None
+
+    def test_clarify_stands_when_the_flag_is_null(self, fresh_modules):
+        (aj,) = fresh_modules("adequacy_judge")
+        finding = aj.parse_finding(dict(CLARIFY_PAYLOAD, question_omits_the_fact=None))
+        assert finding.verdict == "CLARIFY"
+        assert finding.clarification is not None
+
+    def test_the_guard_does_not_touch_an_answer_verdict(self, fresh_modules):
+        (aj,) = fresh_modules("adequacy_judge")
+        finding = aj.parse_finding(
+            {
+                "relevant_material_found": True,
+                "question_omits_the_fact": False,
+                "verdict": "ANSWER",
+                "supported": "s",
+                "unsupported": "u",
+                "rationale": "r",
+            }
+        )
+        assert finding.verdict == "ANSWER"
+        assert finding.unsupported == "u"
+
+
+class TestFindingToolSchema:
+    def test_both_structural_flags_are_required(self, fresh_modules):
+        (aj,) = fresh_modules("adequacy_judge")
+        schema = aj.FINDING_TOOL_CONFIG["tools"][0]["toolSpec"]["inputSchema"]["json"]
+        assert schema["required"] == [
+            "relevant_material_found",
+            "question_omits_the_fact",
+            "verdict",
+            "supported",
+            "unsupported",
+            "rationale",
+        ]
+        omits = schema["properties"]["question_omits_the_fact"]
+        assert omits["type"] == "boolean"
+        # The description must aim the judge at the QUESTION, not the plan/material.
+        assert "QUESTION" in omits["description"]
+        assert "agricultural" in omits["description"]
+
+
 class TestParseFinding:
     def test_unknown_verdict_degrades_to_answer(self, fresh_modules):
         (aj,) = fresh_modules("adequacy_judge")

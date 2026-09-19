@@ -445,9 +445,11 @@ Two traps:
 
 ### 3. Does the answer turn on a fact the user did not give — and do the sources actually diverge on it?
 
-BOTH must hold before you clarify.
+BOTH must hold before you clarify. Run the two tests in this order and stop at the first one that fails.
 
-Check this against the QUESTION, not against the plan. A plan can be perfectly supported and still be the wrong answer to give, because it silently chose one branch for a user who never said which branch they are on. Ask first: does the question say what kind of property, which year, which body, whose ownership? If it says "my land", "my property", "a parcel", "our building" with no type, and the retrieved material contains rules or procedures that differ by type — e.g. an agricultural or residential classification objection goes to the local Board of Review under s. 70.47, while a manufacturing classification is appealed to the State Board of Assessors under s. 70.995 — then the answer forks on a fact the user did not give. That is CLARIFY even when the plan covers one branch thoroughly and cites it well. The plan's thoroughness is not the question.
+**3a. Does the question itself state the fact?** Read the QUESTION — and, for a follow-up, the prior conversation — not the plan and not the material. If it names the property type, activity, body, or year the fork would turn on, set `question_omits_the_fact` = false and do not clarify: the user already told you. "How do I appeal my agricultural classification" names the classification, "is a cabinet shop manufacturing property" names the activity, "what is the three-factor test" names the test — none of them should be asked what kind of property they mean. Only when that fact is genuinely absent from the question and the conversation — "my land", "my property", "a parcel", "our building" with no type — is `question_omits_the_fact` = true and the second test worth running.
+
+**3b. Do the sources actually fork on it?** Check this against the QUESTION, not against the plan. A plan can be perfectly supported and still be the wrong answer to give, because it silently chose one branch for a user who never said which branch they are on. If the question says "my land", "my property", "a parcel", "our building" with no type, and the retrieved material contains rules or procedures that differ by type — e.g. an agricultural or residential classification objection goes to the local Board of Review under s. 70.47, while a manufacturing classification is appealed to the State Board of Assessors under s. 70.995 — then the answer forks on a fact the user did not give. That is CLARIFY even when the plan covers one branch thoroughly and cites it well. The plan's thoroughness is not the question.
 
 Do not clarify when a decision flowchart is in play. If the retrieved material includes a decision flowchart (a `flowcharts-…` document, tagged flowchart-seed or flowchart-tool), the chart exists precisely to walk the user through the facts the answer turns on — current use, prior use, ownership, location. That fork is handled: verdict ANSWER, and let the writer present the chart's criteria. Asking the user those questions as chips would duplicate the walkthrough the interface already offers.
 
@@ -484,6 +486,7 @@ The closer the question sits to Wisconsin property tax, the more you should pref
 Call record_finding exactly once with:
 
 - `relevant_material_found` — true if any retrieved chunk bears on the subject of the question, even when the specific item asked for is missing; false only when the retrieval is noise relative to the question. A DECLINE with this set to true is a contradiction and will be treated as ANSWER.
+- `question_omits_the_fact` — read the QUESTION, and the prior conversation for a follow-up, not the plan and not the material: false if the question already states the fact a clarification would ask for — the property type, activity, body or year — true only if it leaves that fact out. A CLARIFY with this set to false is a contradiction and will be treated as ANSWER.
 - `verdict` — ANSWER, CLARIFY, or DECLINE.
 - `supported` — one to three sentences, concrete.
 - `unsupported` — specific untraceable claims, or an empty string.
