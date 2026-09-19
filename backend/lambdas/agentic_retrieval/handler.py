@@ -232,7 +232,12 @@ def handler(event: dict, context) -> dict[str, Any]:
                     if verdict == VERDICT_DISAMBIGUATE:
                         choices_msg = ChoicesMessage(
                             query_id=user_query.query_id,
-                            content=ChoicesContent(choices=PROPERTY_TYPE_CHOICES),
+                            content=ChoicesContent(
+                                choices=PROPERTY_TYPE_CHOICES,
+                                # The canned answer text already asks the
+                                # question, so none travels with the chips.
+                                kind="disambiguation",
+                            ),
                         )
                         data = json.dumps(
                             {"streamId": "choices", "body": choices_msg.model_dump(by_alias=True)}
@@ -571,10 +576,10 @@ def handler(event: dict, context) -> dict[str, Any]:
             )
 
         # Streaming is done. If the judge asked for a clarification, offer its
-        # options as chips using the existing generic `choices` wire type (the
-        # frontend renders them after the stream completes — no frontend
-        # change). The question itself is already the last line of the answer;
-        # these are just the buttons.
+        # question and options using the existing generic `choices` wire type
+        # (the frontend renders them after the stream completes, as one
+        # clarification block above the source cards). The question travels
+        # here rather than in the prose — Phase B is told NOT to restate it.
         pending_clarification = None
         if finding is not None and finding.clarification and finding.clarification.options:
             pending_clarification = {
@@ -587,7 +592,12 @@ def handler(event: dict, context) -> dict[str, Any]:
                 try:
                     choices_msg = ChoicesMessage(
                         query_id=user_query.query_id,
-                        content=ChoicesContent(choices=finding.clarification.options),
+                        content=ChoicesContent(
+                            choices=finding.clarification.options,
+                            question=finding.clarification.question or None,
+                            axis=finding.clarification.axis or None,
+                            kind="clarification",
+                        ),
                     )
                     ws_server.client.post_to_connection(
                         ConnectionId=ws_server.connection_id,

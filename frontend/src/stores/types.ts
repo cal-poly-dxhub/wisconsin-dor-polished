@@ -8,6 +8,17 @@ export interface MessageUnion {
 
 export type SuggestionKind = 'topic-shift';
 
+export type ClarificationKind = 'clarification' | 'disambiguation';
+
+/** Framing that arrives alongside a turn's choice chips: the one question to
+ *  put to the user, the axis it asks about, and which path produced it. The
+ *  question is absent on the legacy pre-loop disambiguation path. */
+export interface QueryClarification {
+  question?: string;
+  axis?: string;
+  kind?: ClarificationKind;
+}
+
 export interface AgentTraceEvent {
   kind:
     | 'loop_start'
@@ -38,6 +49,9 @@ export interface Query {
   };
   resources?: ResourceItem[];
   choices?: string[];
+  // Question/axis/kind that came with `choices`, rendered with the chips as
+  // one clarification block under the answer.
+  clarification?: QueryClarification;
   // Soft, dismissible suggestion attached to this turn. 'topic-shift' offers
   // start-new-chat / continue-here controls when the classifier thinks the
   // question opens an unrelated subject. Cleared once the user picks or dismisses.
@@ -163,7 +177,11 @@ export interface ChatStore {
   appendQueryResponse: (queryId: string, fragment: string) => void;
   updateQueryResources: (queryId: string, resources: ResourceItem[]) => void;
 
-  setQueryChoices: (queryId: string, choices: string[]) => void;
+  setQueryChoices: (
+    queryId: string,
+    choices: string[],
+    clarification?: QueryClarification
+  ) => void;
   setQueryFlowchart: (queryId: string, flowchart: FlowchartContent) => void;
   setQuerySuggestion: (queryId: string, suggestion: SuggestionKind) => void;
   clearQuerySuggestion: (queryId: string) => void;

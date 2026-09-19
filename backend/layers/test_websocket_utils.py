@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from websocket_utils.models import AgentEventMessage
+from websocket_utils.models import AgentEventMessage, ChoicesContent, ChoicesMessage
 
 
 def test_agent_event_message_camelcase_serialization():
@@ -43,6 +43,42 @@ def test_agent_event_message_optional_dev_payload():
     # dev_payload defaults to {} for consistent schema on the wire.
     assert dumped["devPayload"] == {}
     assert "turn" in dumped and dumped["turn"] is None
+
+
+def test_choices_message_carries_clarification_framing():
+    """The adequacy judge sends the question and axis WITH the options, so the
+    frontend can frame them as one clarification block."""
+    msg = ChoicesMessage(
+        query_id="q-1",
+        content=ChoicesContent(
+            choices=["Agricultural", "Undeveloped", "Answer in general terms"],
+            question="Is the parcel classified agricultural or undeveloped?",
+            axis="property classification",
+            kind="clarification",
+        ),
+    )
+    dumped = msg.model_dump(by_alias=True)
+    assert dumped["responseType"] == "choices"
+    assert dumped["queryId"] == "q-1"
+    content = dumped["content"]
+    assert content["choices"][0] == "Agricultural"
+    # Single-word field names, so the camelCase alias generator is a no-op.
+    assert content["question"] == "Is the parcel classified agricultural or undeveloped?"
+    assert content["axis"] == "property classification"
+    assert content["kind"] == "clarification"
+
+
+def test_choices_message_framing_is_optional():
+    """The legacy pre-loop disambiguation path sends options with no question:
+    the fields must still be present (and null) so the schema is stable."""
+    msg = ChoicesMessage(
+        query_id="q-2",
+        content=ChoicesContent(choices=["Residential", "Commercial"], kind="disambiguation"),
+    )
+    content = msg.model_dump(by_alias=True)["content"]
+    assert content["question"] is None
+    assert content["axis"] is None
+    assert content["kind"] == "disambiguation"
 
 
 class TestWebSocketServer:
