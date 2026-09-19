@@ -14,11 +14,16 @@ import { ExternalLink, Maximize2, X } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import type { FAQ } from '@messages/websocket-interface';
 import { AuthorityBadge } from './authority-badge';
+import { SOURCE_KIND_META } from './source-taxonomy';
 
 export type { FAQ };
 
+const FAQ_KIND_META = SOURCE_KIND_META.faq;
+
 const faqCardVariants = cva(
-  'group cursor-pointer font-sans transition-[color,background-color,border-color,box-shadow] duration-200 ease-in-out hover:border-primary/40 hover:shadow-md focus-within:border-primary/50',
+  // No hover/focus border-colour change — it would out-specify the
+  // `border-l-<hue>` accent from the kind tint. See document-card.tsx.
+  'group cursor-pointer font-sans transition-[color,background-color,border-color,box-shadow] duration-200 ease-in-out hover:shadow-md focus-within:ring-2 focus-within:ring-primary/30',
   {
     variants: {
       variant: {
@@ -142,7 +147,7 @@ export function FAQCardCompact({
   return (
     <motion.div
       onClick={onClick}
-      className="cursor-pointer"
+      className="h-full cursor-pointer"
       initial={ANIMATION_CONFIG.compact}
       animate={
         isExpanded ? ANIMATION_CONFIG.expanded : ANIMATION_CONFIG.compact
@@ -156,13 +161,24 @@ export function FAQCardCompact({
             size,
             state: isExpanded ? 'expanded' : 'collapsed',
           }),
-          'flex flex-col rounded-lg',
+          'flex h-full flex-col rounded-lg',
+          FAQ_KIND_META.card,
           className
         )}
       >
         <CardHeader className="px-4 pt-3 pb-1.5">
           <div className="flex items-start gap-2">
-            <FAQHeader question={faq.question} faqId={faq.faqId} variant={variant} size={size} />
+            <div className="min-w-0 flex-1">
+              <div
+                className={cn(
+                  'mb-1 text-[10px] leading-none font-semibold tracking-[0.08em] uppercase',
+                  FAQ_KIND_META.accent
+                )}
+              >
+                {FAQ_KIND_META.label}
+              </div>
+              <FAQHeader question={faq.question} faqId={faq.faqId} variant={variant} size={size} />
+            </div>
             <button
               type="button"
               onClick={event => {
@@ -181,7 +197,6 @@ export function FAQCardCompact({
         </CardHeader>
 
         <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pb-3">
-          <AuthorityBadge authorityLevel={6} size="sm" />
           {faq.sourceUrl && (
             <a
               href={faq.sourceUrl}

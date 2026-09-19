@@ -13,9 +13,11 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ExternalLink, Maximize2, X } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import type { InlineCitation } from '@/lib/parse-inline-citations';
+import { useDevTrace } from '@/hooks/use-dev-trace';
 import { AuthorityBadge } from './authority-badge';
 import { DiscoveryBadge } from './discovery-badge';
 import { appendPageFragment, chooseSourceTarget } from './source-target';
+import { classifySourceKind, SOURCE_KIND_META } from './source-taxonomy';
 
 export interface ChunkSnippet {
   page: number;
@@ -43,7 +45,10 @@ export interface Document {
 }
 
 const documentCardVariants = cva(
-  'group cursor-pointer font-sans transition-[color,background-color,border-color,box-shadow] duration-200 ease-in-out border-black/15 dark:border-border hover:border-primary/60 hover:shadow-md hover:bg-accent/70 focus-within:border-primary/50 shadow-none dark:shadow-sm',
+  // NOTE: no hover/focus border-colour change here — it would win on
+  // specificity over the per-kind `border-l-<hue>` accent and wash it out.
+  // Hover feedback comes from the per-kind background tint plus the shadow.
+  'group cursor-pointer font-sans transition-[color,background-color,border-color,box-shadow] duration-200 ease-in-out border-black/10 dark:border-border hover:shadow-md focus-within:ring-2 focus-within:ring-primary/30 shadow-none dark:shadow-sm',
   {
     variants: {
       variant: {
@@ -146,6 +151,9 @@ const ANIMATION_CONFIG = {
 
 const CONTENT_PREVIEW_LENGTH = 150;
 
+/** Citation rows shown before the "+N more" in-place expander. */
+export const VISIBLE_CITATION_ROWS = 2;
+
 function cleanContentText(text: string): string {
   return text
     .replace(/\r\n/g, '\n')
@@ -206,10 +214,23 @@ export function DocumentCardCompact({
       ? `${content.substring(0, CONTENT_PREVIEW_LENGTH)}...`
       : content;
 
+  const kind = classifySourceKind(document);
+  const kindMeta = SOURCE_KIND_META[kind];
+
+  // Retrieval provenance ("Semantic match", "Court opinion", ...) is debugging
+  // detail, not something an answer reader needs. Keep it behind dev trace.
+  const devMode = useDevTrace();
+
+  // At most two citation rows by default so every card in the grid lands on the
+  // same height; "+N more" reveals the rest in place (the modal still exists).
+  const [showAllCitations, setShowAllCitations] = useState(false);
+  const visibleCitations =
+    citations && (showAllCitations ? citations : citations.slice(0, VISIBLE_CITATION_ROWS));
+
   return (
     <motion.div
       onClick={onClick}
-      className="cursor-pointer"
+      className="h-full cursor-pointer"
       initial={ANIMATION_CONFIG.compact}
       animate={ANIMATION_CONFIG.compact}
       transition={{ ease: 'easeIn', duration: ANIMATION_CONFIG.duration }}
@@ -221,18 +242,29 @@ export function DocumentCardCompact({
             size,
             state: 'default',
           }),
-          'flex flex-col rounded-lg overflow-hidden',
+          'flex h-full flex-col rounded-lg overflow-hidden',
+          kindMeta.card,
           className
         )}
       >
-        <CardHeader className="px-4 pt-3.5 pb-3.5">
+        <CardHeader className="px-4 pt-3 pb-3.5">
           <div className="flex items-start gap-2">
-            <DocumentHeader
-              title={document.title}
-              documentId={document.documentId}
-              variant={variant}
-              size={size}
-            />
+            <div className="min-w-0 flex-1">
+              <div
+                className={cn(
+                  'mb-1 text-[10px] leading-none font-semibold tracking-[0.08em] uppercase',
+                  kindMeta.accent
+                )}
+              >
+                {kindMeta.label}
+              </div>
+              <DocumentHeader
+                title={document.title}
+                documentId={document.documentId}
+                variant={variant}
+                size={size}
+              />
+            </div>
             <button
               type="button"
               onClick={event => {
@@ -245,21 +277,16 @@ export function DocumentCardCompact({
               <Maximize2 className="h-3.5 w-3.5" />
             </button>
           </div>
-          {(document.authorityLevel !== undefined || (document.discoveryTag && document.discoveryTag !== 'unknown')) && (
+          {devMode && document.discoveryTag && document.discoveryTag !== 'unknown' && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1.5">
-              {document.authorityLevel !== undefined && (
-                <AuthorityBadge authorityLevel={document.authorityLevel} size="sm" />
-              )}
-              {document.discoveryTag && document.discoveryTag !== 'unknown' && (
-                <DiscoveryBadge tag={document.discoveryTag} size="sm" />
-              )}
+              <DiscoveryBadge tag={document.discoveryTag} size="sm" />
             </div>
           )}
         </CardHeader>
 
-        {citations && citations.length > 0 && document.sourceUrl ? (
+        {citations && citations.length > 0 && visibleCitations && document.sourceUrl ? (
           <div className="mt-auto flex flex-col divide-y divide-border border-t border-border">
-            {citations.slice(0, 2).map((c) => {
+            {visibleCitations.map((c) => {
               const snippet = document.chunks?.find(ch => ch.page === c.page);
               return (
                 <button
@@ -287,13 +314,19 @@ export function DocumentCardCompact({
                 </button>
               );
             })}
-            {citations.length > 2 && (
+            {citations.length > VISIBLE_CITATION_ROWS && (
               <button
                 type="button"
                 className="w-full px-4 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-[color,background-color,border-color] cursor-pointer text-center"
-                onClick={(e) => { e.stopPropagation(); onClick(); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowAllCitations(prev => !prev);
+                }}
+                aria-expanded={showAllCitations}
               >
-                +{citations.length - 2} more
+                {showAllCitations
+                  ? 'Show fewer'
+                  : `+${citations.length - VISIBLE_CITATION_ROWS} more`}
               </button>
             )}
           </div>
@@ -337,6 +370,8 @@ function DocumentCardModal({
   onClose,
   onSourceClick,
 }: DocumentCardModalProps) {
+  const devMode = useDevTrace();
+
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       onClose(e);
@@ -367,7 +402,7 @@ function DocumentCardModal({
               {document.authorityLevel !== undefined && (
                 <AuthorityBadge authorityLevel={document.authorityLevel} size="sm" />
               )}
-              {document.discoveryTag && document.discoveryTag !== 'unknown' && (
+              {devMode && document.discoveryTag && document.discoveryTag !== 'unknown' && (
                 <DiscoveryBadge tag={document.discoveryTag} size="sm" />
               )}
             </div>
