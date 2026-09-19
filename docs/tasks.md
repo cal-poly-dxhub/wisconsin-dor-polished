@@ -1,5 +1,17 @@
 # Task List
 
+## Roadmap as of 2026-09-18
+
+The bot is done as a research problem: every tester-reported retrieval issue has a shipped, harness-guarded fix, the Assessment Manual is fully indexed (Task 72), and the tracked set scores 37/42. What remains:
+
+1. **Adequacy judge (Task 71) — flag on** after one tuning pass on over-clarifying; bar = classic ≥34 and scope ≥13 on one clean 62-case run. Retest with DOR: Sausen, Markarian, Native American, maintenance-vs-revaluation.
+2. **Security before any public move** (handoff plan §3): WebSocket $connect authorizer, session ownership checks, close self-signup. ~1 day.
+3. **Handoff**: SSO with Amy/Brad, cost sheet (Neptune 32 m-NCU is the floor — 16 rejected on a fresh graph; lever: drop the 15 non-current WPAM editions to likely fit 16), annual-refresh runbook.
+4. **Content as DOR supplies it**: Prime Leather citation, WPAM Volume 3, Innovation Grant date conflict, BOR interpreter reference, plain-language glossary.
+5. **Housekeeping**: delete rollback graph `g-ndvl4j73v4` ~09-25 and re-point the CDK construct; remove `disambiguationClassifier` / `PROPERTY_TYPE_CHOICES` once the judge has a week of traffic.
+
+Decided: Sonnet 5 rejected (stops researching early); vocab-swap map retired (document expansion replaced it); live graph is `g-svphgiu4k6` via `neptuneGraphIdOverride` in `infra/cdk.json`.
+
 ## TODO
 
 | # | Task | Status (audit 2026-09-12) | Related Responses |
