@@ -124,10 +124,9 @@ def test_vector_search_top_k_documented(config):
         "CASELAW_CHUNK_FETCH_K",
         "CASELAW_CHUNK_HARD_CAP",
         "CASELAW_CHUNK_MAX_PER_CASE",
-        "BROAD_DISCOVERY_CAP",
         "DIVERSITY_CAP_PER_DOC",
-        "ENRICH_CAP_PER_DOC",
-        "ENRICH_CAP_PER_TYPE",
+        "ENABLE_DISAMBIGUATION",
+        "ENABLE_TOPIC_SHIFT",
         "FAQ_KNOWLEDGE_BASE_ID",
         "FAQ_SCORE_THRESHOLD",
         "MAX_TURNS",
@@ -147,3 +146,24 @@ def test_vector_search_top_k_documented(config):
 def test_spec_documented_env_vars_present(config, expected_var):
     """Every env var listed in the spec's table must exist in the TOML."""
     assert expected_var in config["env"], f"{expected_var} missing from config/retrieval.toml"
+
+
+@pytest.mark.parametrize("flag", ["ENABLE_DISAMBIGUATION", "ENABLE_TOPIC_SHIFT"])
+def test_legacy_classifier_flags_default_off(config, flag):
+    """The pre-loop classifier is superseded by the adequacy judge (Task 71).
+    Both of its flags stay declared (config.py reads them, and SCOPE_GATE_ENABLED
+    is a two-way door back to the old gate) but must default to false."""
+    entry = config["env"][flag]
+    assert entry["type"] == "bool"
+    assert str(entry["default"]).lower() == "false"
+    assert "legacy" in entry["description"].lower()
+
+
+@pytest.mark.parametrize(
+    "removed_var",
+    ["BROAD_DISCOVERY_CAP", "ENRICH_CAP_PER_DOC", "ENRICH_CAP_PER_TYPE"],
+)
+def test_removed_env_vars_stay_removed(config, removed_var):
+    """BROAD_DISCOVERY_CAP was never read by any stage; the ENRICH_CAP_* pair
+    configured the auto_enrichment stage, which was deleted."""
+    assert removed_var not in config["env"]

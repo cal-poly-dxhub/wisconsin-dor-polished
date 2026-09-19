@@ -2,7 +2,7 @@
 
 execute_tool's vector_search branch delegates to run_vector_search — the
 behavioral tests for the actual retrieval logic live in test_tools.py,
-test_statute_backfill.py, and test_auto_enrichment.py. These tests instead
+and test_statute_backfill.py. These tests instead
 verify pipeline.py's own contract: stage ordering, that the runner emits a
 standard-shaped trace event for every logged stage, and that the final
 result dict matches the documented shape.
@@ -33,7 +33,6 @@ def test_vector_search_stages_order_matches_original_monolith():
         "diversity_cap",
         "authority_quota",
         "authority_tiebreak",
-        "auto_enrichment",
         "citation_extraction",
         "statute_backfill",
         "caselaw_backfill",

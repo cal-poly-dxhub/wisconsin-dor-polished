@@ -628,28 +628,22 @@ def test_get_neighbors_ranked_result_includes_trace_context():
     assert result["total_cases"] == 10
 
 
-def test_vector_search_enrichment_runs_but_is_not_surfaced():
-    """Auto-enrichment still runs internally (feeding case-law discovery) but
-    is NOT surfaced to the model — graph_context is absent from the result
-    (Direction 1, Option A)."""
+def test_vector_search_does_not_enrich_with_graph_neighbors():
+    """The auto_enrichment stage was removed: its neighbor fetch was never
+    returned to the model and no downstream stage read it, so vector_search
+    must not spend a get_neighbors round-trip per top parent doc."""
     from agent_tools import execute_tool
 
     mock_neptune = MagicMock()
     mock_neptune.vector_search.return_value = [
         {"chunk_id": "c1", "text": "test", "score": 0.9, "doc_id": "doc-1"},
     ]
-    mock_neptune.get_neighbors.return_value = [
-        {"id": "related-doc", "title": "Related", "labels": ["Document"], "relationship": "CITES"},
-        {"id": "chunk-99", "title": None, "labels": ["Chunk"], "relationship": "EXTRACTED_FROM"},
-    ]
     mock_neptune.resolve_case_citations.return_value = []
 
     with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
 
-    # Enrichment still fires internally for the top parent doc.
-    mock_neptune.get_neighbors.assert_called_once_with("doc-1")
-    # But nothing is surfaced to the model.
+    mock_neptune.get_neighbors.assert_not_called()
     assert "graph_context" not in result
 
 

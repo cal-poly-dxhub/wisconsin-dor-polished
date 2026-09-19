@@ -95,18 +95,6 @@ _CHUNK_FIELDS_FOR_MODEL = frozenset(
     }
 )
 
-_NEIGHBOR_FIELDS_FOR_MODEL = frozenset(
-    {
-        "id",
-        "title",
-        "relationship",
-        "labels",
-        "authority_level",
-        "framework_id",
-    }
-)
-
-
 def _compact_for_model(result: dict, tool_name: str) -> dict:
     """Strip fields from tool results that the model doesn't need for reasoning.
 
@@ -131,18 +119,6 @@ def _compact_for_model(result: dict, tool_name: str) -> dict:
                 {k: v for k, v in chunk.items() if k in _CHUNK_FIELDS_FOR_MODEL and v is not None}
                 for chunk in value
             ]
-        elif key == "graph_context":
-            compacted["graph_context"] = {
-                doc_id: [
-                    {
-                        k: v
-                        for k, v in n.items()
-                        if k in _NEIGHBOR_FIELDS_FOR_MODEL and v is not None
-                    }
-                    for n in neighbors
-                ]
-                for doc_id, neighbors in value.items()
-            }
         elif key in ("score", "pre_dedup_count", "ranking_stats"):
             continue
         else:
