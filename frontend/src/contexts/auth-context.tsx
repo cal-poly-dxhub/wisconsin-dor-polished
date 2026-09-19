@@ -21,6 +21,8 @@ interface AuthContextType {
   session: CognitoUserSession | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  /** True when the ID token carries the `Admins` Cognito group (the same check the admin APIs make). */
+  isAdmin: boolean;
   signIn: (params: SignInParams) => Promise<void>;
   signUp: (params: SignUpParams) => Promise<{ userConfirmed: boolean }>;
   confirmSignUp: (params: ConfirmSignUpParams) => Promise<void>;
@@ -29,6 +31,15 @@ interface AuthContextType {
   forgotPassword: (email: string) => Promise<void>;
   confirmForgotPassword: (params: ConfirmForgotPasswordParams) => Promise<void>;
   refreshSession: () => Promise<void>;
+}
+
+const ADMIN_GROUP = 'Admins';
+
+/** Read `cognito:groups` off the ID token; mirrors `require_admin()` in the chat API. */
+export function hasAdminGroup(session: CognitoUserSession | null): boolean {
+  if (!session) return false;
+  const groups = session.getIdToken().payload['cognito:groups'];
+  return Array.isArray(groups) && groups.includes(ADMIN_GROUP);
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -100,6 +111,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         session,
         isLoading,
         isAuthenticated: !!session,
+        isAdmin: hasAdminGroup(session),
         signIn,
         signUp,
         confirmSignUp,

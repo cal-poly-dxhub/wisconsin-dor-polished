@@ -47,7 +47,7 @@ function AdminSidebar() {
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
-    <ProtectedRoute>
+    <ProtectedRoute requireAdmin>
       <div className="min-h-screen bg-background">
         <AdminSidebar />
         <main className="pl-48">{children}</main>

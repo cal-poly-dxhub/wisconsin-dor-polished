@@ -31,6 +31,12 @@ export class SessionsStack extends cdk.NestedStack {
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
 
+    // NOTE: the `Admins` user-pool group (gates every /admin/* API via
+    // require_admin() in chat_api and the /admin pages via
+    // <ProtectedRoute requireAdmin>) was created by hand in the console and is
+    // NOT managed here. Declaring it as a CfnUserPoolGroup would fail on
+    // create because the group already exists; adopt it with `cdk import`
+    // during the security pass rather than recreating it.
     this.userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: 'wisconsin-user-pool',
       selfSignUpEnabled: true,
