@@ -22,9 +22,7 @@ ALLOWED_METADATA_KEYS = frozenset(
         "topScore",
         "faqCount",
         "documentCount",
-        "chainLength",
         "opinionChars",
-        "refined",
         "refinedQuery",
         "citedDocCount",
         "hasPlan",
@@ -80,6 +78,11 @@ ALLOWED_METADATA_KEYS = frozenset(
         # Adequacy judge (post-retrieval) — see adequacy_judge.py.
         "clarificationOffered",
         "judgeModelId",
+        # find_case_law (case-name / citation resolver) — see case_law.py.
+        "caseCount",
+        "caseTitles",
+        "caseCitations",
+        "matchKinds",
         # Flowchart seed (pre-loop router) — see flowchart_router.py.
         "flowchartId",
         "routerScore",

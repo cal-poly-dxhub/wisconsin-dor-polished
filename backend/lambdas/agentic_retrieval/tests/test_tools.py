@@ -60,7 +60,7 @@ def test_execute_tool_get_document_not_found():
 
 def test_execute_tool_get_document_accepts_node_id_alias():
     """The model sometimes calls get_document with node_id (the param name
-    used by get_neighbors/get_authority_chain) instead of doc_id. Accept it
+    used by get_neighbors) instead of doc_id. Accept it
     rather than raising KeyError, which would crash the whole agent loop."""
     from agent_tools import execute_tool
 
@@ -195,6 +195,29 @@ def test_refine_query_tool_removed_from_definitions():
 
     names = {t["toolSpec"]["name"] for t in TOOL_DEFINITIONS}
     assert "refine_query" not in names
+
+
+def test_retired_tools_absent_from_definitions():
+    """get_authority_chain and list_framework_docs were retired: the loader
+    never builds the hierarchy they walked, and framework listing never earned
+    a cite. `clarify` was never a real tool (the adequacy judge asks instead)."""
+    from agent_tools import TOOL_DEFINITIONS
+
+    names = {t["toolSpec"]["name"] for t in TOOL_DEFINITIONS}
+    assert "get_authority_chain" not in names
+    assert "list_framework_docs" not in names
+    assert "clarify" not in names
+
+
+def test_get_neighbors_edge_types_only_lists_edges_the_loader_writes():
+    """IMPLEMENTS and COVERS_TOPIC are in the data model docs but no loader
+    phase ever creates them, so they must not be offered to the model."""
+    from agent_tools import TOOL_DEFINITIONS
+
+    spec = next(t["toolSpec"] for t in TOOL_DEFINITIONS if t["toolSpec"]["name"] == "get_neighbors")
+    blob = str(spec)
+    assert "IMPLEMENTS" not in blob
+    assert "COVERS_TOPIC" not in blob
 
 
 # ---------------------------------------------------------------------------

@@ -623,7 +623,7 @@ def execute_tool(
 
     elif tool_name == "get_document":
         # The model occasionally passes `node_id` (the param name used by
-        # get_neighbors/get_authority_chain) instead of `doc_id`. Accept the
+        # get_neighbors) instead of `doc_id`. Accept the
         # alias and a missing id gracefully — indexing tool_input["doc_id"]
         # directly raised KeyError and crashed the entire agent loop.
         requested_id = tool_input.get("doc_id") or tool_input.get("node_id") or ""
@@ -748,29 +748,6 @@ def execute_tool(
         )
         return {"neighbors": neighbors}
 
-    elif tool_name == "get_authority_chain":
-        chain = neptune.get_authority_chain(tool_input["node_id"])
-        _log_tool_event(
-            "get_authority_chain_complete",
-            tool_name=tool_name,
-            node_id=tool_input["node_id"],
-            chain_length=len(chain),
-            chain_ids=[node.get("id") for node in chain[:10]],
-            latency_ms=round((time.perf_counter() - started) * 1000),
-        )
-        return {"authority_chain": chain}
-
-    elif tool_name == "list_framework_docs":
-        docs = neptune.list_framework_docs(tool_input["framework_id"])
-        _log_tool_event(
-            "list_framework_docs_complete",
-            tool_name=tool_name,
-            framework_id=tool_input["framework_id"],
-            document_count=len(docs),
-            latency_ms=round((time.perf_counter() - started) * 1000),
-        )
-        return {"documents": docs}
-
     elif tool_name == "find_case_law":
         search_text = (tool_input.get("search_text") or "").strip()
         statute_id = tool_input.get("statute_id")
@@ -873,15 +850,6 @@ def execute_tool(
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
         return result
-
-    elif tool_name == "clarify":
-        _log_tool_event(
-            "clarify_tool_complete",
-            tool_name=tool_name,
-            question_chars=len(tool_input.get("question", "")),
-            latency_ms=round((time.perf_counter() - started) * 1000),
-        )
-        return tool_input
 
     elif tool_name == "prepare_answer":
         _log_tool_event(

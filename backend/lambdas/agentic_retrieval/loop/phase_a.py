@@ -163,7 +163,8 @@ class AgentLoopResult:
     answer_plan: str
     trace_log: list[dict]
     connection_alive: bool
-    # Fallback answer for edge cases (turn budget exhausted, clarify tool)
+    # Fallback answer for edge cases (turn budget exhausted, model answered in
+    # prose instead of calling prepare_answer)
     fallback_answer: str | None = None
     # High-confidence FAQ entries (from seeded faq_search)
     high_confidence_faq: FAQResource | None = None
@@ -981,12 +982,6 @@ def run_agentic_loop(
                     all_doc_ids.add(doc["id"])
                     discovery[doc["id"]] = "fetched"
 
-            if tool_name == "list_framework_docs":
-                for d in result.get("documents", []):
-                    if d.get("id"):
-                        all_doc_ids.add(d["id"])
-                        discovery.setdefault(d["id"], "framework-list")
-
             # A chart the model fetched itself is registered exactly like a
             # router-seeded one: discoverable (so a cited flowcharts-* id gets a
             # citation card anchored at the chart's WPAM page) and delivered as
@@ -1039,7 +1034,7 @@ def run_agentic_loop(
                 discovery=discovery_summary(discovery),
                 tool_result_summary=tool_result_summary["raw"],
             )
-            if tool_name not in ("prepare_answer", "clarify"):
+            if tool_name != "prepare_answer":
                 result_metadata = dict(tool_result_summary["metadata"])
                 if tool_latency_ms is not None:
                     result_metadata["latencyMs"] = tool_latency_ms
@@ -1062,54 +1057,6 @@ def run_agentic_loop(
                         "raw": tool_result_summary["raw"],
                         "toolLatencyMs": tool_latency_ms,
                     },
-                )
-
-            if tool_name == "clarify":
-                answer = result.get("question", "")
-                _log(
-                    "agent_loop_complete",
-                    **trace_context,
-                    terminal_reason="clarify_tool",
-                    turns_used=turn_number,
-                    elapsed_ms=round((time.perf_counter() - loop_started) * 1000),
-                    answer_chars=len(answer),
-                    discovered_doc_count=len(all_doc_ids),
-                )
-                _record_trace(
-                    "loop_complete",
-                    turn=turn_number,
-                    terminalReason="clarify_tool",
-                    turnsUsed=turn_number,
-                    elapsedMs=round((time.perf_counter() - loop_started) * 1000),
-                )
-                _emit_safe(
-                    ws_server,
-                    trace_seq,
-                    query_id=query_id,
-                    kind="loop_complete",
-                    payload={
-                        "terminalReason": "clarify_tool",
-                        "turnsUsed": turn_number,
-                        "elapsedMs": round((time.perf_counter() - loop_started) * 1000),
-                        "citedDocCount": 0,
-                        "discoveryCounts": discovery_summary(discovery),
-                    },
-                )
-                return AgentLoopResult(
-                    cited_doc_ids=[],
-                    all_chunks=all_chunks,
-                    all_doc_ids=all_doc_ids,
-                    discovery=discovery,
-                    fetched_opinions=fetched_opinions,
-                    faq_resource=None,
-                    answer_plan="",
-                    trace_log=trace_log,
-                    connection_alive=ws_connection_alive[0],
-                    fallback_answer=answer,
-                    high_confidence_faq=high_confidence_faq,
-                    faq_entries=faq_entries,
-                    seeded_flowchart=flowchart_seed,
-                    seeded_flowchart_score=flowchart_seed_score,
                 )
 
             if tool_name == "prepare_answer":

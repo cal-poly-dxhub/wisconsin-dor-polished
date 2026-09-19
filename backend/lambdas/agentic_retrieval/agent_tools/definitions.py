@@ -221,7 +221,7 @@ TOOL_DEFINITIONS = [
             "name": "get_neighbors",
             "description": (
                 "Traverse graph edges from a document to find related nodes. "
-                "Use this to find what a document CITES, IMPLEMENTS, or is "
+                "Use this to find what a document CITES or is "
                 "PART_OF. Critical for finding authoritative sources — most "
                 "importantly, the interpreting case law that hangs off a "
                 "statute stub via CITES edges."
@@ -238,8 +238,8 @@ TOOL_DEFINITIONS = [
                             "type": "array",
                             "items": {"type": "string"},
                             "description": (
-                                "Filter by edge types. Options: CITES, IMPLEMENTS, PART_OF, "
-                                "BELONGS_TO, DERIVED_FROM, COVERS_TOPIC, EXTRACTED_FROM"
+                                "Filter by edge types. Options: CITES, PART_OF, "
+                                "BELONGS_TO, DERIVED_FROM, EXTRACTED_FROM"
                             ),
                         },
                         "direction": {
@@ -276,51 +276,6 @@ TOOL_DEFINITIONS = [
                         },
                     },
                     "required": ["node_id"],
-                }
-            },
-        }
-    },
-    {
-        "toolSpec": {
-            "name": "get_authority_chain",
-            "description": (
-                "Trace the governance hierarchy from a document up to the root authority. "
-                "Returns the chain: Document -> Section -> Chapter -> Framework -> Constitution. "
-                "Use this to understand what level of authority backs a "
-                "particular rule or guidance."
-            ),
-            "inputSchema": {
-                "json": {
-                    "type": "object",
-                    "properties": {
-                        "node_id": {
-                            "type": "string",
-                            "description": "The node ID to trace authority from",
-                        }
-                    },
-                    "required": ["node_id"],
-                }
-            },
-        }
-    },
-    {
-        "toolSpec": {
-            "name": "list_framework_docs",
-            "description": (
-                "List all documents belonging to a framework/authority level. "
-                "Framework IDs: FW-CONSTITUTION, FW-STATUTES, FW-ADMIN-RULES, "
-                "FW-WPAM, FW-FAQ, FW-GOV-PUBS"
-            ),
-            "inputSchema": {
-                "json": {
-                    "type": "object",
-                    "properties": {
-                        "framework_id": {
-                            "type": "string",
-                            "description": "The framework ID to list documents for",
-                        }
-                    },
-                    "required": ["framework_id"],
                 }
             },
         }

@@ -91,22 +91,14 @@ def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
             "authority_level": (doc or {}).get("authority_level"),
         }
 
-    if tool_name == "get_authority_chain":
-        chain = result.get("authority_chain", [])
+    if tool_name == "find_case_law":
+        cases = result.get("cases", [])
         return {
             "tool_name": tool_name,
-            "status": "ok",
-            "chain_length": len(chain),
-            "chain_ids": [node.get("id") for node in chain[:10]],
-        }
-
-    if tool_name == "list_framework_docs":
-        docs = result.get("documents", [])
-        return {
-            "tool_name": tool_name,
-            "status": "ok",
-            "document_count": len(docs),
-            "document_ids": [doc.get("id") for doc in docs[:10]],
+            "status": "ok" if cases else "miss",
+            "case_count": len(cases),
+            "case_ids": [case.get("id") for case in cases[:10]],
+            "match_kinds": [case.get("match_kind") for case in cases[:10]],
         }
 
     if tool_name == "fetch_case_opinion":
@@ -116,13 +108,6 @@ def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
             "citation": result.get("citation"),
             "raw_key": result.get("raw_key", ""),
             "opinion_chars": len(result.get("text", "")),
-        }
-
-    if tool_name == "clarify":
-        return {
-            "tool_name": tool_name,
-            "status": "terminal",
-            "question_chars": len(result.get("question", "")),
         }
 
     if tool_name == "prepare_answer":
@@ -139,7 +124,7 @@ def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
 
 def build_tool_call_summary(tool_name: str, tool_input: dict, neptune_client=None) -> str:
     """Short prose describing a tool call for the UI trace."""
-    if tool_name in ("vector_search", "faq_search", "refine_query"):
+    if tool_name in ("vector_search", "faq_search"):
         query = tool_input.get("query", "")
         return f'"{query}"' if query else ""
     if tool_name == "search_document":
@@ -191,25 +176,12 @@ def build_tool_call_summary(tool_name: str, tool_input: dict, neptune_client=Non
     if tool_name == "get_document":
         doc_id = tool_input.get("doc_id", "")
         return doc_id
-    if tool_name == "get_authority_chain":
-        doc_id = tool_input.get("doc_id", "") or tool_input.get("node_id", "")
-        title = doc_id
-        if doc_id and neptune_client:
-            try:
-                info = neptune_client.get_document(doc_id)
-                title = (info or {}).get("title") or doc_id
-            except Exception:
-                pass
-        return title
-    if tool_name == "list_framework_docs":
-        framework = tool_input.get("framework_name", "") or tool_input.get("framework_id", "")
-        return framework
+    if tool_name == "find_case_law":
+        search_text = tool_input.get("search_text", "")
+        return f'"{search_text}"' if search_text else ""
     if tool_name == "fetch_case_opinion":
         citation = tool_input.get("citation", "")
         return citation
-    if tool_name == "clarify":
-        question = tool_input.get("question", "")
-        return f'"{question[:60]}"' if question else ""
     if tool_name == "prepare_answer":
         cited = tool_input.get("cited_doc_ids", []) or []
         n = len(cited)
@@ -568,19 +540,24 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             status = "miss"
             metadata = {"documentCount": 0}
 
-    elif tool_name == "get_authority_chain":
-        chain = result.get("authority_chain", [])
-        doc_ids = [n["id"] for n in chain if n.get("id")][:10]
-        n = len(chain)
-        summary_text = f"Traced {n} authority {'step' if n == 1 else 'steps'}"
-        metadata = {"chainLength": len(chain)}
-
-    elif tool_name == "list_framework_docs":
-        docs = result.get("documents", [])
-        doc_ids = [d["id"] for d in docs if d.get("id")][:10]
-        n = len(docs)
-        summary_text = f"Listed {n} framework {'document' if n == 1 else 'documents'}"
-        metadata = {"documentCount": len(docs)}
+    elif tool_name == "find_case_law":
+        # Case ids resolve to CaseLaw nodes, so the generic title lookup below
+        # fills doc_titles; the titles the resolver already returned are kept
+        # in metadata so the trace shows them even when the lookup misses.
+        cases = result.get("cases", []) or []
+        doc_ids = [c["id"] for c in cases if c.get("id")][:10]
+        n = len(cases)
+        if not cases:
+            status = "miss"
+            summary_text = "No matching case in the graph"
+        else:
+            summary_text = f"Resolved {n} {'case' if n == 1 else 'cases'}"
+        metadata = {
+            "caseCount": n,
+            "caseTitles": [c.get("title") or c.get("id", "") for c in cases[:10]],
+            "caseCitations": [c.get("citation", "") for c in cases[:10]],
+            "matchKinds": [c.get("match_kind", "") for c in cases[:10]],
+        }
 
     elif tool_name == "fetch_case_opinion":
         citation = result.get("citation", "")
@@ -591,17 +568,6 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             summary_text = f"No opinion found for {citation}"
             status = "miss"
             metadata = {"opinionChars": 0}
-
-    elif tool_name == "refine_query":
-        refined = result.get("refined_query", "")
-        summary_text = f'Refined to "{refined}"' if refined else "No refinement"
-        metadata = {"refined": bool(refined), "refinedQuery": refined}
-
-    elif tool_name == "clarify":
-        question = result.get("question", "")
-        summary_text = f"Asking user: {question[:80]}"
-        status = "terminal"
-        metadata = {"questionChars": len(question)}
 
     elif tool_name == "prepare_answer":
         cited = result.get("cited_doc_ids", []) or []
