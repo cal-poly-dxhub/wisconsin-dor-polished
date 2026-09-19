@@ -11,6 +11,7 @@ import pydantic
 from aws_lambda_powertools.event_handler.api_gateway import (
     APIGatewayHttpResolver,
     CORSConfig,
+    Response,
     Router,
 )
 from aws_lambda_powertools.utilities.typing import LambdaContext
@@ -68,6 +69,26 @@ def create_api_response(status_code: int, body: dict[str, Any]) -> dict[str, Any
             "Content-Type": "application/json",
         },
     }
+
+
+def create_json_response(status_code: int, body: dict[str, Any]) -> Response:
+    """Return a real HTTP response instead of an envelope dict.
+
+    ``create_api_response`` builds a ``{statusCode, body}`` dict. When a route
+    handler returns a plain dict the Powertools resolver serializes that whole
+    dict as the response body, so the caller receives the payload as a
+    JSON-escaped string under ``body`` and has to parse it twice — and every
+    error comes back as HTTP 200. Returning a ``Response`` makes the status code
+    and the JSON body real, so ``403``/``404`` reach the client as themselves.
+
+    Used by the ``/admin/chunks`` routes only; the other routes (and their
+    frontend parsers) still expect the legacy envelope.
+    """
+    return Response(
+        status_code=status_code,
+        content_type="application/json",
+        body=json.dumps(body, default=_json_default),
+    )
 
 
 def create_error_response(
@@ -723,106 +744,258 @@ def activity_detail_handler(query_id: str) -> dict[str, Any]:
         return create_api_response(500, error_response)
 
 
+EXTRACTED_PREFIX = "extracted/"
+
+# Keys the ingestion pipeline writes under extracted/ that are not extracted
+# documents. extract.py writes extracted/manifest.json alongside the per-doc
+# records; listing it produced a bogus zero-chunk "manifest" document.
+EXTRACTED_NON_DOCUMENT_IDS = {"manifest"}
+
+# The chunk index is metadata-only (~150 bytes/chunk), so a page can be large
+# without approaching the 6 MB Lambda response cap. Full text is fetched a
+# window at a time and is where the real weight is, so its cap is much lower.
+CHUNK_INDEX_DEFAULT_LIMIT = 1000
+CHUNK_INDEX_MAX_LIMIT = 5000
+CHUNK_TEXT_DEFAULT_LIMIT = 1
+CHUNK_TEXT_MAX_LIMIT = 25
+
+_s3_client = None
+
+
+def get_s3_client():
+    """Lazily build (and reuse) the S3 client so tests can patch this seam."""
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client("s3")
+    return _s3_client
+
+
+def _work_bucket() -> str:
+    work_bucket = os.environ.get("WORK_BUCKET_NAME", "")
+    if not work_bucket:
+        raise ValidationError(reason="WORK_BUCKET_NAME not configured.")
+    return work_bucket
+
+
+def _load_extracted_document(doc_id: str) -> dict[str, Any] | None:
+    """Read extracted/{doc_id}.json from the work bucket; None when absent."""
+    s3 = get_s3_client()
+    try:
+        obj = s3.get_object(Bucket=_work_bucket(), Key=f"{EXTRACTED_PREFIX}{doc_id}.json")
+    except ClientError as e:
+        # boto3 raises NoSuchKey (a ClientError subclass) for a missing object
+        # and 404/NoSuchBucket shapes depending on the caller's permissions.
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchKey", "NoSuchBucket", "404"):
+            return None
+        raise
+    return json.loads(obj["Body"].read().decode("utf-8"))
+
+
+def _parse_window(params: dict[str, str], default_limit: int, max_limit: int) -> tuple[int, int]:
+    """Parse ?offset=&limit= into a clamped (offset, limit) pair."""
+    try:
+        offset = max(0, int(params.get("offset", "0")))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = int(params.get("limit", str(default_limit)))
+    except (TypeError, ValueError):
+        limit = default_limit
+    return offset, max(1, min(limit, max_limit))
+
+
+def _chunk_index_entry(chunk: dict[str, Any], pos: int, doc_id: str) -> dict[str, Any]:
+    """Everything the heatmap grid needs — and nothing else. No chunk text."""
+    meta = chunk.get("metadata", {}) or {}
+    return {
+        "chunk_id": chunk.get("chunk_id") or f"{doc_id}_chunk_{pos:04d}",
+        "pos": pos,
+        "idx": meta.get("chunk_index", pos),
+        "char_count": len(chunk.get("text", "") or ""),
+        "heading": meta.get("heading") or None,
+        "subheading": meta.get("subheading") or None,
+        "start_page": meta.get("start_page"),
+        "end_page": meta.get("end_page"),
+    }
+
+
+def _chunk_full_entry(chunk: dict[str, Any], pos: int, doc_id: str) -> dict[str, Any]:
+    """The index entry plus text and the reference lists shown in the modal."""
+    meta = chunk.get("metadata", {}) or {}
+    entry = _chunk_index_entry(chunk, pos, doc_id)
+    entry.update(
+        {
+            "text": chunk.get("text", "") or "",
+            "s3_key": meta.get("source"),
+            "statute_refs": meta.get("statute_refs", []) or [],
+            "admin_rule_refs": meta.get("admin_rule_refs", []) or [],
+            "edition_year": meta.get("edition_year"),
+        }
+    )
+    return entry
+
+
+def _document_meta(doc_id: str, data: dict[str, Any], chunks: list[dict[str, Any]]):
+    """Document-level stats, always computed over every chunk (not the page)."""
+    char_counts = [len(c.get("text", "") or "") for c in chunks]
+    return {
+        "doc_id": doc_id,
+        "title": data.get("title") or None,
+        "doc_type": data.get("doc_type") or None,
+        "framework_id": data.get("framework_id") or None,
+        "authority_level": data.get("authority_level"),
+        "source_url": data.get("source_url") or None,
+        "chunk_count": len(chunks),
+        "total_chars": sum(char_counts),
+        "max_chunk_chars": max(char_counts, default=0),
+        "min_chunk_chars": min(char_counts, default=0),
+    }
+
+
 @app.get("/admin/chunks/documents")
-def chunks_documents_handler() -> dict[str, Any]:
-    """List all documents that have been extracted (exist in work bucket)."""
+def chunks_documents_handler() -> Response:
+    """List the documents that have been extracted into the work bucket."""
     try:
         require_admin()
-        work_bucket = os.environ.get("WORK_BUCKET_NAME", "")
-        if not work_bucket:
-            raise ValidationError(reason="WORK_BUCKET_NAME not configured.")
+        work_bucket = _work_bucket()
 
-        s3 = boto3.client("s3")
+        s3 = get_s3_client()
         documents = []
         paginator = s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=work_bucket, Prefix="extracted/"):
+        for page in paginator.paginate(Bucket=work_bucket, Prefix=EXTRACTED_PREFIX):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-                if key.endswith(".json"):
-                    doc_id = key.removeprefix("extracted/").removesuffix(".json")
-                    documents.append(
-                        {
-                            "doc_id": doc_id,
-                            "last_modified": obj["LastModified"].isoformat(),
-                            "size_bytes": obj["Size"],
-                        }
-                    )
+                if not key.startswith(EXTRACTED_PREFIX) or not key.endswith(".json"):
+                    continue
+                doc_id = key[len(EXTRACTED_PREFIX) : -len(".json")]
+                # A document id is a single path segment; anything nested (a
+                # staging cache prefix, say) or on the non-document list is not
+                # an extracted document and must not appear as one.
+                if not doc_id or "/" in doc_id or doc_id in EXTRACTED_NON_DOCUMENT_IDS:
+                    continue
+                documents.append(
+                    {
+                        "doc_id": doc_id,
+                        "last_modified": obj["LastModified"].isoformat(),
+                        "size_bytes": obj["Size"],
+                    }
+                )
 
         documents.sort(key=lambda d: d["doc_id"])
-        return create_api_response(200, {"documents": documents, "count": len(documents)})
+        return create_json_response(200, {"documents": documents, "count": len(documents)})
 
     except ChatAPIError as e:
-        return create_api_response(e.status_code, e.to_response())
+        return create_json_response(e.status_code, e.to_response())
     except Exception as e:
         logger.error(f"Unexpected error in chunks_documents_handler: {e}")
-        error_response = create_error_body(e)
-        return create_api_response(500, error_response)
+        return create_json_response(500, create_error_body(e))
+
+
+@app.get("/admin/chunks/<docId>/index")
+def chunks_index_handler(docId: str) -> Response:
+    """Metadata-only projection of a document's chunks, paginated.
+
+    This is what the admin grid loads: no chunk text, so a thousand-chunk WPAM
+    volume is a few hundred KB instead of several MB.
+    """
+    try:
+        require_admin()
+        params = app.current_event.query_string_parameters or {}
+        offset, limit = _parse_window(params, CHUNK_INDEX_DEFAULT_LIMIT, CHUNK_INDEX_MAX_LIMIT)
+
+        data = _load_extracted_document(docId)
+        if data is None:
+            return create_json_response(404, {"error": f"Document not found: {docId}"})
+
+        chunks = data.get("chunks", []) or []
+        window = chunks[offset : offset + limit]
+        entries = [_chunk_index_entry(c, offset + i, docId) for i, c in enumerate(window)]
+        next_offset = offset + len(window)
+
+        return create_json_response(
+            200,
+            {
+                "document": _document_meta(docId, data, chunks),
+                "chunks": entries,
+                "offset": offset,
+                "limit": limit,
+                "total": len(chunks),
+                "next_offset": next_offset if next_offset < len(chunks) else None,
+            },
+        )
+
+    except ChatAPIError as e:
+        return create_json_response(e.status_code, e.to_response())
+    except Exception as e:
+        logger.error(f"Unexpected error in chunks_index_handler: {e}")
+        return create_json_response(500, create_error_body(e))
+
+
+@app.get("/admin/chunks/<docId>/text")
+def chunks_text_handler(docId: str) -> Response:
+    """Full text for a small window of chunks, fetched on demand.
+
+    ``offset`` is the chunk's position in the document (the ``pos`` field the
+    index endpoint returns), not its ``chunk_index`` metadata value.
+    """
+    try:
+        require_admin()
+        params = app.current_event.query_string_parameters or {}
+        offset, limit = _parse_window(params, CHUNK_TEXT_DEFAULT_LIMIT, CHUNK_TEXT_MAX_LIMIT)
+
+        data = _load_extracted_document(docId)
+        if data is None:
+            return create_json_response(404, {"error": f"Document not found: {docId}"})
+
+        chunks = data.get("chunks", []) or []
+        window = chunks[offset : offset + limit]
+        entries = [_chunk_full_entry(c, offset + i, docId) for i, c in enumerate(window)]
+
+        return create_json_response(
+            200,
+            {
+                "doc_id": docId,
+                "chunks": entries,
+                "offset": offset,
+                "limit": limit,
+                "total": len(chunks),
+            },
+        )
+
+    except ChatAPIError as e:
+        return create_json_response(e.status_code, e.to_response())
+    except Exception as e:
+        logger.error(f"Unexpected error in chunks_text_handler: {e}")
+        return create_json_response(500, create_error_body(e))
 
 
 @app.get("/admin/chunks/<docId>")
-def chunks_detail_handler(docId: str) -> dict[str, Any]:
-    """Return all chunks for a given document from the work bucket."""
+def chunks_detail_handler(docId: str) -> Response:
+    """Every chunk of a document, text included (legacy full payload).
+
+    Superseded by ``/index`` + ``/text`` for the admin UI — a large document
+    can exceed the 6 MB Lambda response cap here. Kept for ad-hoc inspection.
+    """
     try:
         require_admin()
-        work_bucket = os.environ.get("WORK_BUCKET_NAME", "")
-        if not work_bucket:
-            raise ValidationError(reason="WORK_BUCKET_NAME not configured.")
+        data = _load_extracted_document(docId)
+        if data is None:
+            return create_json_response(404, {"error": f"Document not found: {docId}"})
 
-        s3 = boto3.client("s3")
-        key = f"extracted/{docId}.json"
-        try:
-            obj = s3.get_object(Bucket=work_bucket, Key=key)
-        except s3.exceptions.NoSuchKey:
-            return create_api_response(404, {"error": f"Document not found: {docId}"})
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "NoSuchKey":
-                return create_api_response(404, {"error": f"Document not found: {docId}"})
-            raise
+        chunks = data.get("chunks", []) or []
+        result_chunks = [_chunk_full_entry(c, i, docId) for i, c in enumerate(chunks)]
 
-        data = json.loads(obj["Body"].read().decode("utf-8"))
-        chunks = data.get("chunks", [])
-
-        result_chunks = []
-        for i, chunk in enumerate(chunks):
-            meta = chunk.get("metadata", {})
-            result_chunks.append(
-                {
-                    "chunk_id": chunk.get("chunk_id", f"{docId}_chunk_{i:04d}"),
-                    "text": chunk.get("text", ""),
-                    "char_count": len(chunk.get("text", "")),
-                    "idx": meta.get("chunk_index", i),
-                    "heading": meta.get("heading") or None,
-                    "subheading": meta.get("subheading") or None,
-                    "start_page": meta.get("start_page"),
-                    "end_page": meta.get("end_page"),
-                    "s3_key": meta.get("source"),
-                    "statute_refs": meta.get("statute_refs", []),
-                    "admin_rule_refs": meta.get("admin_rule_refs", []),
-                    "edition_year": meta.get("edition_year"),
-                }
-            )
-
-        doc_meta = {
-            "doc_id": docId,
-            "title": data.get("title") or None,
-            "doc_type": data.get("doc_type") or None,
-            "framework_id": data.get("framework_id") or None,
-            "authority_level": data.get("authority_level"),
-            "source_url": data.get("source_url") or None,
-            "chunk_count": len(result_chunks),
-            "total_chars": sum(c["char_count"] for c in result_chunks),
-            "max_chunk_chars": max((c["char_count"] for c in result_chunks), default=0),
-            "min_chunk_chars": min((c["char_count"] for c in result_chunks), default=0),
-        }
-
-        return create_api_response(200, {"document": doc_meta, "chunks": result_chunks})
+        return create_json_response(
+            200,
+            {"document": _document_meta(docId, data, chunks), "chunks": result_chunks},
+        )
 
     except ChatAPIError as e:
-        return create_api_response(e.status_code, e.to_response())
+        return create_json_response(e.status_code, e.to_response())
     except Exception as e:
         logger.error(f"Unexpected error in chunks_detail_handler: {e}")
-        error_response = create_error_body(e)
-        return create_api_response(500, error_response)
+        return create_json_response(500, create_error_body(e))
 
 
 INGEST_CATEGORIES = {
