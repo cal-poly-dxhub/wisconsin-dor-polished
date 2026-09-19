@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
@@ -18,6 +19,10 @@ with patch.dict(os.environ, {"SESSIONS_TABLE_NAME": "test-sessions-table", "LOG_
     import main as chat_api_main
     from main import (
         activity_handler,
+        chunks_detail_handler,
+        chunks_documents_handler,
+        chunks_index_handler,
+        chunks_text_handler,
         create_session_handler,
         feedback_handler,
         handler,
@@ -42,6 +47,11 @@ def patch_eventbridge():
 
 def patch_create_session():
     return patch.object(chat_api_main, "create_session")
+
+
+def patch_s3(mock_s3):
+    """Swap the lazily-built S3 client for a stub (no moto/boto in the suite)."""
+    return patch.object(chat_api_main, "get_s3_client", return_value=mock_s3)
 
 
 def _set_current_event(json_body=None, claims=None, query_params=None):
@@ -590,3 +600,227 @@ def test_feedback_rich_payload_writes_derived_thumb_and_map(mock_dynamodb):
     assert note["missedDetail"] == {"S": "stat 70.32"}
     annotation = rich_map["annotations"]["L"][0]["M"]
     assert annotation["startOffset"] == {"N": "10"}
+
+
+# ---------------------------------------------------------------------------
+# /admin/chunks — document list, metadata index, on-demand text
+# ---------------------------------------------------------------------------
+
+ADMIN_CLAIMS = {"sub": "admin-user", "cognito:groups": ["Admins"]}
+
+
+def _extracted_doc(chunk_texts):
+    """An extracted/{doc_id}.json payload shaped like the ingestion pipeline's."""
+    return {
+        "title": "Wisconsin Property Assessment Manual",
+        "doc_type": "manual",
+        "framework_id": "FW-WPAM",
+        "authority_level": 5,
+        "source_url": "https://example.gov/wpam.pdf",
+        "chunks": [
+            {
+                "chunk_id": f"wpam_chunk_{i:04d}",
+                "text": text,
+                "metadata": {
+                    "chunk_index": i,
+                    "heading": f"Chapter {i}",
+                    "subheading": None,
+                    "start_page": i + 1,
+                    "end_page": i + 1,
+                    "source": "raw/wpam/wpam.pdf",
+                    "statute_refs": ["70.32"],
+                    "admin_rule_refs": [],
+                    "edition_year": 2026,
+                },
+            }
+            for i, text in enumerate(chunk_texts)
+        ],
+    }
+
+
+def _fake_s3_for_doc(payload):
+    mock_s3 = MagicMock()
+    body = MagicMock()
+    body.read.return_value = json.dumps(payload).encode("utf-8")
+    mock_s3.get_object.return_value = {"Body": body}
+    return mock_s3
+
+
+def _no_such_key_s3():
+    mock_s3 = MagicMock()
+    mock_s3.get_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."}},
+        "GetObject",
+    )
+    return mock_s3
+
+
+def _with_work_bucket():
+    return patch.dict(os.environ, {"WORK_BUCKET_NAME": "test-work-bucket"})
+
+
+def test_chunks_documents_filters_non_document_keys():
+    """manifest.json and nested keys are pipeline artifacts, not documents."""
+    ts = datetime(2026, 9, 1, tzinfo=UTC)
+    mock_s3 = MagicMock()
+    mock_s3.get_paginator.return_value.paginate.return_value = [
+        {
+            "Contents": [
+                {"Key": "extracted/manifest.json", "LastModified": ts, "Size": 120},
+                {"Key": "extracted/wpam-2026.json", "LastModified": ts, "Size": 4096},
+                {"Key": "extracted/statutes-70.json", "LastModified": ts, "Size": 2048},
+                # Nested (e.g. a staging cache prefix) — not a document id.
+                {"Key": "extracted/staging/wpam-2026.json", "LastModified": ts, "Size": 10},
+                # Not JSON at all.
+                {"Key": "extracted/wpam-2026.txt", "LastModified": ts, "Size": 10},
+            ]
+        }
+    ]
+    _set_current_event(claims=ADMIN_CLAIMS)
+
+    with _with_work_bucket(), patch_s3(mock_s3):
+        response = chunks_documents_handler()
+
+    assert response.status_code == 200
+    # Single-encoded: the body is the payload itself, not a {statusCode, body}
+    # envelope the client has to parse twice.
+    body = json.loads(response.body)
+    assert [d["doc_id"] for d in body["documents"]] == ["statutes-70", "wpam-2026"]
+    assert body["count"] == 2
+
+
+def test_chunks_documents_forbidden_for_non_admin():
+    """A non-Admins caller gets a real 403, not a 200 wrapping one."""
+    _set_current_event(claims={"sub": "plain-user", "cognito:groups": ["Users"]})
+
+    with _with_work_bucket(), patch_s3(MagicMock()):
+        response = chunks_documents_handler()
+
+    assert response.status_code == 403
+    assert "error" in json.loads(response.body)
+
+
+def test_chunks_index_returns_metadata_only_page():
+    """The grid projection carries no chunk text and pages with offset/limit."""
+    payload = _extracted_doc(["a" * 100, "b" * 200, "c" * 300, "d" * 400])
+    _set_current_event(claims=ADMIN_CLAIMS, query_params={"offset": "1", "limit": "2"})
+
+    with _with_work_bucket(), patch_s3(_fake_s3_for_doc(payload)):
+        response = chunks_index_handler("wpam-2026")
+
+    assert response.status_code == 200
+    body = json.loads(response.body)
+    assert body["offset"] == 1
+    assert body["limit"] == 2
+    assert body["total"] == 4
+    assert body["next_offset"] == 3
+
+    assert [c["pos"] for c in body["chunks"]] == [1, 2]
+    assert [c["char_count"] for c in body["chunks"]] == [200, 300]
+    for chunk in body["chunks"]:
+        assert "text" not in chunk
+        assert chunk["heading"].startswith("Chapter ")
+
+    # Document stats cover every chunk, not just the requested page.
+    doc = body["document"]
+    assert doc["chunk_count"] == 4
+    assert doc["total_chars"] == 1000
+    assert doc["max_chunk_chars"] == 400
+    assert doc["min_chunk_chars"] == 100
+    assert doc["source_url"] == "https://example.gov/wpam.pdf"
+
+
+def test_chunks_index_last_page_has_no_next_offset():
+    payload = _extracted_doc(["a" * 10, "b" * 10])
+    _set_current_event(claims=ADMIN_CLAIMS, query_params={"offset": "1", "limit": "500"})
+
+    with _with_work_bucket(), patch_s3(_fake_s3_for_doc(payload)):
+        response = chunks_index_handler("wpam-2026")
+
+    body = json.loads(response.body)
+    assert body["next_offset"] is None
+    assert len(body["chunks"]) == 1
+
+
+def test_chunks_index_clamps_absurd_window():
+    payload = _extracted_doc(["x" * 10] * 3)
+    _set_current_event(claims=ADMIN_CLAIMS, query_params={"limit": "999999", "offset": "-5"})
+
+    with _with_work_bucket(), patch_s3(_fake_s3_for_doc(payload)):
+        response = chunks_index_handler("wpam-2026")
+
+    body = json.loads(response.body)
+    assert body["limit"] == chat_api_main.CHUNK_INDEX_MAX_LIMIT
+    assert body["offset"] == 0
+
+
+def test_chunks_text_returns_full_text_for_window():
+    payload = _extracted_doc(["first chunk", "second chunk", "third chunk"])
+    _set_current_event(claims=ADMIN_CLAIMS, query_params={"offset": "1", "limit": "2"})
+
+    with _with_work_bucket(), patch_s3(_fake_s3_for_doc(payload)):
+        response = chunks_text_handler("wpam-2026")
+
+    assert response.status_code == 200
+    body = json.loads(response.body)
+    assert body["doc_id"] == "wpam-2026"
+    assert body["total"] == 3
+    assert [c["text"] for c in body["chunks"]] == ["second chunk", "third chunk"]
+    assert [c["pos"] for c in body["chunks"]] == [1, 2]
+    first = body["chunks"][0]
+    assert first["statute_refs"] == ["70.32"]
+    assert first["s3_key"] == "raw/wpam/wpam.pdf"
+    assert first["start_page"] == 2
+
+
+def test_chunks_text_defaults_to_a_single_chunk():
+    payload = _extracted_doc(["only", "one", "please"])
+    _set_current_event(claims=ADMIN_CLAIMS, query_params={"offset": "2"})
+
+    with _with_work_bucket(), patch_s3(_fake_s3_for_doc(payload)):
+        response = chunks_text_handler("wpam-2026")
+
+    body = json.loads(response.body)
+    assert len(body["chunks"]) == 1
+    assert body["chunks"][0]["text"] == "please"
+
+
+def test_chunks_index_missing_document_is_404():
+    _set_current_event(claims=ADMIN_CLAIMS)
+
+    with _with_work_bucket(), patch_s3(_no_such_key_s3()):
+        response = chunks_index_handler("does-not-exist")
+
+    assert response.status_code == 404
+    assert "does-not-exist" in json.loads(response.body)["error"]
+
+
+def test_chunks_text_missing_document_is_404():
+    _set_current_event(claims=ADMIN_CLAIMS)
+
+    with _with_work_bucket(), patch_s3(_no_such_key_s3()):
+        response = chunks_text_handler("does-not-exist")
+
+    assert response.status_code == 404
+
+
+def test_chunks_detail_legacy_route_still_returns_every_chunk():
+    payload = _extracted_doc(["alpha", "beta"])
+    _set_current_event(claims=ADMIN_CLAIMS)
+
+    with _with_work_bucket(), patch_s3(_fake_s3_for_doc(payload)):
+        response = chunks_detail_handler("wpam-2026")
+
+    assert response.status_code == 200
+    body = json.loads(response.body)
+    assert [c["text"] for c in body["chunks"]] == ["alpha", "beta"]
+    assert body["document"]["chunk_count"] == 2
+
+
+def test_chunks_index_requires_work_bucket_config():
+    _set_current_event(claims=ADMIN_CLAIMS)
+
+    with patch.dict(os.environ, {"WORK_BUCKET_NAME": ""}), patch_s3(MagicMock()):
+        response = chunks_index_handler("wpam-2026")
+
+    assert response.status_code == 400

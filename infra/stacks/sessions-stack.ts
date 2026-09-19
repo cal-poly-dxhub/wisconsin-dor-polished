@@ -515,6 +515,22 @@ export class SessionsStack extends cdk.NestedStack {
       authorizer: authorizer,
     });
 
+    // Metadata-only chunk projection for the admin grid (paginated).
+    httpApi.addRoutes({
+      path: '/admin/chunks/{docId}/index',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
+    // Full chunk text, fetched a window at a time when a chunk is opened.
+    httpApi.addRoutes({
+      path: '/admin/chunks/{docId}/text',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+      authorizer: authorizer,
+    });
+
     httpApi.addRoutes({
       path: '/admin/chunks/{docId}',
       methods: [apigatewayv2.HttpMethod.GET],
