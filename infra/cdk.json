@@ -100,6 +100,8 @@
     "@aws-cdk/aws-s3:publicAccessBlockedByDefault": true,
     "@aws-cdk/aws-lambda:useCdkManagedLogGroup": true,
     "@aws-cdk/core:addConstructMetadataFailed": true,
-    "@aws-cdk/aws-lambda:codeFromBucketObjectVersionNotSpecified": true
+    "@aws-cdk/aws-lambda:codeFromBucketObjectVersionNotSpecified": true,
+    "neptuneGraphIdOverride": "g-svphgiu4k6",
+    "stagingGraphId": "g-svphgiu4k6"
   }
 }
