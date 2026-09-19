@@ -30,12 +30,16 @@ export interface PersistedTraceEvent {
 interface ActivityDetailResponse {
   statusCode?: number;
   body?: string;
-  item?: { trace?: PersistedTraceEvent[] | null; query?: string };
+  item?: { trace?: PersistedTraceEvent[] | null; query?: string; answer?: string };
 }
 
 export interface PersistedTraceResult {
   events: FixtureTraceEvent[];
   query: string | null;
+  // The stored Phase B answer. Resources and clarification chips are NOT
+  // returned by GET /admin/activity/{queryId}, so the replayed Phase B pane
+  // shows the answer text alone.
+  answer: string | null;
   loading: boolean;
   error: boolean;
 }
@@ -69,24 +73,30 @@ export function toCanvasEvents(trace: PersistedTraceEvent[]): FixtureTraceEvent[
         metadata.latencyMs = ev.latencyMs;
       }
 
-      // Synthetic pending call so buildTurns creates the pane. `refine_query`
-      // is intentionally skipped by buildTurns, so don't bother emitting it.
-      if (toolName !== 'refine_query') {
-        events.push({
-          kind: 'tool_call',
-          turn: ev.turn,
-          seq: seq++,
-          timestamp: ev.ts,
-          payload: { toolName, summary: ev.summary ?? '' },
-        });
-      }
+      // Synthetic pending call so buildTurns pairs call → result. (buildTurns
+      // also materializes an unmatched result on its own, so this is belt and
+      // braces — it keeps the call summary, which the result doesn't carry.)
+      events.push({
+        kind: 'tool_call',
+        turn: ev.turn,
+        seq: seq++,
+        timestamp: ev.ts,
+        payload: { toolName, summary: ev.summary ?? '' },
+      });
 
       events.push({
         kind: 'tool_result',
         turn: ev.turn,
         seq: seq++,
         timestamp: ev.ts,
-        payload: { toolName, status: ev.status ?? 'ok', summary: ev.summary ?? '', metadata },
+        payload: {
+          toolName,
+          status: ev.status ?? 'ok',
+          summary: ev.summary ?? '',
+          docIds: ev.docIds ?? [],
+          docTitles: ev.docTitles ?? [],
+          metadata,
+        },
       });
       continue;
     }
@@ -132,6 +142,7 @@ export function toCanvasEvents(trace: PersistedTraceEvent[]): FixtureTraceEvent[
 export function usePersistedTrace(queryId: string | null): PersistedTraceResult {
   const [events, setEvents] = useState<FixtureTraceEvent[]>([]);
   const [query, setQuery] = useState<string | null>(null);
+  const [answer, setAnswer] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
 
@@ -139,6 +150,7 @@ export function usePersistedTrace(queryId: string | null): PersistedTraceResult 
     if (!queryId) {
       setEvents([]);
       setQuery(null);
+      setAnswer(null);
       setLoading(false);
       setError(false);
       return;
@@ -151,6 +163,7 @@ export function usePersistedTrace(queryId: string | null): PersistedTraceResult 
       setError(false);
       setEvents([]);
       setQuery(null);
+      setAnswer(null);
 
       try {
         const response = await http
@@ -167,6 +180,7 @@ export function usePersistedTrace(queryId: string | null): PersistedTraceResult 
         const trace = data.item?.trace ?? [];
         setEvents(toCanvasEvents(trace));
         setQuery(data.item?.query ?? null);
+        setAnswer(data.item?.answer ?? null);
         setError(trace.length === 0);
       } catch (err) {
         if (!controller.signal.aborted) {
@@ -182,5 +196,5 @@ export function usePersistedTrace(queryId: string | null): PersistedTraceResult 
     return () => controller.abort();
   }, [queryId]);
 
-  return { events, query, loading, error };
+  return { events, query, answer, loading, error };
 }

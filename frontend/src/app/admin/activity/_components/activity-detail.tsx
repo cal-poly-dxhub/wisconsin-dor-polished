@@ -296,7 +296,7 @@ export function ActivityDetail({
 // Humanized tool labels, mirroring the canvas's TOOL_TITLES.
 const TOOL_LABELS: Record<string, string> = {
   faq_search: 'FAQ Search',
-  refine_query: 'Query Refinement',
+  auto_refine: 'Auto Refine',
   vector_search: 'Vector Search',
   search_document: 'Document Search',
   list_sections: 'List Sections',
@@ -307,10 +307,12 @@ const TOOL_LABELS: Record<string, string> = {
   list_framework_docs: 'Framework Documents',
   find_case_law: 'Case Law Search',
   fetch_case_opinion: 'Fetch Case Opinion',
+  list_worksheets: 'Worksheet Registry',
+  get_worksheet: 'TID Worksheet',
+  list_flowcharts: 'Flowchart Registry',
+  get_flowchart: 'Decision Flowchart',
   prepare_answer: 'Answer Synthesis',
   answer: 'Answer Synthesis',
-  cite_documents: 'Cite Documents',
-  clarify: 'Clarify',
 };
 
 function toolLabel(toolName?: string): string {
@@ -334,10 +336,13 @@ function getToolIcon(toolName?: string) {
     case 'get_document':
     case 'list_framework_docs':
     case 'fetch_case_opinion':
+    case 'list_worksheets':
+    case 'get_worksheet':
+    case 'list_flowcharts':
+    case 'get_flowchart':
       return <BookText className="h-4 w-4" />;
     case 'prepare_answer':
     case 'answer':
-    case 'cite_documents':
       return <Sparkles className="h-4 w-4" />;
     default:
       return <Zap className="h-4 w-4" />;

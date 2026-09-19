@@ -6,12 +6,23 @@ import { ArrowRight } from 'lucide-react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useVisualizerSocket } from './hooks/use-visualizer-socket';
 import { usePersistedTrace } from './hooks/use-persisted-trace';
-import { useCorpusManifest } from './hooks/use-corpus-manifest';
-import { DEMO_TRACE, type FixtureTraceEvent } from './fixtures/demo-trace';
+import {
+  DEMO_ANSWER,
+  DEMO_CHOICES,
+  DEMO_RESOURCES,
+  DEMO_TRACE,
+  type FixtureTraceEvent,
+} from './fixtures/demo-trace';
 import { useTiming } from './hooks/use-timing';
 import { CanvasView } from './canvas-view';
+import type { ResourceItem } from '@/stores/types';
 
 const queryClient = new QueryClient();
+
+// Fixture Phase B playback: the demo answer types out in chunks once the
+// trace reaches `answer_streaming`, then the chips land.
+const FIXTURE_FRAGMENT_CHARS = 96;
+const FIXTURE_FRAGMENT_MS = 26;
 
 function fmtTime(ms: number): string {
   const total = Math.max(0, ms);
@@ -44,12 +55,17 @@ function CanvasShell() {
   const {
     events: persistedEvents,
     query: persistedQuery,
+    answer: persistedAnswer,
     loading: persistedLoading,
     error: persistedError,
   } = usePersistedTrace(persistedQueryId);
 
   // --- Fixture playback ---
   const [fixtureEvents, setFixtureEvents] = useState<FixtureTraceEvent[]>([]);
+  const [fixtureAnswer, setFixtureAnswer] = useState('');
+  const [fixtureAnswerDone, setFixtureAnswerDone] = useState(false);
+  const [fixtureChoices, setFixtureChoices] = useState<string[]>([]);
+  const [fixtureResources, setFixtureResources] = useState<ResourceItem[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const scheduleFixture = useCallback(() => {
@@ -57,8 +73,10 @@ function CanvasShell() {
     timerRef.current = [];
 
     const baseTs = DEMO_TRACE[0]?.timestamp ?? Date.now();
+    let lastDelay = 0;
     for (const ev of DEMO_TRACE) {
       const delay = ev.timestamp - baseTs;
+      lastDelay = Math.max(lastDelay, delay);
       const timer = setTimeout(() => {
         const nowBase = Date.now() - delay;
         setFixtureEvents((prev) => [
@@ -68,12 +86,39 @@ function CanvasShell() {
       }, delay);
       timerRef.current.push(timer);
     }
+
+    // Phase B: resource cards land first, then the answer streams, then the
+    // clarification chips — the order the backend sends them.
+    timerRef.current.push(
+      setTimeout(() => setFixtureResources(DEMO_RESOURCES), lastDelay + 120)
+    );
+    for (let offset = 0; offset < DEMO_ANSWER.length; offset += FIXTURE_FRAGMENT_CHARS) {
+      const end = offset + FIXTURE_FRAGMENT_CHARS;
+      timerRef.current.push(
+        setTimeout(
+          () => setFixtureAnswer(DEMO_ANSWER.slice(0, end)),
+          lastDelay + 300 + (offset / FIXTURE_FRAGMENT_CHARS) * FIXTURE_FRAGMENT_MS
+        )
+      );
+    }
+    const answerMs =
+      lastDelay + 300 + Math.ceil(DEMO_ANSWER.length / FIXTURE_FRAGMENT_CHARS) * FIXTURE_FRAGMENT_MS;
+    timerRef.current.push(setTimeout(() => setFixtureAnswerDone(true), answerMs));
+    timerRef.current.push(setTimeout(() => setFixtureChoices(DEMO_CHOICES), answerMs + 200));
+  }, []);
+
+  const resetFixture = useCallback(() => {
+    setFixtureEvents([]);
+    setFixtureAnswer('');
+    setFixtureAnswerDone(false);
+    setFixtureChoices([]);
+    setFixtureResources([]);
   }, []);
 
   const playFixture = useCallback(() => {
-    setFixtureEvents([]);
+    resetFixture();
     setTimeout(scheduleFixture, 0);
-  }, [scheduleFixture]);
+  }, [resetFixture, scheduleFixture]);
 
   // Auto-play fixture on mount — skipped when replaying a persisted query.
   const mountedRef = useRef(false);
@@ -86,28 +131,40 @@ function CanvasShell() {
   }, [scheduleFixture, persistedQueryId]);
 
   // --- Live query via WebSocket ---
-  const { manifest } = useCorpusManifest();
   const {
     traceEvents: liveTraceEvents,
+    answerText,
+    answerComplete,
+    resourceItems,
+    choices,
+    suggestion,
+    error: liveError,
     sendQuery,
     isRunning,
-  } = useVisualizerSocket(manifest);
+  } = useVisualizerSocket();
 
   const [mode, setMode] = useState<'fixture' | 'live' | 'persisted'>(
     persistedQueryId ? 'persisted' : 'fixture'
   );
   const [queryInput, setQueryInput] = useState('');
 
+  const runQuery = useCallback(
+    (q: string) => {
+      const trimmed = q.trim();
+      if (!trimmed || isRunning) return;
+      for (const t of timerRef.current) clearTimeout(t);
+      timerRef.current = [];
+      resetFixture();
+      setMode('live');
+      sendQuery(trimmed);
+    },
+    [isRunning, resetFixture, sendQuery]
+  );
+
   const handleSubmit = useCallback(() => {
-    const q = queryInput.trim();
-    if (!q || isRunning) return;
-    for (const t of timerRef.current) clearTimeout(t);
-    timerRef.current = [];
-    setFixtureEvents([]);
-    setMode('live');
-    sendQuery(q);
+    runQuery(queryInput);
     setQueryInput('');
-  }, [queryInput, isRunning, sendQuery]);
+  }, [queryInput, runQuery]);
 
   const handleReplay = useCallback(() => {
     setMode('fixture');
@@ -124,8 +181,40 @@ function CanvasShell() {
             seq: ev.seq,
             timestamp: ev.timestamp,
             payload: ev.payload,
+            devPayload: ev.devPayload,
           }))
         : fixtureEvents;
+
+  // Phase B state, by mode. Persisted replays only have the stored answer
+  // text (the detail endpoint returns no resources or chips).
+  const answer =
+    mode === 'persisted'
+      ? {
+          text: persistedAnswer ?? '',
+          streaming: false,
+          complete: Boolean(persistedAnswer),
+          resources: [] as ResourceItem[],
+          choices: [] as string[],
+          error: null,
+        }
+      : mode === 'live'
+        ? {
+            text: answerText,
+            streaming: isRunning,
+            complete: answerComplete,
+            resources: resourceItems,
+            choices,
+            error: liveError,
+            suggestion,
+          }
+        : {
+            text: fixtureAnswer,
+            streaming: fixtureAnswer.length > 0 && !fixtureAnswerDone,
+            complete: fixtureAnswerDone,
+            resources: fixtureResources,
+            choices: fixtureChoices,
+            error: null,
+          };
 
   const timing = useTiming(events);
 
@@ -159,7 +248,7 @@ function CanvasShell() {
           onClick={handleReplay}
           className="shrink-0 cursor-pointer rounded-full border border-neutral-200 px-4 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50"
         >
-          Replay
+          Replay demo
         </button>
 
         <div className="flex-1" />
@@ -188,15 +277,16 @@ function CanvasShell() {
             <>
               {persistedQuery && <span className="text-amber-800">&ldquo;{persistedQuery}&rdquo;</span>}
               <span className="text-amber-700/70">
-                Reasoning, token usage &amp; disambiguation panes are blank — not captured in stored traces.
+                Reasoning, token usage, phase panes &amp; delivered resources are blank — not
+                captured in stored traces.
               </span>
             </>
           )}
         </div>
       )}
 
-      {/* Turn-grouped pane layout */}
-      <CanvasView events={events} sendQuery={sendQuery} />
+      {/* Turn-grouped pane layout + Phase B */}
+      <CanvasView events={events} sendQuery={runQuery} answer={answer} />
     </div>
   );
 }
