@@ -200,7 +200,7 @@ Flat layout: `backend/` (lambdas + layers), `infra/` (CDK stacks), `frontend/` (
 
 ### Retrieval Path
 
-EventBridge rule `wisconsin-dor.chat-api:ChatMessageReceived` → AgenticRetrieval Lambda directly (no Step Function). The Lambda runs the Claude tool loop (faq_search → Neptune vector_search/get_neighbors/get_authority_chain → answer), then streams documents, FAQs, and answer fragments over WebSocket itself. Single Lambda, single DynamoDB write.
+EventBridge rule `wisconsin-dor.chat-api:ChatMessageReceived` → AgenticRetrieval Lambda directly (no Step Function). The Lambda runs the Claude tool loop (faq_search → Neptune vector_search/search_document/get_neighbors → answer), then streams documents, FAQs, and answer fragments over WebSocket itself. Single Lambda, single DynamoDB write.
 
 ### Directory Responsibilities
 
@@ -234,15 +234,18 @@ Responses stream to the frontend via API Gateway WebSocket. The `websocket_utils
 
 Neptune Analytics graph with 1024-dim vectors and IAM auth. **Live graph as of 2026-09-18: `g-svphgiu4k6`** (re-indexed WPAM), selected by the `neptuneGraphIdOverride` context pinned in `infra/cdk.json`; the CDK-owned construct graph `g-ndvl4j73v4` is the rollback until it is deleted. Fargate `load` targets the CDK-owned graph unless you pass `--graph-id`; the task role is also granted the `stagingGraphId` context graph. Use `--graph-id g-svphgiu4k6` for loads until the construct is re-pointed.
 
-**Node types:** Framework → Document → Chunk (with vector embeddings), Topic nodes for semantic grouping.
+**Node types:** Framework → Document → Chunk (with vector embeddings).
 
 **Authority hierarchy (9 levels, by legal precedence):**
 Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM (5) → FAQs (6) → Gov Pubs (7) → IAAO (8) → USPAP (9)
 
-**Edge types:**
-- Authority: `CITES` (Doc→Statute, Doc→AdminRule, Statute→CaseLaw mirror, Chunk→Statute, Chunk→AdminRule), `IMPLEMENTS` (Doc→Statute)
-- Hierarchy: `PART_OF` (Section→Chapter, Subsection→Section), `BELONGS_TO` (Doc→Framework), `HAS_SUBSECTION` (Doc→Doc multi-part), `EXTRACTED_FROM` (Chunk→Doc), `DERIVED_FROM` (Framework→Framework, e.g., IAAO→WPAM)
-- Topical: `COVERS_TOPIC` (Doc→Topic)
+**Edge types (what the loader actually writes):**
+- Authority: `CITES` (Doc→Statute, Doc→AdminRule, Statute→CaseLaw mirror, Chunk→Statute, Chunk→AdminRule)
+- Hierarchy: `PART_OF` (Section→Chapter, Subsection→Section), `BELONGS_TO` (Doc→Framework), `EXTRACTED_FROM` (Chunk→Doc), `DERIVED_FROM` (Framework→Framework, e.g., IAAO→WPAM)
+- Resolution: `DEFINED_BY` (Statute/AdminRule stub→Chunk)
+
+`IMPLEMENTS`, `HAS_SUBSECTION`, and `COVERS_TOPIC` appear in older docs but no
+load phase creates them; `get_neighbors` no longer offers them as `edge_types`.
 
 **S3 bucket structure:** `raw/{category}-{clean-name}/{category}-{clean-name}.pdf` + `.metadata.json`
 
