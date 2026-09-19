@@ -23,8 +23,11 @@ def test_prompt_requires_tool_sourced_citations():
 def test_prompt_requires_graph_traversal():
     from prompt import SYSTEM_PROMPT
 
-    # docs/graphrag.md §1: "PREFER graph traversal over get_document with guessed IDs"
-    assert "PREFER graph traversal" in SYSTEM_PROMPT
+    # Graph traversal is scoped: get_neighbors only for case-law holdings on a
+    # specific statute, never a blind walk. (The fallback mirror was re-synced
+    # to the live TOML on 2026-09-18; the old "PREFER graph traversal" phrase
+    # had already been gone from the live prompt for months.)
+    assert "get_neighbors only when" in SYSTEM_PROMPT
 
 
 def test_prompt_includes_framework_applicability():
@@ -65,7 +68,7 @@ def test_prompt_forbids_case_law_as_starting_point():
 
     # Case law must not be the entry point of a traversal — statutes first.
     assert "SECONDARY source" in SYSTEM_PROMPT
-    assert "FIRST traversal step" in SYSTEM_PROMPT
+    assert "does not create rules" in SYSTEM_PROMPT
 
 
 def test_prompt_requires_stub_before_opinion():
@@ -76,17 +79,17 @@ def test_prompt_requires_stub_before_opinion():
     # but either form of the gate is acceptable.
     lower = SYSTEM_PROMPT.lower()
     assert "annotation" in lower or "stub" in lower
-    # fetch_case_opinion is gated behind annotation/stub-insufficiency AND
-    # holding relevance.
-    assert "fetch_case_opinion ONLY when" in SYSTEM_PROMPT
+    # fetch_case_opinion must be called with the node's citation verbatim.
+    assert "fetch_case_opinion, pass the `citation`" in SYSTEM_PROMPT
+    assert "VERBATIM" in SYSTEM_PROMPT
 
 
-def test_prompt_mandates_refine_query_for_followups():
+def test_prompt_handles_followups():
     from prompt import SYSTEM_PROMPT
 
-    # The agent must know to rewrite short follow-ups against history.
-    assert "refine_query" in SYSTEM_PROMPT
-    # Either of the two motivating examples should be called out.
+    # Short follow-ups are rewritten against history by the auto_refine
+    # pipeline stage (refine_query was removed); the prompt must still tell
+    # the agent how to treat them.
     lower = SYSTEM_PROMPT.lower()
     assert "follow-up" in lower or "follow up" in lower
 
