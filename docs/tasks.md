@@ -4,7 +4,7 @@
 
 The bot is done as a research problem: every tester-reported retrieval issue has a shipped, harness-guarded fix, the Assessment Manual is fully indexed (Task 72), and the tracked set scores 37/42. What remains:
 
-1. **Adequacy judge (Task 71) — flag on** after one tuning pass on over-clarifying; bar = classic ≥34 and scope ≥13 on one clean 62-case run. Retest with DOR: Sausen, Markarian, Native American, maintenance-vs-revaluation.
+1. **Adequacy judge (Task 71) — ON in prod since 2026-09-18 evening** (commit f7714ff): one clean 63-case run, classic 41/45 vs 40/45 judge-off, scope 14/17 vs 10/17, 0 regressions; CLARIFY on 18/63 accepted as intended (ask on a real source-derived fork; flowcharts and chips are complementary). Watch tester feedback on the chips this week; rollback = flip the two CDK flags. Retests done in the harness (Task 73); DOR to retest in the app.
 2. **Security before any public move** (handoff plan §3): WebSocket $connect authorizer, session ownership checks, close self-signup. ~1 day.
 3. **Handoff**: SSO with Amy/Brad, cost sheet (Neptune 32 m-NCU is the floor — 16 rejected on a fresh graph; lever: drop the 15 non-current WPAM editions to likely fit 16), annual-refresh runbook.
 4. **Content threads after the 09-17 DOR meeting** (Task 73): refresh the stale SL-405 instructions PDF + harness case (Innovation Grant); gate alias generation to the doc types the embed uses; retest maintenance-vs-revaluation and residential grades on the re-indexed graph. Still with DOR: BOR interpreter reference, mobile homes vs §70.11(49). Closed: Prime Leather, "clear height", plain-language glossary, manufacturing-appeal filing.
@@ -498,6 +498,8 @@ Remaining, in priority order:
 6. Style only, no action: "modular offices" (correct but hedged), "does it matter if sustained" (verbose follow-up), text-rewording request (one clean rewrite would have served better).
 
 ### Task 71: Post-retrieval adequacy judge replaces the pre-loop scope gate (2026-09-18)
+
+**Status update 2026-09-18 evening — ON in prod.** Added a required `question_omits_the_fact` schema field with a CLARIFY→ANSWER code guard (mirrors the DECLINE guard; never fired in the gate run — the judge reads any unstated sub-fact as omitted, which Isaac decided is fine: asking beats over-confidence). Step 3 split into 3a (does the question state the fact) / 3b (do the sources fork). The 'do not clarify when a flowchart is in play' rule was replaced with the opposite: the chart lays out the facts, the clarification collects them. Gate run `logs-2026-09-14/full63_judgeon_guard_2026-09-18.json`: classic 41/45 (baseline 40/45), scope 14/17 (10/17), ig-line8 pass, verdicts ANSWER 40 / CLARIFY 18 / DECLINE 5. Deployed 22:16 PT with `ADEQUACY_JUDGE_ENABLED=true`, `SCOPE_GATE_ENABLED=false`.
 
 **Status:** DEPLOYED 2026-09-18 (flags `ADEQUACY_JUDGE_ENABLED=true`, `SCOPE_GATE_ENABLED=false` in `graphrag-messages-stack.ts`). Two-way door: flip both and redeploy to restore the classifier gate byte-for-byte.
 
