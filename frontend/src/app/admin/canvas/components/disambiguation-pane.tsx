@@ -18,6 +18,11 @@ const PROPERTY_TYPE_CHOICES = [
 interface DisambiguationData {
   result: 'disambiguate' | 'proceed';
   label: string;
+  // Whether the verdict actually stopped the run. With the adequacy judge on
+  // and the scope gate off, DISAMBIGUATE is recorded but the research loop
+  // runs anyway and the judge decides afterwards — so this is read off the
+  // trace (did any tool event follow?), not assumed from the verdict.
+  shortCircuited?: boolean;
   onSelect?: (choice: string) => void;
 }
 
@@ -55,9 +60,19 @@ export function DisambiguationPane({ data }: { data: DisambiguationData }) {
           </div>
 
           {/* Short-circuit banner */}
-          <div className="mt-5 rounded-md bg-red-50 px-3 py-2">
-            <p className="text-xs font-medium text-red-700 uppercase tracking-wide">
-              Agent loop short-circuited
+          <div
+            className={`mt-5 rounded-md px-3 py-2 ${
+              data.shortCircuited === false ? 'bg-amber-50' : 'bg-red-50'
+            }`}
+          >
+            <p
+              className={`text-xs font-medium uppercase tracking-wide ${
+                data.shortCircuited === false ? 'text-amber-700' : 'text-red-700'
+              }`}
+            >
+              {data.shortCircuited === false
+                ? 'Scope gate off — verdict recorded, research loop ran anyway'
+                : 'Agent loop short-circuited'}
             </p>
           </div>
         </>

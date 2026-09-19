@@ -1,7 +1,29 @@
 /**
- * Fixture trace for canvas iteration. vector_search has a full visual;
- * other tool calls will appear as placeholder panes for now.
+ * Fixture trace for canvas iteration — auto-played on /admin/canvas.
+ *
+ * Hand-written to mirror the real agent-event stream (payload shapes come from
+ * tracing/summaries.py + tracing/emitter.py's ALLOWED_METADATA_KEYS), and kept
+ * broad enough to exercise every pane family:
+ *
+ *   request_received / history_loaded → header strip
+ *   auto_refine (turn-0 stage, no tool_call)
+ *   generality_classified             → pre-loop classifier
+ *   faq_search + faq_transition       → collapsible FAQ row
+ *   get_flowchart (seeded, router)    → flowchart pane
+ *   vector_search (seeded, dual-arm)  → wide initial-search pane
+ *   get_neighbors / list_sections / get_section
+ *   find_case_law / list_worksheets / get_worksheet
+ *   prepare_answer + loop_complete
+ *   adequacy_judged (CLARIFY)         → judge pane + chips
+ *   answer_streaming                  → Phase B pane (DEMO_ANSWER below)
+ *
+ * The scenario: the conversation's previous turn was "How is farmland in our
+ * new TID assessed?", so history is loaded, the follow-up is auto-refined
+ * against it, the flowchart router matches on the *history* candidate, and the
+ * TID worksheets are worth a look.
  */
+
+import type { ResourceItem } from '@/stores/types';
 
 export interface FixtureTraceEvent {
   kind: 'loop_start' | 'reasoning' | 'tool_call' | 'tool_result' | 'loop_complete' | 'phase' | 'turn_usage';
@@ -9,6 +31,10 @@ export interface FixtureTraceEvent {
   seq: number;
   timestamp: number;
   payload: Record<string, unknown>;
+  // Mirrors AgentEventMessage.dev_payload — carries `toolInput`, the only
+  // place some tools' arguments survive (find_case_law's search_text,
+  // get_worksheet's worksheet_id).
+  devPayload?: Record<string, unknown>;
 }
 
 const BASE = Date.now();
@@ -32,10 +58,36 @@ export const CORPUS_TOTAL_CHUNKS = 16234;
 
 export const DEMO_QUERY = 'What information is used to determine my assessment?';
 
+const DEMO_REFINED_QUERY =
+  'What information is used to determine my agricultural land assessment in a TID?';
+
 export const DEMO_TRACE: FixtureTraceEvent[] = [
-  // --- Pre-loop: disambiguation check ---
+  // --- Pre-loop: request + conversation history ---
   {
     kind: 'phase', turn: null, seq: ++seq, timestamp: t(0),
+    payload: { phase: 'request_received' },
+  },
+  {
+    kind: 'phase', turn: null, seq: ++seq, timestamp: t(4),
+    payload: { phase: 'history_loaded', historyTurns: 1 },
+  },
+
+  // --- Turn 0: auto_refine (a stage, not a tool — no matching tool_call) ---
+  {
+    kind: 'tool_result', turn: 0, seq: ++seq, timestamp: t(18),
+    payload: {
+      toolName: 'auto_refine',
+      status: 'ok',
+      summary: `Refined to "${DEMO_REFINED_QUERY}"`,
+      docIds: [],
+      docTitles: [],
+      metadata: { refined: true, refinedQuery: DEMO_REFINED_QUERY },
+    },
+  },
+
+  // --- Pre-loop: disambiguation check ---
+  {
+    kind: 'phase', turn: null, seq: ++seq, timestamp: t(26),
     payload: { phase: 'generality_classified', label: 'Query is specific enough to proceed', result: 'proceed' },
   },
 
@@ -190,6 +242,29 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
     },
   },
 
+  // --- Turn 0: flowchart router SEED (no tool_call — phase_a injects it) ---
+  // Matched on the `history` candidate: the previous turn asked about farmland,
+  // which is a far better routing signal than this turn's generic wording.
+  {
+    kind: 'tool_result', turn: 0, seq: ++seq, timestamp: t(760),
+    payload: {
+      toolName: 'get_flowchart',
+      status: 'success',
+      summary: 'Seeded flowchart: Determining Agricultural Classification',
+      docIds: ['flowcharts-ag-classification'],
+      docTitles: ['Determining Agricultural Classification'],
+      metadata: {
+        seeded: true,
+        flowchartId: 'flowcharts-ag-classification',
+        wpamPage: '14-11',
+        sourceUrl:
+          'https://www.revenue.wi.gov/DORForms/wpam26.pdf#page=512',
+        routerScore: 0.663,
+        routerMatchedOn: 'history',
+      },
+    },
+  },
+
   // --- Turn 1 usage ---
   {
     kind: 'turn_usage', turn: 1, seq: ++seq, timestamp: t(2690),
@@ -323,16 +398,80 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
     },
   },
 
-  // --- Turn 5: prepare_answer (placeholder) ---
+  // --- Turn 5: case law + TID worksheets ---
   {
-    kind: 'tool_call', turn: 5, seq: ++seq, timestamp: t(8200),
+    kind: 'reasoning', turn: 5, seq: ++seq, timestamp: t(6100),
+    payload: {
+      text: 'The backfill surfaced Sausen on the burden of proof — worth resolving the node id before citing it. The prior turn mentioned a new TID, so I should also check whether the base-value workbook covers the figures the assessor uses.',
+    },
+  },
+  {
+    kind: 'tool_call', turn: 5, seq: ++seq, timestamp: t(6200),
+    payload: { toolName: 'find_case_law', summary: '', status: 'pending' },
+    devPayload: {
+      toolInput: { search_text: 'Sausen v. Town of Black Creek', statute_id: 'WIS-STAT-70.47' },
+      toolUseId: 'tooluse_find_case_law_5',
+    },
+  },
+  {
+    kind: 'tool_result', turn: 5, seq: ++seq, timestamp: t(6340),
+    payload: {
+      toolName: 'find_case_law',
+      status: 'ok',
+      summary: 'find_case_law complete',
+      docIds: ['case-law-2014-wi-9'],
+      docTitles: ['Sausen v. Town of Black Creek Board of Review'],
+      metadata: { latencyMs: 138 },
+    },
+  },
+  {
+    kind: 'tool_call', turn: 5, seq: ++seq, timestamp: t(6500),
+    payload: { toolName: 'list_worksheets', summary: '', status: 'pending' },
+    devPayload: { toolInput: {}, toolUseId: 'tooluse_list_worksheets_5' },
+  },
+  {
+    kind: 'tool_result', turn: 5, seq: ++seq, timestamp: t(6560),
+    payload: {
+      toolName: 'list_worksheets',
+      status: 'ok',
+      summary: 'Listed 4 worksheets',
+      docIds: [],
+      docTitles: [],
+      // worksheetCount is built server-side but is NOT in
+      // ALLOWED_METADATA_KEYS, so only latency survives the filter.
+      metadata: { latencyMs: 12 },
+    },
+  },
+  {
+    kind: 'tool_call', turn: 5, seq: ++seq, timestamp: t(6700),
+    payload: { toolName: 'get_worksheet', summary: '', status: 'pending' },
+    devPayload: {
+      toolInput: { worksheet_id: 'worksheets-tidbase', sheet: 'PE-606' },
+      toolUseId: 'tooluse_get_worksheet_5',
+    },
+  },
+  {
+    kind: 'tool_result', turn: 5, seq: ++seq, timestamp: t(6960),
+    payload: {
+      toolName: 'get_worksheet',
+      status: 'ok',
+      summary: 'Got TID Base Value Workbook (5 sheets)',
+      docIds: [],
+      docTitles: [],
+      metadata: { latencyMs: 254 },
+    },
+  },
+
+  // --- Turn 6: prepare_answer ---
+  {
+    kind: 'tool_call', turn: 6, seq: ++seq, timestamp: t(8200),
     payload: { toolName: 'prepare_answer', summary: 'with 5 cited sources', status: 'pending' },
   },
   {
-    kind: 'loop_complete', turn: 5, seq: ++seq, timestamp: t(8600),
+    kind: 'loop_complete', turn: 6, seq: ++seq, timestamp: t(8600),
     payload: {
       terminalReason: 'prepare_answer',
-      turnsUsed: 5,
+      turnsUsed: 6,
       elapsedMs: 8600,
       citedDocCount: 5,
       discoveryTitles: {
@@ -342,6 +481,99 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
         'gov_publications-2026-property-owners-guide': '2026 Property Owner\'s Guide',
         'admin_rules-tax-18': 'Tax 18 — Agricultural Land',
       },
+    },
+  },
+
+  // --- Adequacy judge (between Phase A and Phase B) ---
+  // The Finding itself stays server-side; the wire carries the verdict, a
+  // label, and {latencyMs, clarificationOffered, judgeModelId}.
+  {
+    kind: 'phase', turn: null, seq: ++seq, timestamp: t(9700),
+    payload: {
+      phase: 'adequacy_judged',
+      label: 'Sources diverge on a fact the user did not give',
+      result: 'clarify',
+      metadata: {
+        latencyMs: 1080,
+        clarificationOffered: true,
+        judgeModelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+      },
+    },
+  },
+
+  // --- Phase B opens ---
+  {
+    kind: 'phase', turn: null, seq: ++seq, timestamp: t(9760),
+    payload: { phase: 'answer_streaming' },
+  },
+];
+
+// --- Phase B payload (delivered on separate WebSocket frames, not as trace
+// events): the streamed answer, the resource cards, and the clarification
+// chips the backend sends after the stream when the judge returns CLARIFY.
+
+export const DEMO_ANSWER = `Which information the assessor uses depends on how your parcel is classified, and the sources part ways on that point.
+
+For **residential and commercial** property, the assessor values the parcel at full value — the price it would bring at an arm's-length sale — working down a three-tier hierarchy: a recent arm's-length sale of the property itself, then comparable sales, then (only if neither is available) the cost and income approaches (Wis. Stat. 70.32(1); WPAM 2026 Ch. 9).
+
+For **agricultural land**, none of that applies. Qualifying farmland is valued by its *use* — a capitalized net-income value per acre set by the Farmland Advisory Council — not by what it would sell for (Wis. Stat. 70.32(2r); Tax 18).
+
+Because your previous question was about farmland in a new TID, which of these applies matters: the base-value workbook takes the classified values as inputs, so a parcel valued at use value enters the TID calculation at that figure rather than at market value.
+
+Which classification applies to your parcel?`;
+
+export const DEMO_CHOICES = [
+  'Residential',
+  'Commercial',
+  'Agricultural (use-value)',
+  'Agricultural forest / undeveloped',
+  'Answer in general terms',
+];
+
+export const DEMO_RESOURCES: ResourceItem[] = [
+  {
+    type: 'document' as const,
+    data: {
+      documentId: 'wpam-wisconsin-property-assessment-manual-2026',
+      title: 'WPAM 2026 — Wisconsin Property Assessment Manual',
+      content: 'Chapter 9 — Valuation. The assessor must value property at full value…',
+      sourceUrl: 'https://www.revenue.wi.gov/DORForms/wpam26.pdf#page=310',
+      discoveryTag: 'vector-search',
+      authorityLevel: 5,
+      startPage: 310,
+      endPage: 312,
+    },
+  },
+  {
+    type: 'document' as const,
+    data: {
+      documentId: 'statutes-70',
+      title: 'Chapter 70 — Property Assessment',
+      content: '70.32 Real estate, how valued. (1) Real property shall be valued…',
+      sourceUrl: 'https://docs.legis.wisconsin.gov/document/statutes/70.32',
+      discoveryTag: 'statute-backfill',
+      authorityLevel: 2,
+    },
+  },
+  {
+    type: 'document' as const,
+    data: {
+      documentId: 'admin_rules-tax-18',
+      title: 'Tax 18 — Agricultural Land',
+      content: 'Tax 18.05 Agricultural use value. Agricultural land is assessed…',
+      sourceUrl: 'https://docs.legis.wisconsin.gov/code/admin_code/tax/18',
+      discoveryTag: 'graph-neighbor',
+      authorityLevel: 4,
+    },
+  },
+  {
+    type: 'faq' as const,
+    data: {
+      faqId: 'faq-full-value',
+      question: 'What information is used to determine my assessment?',
+      answer:
+        'Assessors use recent arm’s-length sales, comparable sales, and, when neither is available, the cost and income approaches.',
+      sourceUrl: 'https://www.revenue.wi.gov/Pages/FAQS/slf-pt.aspx',
     },
   },
 ];

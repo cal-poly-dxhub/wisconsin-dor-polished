@@ -4,9 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { WebSocket as PartySocket } from 'partysocket';
 import { createSession, sendMessage } from '@/api/chat-api';
 import type { SourceDocument, FAQ } from '@messages/websocket-interface';
-import type { ResourceItem } from '@/stores/types';
-import { useFixtureStream } from './use-fixture-stream';
-import type { GridManifest } from './use-corpus-manifest';
+import type { ResourceItem, SuggestionKind } from '@/stores/types';
 
 export interface TraceEvent {
   kind: 'loop_start' | 'reasoning' | 'tool_call' | 'tool_result' | 'loop_complete' | 'phase' | 'turn_usage';
@@ -22,22 +20,26 @@ interface UseVisualizerSocketReturn {
   answerText: string;
   answerComplete: boolean;
   resourceItems: ResourceItem[];
+  /** Clarification chips from the adequacy judge (or the pre-loop classifier). */
+  choices: string[];
+  /** Soft follow-up nudge; only 'topic-shift' exists today. */
+  suggestion: SuggestionKind | null;
   isConnected: boolean;
   isRunning: boolean;
   currentQuery: string | null;
   sendQuery: (query: string) => void;
-  playFixtures: () => void;
-  playVectorOnly: () => void;
   error: string | null;
 }
 
 const WS_URL = process.env.NEXT_PUBLIC_WEBSOCKET_URL!;
 
-export function useVisualizerSocket(manifest: GridManifest | null): UseVisualizerSocketReturn {
+export function useVisualizerSocket(): UseVisualizerSocketReturn {
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
   const [answerText, setAnswerText] = useState('');
   const [answerComplete, setAnswerComplete] = useState(false);
   const [resourceItems, setResourceItems] = useState<ResourceItem[]>([]);
+  const [choices, setChoices] = useState<string[]>([]);
+  const [suggestion, setSuggestion] = useState<SuggestionKind | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [currentQuery, setCurrentQuery] = useState<string | null>(null);
@@ -49,15 +51,13 @@ export function useVisualizerSocket(manifest: GridManifest | null): UseVisualize
     setAnswerText('');
     setAnswerComplete(false);
     setResourceItems([]);
+    setChoices([]);
+    setSuggestion(null);
   }, []);
 
   const resetAnswerStream = useCallback(() => {
     setAnswerText('');
     setAnswerComplete(false);
-  }, []);
-
-  const setResources = useCallback((items: ResourceItem[]) => {
-    setResourceItems(items);
   }, []);
 
   const appendResources = useCallback((items: ResourceItem[]) => {
@@ -71,26 +71,6 @@ export function useVisualizerSocket(manifest: GridManifest | null): UseVisualize
       return [...prev, traceEvent];
     });
   }, []);
-
-  const { playFixture, playVectorOnly: playVectorOnlyRaw, cancelFixture } = useFixtureStream({
-    onStart: (query) => {
-      setError(null);
-      setTraceEvents([]);
-      resetQueryState();
-      setCurrentQuery(query);
-      setIsRunning(true);
-    },
-    onEvent: appendTraceEvent,
-    onComplete: () => setIsRunning(false),
-    onAnswerStart: resetAnswerStream,
-    onAnswerFragment: (fragment) => {
-      setAnswerText((prev) => prev + fragment);
-    },
-    onAnswerComplete: () => setAnswerComplete(true),
-    onResources: setResources,
-    onError: (message) => setError(message),
-    manifest,
-  });
 
   const connectWebSocket = useCallback((sessionId: string) => {
     if (wsRef.current) {
@@ -141,6 +121,7 @@ export function useVisualizerSocket(manifest: GridManifest | null): UseVisualize
             resetAnswerStream();
           } else if (body.event === 'stop') {
             setAnswerComplete(true);
+            setIsRunning(false);
           }
           return;
         }
@@ -176,6 +157,30 @@ export function useVisualizerSocket(manifest: GridManifest | null): UseVisualize
               }))
             );
           }
+          return;
+        }
+
+        // Clarification chips: sent after the stream when the adequacy judge
+        // returns CLARIFY, and by the pre-loop DISAMBIGUATE short-circuit.
+        if (body.responseType === 'choices') {
+          const items = body.content?.choices;
+          if (Array.isArray(items)) {
+            setChoices(items.filter((c: unknown): c is string => typeof c === 'string'));
+          }
+          return;
+        }
+
+        // Soft nudge attached to the turn ('topic-shift' today).
+        if (body.responseType === 'suggestion') {
+          const kind = body.content?.kind;
+          if (kind === 'topic-shift') setSuggestion('topic-shift');
+          return;
+        }
+
+        if (body.responseType === 'error') {
+          const message = body.content?.error;
+          setError(typeof message === 'string' ? message : 'Agent returned an error');
+          setIsRunning(false);
         }
       } catch (err) {
         console.error('[Visualizer WS] Parse error:', err);
@@ -202,7 +207,6 @@ export function useVisualizerSocket(manifest: GridManifest | null): UseVisualize
 
   const sendQuery = useCallback(
     async (query: string) => {
-      cancelFixture();
       setError(null);
       setTraceEvents([]);
       resetQueryState();
@@ -237,37 +241,26 @@ export function useVisualizerSocket(manifest: GridManifest | null): UseVisualize
         console.error('[Visualizer] Send failed:', err);
       }
     },
-    [cancelFixture, ensureSession, resetQueryState]
+    [ensureSession, resetQueryState]
   );
-
-  const playFixtures = useCallback(() => {
-    if (isRunning) return;
-    playFixture();
-  }, [isRunning, playFixture]);
-
-  const playVectorOnly = useCallback(() => {
-    if (isRunning) return;
-    playVectorOnlyRaw();
-  }, [isRunning, playVectorOnlyRaw]);
 
   useEffect(() => {
     return () => {
-      cancelFixture();
       wsRef.current?.close();
     };
-  }, [cancelFixture]);
+  }, []);
 
   return {
     traceEvents,
     answerText,
     answerComplete,
     resourceItems,
+    choices,
+    suggestion,
     isConnected,
     isRunning,
     currentQuery,
     sendQuery,
-    playFixtures,
-    playVectorOnly,
     error,
   };
 }

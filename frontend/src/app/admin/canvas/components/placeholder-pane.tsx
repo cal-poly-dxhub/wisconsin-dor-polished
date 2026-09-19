@@ -1,5 +1,9 @@
 'use client';
 
+// Fallback titles only. Every tool in backend-tools.ts has a real pane in the
+// canvas pane map (TOOL_PANES in canvas-view.tsx) — this map exists for the
+// case the map is missing one, and for the synthetic pipeline-stage names the
+// backend may add later.
 const TOOL_TITLES: Record<string, string> = {
   get_neighbors: 'Graph Neighbors',
   get_section: 'Get Section',
@@ -7,10 +11,13 @@ const TOOL_TITLES: Record<string, string> = {
   list_sections: 'List Sections',
   get_document: 'Get Document',
   faq_search: 'FAQ Search',
-  refine_query: 'Query Refinement',
+  auto_refine: 'Auto Refine',
   find_case_law: 'Case Law Search',
+  list_worksheets: 'Worksheet Registry',
+  get_worksheet: 'TID Worksheet',
+  list_flowcharts: 'Flowchart Registry',
+  get_flowchart: 'Decision Flowchart',
   prepare_answer: 'Answer Synthesis',
-  cite_documents: 'Cite Documents',
 };
 
 export function PlaceholderPane({
