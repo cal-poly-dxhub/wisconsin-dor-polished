@@ -540,7 +540,7 @@ queries:
       is in scope, even though it cannot display images. FAIL if it refuses /
       treats the whole request as out of scope and fails to surface any WPAM
       grade material. (Not judged: whether it also states it cannot show images.)
-    must_cite: [wpam-wisconsin-property-assessment-manual-2026]
+    must_cite: [wpam-volume-2-residential-apartments-agricultural]
     must_contain: ["grade|quality class"]
     notes: >
       Residential building grades are in scope (WPAM). Content guard verifies
@@ -1071,6 +1071,33 @@ queries:
       gq-scope-prime-leather-absent, which is the SAME shape for a case that is
       NOT in the corpus — together they separate "refuses case names" from
       "honestly reports a gap".
+
+  - queryId: ig-line8-future-year
+    stratum: B
+    tags: [ingestion-gap, source-currency, innovation-grant]
+    query: "When an Innovation Grant application is submitted, can the Section A, line 8 value for Date the service/duty will be transferred per the signed contract/agreement be a date in 2027, if the application is submitted on December 31, 2026?"
+    rubric: >
+      PASS only if the answer says the application must WAIT for the calendar
+      year of the transfer: a 2027 transfer date is filed in 2027 (Phase 2,
+      Jan. 1 – March 31, 2027), not on December 31, 2026 (Phase 1), because the
+      FAQ says an innovation plan whose transfer effective date is in a future
+      calendar year must wait until that year to apply (line 8 auto-fills the
+      preceding calendar year and the cost baselines are that year's actuals).
+      Mentioning that a transfer after June 30, 2027 forfeits the FY2027 payment
+      is a bonus, not required. FAIL if the answer says a December 31, 2026
+      submission with a 2027 line-8 date is permissible, or if it warns about a
+      March 31, 2026 filing deadline (that was round one; the current SL-405
+      instructions state the Phase 1 / Phase 2 windows).
+    must_cite: [faq_pages-slf-ig, form_instructions-ig-inst]
+    must_contain: ["wait|2027"]
+    must_not_contain: ["March 31, 2026"]
+    notes: >
+      Task 73. Production query 8b37e3bd (2026-09-17, thumbs-down, DOR confirmed
+      incomplete): the bot answered yes, missed the wait-until-that-year rule in
+      the FAQ chunk it cited, and warned about a stale March 31, 2026 deadline
+      from an out-of-date copy of ig-inst.pdf. Requires the refreshed
+      form_instructions-ig-inst (live PDF states Phase 1: Oct 1 – Dec 31, 2026;
+      Phase 2: Jan 1 – March 31, 2027).
 
   - queryId: gq-scope-innovation-grant-count
     stratum: B

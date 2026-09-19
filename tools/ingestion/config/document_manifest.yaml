@@ -279,6 +279,15 @@ categories:
       # URL resolves fine, but the news-date regex can't parse it — pin the date here.
       - url: https://www.revenue.wi.gov/Pages/SLF/Assessor-News/20203-05-15.aspx
         effective_date: "2023-05-15"
+      # Press release (PDF, not a dated news page): first-round Innovation Grant
+      # awards paid 2026-06-26. Closes the loop on the 2025-07-02 COTVC item
+      # ("application available through March 31, 2026" = round one) so the
+      # bot can tell round one (closed) from round two (Phase 1/2, 2026–27).
+      # Task 73.
+      - url: https://www.revenue.wi.gov/Pages/News/2026/First-Round-Innovation-Grant-Awards.pdf
+        doc_id: news_pages-innovation-grant-first-round-awards-2026-06-26
+        title: "DOR Announces First Round Innovation Grant Awards (press release, June 26, 2026)"
+        effective_date: "2026-06-26"
       - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-08.aspx
       - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-19.aspx
       - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-21.aspx
