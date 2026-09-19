@@ -74,12 +74,13 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           // writes under that finding. With the judge on, the pre-loop
           // OUT_OF_SCOPE / DISAMBIGUATE short-circuits are skipped
           // (SCOPE_GATE_ENABLED=false); TOPIC_SHIFT is unaffected. Two-way
-          // door: flip both and redeploy. OFF as of 2026-09-18: the judge
-          // clears the scope set (14/17 vs 10/17) but still over-clarifies on
-          // already-specific questions (8/42 CLARIFY on the classic set,
-          // costing 3 cases). Tune the clarify test, then set 'true'/'false'.
-          ADEQUACY_JUDGE_ENABLED: 'false',
-          SCOPE_GATE_ENABLED: 'true',
+          // door: flip both and redeploy. ON as of 2026-09-18 (evening) after
+          // one clean 63-case run: classic 41/45 vs 40/45 judge-off, scope
+          // 14/17 vs 10/17, CLARIFY on 18/63 (accepted: asking on a real
+          // source-derived fork is the intended behavior). Rollback = 'false'
+          // / 'true'.
+          ADEQUACY_JUDGE_ENABLED: 'true',
+          SCOPE_GATE_ENABLED: 'false',
         }),
       }
     );
