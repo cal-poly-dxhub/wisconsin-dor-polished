@@ -68,6 +68,18 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           // unrelated subject short-circuits with a soft "start a new chat?"
           // suggestion instead of running the loop. Only acts mid-conversation.
           ENABLE_TOPIC_SHIFT: 'true',
+          // Post-retrieval adequacy judge (2026-09-18): every query runs the
+          // research loop; a Haiku judge then grades the answer plan against
+          // the retrieved evidence (ANSWER / CLARIFY / DECLINE) and Phase B
+          // writes under that finding. With the judge on, the pre-loop
+          // OUT_OF_SCOPE / DISAMBIGUATE short-circuits are skipped
+          // (SCOPE_GATE_ENABLED=false); TOPIC_SHIFT is unaffected. Two-way
+          // door: flip both and redeploy. OFF as of 2026-09-18: the judge
+          // clears the scope set (14/17 vs 10/17) but still over-clarifies on
+          // already-specific questions (8/42 CLARIFY on the classic set,
+          // costing 3 cases). Tune the clarify test, then set 'true'/'false'.
+          ADEQUACY_JUDGE_ENABLED: 'false',
+          SCOPE_GATE_ENABLED: 'true',
         }),
       }
     );

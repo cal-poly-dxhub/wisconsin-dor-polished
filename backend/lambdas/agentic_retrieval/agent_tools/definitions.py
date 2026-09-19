@@ -489,8 +489,11 @@ TOOL_DEFINITIONS = [
                 "every situation' and 'a thorough review of each property is "
                 "still required'. Present the decision path and its authorities; "
                 "do NOT assert a definitive exempt/taxable verdict for the user's "
-                "specific property. Cite the flowchart by its flowchart_id and "
-                "the WPAM page."
+                "specific property. When you use a chart, list its flowchart_id "
+                "in cited_doc_ids and cite it inline as "
+                "[short label](doc:<flowchart_id>#page=<source.pdf_page>) using "
+                "the pdf_page from the chart's own source block — NOT as a bare "
+                "reference to the WPAM document."
             ),
             "inputSchema": {
                 "json": {
@@ -500,7 +503,9 @@ TOOL_DEFINITIONS = [
                             "type": "string",
                             "description": (
                                 "The flowchart ID from list_flowcharts "
-                                "(e.g., 'flowcharts-mobile-home')."
+                                "(e.g., 'flowcharts-mobile-home'). A close "
+                                "near-miss is resolved to the registered chart; "
+                                "an unrecognizable id returns the valid ids."
                             ),
                         },
                     },

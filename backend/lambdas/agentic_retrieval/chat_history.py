@@ -53,8 +53,11 @@ def sanitize_answer_for_history(answer: str) -> str:
     return s.strip()
 
 
-def get_chat_history(session_id: str) -> list[dict[str, str]]:
+def get_chat_history(session_id: str) -> list[dict]:
     """Fetch prior {query, answer} pairs for a session, oldest first.
+
+    A turn on which the adequacy judge asked a clarifying question also carries
+    a ``clarification`` dict ({axis, question, options, original_query}).
 
     Returns an empty list if the table isn't configured or the query fails;
     history is an enrichment, not a correctness requirement.
@@ -70,11 +73,27 @@ def get_chat_history(session_id: str) -> list[dict[str, str]]:
             ScanIndexForward=True,
         )
         items = response.get("Items", [])
-        history = [
-            {"query": item["query"], "answer": sanitize_answer_for_history(item["answer"])}
-            for item in items
-            if item.get("query") and item.get("answer")
-        ]
+        history = []
+        for item in items:
+            if not (item.get("query") and item.get("answer")):
+                continue
+            turn: dict = {
+                "query": item["query"],
+                "answer": sanitize_answer_for_history(item["answer"]),
+            }
+            # A clarification the adequacy judge asked on this turn, if any.
+            # resolve_pending_clarification() keys the next message off it, and
+            # the judge sees it in history so it never asks twice. Turns written
+            # before this field existed simply omit it.
+            pending = item.get("clarification")
+            if isinstance(pending, dict) and pending.get("options"):
+                turn["clarification"] = {
+                    "axis": str(pending.get("axis") or ""),
+                    "question": str(pending.get("question") or ""),
+                    "options": [str(o) for o in pending.get("options") or []],
+                    "original_query": str(pending.get("original_query") or item["query"]),
+                }
+            history.append(turn)
         if len(history) > MAX_HISTORY_TURNS:
             history = history[-MAX_HISTORY_TURNS:]
         logger.info(f"Loaded {len(history)} history turn(s) for session {session_id}")
@@ -96,8 +115,16 @@ def save_chat_history(
     faq_resource: "FAQResource | None" = None,
     trace_log: list[dict] | None = None,
     seeded_flowchart: dict | None = None,
+    clarification: dict | None = None,
 ) -> None:
-    """Persist a query/answer pair (with resources, flowchart, and trace) to history."""
+    """Persist a query/answer pair (with resources, flowchart, and trace) to history.
+
+    ``clarification`` — {axis, question, options, original_query} — records a
+    question the adequacy judge put to the user on this turn, so the next
+    message can be folded back into the original question deterministically
+    (``adequacy_judge.resolve_pending_clarification``). Optional and additive:
+    turns without one are stored exactly as before.
+    """
     if not CHAT_HISTORY_TABLE or not session_id:
         return
     try:
@@ -158,6 +185,17 @@ def save_chat_history(
         # this mirrors how `trace` is stored).
         if seeded_flowchart:
             item["flowchart"] = json.dumps(seeded_flowchart)
+
+        # Stored as a native DynamoDB map (unlike trace/flowchart, which are
+        # deep): four shallow string/list-of-string fields the next turn reads
+        # back directly.
+        if clarification and clarification.get("options"):
+            item["clarification"] = {
+                "axis": str(clarification.get("axis") or ""),
+                "question": str(clarification.get("question") or ""),
+                "options": [str(o) for o in clarification.get("options") or []],
+                "original_query": str(clarification.get("original_query") or query),
+            }
 
         table = dynamodb_resource.Table(CHAT_HISTORY_TABLE)
         table.put_item(Item=item)

@@ -31,6 +31,26 @@ Two-run workflow:
     # 3. Compare the two runs:
     python tools/ingestion/ops/run_graph_regression.py --compare-only
 
+Scope / adequacy cases
+----------------------
+With ADEQUACY_JUDGE_ENABLED=true the harness also runs the post-retrieval
+adequacy judge (backend/lambdas/agentic_retrieval/adequacy_judge.py) after
+Phase A and injects its Finding into the Phase-B context, exactly as the Lambda
+does. The finding is stored on each run record under "finding", and two extra
+per-case expectations gate on it:
+
+    expected_verdict:            ANSWER | CLARIFY | DECLINE
+    expected_clarification_axis: substring of finding.clarification.axis
+
+Run only the scope slice (cheap — ~16 cases):
+
+    ADEQUACY_JUDGE_ENABLED=true AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 \\
+      python tools/ingestion/ops/run_graph_regression.py --mode after --tags scope
+
+If adequacy_judge is not importable (not merged yet) the harness logs once and
+runs without it; verdict expectations are then reported as UNCHECKED, never as
+silent passes.
+
 Requires the agentic_retrieval Lambda env (Neptune graph id, FAQ KB id) — run
 it with the same AWS profile/region and env vars the Lambda uses. The relevant
 env vars are FAQ_KNOWLEDGE_BASE_ID, RAW_BUCKET, AGENTIC_MODEL_ID, and the
@@ -74,11 +94,129 @@ RESULTS_DIR = os.path.dirname(os.path.abspath(__file__))
 BASELINE_PATH = os.path.join(RESULTS_DIR, "graph_regression_baseline.json")
 AFTER_PATH = os.path.join(RESULTS_DIR, "graph_regression_after.json")
 
+VALID_VERDICTS = ("ANSWER", "CLARIFY", "DECLINE")
+
 
 def load_queries() -> list[dict]:
     with open(QUERIES_YAML) as f:
         data = yaml.safe_load(f)
     return data.get("queries", [])
+
+
+def filter_entries(
+    entries: list[dict], ids: list[str] | None = None, tags: list[str] | None = None
+) -> list[dict]:
+    """Restrict the golden set by queryId and/or tag.
+
+    `--ids` is an exact queryId match; `--tags` keeps any case whose `tags:` list
+    intersects the requested tags (case-insensitive). Both may be combined — the
+    filters are ANDed — so `--tags scope --ids gq-x` runs the scope cases that are
+    also gq-x. A tag filter is how the orchestrator runs one cheap slice of the
+    golden set (e.g. `--tags scope`) instead of the whole ~60-query corpus.
+    """
+    if ids:
+        wanted = set(ids)
+        entries = [e for e in entries if e.get("queryId") in wanted]
+        missing = wanted - {e.get("queryId") for e in entries}
+        if missing:
+            logger.warning(f"--ids not found in golden set: {sorted(missing)}")
+    if tags:
+        wanted_tags = {t.strip().lower() for t in tags if t.strip()}
+        entries = [
+            e for e in entries if wanted_tags & {str(t).lower() for t in (e.get("tags") or [])}
+        ]
+        logger.info(f"--tags {sorted(wanted_tags)} → {len(entries)} case(s)")
+    return entries
+
+
+# ── Adequacy judge (post-retrieval ANSWER / CLARIFY / DECLINE) ────────────────
+# The judge lives in the agentic_retrieval Lambda source dir (already on sys.path
+# above). It may not exist yet on this branch — the harness must keep working, so
+# the import is lazy, failure-tolerant, and logged exactly once.
+ADEQUACY_ENV_FLAG = "ADEQUACY_JUDGE_ENABLED"
+_adequacy_import_logged = False
+
+
+def adequacy_enabled() -> bool:
+    return os.environ.get(ADEQUACY_ENV_FLAG, "").strip().lower() == "true"
+
+
+def _load_adequacy_judge():
+    """Import the adequacy_judge module, or return None (logged once)."""
+    global _adequacy_import_logged
+    try:
+        import adequacy_judge  # type: ignore[import-not-found]
+
+        return adequacy_judge
+    except Exception as exc:  # noqa: BLE001 — branch may not be merged yet
+        if not _adequacy_import_logged:
+            _adequacy_import_logged = True
+            logger.warning(
+                f"{ADEQUACY_ENV_FLAG}=true but adequacy_judge is unavailable ({exc}); "
+                "running without it. Verdict expectations will be reported as UNCHECKED."
+            )
+        return None
+
+
+def finding_to_dict(finding) -> dict | None:
+    """Normalize a Finding dataclass (or dict) to a JSON-serializable dict."""
+    if finding is None:
+        return None
+    if isinstance(finding, dict):
+        raw = dict(finding)
+    else:
+        import dataclasses
+
+        if dataclasses.is_dataclass(finding):
+            raw = dataclasses.asdict(finding)
+        else:  # defensive — an object with the documented attributes
+            raw = {
+                k: getattr(finding, k, None)
+                for k in (
+                    "verdict",
+                    "supported",
+                    "unsupported",
+                    "clarification",
+                    "rationale",
+                    "model_id",
+                    "latency_ms",
+                )
+            }
+    clar = raw.get("clarification")
+    if clar is not None and not isinstance(clar, dict):
+        clar = {
+            "axis": getattr(clar, "axis", ""),
+            "question": getattr(clar, "question", ""),
+            "options": list(getattr(clar, "options", []) or []),
+        }
+        raw["clarification"] = clar
+    return raw
+
+
+def history_from_entry(entry: dict) -> list[dict]:
+    """Build the chat_history list for a multi-turn case.
+
+    A case may carry:
+
+        history:
+          - query: "How do I appeal the classification of my land?"
+            answer: "<the prior assistant turn>"
+            clarification: "Which classification …? (agricultural / manufacturing)"
+
+    `clarification` is optional sugar for a CLARIFY prior turn: it is appended to
+    that turn's answer text so the follow-up ("Agricultural") is interpretable as
+    an answer to the question the assistant just asked. The shape handed to
+    run_agentic_loop / build_answer_context is the production one — a list of
+    {query, answer} dicts, oldest first (see chat_history.get_chat_history).
+    """
+    history: list[dict] = []
+    for turn in entry.get("history") or []:
+        answer = str(turn.get("answer", "") or "")
+        clarification = turn.get("clarification")
+        if clarification:
+            answer = f"{answer}\n\n{clarification}".strip()
+        history.append({"query": str(turn.get("query", "") or ""), "answer": answer})
+    return history
 
 
 def _load_answerstream_from_toml(path: str) -> str:
@@ -193,17 +331,51 @@ def run_one_query(
         answerstream_prompt = ANSWER_STREAM_SYSTEM_PROMPT
 
     query = entry["query"]
+    chat_history = history_from_entry(entry)
     started = time.perf_counter()
 
     # Phase A: research loop. ws_server=None → no WebSocket emission.
-    result = run_agentic_loop(query, chat_history=[], query_id=entry.get("queryId", ""))
+    result = run_agentic_loop(query, chat_history=chat_history, query_id=entry.get("queryId", ""))
 
     cited_doc_ids = list(result.cited_doc_ids)
+
+    # Post-retrieval adequacy judge: ANSWER / CLARIFY / DECLINE on the Phase-A
+    # plan + the chunks actually cited. Phase B always streams; the finding is
+    # injected into its context so the answer can hedge, clarify, or decline.
+    finding_dict: dict | None = None
+    finding = None
+    if adequacy_enabled():
+        judge_mod = _load_adequacy_judge()
+        if judge_mod is not None:
+            cited_set = set(cited_doc_ids)
+            # Everything retrieved (mirrors handler.py); the judge labels cited vs not.
+            cited_chunks = list(result.all_chunks)
+            try:
+                finding = judge_mod.judge_answer_plan(
+                    query,
+                    chat_history,
+                    result.answer_plan,
+                    cited_chunks,
+                    result.discovery,
+                    cited_doc_ids=cited_set,
+                )
+                finding_dict = finding_to_dict(finding)
+            except Exception as exc:  # noqa: BLE001 — a flaky judge must not kill the run
+                logger.warning(f"  adequacy judge failed: {exc}")
+                finding = None
 
     # Phase B: build context (independent of answerStream) then generate the
     # answer text non-streaming with the (possibly candidate) answerStream prompt.
     answer_context = ""
+    if finding is not None and result.fallback_answer:
+        # Mirrors handler.py: under a finding the fallback text becomes the plan
+        # and Phase B writes the answer (one prose path).
+        result.answer_plan = result.fallback_answer
+        result.fallback_answer = None
     if not result.fallback_answer:
+        ctx_kwargs: dict = {}
+        if finding is not None:
+            ctx_kwargs["finding"] = finding
         answer_context = build_answer_context(
             query=query,
             cited_chunks=result.all_chunks,
@@ -211,8 +383,9 @@ def run_one_query(
             discovery=result.discovery,
             fetched_opinions=result.fetched_opinions,
             answer_plan=result.answer_plan,
-            chat_history=[],
+            chat_history=chat_history,
             neptune_client=neptune,
+            **ctx_kwargs,
         )
     answer_text = _phase_b_generate(
         query,
@@ -241,6 +414,8 @@ def run_one_query(
         "queryId": entry.get("queryId", ""),
         "stratum": entry.get("stratum", ""),
         "query": query,
+        "history_turns": len(chat_history),
+        "finding": finding_dict,
         "cited_doc_ids": cited_doc_ids,
         "cited_discovery": cited_discovery,
         "discovery_counts": discovery_counts,
@@ -372,6 +547,77 @@ def verify_case_ids_exist(case_ids: list[str]) -> dict[str, bool]:
     return existence
 
 
+def grade_verdict(entry: dict, run: dict) -> dict:
+    """Check the adequacy-judge finding against a case's verdict expectations.
+
+    Case fields (both optional):
+      expected_verdict            — ANSWER | CLARIFY | DECLINE
+      expected_clarification_axis — case-insensitive SUBSTRING of finding.clarification.axis
+
+    An expected_verdict of CLARIFY additionally requires the finding to carry a
+    usable clarification: at least two options for the user to pick from (a
+    one-option "clarification" is a statement, not a choice).
+
+    Returns {verdict_checked, verdict_pass, actual_verdict, verdict_reason}.
+    When the run carries no finding — the adequacy judge is disabled or its
+    module is not importable — the check is SKIPPED (verdict_checked False,
+    verdict_pass True) so this harness still runs green on a branch without the
+    judge. The summary marks such cases UNCHECKED so a skip is never mistaken
+    for a pass.
+    """
+    expected = (entry.get("expected_verdict") or "").strip().upper()
+    expected_axis = (entry.get("expected_clarification_axis") or "").strip()
+    if not expected and not expected_axis:
+        return {
+            "verdict_checked": False,
+            "verdict_pass": True,
+            "actual_verdict": (run.get("finding") or {}).get("verdict"),
+            "verdict_reason": "",
+        }
+    if expected and expected not in VALID_VERDICTS:
+        return {
+            "verdict_checked": True,
+            "verdict_pass": False,
+            "actual_verdict": None,
+            "verdict_reason": (
+                f"case declares expected_verdict={expected!r}, not one of {VALID_VERDICTS}"
+            ),
+        }
+
+    finding = run.get("finding")
+    if not finding:
+        return {
+            "verdict_checked": False,
+            "verdict_pass": True,
+            "actual_verdict": None,
+            "verdict_reason": "no finding on run (adequacy judge disabled/unavailable)",
+        }
+
+    actual = str(finding.get("verdict") or "").strip().upper()
+    problems: list[str] = []
+    if expected and actual != expected:
+        problems.append(f"expected verdict {expected}, got {actual or '(none)'}")
+
+    clar = finding.get("clarification") or {}
+    if expected == "CLARIFY":
+        options = list(clar.get("options") or [])
+        if len(options) < 2:
+            problems.append(f"CLARIFY needs >=2 clarification options, got {len(options)}")
+    if expected_axis:
+        axis = str(clar.get("axis") or "")
+        if expected_axis.lower() not in axis.lower():
+            problems.append(
+                f"expected clarification axis containing {expected_axis!r}, got {axis!r}"
+            )
+
+    return {
+        "verdict_checked": True,
+        "verdict_pass": not problems,
+        "actual_verdict": actual or None,
+        "verdict_reason": "; ".join(problems),
+    }
+
+
 def grade(entry: dict, run: dict, case_existence: dict[str, bool], run_judge: bool = True) -> dict:
     """Grade one run against its golden-set expectations.
 
@@ -417,12 +663,20 @@ def grade(entry: dict, run: dict, case_existence: dict[str, bool], run_judge: bo
     # judge-gated. An ERROR verdict is NOT a pass (fail-closed).
     judge_pass = True if not rubric else (judge_verdict == "PASS")
 
-    overall_pass = cite_pass and judge_pass and no_hallucination
+    # --- Adequacy-judge verdict expectations (ANSWER / CLARIFY / DECLINE).
+    v = grade_verdict(entry, run)
+
+    overall_pass = cite_pass and judge_pass and no_hallucination and v["verdict_pass"]
 
     return {
         "queryId": run["queryId"],
         "stratum": run["stratum"],
         "tags": entry.get("tags", []) or [],
+        "expected_verdict": (entry.get("expected_verdict") or "").strip().upper() or None,
+        "verdict_checked": v["verdict_checked"],
+        "verdict_pass": v["verdict_pass"],
+        "actual_verdict": v["actual_verdict"],
+        "verdict_reason": v["verdict_reason"],
         "cite_hits": cite_hits,
         "cite_pass": cite_pass,
         "fact_hits": fact_hits,
@@ -460,14 +714,9 @@ def run_mode(
     answerstream_prompt: str | None = None,
     agenticretrieval_prompt: str | None = None,
     workers: int = 1,
+    tags: list[str] | None = None,
 ) -> None:
-    entries = load_queries()
-    if ids:
-        wanted = set(ids)
-        entries = [e for e in entries if e.get("queryId") in wanted]
-        missing = wanted - {e.get("queryId") for e in entries}
-        if missing:
-            logger.warning(f"--ids not found in golden set: {sorted(missing)}")
+    entries = filter_entries(load_queries(), ids=ids, tags=tags)
     if out_path is None:
         out_path = BASELINE_PATH if mode == "baseline" else AFTER_PATH
 
@@ -635,7 +884,14 @@ def _print_grade_summary(mode: str, entries: list[dict], grades: list[dict]) -> 
             problems.append(f"JUDGE {verdict}: {g.get('judge_reason', '')}")
         if not g["no_hallucination"]:
             problems.append(f"HALLUCINATED cases {g['hallucinated_case_ids']}")
+        if not g.get("verdict_pass", True):
+            problems.append(f"VERDICT: {g.get('verdict_reason', '')}")
         status = "OK" if not problems else "FAIL"
+        # A declared expected_verdict that could not be evaluated (no finding on
+        # the run) is neither a pass nor a fail — say so rather than let a skip
+        # read as a green check.
+        if g.get("expected_verdict") and not g.get("verdict_checked"):
+            status = f"{status} [verdict UNCHECKED: {g.get('verdict_reason', '')}]"
         # Surface the judge reason even on PASS for auditability.
         judge_note = ""
         if g.get("has_rubric") and g.get("judge_pass") and not problems:
@@ -655,12 +911,64 @@ def _print_grade_summary(mode: str, entries: list[dict], grades: list[dict]) -> 
         logger.info("\n--- external/blocked (not counted in gate) ---")
         for bl in blocked_lines:
             logger.info(bl)
+    verdict_counts: dict[str, int] = {}
+    for g in grades:
+        av = g.get("actual_verdict")
+        if av:
+            verdict_counts[av] = verdict_counts.get(av, 0) + 1
+    if verdict_counts:
+        dist = ", ".join(f"{v}={verdict_counts[v]}" for v in sorted(verdict_counts))
+        logger.info(f"\n--- adequacy verdicts: {dist} ---")
     logger.info(
         f"\n{gated - hard_fail}/{gated} passed intra-run gates "
         f"({hard_fail} flagged; {len(blocked_lines)} external/blocked excluded). "
-        f"Gate = must_cite AND judge(rubric) AND no-hallucination. "
+        f"Gate = must_cite AND judge(rubric) AND no-hallucination AND verdict. "
         f"Run --compare-only after both baseline+after for drift."
     )
+
+
+def _run_verdict(run: dict | None) -> str:
+    """The adequacy verdict recorded on a run, or '-' when none was captured."""
+    if not run:
+        return "-"
+    finding = run.get("finding") or {}
+    return str(finding.get("verdict") or "-").upper()
+
+
+def _print_verdict_flips(base_runs: dict[str, dict], after_runs: dict[str, dict]) -> None:
+    """Report adequacy-verdict distribution per run and every per-case flip.
+
+    A flip is the headline signal when tuning the adequacy judge: a case that
+    used to ANSWER now DECLINEs (over-refusal) or vice versa (over-reach). '-'
+    means that run captured no finding (judge disabled or unavailable).
+    """
+    base_counts: dict[str, int] = {}
+    after_counts: dict[str, int] = {}
+    flips: list[tuple[str, str, str]] = []
+    for qid, b in base_runs.items():
+        a = after_runs.get(qid)
+        bv, av = _run_verdict(b), _run_verdict(a)
+        base_counts[bv] = base_counts.get(bv, 0) + 1
+        if a is not None:
+            after_counts[av] = after_counts.get(av, 0) + 1
+        if a is not None and bv != av:
+            flips.append((qid, bv, av))
+
+    if not any(v in VALID_VERDICTS for v in (*base_counts, *after_counts)):
+        return  # neither run carried adequacy findings — nothing to report
+
+    def _fmt(counts: dict[str, int]) -> str:
+        return ", ".join(f"{k}={counts[k]}" for k in sorted(counts)) or "(none)"
+
+    logger.info("\n=== ADEQUACY VERDICTS ===")
+    logger.info(f"  baseline: {_fmt(base_counts)}")
+    logger.info(f"  after:    {_fmt(after_counts)}")
+    if flips:
+        logger.info(f"\n  verdict flips ({len(flips)}):")
+        for qid, bv, av in sorted(flips):
+            logger.info(f"    {qid}: {bv} → {av}")
+    else:
+        logger.info("\n  verdict flips: none")
 
 
 def compare() -> None:
@@ -760,6 +1068,8 @@ def compare() -> None:
             logger.info(f"      NEW HALLUCINATED cases: {new_halluc}")
         if new_forbidden:
             logger.info(f"      NEW FORBIDDEN phrases: {new_forbidden}")
+
+    _print_verdict_flips(base_runs, after_runs)
 
     # Loop-effort summary (soft signal, does not gate the exit code).
     if base_turns_total or after_turns_total:
@@ -888,6 +1198,12 @@ def main() -> None:
         help="Comma-separated queryIds to restrict the run to (subset testing)",
     )
     parser.add_argument(
+        "--tags",
+        default="",
+        help="Comma-separated tags; run only cases whose `tags:` list contains one of "
+        "them (case-insensitive). e.g. --tags scope. Combines with --ids (ANDed).",
+    )
+    parser.add_argument(
         "--out",
         default="",
         help="Override output JSON path (default baseline.json/after.json by --mode)",
@@ -919,7 +1235,10 @@ def main() -> None:
     args = parser.parse_args()
 
     ids = [s.strip() for s in args.ids.split(",") if s.strip()] or None
+    tags = [s.strip() for s in args.tags.split(",") if s.strip()] or None
     out_path = args.out or None
+    if adequacy_enabled():
+        logger.info(f"{ADEQUACY_ENV_FLAG}=true — running the post-retrieval adequacy judge.")
     answerstream_prompt = None
     if args.candidate_answerstream:
         answerstream_prompt = _load_answerstream_from_toml(args.candidate_answerstream)
@@ -963,6 +1282,7 @@ def main() -> None:
         answerstream_prompt=answerstream_prompt,
         agenticretrieval_prompt=agenticretrieval_prompt,
         workers=args.workers,
+        tags=tags,
     )
 
 

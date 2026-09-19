@@ -215,6 +215,22 @@ def process_document(document, local_pdf_path: str):
 # downstream chunk with a nonsense heading.
 _LEADER_IN_LINE = re.compile(r"(?:\.[ \t\xa0]*){5,}\.")
 
+# WPAM page references ("7-40" = chapter 7, page 40). They appear both in the
+# front-matter TOC and, once per page, in the running footer — so the token
+# alone proves nothing. Only a *short* line made of little else is a genuine
+# TOC/footer artifact; prose that merely contains a range is much longer.
+_WPAM_PAGE_REF_RE = re.compile(r"\b\d+-\d+\b")
+_WPAM_PAGE_REF_MAX_CHARS = 12
+
+# A table-of-contents entry: a dot-leader run that ENDS the line at a page
+# number ("Board of Review ......... 20-3"). The trailing number is what
+# separates a TOC from the dot-leader *cost tables* that make up most of WPAM
+# Volume 2, whose leaders run to a unit or a price instead
+# ("RC1 - Carport . . . . . . SF", "1000 gallon . . . . . . $").
+_TOC_ENTRY_LINE = re.compile(
+    r"(?:\.[ \t\xa0]*){5,}\.[ \t\xa0]*\d{1,4}(?:\s*-\s*\d{1,4})?[ \t\xa0]*$"
+)
+
 # Titan Embed Text v2 silently truncates inputs past 8000 characters in
 # embed.py. Any chunk larger than this was partially vector-invisible:
 # stored in Neptune, shown at retrieval, but the tail bytes were not part of
@@ -845,6 +861,53 @@ def chunk_document_admin_rule(header_split, file, BUCKET, line_page_mapping):
     return final_chunks
 
 
+def wpam_is_probably_toc(body_lines: list[str]) -> bool:
+    """Detect full or mini TOCs from a chunk's BODY lines.
+
+    Structural only — no keyword test. Earlier versions dropped ~89% of
+    every WPAM Volume 1 edition:
+
+    * They ran on the flushed text, which has the chapter heading
+      prepended, then matched ``^Chapter N`` + any ``\\d+-\\d+`` token.
+      Every WPAM page carries a footer like "7-40", so ordinary prose
+      chunks were discarded on the strength of one footer line.
+    * They dropped any chunk whose text merely contained "appendix",
+      "glossary" or "revisions" — which discards the glossary BODY
+      (where definitions such as "clear height" live) and any prose
+      mentioning an appendix.
+
+    A real TOC page is recognised by its shape instead:
+      (a) at least three TOC *entry* lines — a dot-leader run ending at a
+          page number — and those making up more than 30% of the chunk, or
+      (b) a majority-ish of *short* page-reference lines — bare "7-40"
+          style entries, never prose that happens to contain a range.
+
+    (a) deliberately tests for the trailing page number rather than the
+    leader dots alone: WPAM Volume 2 lays its cost tables out with dot
+    leaders too ("RC1 - Carport . . . . . . SF"), and a leaders-only test
+    discarded ~50K characters of real pricing content from that volume.
+    """
+    lines = [line for line in body_lines if line.strip()]
+    if len(lines) < 2:
+        return False
+
+    toc_entries = sum(1 for line in lines if _TOC_ENTRY_LINE.search(line))
+    if toc_entries >= 3 and toc_entries / len(lines) > 0.3:
+        return True
+
+    # Bare page references only: a running footer ("7-40") or a TOC entry
+    # stripped of its leader dots. Prose containing a range ("see 70.32(1),
+    # pages 7-40 through 7-52") is far longer than this and never counts.
+    page_ref_lines = [
+        line
+        for line in lines
+        if _WPAM_PAGE_REF_RE.search(line) and len(line.strip()) <= _WPAM_PAGE_REF_MAX_CHARS
+    ]
+    if len(lines) >= 5 and len(page_ref_lines) / len(lines) > 0.3:
+        return True
+    return False
+
+
 def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
     """
     Chunk Wisconsin Property Assessment Manual (WPAM) PDFs.
@@ -946,21 +1009,6 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
             return 0
         return sum(len(text) for text, _ in buffer) + len(buffer) - 1
 
-    def is_probably_toc(text: str) -> bool:
-        """Detect full or mini TOCs."""
-        lowered = text.lower()
-        if any(k in lowered for k in ["table of contents", "appendix", "glossary", "revisions"]):
-            return True
-        lines = text.splitlines()
-        if len(lines) < 2:
-            return False
-        page_refs = sum(1 for line in lines if re.search(r"\b\d+-\d+\b", line))
-        if page_refs / max(1, len(lines)) > 0.3:
-            return True
-        if re.match(r"^Chapter\s+\d+", text) and re.search(r"\b\d+-\d+\b", text):
-            return True
-        return False
-
     # --- Chunk Collector ---
     def flush_chunk(buffer: list[tuple[str, int]], chapter=None, section=None):
         if not buffer:
@@ -970,8 +1018,13 @@ def chunk_document_wpam(header_split, file, BUCKET, line_page_mapping):
         chapter = chapter or ""
         section = section or ""
         heading = f"{chapter}\n{section}".strip()
+        # TOC detection runs on the body only: the heading is prepended here,
+        # so including it made every chunk under a "Chapter N" heading look
+        # like a TOC entry.
+        if wpam_is_probably_toc(body_lines):
+            return
         text = "\n".join(([heading] + body_lines) if heading else body_lines).strip()
-        if not text or is_probably_toc(text):
+        if not text:
             return
 
         pages = {page for _, page in buffer}

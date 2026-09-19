@@ -77,9 +77,13 @@ ALLOWED_METADATA_KEYS = frozenset(
         "diversityCapPerDoc",
         "seeded",
         "filtered",
+        # Adequacy judge (post-retrieval) — see adequacy_judge.py.
+        "clarificationOffered",
+        "judgeModelId",
         # Flowchart seed (pre-loop router) — see flowchart_router.py.
         "flowchartId",
         "routerScore",
+        "routerMatchedOn",
         "sourceUrl",
         "wpamPage",
     }

@@ -225,7 +225,7 @@ Responses stream to the frontend via API Gateway WebSocket. The `websocket_utils
 
 ### GraphRAG Data Model
 
-Neptune Analytics graph (`g-ndvl4j73v4` in us-east-1) with 1024-dim vectors and IAM auth.
+Neptune Analytics graph with 1024-dim vectors and IAM auth. **Live graph as of 2026-09-18: `g-svphgiu4k6`** (re-indexed WPAM), selected by the `neptuneGraphIdOverride` context pinned in `infra/cdk.json`; the CDK-owned construct graph `g-ndvl4j73v4` is the rollback until it is deleted. Fargate `load` targets the CDK-owned graph unless you pass `--graph-id`; the task role is also granted the `stagingGraphId` context graph. Use `--graph-id g-svphgiu4k6` for loads until the construct is re-pointed.
 
 **Node types:** Framework → Document → Chunk (with vector embeddings), Topic nodes for semantic grouping.
 

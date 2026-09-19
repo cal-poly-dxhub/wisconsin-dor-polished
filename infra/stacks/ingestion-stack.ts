@@ -113,6 +113,13 @@ export class IngestionStack extends cdk.NestedStack {
         ],
         resources: [
           `arn:aws:neptune-graph:${this.region}:${this.account}:graph/${props.neptuneGraphId}`,
+          // `-c stagingGraphId=g-xxxx` also grants a second graph so it can be
+          // loaded from Fargate (`run_fargate.sh load --graph-id g-xxxx`) and
+          // validated BEFORE the Lambda is pointed at it with
+          // `-c neptuneGraphIdOverride` (stack.ts). Both keys may be set.
+          ...(((this.node.tryGetContext('stagingGraphId') as string | undefined)
+            ? [`arn:aws:neptune-graph:${this.region}:${this.account}:graph/${this.node.tryGetContext('stagingGraphId')}`]
+            : [])),
         ],
       })
     );

@@ -17,24 +17,53 @@
 #   - stratum:           bucket. A = fact gate only; B/D/E = cite + fact gate.
 #                        must_not_contain is enforced on A/B/D/E. Hallucinated
 #                        case citations fail any stratum.
-#   - tags:              METADATA ONLY (ignored by the grader). Group a guard by
-#                        fix workstream so you can filter (e.g. grep
-#                        'synthesis-guardrail').
+#   - tags:              Grouping labels. Ignored by the GRADER, but `--tags a,b`
+#                        selects which rows to run, so a tag is how you run one
+#                        cheap slice (e.g. `--tags scope`).
 #   - queryId:           an opaque, stable label for the row (used to select /
 #                        report a single case). Not a production identifier.
 #
+# ── ADEQUACY-JUDGE (SCOPE) FIELDS ────────────────────────────────────────────
+# With ADEQUACY_JUDGE_ENABLED=true the harness runs the post-retrieval adequacy
+# judge after Phase A and feeds its Finding into Phase B. Two extra per-case
+# fields then gate:
+#   - expected_verdict:            ANSWER | CLARIFY | DECLINE. Must equal
+#                                  finding.verdict. CLARIFY additionally requires
+#                                  finding.clarification.options to hold >= 2
+#                                  options (a one-option "choice" is not a choice).
+#   - expected_clarification_axis: case-insensitive SUBSTRING of
+#                                  finding.clarification.axis. Only set this when
+#                                  the axis wording is genuinely predictable —
+#                                  leave it off and let expected_verdict carry the
+#                                  case otherwise.
+# Both are optional; a row without them is graded exactly as before. When the
+# judge is disabled or not importable, these expectations are reported as
+# UNCHECKED (never as a silent pass).
+#
+#   - history:           optional prior turns for a MULTI-TURN case, oldest first:
+#                          history:
+#                            - query: "<the earlier user turn>"
+#                              answer: "<the assistant's reply>"
+#                              clarification: "<optional: the question it ended on>"
+#                        `clarification` is appended to that turn's answer text, so
+#                        a follow-up like "Agricultural" is interpretable as the
+#                        reply to the question the assistant just asked. The list is
+#                        passed as chat_history to BOTH run_agentic_loop and
+#                        build_answer_context — the production shape.
+#
 # ── WHAT THIS HARNESS CANNOT TEST (deliberately excluded) ─────────────────────
-# run_graph_regression.run_one_query() calls run_agentic_loop() DIRECTLY, which
-# does NOT invoke the pre-loop query classifier (classify_query lives only in
-# handler.py). So this harness CANNOT observe an OUT_OF_SCOPE / DISAMBIGUATE /
-# TOPIC_SHIFT verdict — every query here is forced through retrieval. Therefore:
-#   * Rows tagged oos-content-half appear here only as their CONTENT half — "IF
-#     we proceed, does retrieval find the right material?". Their BEHAVIORAL half
-#     (must the classifier stop refusing?) is a classifier-harness guard, NOT
-#     expressible here.
-#   * Pure classifier decisions (PROCEED / DISAMBIGUATE / OUT_OF_SCOPE) belong in
-#     the sibling classifier harness (classifier_regression_queries.yaml +
-#     run_classifier_regression.py), which exercises classify_query directly.
+# run_graph_regression.run_one_query() calls run_agentic_loop() DIRECTLY, so it
+# never invokes the legacy PRE-loop query classifier (classify_query in
+# handler.py). Scope behavior is now graded through its replacement — the
+# POST-retrieval adequacy judge (expected_verdict above), which this harness DOES
+# exercise. What remains out of reach here:
+#   * Any residual pre-loop classifier decision (PROCEED / DISAMBIGUATE /
+#     OUT_OF_SCOPE) belongs in the sibling classifier harness
+#     (classifier_regression_queries.yaml + run_classifier_regression.py), which
+#     exercises classify_query directly.
+#   * Rows tagged oos-content-half predate the adequacy judge and appear here only
+#     as their CONTENT half — "IF we proceed, does retrieval find the right
+#     material?".
 #
 # Two-run workflow (see run_graph_regression.py docstring):
 #   --mode baseline   (capture current behavior BEFORE deploying a change)
@@ -908,7 +937,11 @@ queries:
 
   - queryId: gq-wpam-clear-height-absent
     stratum: B
-    tags: [ingestion-gap, negative]
+    tags: [ingestion-gap, negative, scope]
+    # Honest-no: the question IS a Wisconsin property-assessment question, so the
+    # adequacy judge must let it through (ANSWER) and let the answer say the
+    # corpus has no definition — NOT refuse it as out of scope.
+    expected_verdict: ANSWER
     query: "How does the Wisconsin Property Assessment Manual define a building's clear height?"
     rubric: >
       PASS only if the answer states that the retrievable WPAM text (Volumes 1
@@ -921,3 +954,345 @@ queries:
     notes: >
       Negative control for the Volume 2 ingest: Volume 2 has appraisal/architectural
       glossaries but no "clear height" entry; the bot must not over-reach.
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SCOPE / ADEQUACY SET  (tag: scope)  — added with the post-retrieval adequacy
+#  judge that replaces the pre-loop scope/disambiguation classifier.
+#
+#  Run just this slice:
+#    ADEQUACY_JUDGE_ENABLED=true AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 \
+#      python tools/ingestion/ops/run_graph_regression.py --mode after --tags scope
+#
+#  Each row carries expected_verdict (ANSWER | CLARIFY | DECLINE). The rubric
+#  grades the ANSWER TEXT; expected_verdict grades the JUDGE'S DECISION. Both
+#  must pass. The four sub-groups below are deliberately balanced: refusing the
+#  garbage is easy, and the cost of a judge tuned to refuse is paid by the
+#  "borderline but in scope" and "honest-no" rows, which must still ANSWER.
+# ══════════════════════════════════════════════════════════════════════════════
+
+  # ── DECLINE: nothing in the corpus bears on the question ────────────────────
+  - queryId: gq-oos-sky-is-blue
+    stratum: B
+    tags: [scope, out-of-scope]
+    expected_verdict: DECLINE
+    query: "the sky is blue"
+    rubric: >
+      PASS if, in two sentences or fewer, the answer states that nothing in its
+      Wisconsin property-tax materials bears on this input AND names what it does
+      cover (Wisconsin property assessment / taxation). FAIL if it fabricates a
+      property-tax connection, cites a source as if responsive, lectures at
+      length about scope or about the sky, or asks a clarifying question instead
+      of declining.
+    must_cite: []
+    notes: >
+      Pure non-question. Anchors the DECLINE end of the scale — if this ever
+      returns ANSWER, the judge is not discriminating at all.
+
+  - queryId: gq-oos-python-reverse-list
+    stratum: B
+    tags: [scope, out-of-scope]
+    expected_verdict: DECLINE
+    query: "write me a python function to reverse a list"
+    rubric: >
+      PASS if, in two sentences or fewer, the answer declines because nothing in
+      its Wisconsin property-tax materials bears on the request AND names what it
+      does cover. FAIL if it writes any code, offers to write code, or pads the
+      refusal with a lecture.
+    must_cite: []
+    notes: >
+      Coding help — a capability probe, not a domain question. Must not be
+      answered even though the model plainly could.
+
+  - queryId: gq-oos-madison-weather
+    stratum: B
+    tags: [scope, out-of-scope]
+    expected_verdict: DECLINE
+    query: "what's the weather in Madison"
+    rubric: >
+      PASS if, in two sentences or fewer, the answer says nothing in its
+      Wisconsin property-tax materials addresses the weather AND names what it
+      does cover. FAIL if it states or guesses any weather conditions, or
+      stretches to a property-tax angle (e.g. weather-related assessment
+      adjustments) that the user did not ask about.
+    must_cite: []
+    notes: >
+      Wisconsin-flavored but out of domain — guards against "mentions Wisconsin,
+      therefore in scope".
+
+  - queryId: gq-oos-federal-1040
+    stratum: B
+    tags: [scope, out-of-scope]
+    expected_verdict: DECLINE
+    query: "how do I file my federal 1040"
+    rubric: >
+      PASS if, in two sentences or fewer, the answer says federal income-tax
+      filing is outside its Wisconsin property-tax materials AND names what it
+      does cover (it may point the user to the IRS in passing). FAIL if it walks
+      through any part of the 1040 filing process, or cites a Wisconsin
+      property-tax source as if it were responsive.
+    must_cite: []
+    notes: >
+      The hardest DECLINE: adjacent domain (tax), wrong jurisdiction and wrong
+      tax. Guards against "it says tax, so answer it".
+
+  # ── ANSWER: borderline-looking but squarely in scope ─────────────────────────
+  - queryId: gq-scope-markarian-case
+    stratum: B
+    tags: [scope, borderline-in-scope]
+    expected_verdict: ANSWER
+    query: "What is the Markarian case?"
+    rubric: >
+      PASS if the answer identifies State ex rel. Markarian v. City of Cudahy as
+      a Wisconsin property-assessment case and says what it stands for (the
+      presumption of correctness afforded an assessor's valuation / that an
+      assessment is set aside only on evidence the assessor did not follow the
+      statutory method), citing the case. FAIL if the answer refuses, says the
+      case is outside its materials, asks a clarifying question instead of
+      answering, or invents a holding about an unrelated subject.
+    must_cite: [case-law-45-wis-2d-683]
+    notes: >
+      A bare case name with no property-tax words in it reads like an
+      out-of-domain question; the case IS in the corpus. Over-refusal tripwire.
+
+  - queryId: gq-scope-sausen-case
+    stratum: B
+    tags: [scope, borderline-in-scope]
+    expected_verdict: ANSWER
+    query: "Summarize Sausen v Town of Black Creek Board of Review"
+    rubric: >
+      PASS if the answer summarizes Sausen v. Town of Black Creek Board of Review
+      as a Wisconsin property-assessment / Board-of-Review case and reports what
+      it held, citing the case from its materials. FAIL if it refuses, says the
+      case is not in its materials, asks a clarifying question instead of
+      answering, or attributes a holding it cannot support from the cited source.
+    must_cite: [case-law-352-wis-2d-576]
+    notes: >
+      Second over-refusal tripwire on case-name-only queries. Paired with
+      gq-scope-prime-leather-absent, which is the SAME shape for a case that is
+      NOT in the corpus — together they separate "refuses case names" from
+      "honestly reports a gap".
+
+  - queryId: gq-scope-innovation-grant-count
+    stratum: B
+    tags: [scope, borderline-in-scope]
+    expected_verdict: ANSWER
+    query: "What is the maximum number of Innovation Grant applications a private entity can submit?"
+    rubric: >
+      PASS if the answer addresses how many Innovation Grant applications a
+      private entity may submit, grounded in the DOR Innovation Grant material
+      (the slf-ig common-questions FAQ and/or §79.038). FAIL if the answer
+      refuses the question as outside its materials, or asks a clarifying
+      question rather than answering. If the ingested material does not state a
+      maximum, saying so plainly is a PASS — a fabricated number is a FAIL.
+    must_cite: [faq_pages-slf-ig]
+    notes: >
+      Grant-program administration reads like a non-property-tax question but is
+      DOR State & Local Finance material that IS in the corpus (slf-ig). Must not
+      be refused.
+
+  - queryId: gq-scope-assessment-date-time
+    stratum: B
+    tags: [scope, borderline-in-scope, guard]
+    expected_verdict: ANSWER
+    query: "Assessments are set at what time of day on January 1 of each year?"
+    rubric: >
+      PASS if the answer states that Wisconsin assessments are fixed as of the
+      close of January 1 (§70.10's assessment-date rule — property is assessed
+      according to its status as of the close of that day), citing ch. 70. FAIL
+      if the answer refuses the question, asks a clarifying question instead of
+      answering, or invents a clock time not supported by the statute.
+    must_cite: [statutes-70]
+    must_contain: ["70\\.10|close of"]
+    notes: >
+      Task 70. An oddly specific "time of day" phrasing invites either a refusal
+      or an invented hour; the statute's answer is "the close of January 1".
+      Tagged `guard` as well as `scope` — it is both an over-refusal tripwire and
+      a content guard.
+
+  # ── CLARIFY: in scope, but the answer turns on a fact only the user has ──────
+  - queryId: gq-clarify-land-classification-appeal
+    stratum: B
+    tags: [scope, clarify]
+    expected_verdict: CLARIFY
+    expected_clarification_axis: classification
+    query: "How do I appeal the classification of my land?"
+    rubric: >
+      PASS if the answer gives the general classification-appeal path with
+      citations (assessor contact / open book, Board of Review objection under
+      ch. 70, and the separate manufacturing path to the State Board of
+      Assessors) AND ends by asking which classification is at issue, offering
+      concrete alternatives that include agricultural and manufacturing. FAIL if
+      it asks the clarifying question with no substantive path or citations (a
+      bare "which do you mean?"), or if it commits to one classification's
+      procedure as if the user had already said which one applies.
+    must_cite: [statutes-70]
+    notes: >
+      The appeal route genuinely forks on classification (ag/undeveloped vs.
+      manufacturing vs. general), so a useful answer is "here is the common path,
+      and which one are you?" — substance FIRST, question LAST. Duplicates the
+      query of gq-appeal-land-classification deliberately: that row is the
+      pre-judge content anchor (and is blocked-on-dor-content, ungated); this row
+      grades the new CLARIFY behavior.
+
+  - queryId: gq-clarify-property-exempt
+    stratum: B
+    tags: [scope, clarify]
+    expected_verdict: CLARIFY
+    query: "Is my property exempt from taxation?"
+    rubric: >
+      PASS if the answer explains that exemption under §70.11 turns on the
+      owner's character and the property's use, gives the general framework with
+      citations (including the presumption of taxability), and ends by asking
+      what kind of owner/use is involved with concrete alternatives to pick from.
+      FAIL if it asserts an exempt-or-taxable verdict for the user's specific
+      property, or asks a bare clarifying question with no substantive framework.
+    must_cite: [statutes-70]
+    notes: >
+      No expected_clarification_axis: the natural axis here could be phrased as
+      ownership, use, or property type, and pinning one wording would grade the
+      judge's vocabulary rather than its behavior. Tighten once the first run
+      shows what the judge actually emits.
+
+  - queryId: gq-clarify-forms-to-file
+    stratum: B
+    tags: [scope, clarify]
+    expected_verdict: CLARIFY
+    query: "What forms do I need to file?"
+    rubric: >
+      PASS if the answer explains that the required forms depend on who is filing
+      and what property is involved, names some concrete examples from its
+      materials, and ends by asking which situation applies with concrete
+      alternatives to choose from. FAIL if it dumps an undifferentiated form list
+      as though it were responsive, or asks a bare clarifying question with no
+      substance at all.
+    must_cite: []
+    notes: >
+      Maximally underspecified but plainly in domain — the DECLINE path would be
+      wrong here. No expected_clarification_axis: the axis could reasonably be
+      the filer's role or the property type.
+
+  - queryId: gq-clarify-how-assessed
+    stratum: B
+    tags: [scope, clarify]
+    expected_verdict: CLARIFY
+    expected_clarification_axis: classification
+    query: "How is my property assessed?"
+    rubric: >
+      PASS if the answer gives the general assessment framework with citations
+      (full market value under §70.32, the assessor's January 1 valuation, and
+      that agricultural land is valued by use rather than market value) AND ends
+      by asking what kind of property it is, offering concrete alternatives
+      (e.g. residential, agricultural, commercial, manufacturing). FAIL if it
+      picks one classification's method and presents it as THE answer, or asks a
+      bare clarifying question with no framework or citations.
+    must_cite: [statutes-70]
+    notes: >
+      The method genuinely differs by classification (market value vs. use value
+      vs. state assessment), which is what makes this a real CLARIFY rather than
+      a lazy one.
+
+  # ── ANSWER: the clarified follow-up must NOT re-ask ──────────────────────────
+  - queryId: gq-clarified-ag-classification-appeal
+    stratum: B
+    tags: [scope, clarify-followup]
+    expected_verdict: ANSWER
+    query: "Agricultural"
+    history:
+      - query: "How do I appeal the classification of my land?"
+        answer: >
+          The appeal path depends on how your land is classified. In general you
+          start with the assessor at open book, then file a written objection
+          with the Board of Review under ch. 70; manufacturing classification is
+          different and goes to the State Board of Assessors.
+        clarification: >
+          Which classification is at issue — agricultural, undeveloped or
+          agricultural forest, manufacturing, or residential/commercial?
+    rubric: >
+      PASS if the answer treats "Agricultural" as the reply to the prior
+      question and gives the agricultural-classification appeal path — assessor /
+      open book, then a written objection to the Board of Review under ch. 70 —
+      grounded in the agricultural classification rules (§70.32(2) — the
+      agricultural definition and/or use-value standard — and/or Tax 18) with
+      citations. FAIL if the answer asks the user again which classification
+      they mean, treats "Agricultural" as a new standalone topic and ignores the
+      prior turn, or refuses it as too vague.
+    must_cite: [statutes-70]
+    must_not_contain: ["which classification|what classification|clarify which"]
+    notes: >
+      Two-turn: the CLARIFY turn above (gq-clarify-land-classification-appeal)
+      followed by the user's one-word answer. The judge must read the history,
+      see the axis already resolved, and return ANSWER — not CLARIFY again.
+
+  - queryId: gq-clarified-ag-how-assessed
+    stratum: B
+    tags: [scope, clarify-followup]
+    expected_verdict: ANSWER
+    query: "Agricultural"
+    history:
+      - query: "How is my property assessed?"
+        answer: >
+          Wisconsin property is generally assessed at full market value as of
+          January 1 under §70.32, but the method depends on the property's
+          classification — agricultural land, for example, is valued by use
+          rather than by market value.
+        clarification: >
+          What kind of property is it — residential, agricultural, commercial, or
+          manufacturing?
+    rubric: >
+      PASS if the answer treats "Agricultural" as the reply to the prior question
+      and explains how agricultural land is assessed — use value rather than
+      market value, per §70.32(2)(a)4 / the use-value guidelines — with
+      citations. FAIL if it asks again what kind of property it is, ignores the
+      prior turn, or explains market-value assessment as though the
+      classification were still unknown.
+    must_cite: [statutes-70]
+    must_not_contain: ["what kind of property|which classification|can you clarify"]
+    notes: >
+      Second two-turn case: the same one-word follow-up against a DIFFERENT prior
+      question, so a PASS cannot come from pattern-matching the word
+      "Agricultural" to one hardcoded answer.
+
+  # ── ANSWER: honest no — in scope, but the corpus has no answer ───────────────
+  - queryId: gq-scope-prime-leather-absent
+    stratum: B
+    tags: [scope, negative, honest-no]
+    expected_verdict: ANSWER
+    query: "How does the Prime Leather Finishing case affect BOA increases?"
+    rubric: >
+      PASS if the answer states plainly that the Prime Leather Finishing case is
+      not in its materials and does NOT state a holding for it. It may still
+      explain, from sources it does cite, how assessment increases work at the
+      State Board of Assessors / Board of Review. FAIL if it asserts any holding,
+      outcome, year, or effect for Prime Leather Finishing, or attributes such a
+      holding to a document it cites.
+    must_cite: []
+    must_not_contain: ["Prime Leather Finishing[^.]{0,80}(held|holding|court ruled|established that)"]
+    notes: >
+      Honest-no counterpart to gq-scope-markarian-case / gq-scope-sausen-case:
+      same case-name shape, but this case is NOT in the corpus. The judge should
+      let it through (the question is in domain) and the answer should own the
+      gap. Fabricating a holding is the failure mode being guarded.
+
+# ── Task 70 content guard (not a scope case) ─────────────────────────────────
+  - queryId: gq-boa-increase-named-body
+    stratum: B
+    tags: [guard, synthesis-guardrail]
+    expected_verdict: ANSWER
+    query: "Can the BOA increase an assessment even if an owner appeals to have it reduced?"
+    rubric: >
+      "BOA" here means the State Board of Assessors (manufacturing property,
+      §70.995), NOT the local Board of Review. PASS ONLY if the State Board of
+      Assessors / §70.995 path comes FIRST and is the answer's primary subject —
+      i.e. it resolves whether the State Board of Assessors may increase an
+      assessment on an owner's objection — with the local Board of Review
+      appearing at most as a brief contrast at the end, if at all. FAIL if the
+      answer leads with the Board of Review, treats "BOA" as the Board of Review,
+      gives the two bodies equal billing, or never names which body it is
+      answering about.
+    must_cite: [statutes-70]
+    must_contain: ["70\\.995"]
+    notes: >
+      Task 70. The acronym collides with "Board of Review" in the corpus, and the
+      failure mode is answering about the wrong body. Ordering is the graded
+      property, which only the rubric judge can see — must_contain just pins
+      §70.995 as present.

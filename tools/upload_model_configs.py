@@ -19,11 +19,11 @@ Usage:
 import argparse
 import os
 import sys
+import tomllib
 from decimal import Decimal
 from pathlib import Path
 
 import boto3
-import toml
 
 script_dir = Path(__file__).parent
 repo_root = script_dir.parent
@@ -59,8 +59,8 @@ def parse_toml_config(config_file: str) -> dict[str, ModelConfig]:
     if not os.path.exists(config_file):
         raise FileNotFoundError(f"Configuration file not found: {config_file}")
 
-    with open(config_file) as f:
-        toml_data = toml.load(f)
+    with open(config_file, "rb") as f:
+        toml_data = tomllib.load(f)  # stdlib parser — same one the Lambda uses
 
     configs = {}
     for config_id, config_data in toml_data.items():

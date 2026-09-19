@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+from typing import TYPE_CHECKING
 
 from graph.neptune_client import NeptuneClient
 from prompt import ANSWER_STREAM_SYSTEM_PROMPT, PERSONA_PROMPTS
@@ -21,6 +22,9 @@ from config import AGENTIC_MODEL_ID, bedrock
 
 from .heartbeat import start_heartbeat
 from .link_repair import has_open_link, repair_citation_links
+
+if TYPE_CHECKING:  # pragma: no cover — import only for the type annotation
+    from adequacy_judge import Finding
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +91,17 @@ def build_answer_context(
     answer_plan: str,
     chat_history: list[dict] | None = None,
     neptune_client: NeptuneClient | None = None,
+    finding: "Finding | None" = None,
 ) -> str:
-    """Build the context message for Phase B answer generation."""
+    """Build the context message for Phase B answer generation.
+
+    ``finding`` is the adequacy judge's verdict on ``answer_plan`` (see
+    ``adequacy_judge``). When present it is rendered as a delimited
+    ``## RETRIEVAL FINDING`` block directly after the answer plan, and the
+    ``answerStream`` prompt tells the model the finding wins wherever the two
+    conflict. When absent the context is byte-for-byte what it was before the
+    judge existed.
+    """
     parts = []
 
     if chat_history:
@@ -102,6 +115,13 @@ def build_answer_context(
 
     if answer_plan:
         parts.append(f"## Answer Plan\n{answer_plan}\n")
+
+    if finding is not None:
+        # Imported lazily so nothing in the judge's import chain loads when the
+        # feature is off (ADEQUACY_JUDGE_ENABLED=false leaves finding None).
+        from adequacy_judge import render_finding_block
+
+        parts.append(render_finding_block(finding))
 
     parts.append("## Retrieved Documents and Chunks\n")
 

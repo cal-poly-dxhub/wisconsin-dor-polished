@@ -257,6 +257,35 @@ description = "Enable the disambiguation pre-check before the agentic loop start
 stage = "loop"
 model_override = false
 
+[env.ADEQUACY_JUDGE_ENABLED]
+default = "false"
+type = "bool"
+description = "Run the post-retrieval adequacy judge over the answer plan before Phase B streams"
+stage = "loop"
+model_override = false
+
+[env.SCOPE_GATE_ENABLED]
+default = "true"
+type = "bool"
+description = "Keep the pre-loop OUT_OF_SCOPE / DISAMBIGUATE short-circuits; disable only alongside the adequacy judge so every query retrieves first"
+stage = "loop"
+model_override = false
+
+[env.ADEQUACY_JUDGE_MODEL_ID]
+default = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+type = "string"
+description = "Bedrock model used by the adequacy judge"
+stage = "loop"
+model_override = false
+
+[env.ADEQUACY_JUDGE_MAX_CONTEXT_CHARS]
+default = 40000
+type = "int"
+description = "Character budget for the cited-chunk evidence the adequacy judge reads"
+range = [2000, 200000]
+stage = "loop"
+model_override = false
+
 [env.WEBSOCKET_CALLBACK_URL]
 default = ""
 type = "string"
