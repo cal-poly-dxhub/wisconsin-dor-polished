@@ -9,6 +9,11 @@ import { Construct } from 'constructs';
 interface IngestionStackProps extends cdk.NestedStackProps {
   rawBucketName: string;
   workBucketName: string;
+  /**
+   * Neptune Analytics graph the `load` phase writes to by default, pinned by
+   * the `neptuneGraphId` CDK context (infra/cdk.json). Scopes both the task
+   * definition's NEPTUNE_GRAPH_ID and the task role's IAM.
+   */
   neptuneGraphId: string;
 }
 
@@ -111,15 +116,12 @@ export class IngestionStack extends cdk.NestedStack {
           'neptune-graph:DeleteDataViaQuery',
           'neptune-graph:GetGraph',
         ],
+        // Scoped to the pinned graph only. Loading a NOT-yet-promoted graph
+        // from Fargate (`run_fargate.sh load --graph-id g-new`) therefore needs
+        // that graph's ARN added here for the duration of the blue/green load
+        // — see the blue/green section of infra/README.md.
         resources: [
           `arn:aws:neptune-graph:${this.region}:${this.account}:graph/${props.neptuneGraphId}`,
-          // `-c stagingGraphId=g-xxxx` also grants a second graph so it can be
-          // loaded from Fargate (`run_fargate.sh load --graph-id g-xxxx`) and
-          // validated BEFORE the Lambda is pointed at it with
-          // `-c neptuneGraphIdOverride` (stack.ts). Both keys may be set.
-          ...(((this.node.tryGetContext('stagingGraphId') as string | undefined)
-            ? [`arn:aws:neptune-graph:${this.region}:${this.account}:graph/${this.node.tryGetContext('stagingGraphId')}`]
-            : [])),
         ],
       })
     );
@@ -159,7 +161,10 @@ export class IngestionStack extends cdk.NestedStack {
         AWS_REGION: 'us-east-1',
         RAW_BUCKET: props.rawBucketName,
         WORK_BUCKET: props.workBucketName,
-        GRAPH_ID: props.neptuneGraphId,
+        // load.py falls back to this when `--graph-id` is omitted, so a routine
+        // `run_fargate.sh load` lands on the pinned graph. `--graph-id` (which
+        // run_fargate.sh forwards as the GRAPH_ID container override) still wins.
+        NEPTUNE_GRAPH_ID: props.neptuneGraphId,
         MAX_WORKERS: '3',
         TEXTRACT_STAGING_BUCKET: 'textract-chunk-result-dhgoel',
       },

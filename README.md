@@ -192,6 +192,6 @@ Documents are ingested via a multi-phase pipeline (see `CLAUDE.md` for full inge
 1. Upload PDFs to S3
 2. Extract + classify (PyMuPDF with Textract fallback) — see `docs/chunk-quality-controls.md`
 3. Embed chunks with Titan
-4. Load into Neptune graph (9 sub-phases: scaffold → document nodes → statute hierarchy → hierarchy links → chunk nodes → case-law CITES → stub resolution → vector upserts → orphan cleanup)
+4. Load into Neptune graph (10 sub-phases: scaffold → document nodes → statute hierarchy → hierarchy links → chunk nodes → case-law CITES → stub resolution → vector upserts → orphan cleanup → integrity checks)
 
 

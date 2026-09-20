@@ -12,8 +12,11 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   sessionsTable: cdk.aws_dynamodb.ITable;
   chatHistoryTable: cdk.aws_dynamodb.ITable;
   websocketCallbackUrl: string;
+  /**
+   * Neptune Analytics graph to query, pinned by the `neptuneGraphId` CDK
+   * context (infra/cdk.json). Scopes both the Lambda env and its IAM.
+   */
   neptuneGraphId: string;
-  neptuneGraphEndpoint: string;
   rawBucketName: string;
   faqKnowledgeBaseId: string;
   faqUrlTable: cdk.aws_dynamodb.ITable;

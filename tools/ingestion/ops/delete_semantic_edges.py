@@ -18,11 +18,11 @@ Run with --apply to actually delete.
 
 Usage:
     python tools/ingestion/ops/delete_semantic_edges.py \\
-        --graph-id g-ndvl4j73v4
+        --graph-id g-svphgiu4k6
     # add --apply to actually delete
 
     AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 python \\
-        tools/ingestion/ops/delete_semantic_edges.py --graph-id g-ndvl4j73v4 --apply
+        tools/ingestion/ops/delete_semantic_edges.py --graph-id g-svphgiu4k6 --apply
 """
 
 from __future__ import annotations

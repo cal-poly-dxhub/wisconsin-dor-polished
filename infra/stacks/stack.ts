@@ -15,6 +15,23 @@ export class WisconsinBotStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
+    // The Neptune Analytics graph is NOT a CDK resource. Graphs are created and
+    // loaded out of band (Fargate `run_fargate.sh load`) and promoted by moving
+    // this pin, so a blue/green swap is a one-line context change plus a deploy
+    // and a rollback is the same change in reverse. Single source of truth for
+    // every consumer: the retrieval Lambda's env + IAM, and the ingestion task's
+    // env + IAM. No silent fallback — a missing pin fails synth.
+    const neptuneGraphId = this.node.tryGetContext('neptuneGraphId') as
+      | string
+      | undefined;
+    if (!neptuneGraphId) {
+      throw new Error(
+        'Missing required CDK context "neptuneGraphId". It is normally pinned in ' +
+          'infra/cdk.json; pass `-c neptuneGraphId=g-xxxxxxxx` to target another ' +
+          'Neptune Analytics graph. See infra/README.md.'
+      );
+    }
+
     const lambdaLayersStack = new LambdaLayersStack(this, 'LambdaLayersStack', {
       description: 'Shared lambda layers for the Wisconsin bot.',
     });
@@ -44,14 +61,7 @@ export class WisconsinBotStack extends cdk.Stack {
         sessionsTable: sessionsStack.sessionsTable,
         chatHistoryTable: sessionsStack.chatHistoryTable,
         websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
-        // Blue/green graph promotion: `-c neptuneGraphIdOverride=g-xxxx` points
-        // the retrieval Lambda (env + IAM scope) at a graph loaded outside this
-        // stack, e.g. a re-indexed staging graph. Omit to use the stack's own
-        // graph. Ingestion (Fargate) always targets the stack's own graph.
-        neptuneGraphId:
-          (this.node.tryGetContext('neptuneGraphIdOverride') as string | undefined) ??
-          graphRAGStack.neptuneGraphId,
-        neptuneGraphEndpoint: graphRAGStack.neptuneGraphEndpoint,
+        neptuneGraphId,
         rawBucketName: graphRAGStack.rawBucketName,
         faqKnowledgeBaseId: graphRAGStack.faqKnowledgeBaseId,
         faqUrlTable: graphRAGStack.faqUrlTable,
@@ -64,7 +74,7 @@ export class WisconsinBotStack extends cdk.Stack {
         'Managed Fargate compute for GraphRAG ingestion pipeline.',
       rawBucketName: graphRAGStack.rawBucketName,
       workBucketName: graphRAGStack.workBucketName,
-      neptuneGraphId: graphRAGStack.neptuneGraphId,
+      neptuneGraphId,
     });
 
     sessionsStack.apiHandler.addEnvironment(
@@ -172,8 +182,10 @@ export class WisconsinBotStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'GraphRAGNeptuneGraphId', {
-      value: graphRAGStack.neptuneGraphId,
-      description: 'Neptune Analytics Graph ID',
+      value: neptuneGraphId,
+      description:
+        'Neptune Analytics Graph ID this deployment targets (pinned via the ' +
+        '"neptuneGraphId" CDK context; not a resource of this stack)',
       exportName: 'WisconsinBot-NeptuneGraphId',
     });
 

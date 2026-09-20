@@ -44,7 +44,7 @@ Usage:
       COURTLISTENER_TOKEN=<token> \
       uv run python tools/ingestion/ops/dedup_case_law.py \
         --work-bucket wis-work-bucket-c8e69250 \
-        --graph-id g-ndvl4j73v4 \
+        --graph-id g-svphgiu4k6 \
         [--dry-run]           # default: dry-run; pass --apply to mutate
         [--skip-cl-lookup]    # skip the API step for name-less URLs
 """

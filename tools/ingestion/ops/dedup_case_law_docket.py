@@ -36,7 +36,7 @@ Usage:
       uv run python tools/ingestion/ops/dedup_case_law_docket.py \
         --work-bucket wis-work-bucket-c8e69250 \
         --raw-bucket wis-raw-bucket-c8e69250 \
-        --graph-id g-ndvl4j73v4 \
+        --graph-id g-svphgiu4k6 \
         [--sim-threshold 0.6]
 """
 

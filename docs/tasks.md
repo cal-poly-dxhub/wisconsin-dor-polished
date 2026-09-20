@@ -8,7 +8,7 @@ The bot is done as a research problem: every tester-reported retrieval issue has
 2. **Security before any public move** (handoff plan §3): WebSocket $connect authorizer, session ownership checks, close self-signup. ~1 day.
 3. **Handoff**: SSO with Amy/Brad, cost sheet (Neptune 32 m-NCU is the floor — 16 rejected on a fresh graph; lever: drop the 15 non-current WPAM editions to likely fit 16), annual-refresh runbook.
 4. **Content threads after the 09-17 DOR meeting** (Task 73): refresh the stale SL-405 instructions PDF + harness case (Innovation Grant); gate alias generation to the doc types the embed uses; retest maintenance-vs-revaluation and residential grades on the re-indexed graph. Still with DOR: BOR interpreter reference, mobile homes vs §70.11(49). Closed: Prime Leather, "clear height", plain-language glossary, manufacturing-appeal filing.
-5. **Housekeeping**: delete rollback graph `g-ndvl4j73v4` ~09-25 and re-point the CDK construct; remove `disambiguationClassifier` / `PROPERTY_TYPE_CHOICES` once the judge has a week of traffic.
+5. **Housekeeping**: the Neptune graph construct is gone from `graphrag-stack.ts` and `neptuneGraphId` in `infra/cdk.json` is now the single pin, so the next deploy deletes rollback graph `g-ndvl4j73v4` — deploy after 09-25 (or later) so the rollback stays available until then. Remove `disambiguationClassifier` / `PROPERTY_TYPE_CHOICES` once the judge has a week of traffic.
 
 Decided: Sonnet 5 rejected (stops researching early); vocab-swap map retired (document expansion replaced it); live graph is `g-svphgiu4k6` via `neptuneGraphIdOverride` in `infra/cdk.json`.
 

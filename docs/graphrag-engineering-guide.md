@@ -43,11 +43,11 @@ Frontend (Next.js)
 ```
 
 Key facts:
-- **Region:** us-east-1 (`WisconsinBotGraphRAG` stack). Neptune graph: `g-ndvl4j73v4`.
+- **Region:** us-east-1 (`WisconsinBotGraphRAG` stack). Neptune graph: `g-svphgiu4k6` — not a CDK resource; pinned by the `neptuneGraphId` context in `infra/cdk.json` (see `infra/README.md`).
 - **Model:** `us.anthropic.claude-sonnet-4-6` (default; configurable via `AGENTIC_MODEL_ID` env var).
 - **Embedding:** Titan Embed Text V2, 1024 dimensions.
 - **Package layout:** the agentic retrieval Lambda has no `main.py`. Entry point is `handler.py`; logic lives in the `loop/`, `agent_tools/` (+ `agent_tools/stages/`), `graph/`, `streaming/`, and `tracing/` subpackages, plus flat helpers (`config.py`, `prompt.py`, `faq.py`, `case_law.py`, `wpam_dedup.py`, `rag_documents.py`, `chat_history.py`).
-- The old Step Function path (`useGraphRAG=false`, separate classifier/retrieval/streaming Lambdas) was fully removed — GraphRAG is the only path.
+- The old Step Function path (separate classifier/retrieval/streaming Lambdas, selected by a since-deleted `useGraphRAG` context flag) was fully removed — GraphRAG is the only path, and nothing reads that flag any more.
 
 ---
 
@@ -131,7 +131,7 @@ The answer context is a structured prompt built from: prior conversation, the us
 
 ## 5. The Neptune Graph Data Model
 
-**Engine:** Neptune Analytics (`neptune-graph`), graph `g-ndvl4j73v4`, us-east-1, 1024-dim vector index, 32 m-NCU (scale to 128 for full re-ingestion), IAM auth, public connectivity (no VPC — IAM is the only protection).
+**Engine:** Neptune Analytics (`neptune-graph`), graph `g-svphgiu4k6`, us-east-1, 1024-dim vector index, 32 m-NCU (scale to 128 for full re-ingestion), IAM auth, public connectivity (no VPC — IAM is the only protection).
 
 ### Node types
 
@@ -516,8 +516,8 @@ Commands below use `<your-profile>` as a placeholder — substitute your own AWS
 bun install
 bun run bundle                          # copy Python lambdas to infra/bundle/
 cd infra
-AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk diff -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG
-AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk diff -c stackName=WisconsinBotGraphRAG
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk deploy -c stackName=WisconsinBotGraphRAG --require-approval never
 ```
 
 ### First-time setup

@@ -34,7 +34,9 @@ sys.path.insert(
 from graph.neptune_client import NeptuneClient
 from wpam_dedup import dedupe_wpam_chunks
 
-GRAPH_ID = "g-ndvl4j73v4"
+# Pinned graph id comes from the environment (infra/cdk.json "neptuneGraphId");
+# --graph-id overrides it.
+GRAPH_ID = os.environ.get("NEPTUNE_GRAPH_ID", "")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 # Queries from the client testing performance matrix that got thumbs-down
@@ -281,8 +283,15 @@ def main():
     parser.add_argument(
         "--top-k", type=int, default=10, help="Final number of chunks to return (default: 10)"
     )
-    parser.add_argument("--graph-id", type=str, default=GRAPH_ID, help="Neptune graph ID")
+    parser.add_argument(
+        "--graph-id",
+        type=str,
+        default=GRAPH_ID,
+        help="Neptune graph ID (default: $NEPTUNE_GRAPH_ID)",
+    )
     args = parser.parse_args()
+    if not args.graph_id:
+        parser.error("--graph-id (or NEPTUNE_GRAPH_ID) is required")
 
     neptune = NeptuneClient(graph_id=args.graph_id, region=REGION)
     print(f"Connected to Neptune graph: {args.graph_id} in {REGION}")

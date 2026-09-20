@@ -6,11 +6,16 @@ CONFIG="/app/tools/ingestion/config/ingest_config.yaml"
 
 # Optional env → flag mappings (all set by scripts/run_fargate.sh):
 #   CACHE_PREFIX   → --cache-prefix <p>   (staging runs: "staging/")
-#   GRAPH_ID       → --graph-id           (task-def default; container override wins)
+#   GRAPH_ID       → --graph-id           (blue/green override only, set by
+#                                          run_fargate.sh --graph-id; when unset,
+#                                          load.py falls back to NEPTUNE_GRAPH_ID
+#                                          from the task definition = the pinned
+#                                          production graph)
 #   ALIASES        → --aliases            (extract: generate chunk aliases)
 #   ALIASES_ONLY   → --aliases-only       (extract: backfill aliases, no re-extraction)
 #   EMBED_INPUT    → --embed-input plain|enriched
 CACHE_PREFIX="${CACHE_PREFIX:-}"
+GRAPH_ID="${GRAPH_ID:-}"
 
 run_extract() {
   python -m tools.ingestion.extract \
@@ -42,7 +47,7 @@ run_embed() {
 run_load() {
   python -m tools.ingestion.load \
     --work-bucket "${WORK_BUCKET}" \
-    --graph-id "${GRAPH_ID}" \
+    ${GRAPH_ID:+--graph-id "$GRAPH_ID"} \
     --config "$CONFIG" \
     ${CACHE_PREFIX:+--cache-prefix "$CACHE_PREFIX"} \
     ${SOURCE_FILTER:+--source-filter "$SOURCE_FILTER"} \
@@ -63,7 +68,7 @@ case "$PHASE" in
     ;;
   full)
     echo "=== Running full pipeline: extract → embed → load ==="
-    [[ -n "$CACHE_PREFIX" ]] && echo "    cache prefix: $CACHE_PREFIX  graph: ${GRAPH_ID}"
+    [[ -n "$CACHE_PREFIX" ]] && echo "    cache prefix: $CACHE_PREFIX  graph: ${GRAPH_ID:-$NEPTUNE_GRAPH_ID}"
     echo "--- Phase: extract ---"
     run_extract
     echo "--- Phase: embed ---"

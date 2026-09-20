@@ -27,7 +27,7 @@ This script:
 
 Usage:
     AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run python \
-        tools/ingestion/ops/cleanup_legacy_docs.py --graph-id g-ndvl4j73v4 [--apply]
+        tools/ingestion/ops/cleanup_legacy_docs.py --graph-id g-svphgiu4k6 [--apply]
 """
 
 import argparse

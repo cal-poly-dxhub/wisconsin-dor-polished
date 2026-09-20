@@ -1,15 +1,21 @@
 import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as neptune from 'aws-cdk-lib/aws-neptunegraph';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { bedrock } from '@cdklabs/generative-ai-cdk-constructs';
 import { Construct } from 'constructs';
 
+/**
+ * Buckets, the FAQ knowledge base, and the shared DynamoDB tables.
+ *
+ * The Neptune Analytics graph is deliberately NOT here. Graphs are created and
+ * loaded out of band (Fargate `run_fargate.sh load`) and the deployment picks
+ * one with the `neptuneGraphId` CDK context pinned in cdk.json — see
+ * infra/README.md. Keeping a re-indexed corpus out of CloudFormation is what
+ * makes a blue/green swap a context change instead of a stack replacement.
+ */
 export class GraphRAGStack extends cdk.NestedStack {
   public readonly rawBucketName: string;
   public readonly workBucketName: string;
-  public readonly neptuneGraphId: string;
-  public readonly neptuneGraphEndpoint: string;
   public readonly faqKnowledgeBaseId: string;
   public readonly faqBucketName: string;
   public readonly faqDataSourceId: string;
@@ -78,30 +84,8 @@ export class GraphRAGStack extends cdk.NestedStack {
       chunkingStrategy: bedrock.ChunkingStrategy.NONE,
     });
 
-    // publicConnectivity: true so Lambdas can reach it via IAM auth
-    // without VPC configuration (no existing VPC in this project)
-    const graph = new neptune.CfnGraph(this, 'WisDorGraph', {
-      graphName: 'wis-dor-graphrag',
-      // Resting tier for serving. 32 is the FLOOR for this graph: Neptune
-      // Analytics rejects scaling to 16 ("cannot be scaled down to [16] m-NCUs
-      // due to storage memory constraints", 2026-09-13). Full loads (Phase 8
-      // vector upserts) need 128: scale up via
-      // `aws neptune-graph update-graph --provisioned-memory 128` before a load
-      // and back to 32 after (see CLAUDE.md). ProvisionedMemory is updatable in
-      // place — changing it here never replaces the graph.
-      provisionedMemory: 32,
-      vectorSearchConfiguration: {
-        vectorSearchDimension: 1024,
-      },
-      publicConnectivity: true,
-      replicaCount: 0,
-      deletionProtection: false,
-    });
-
     this.rawBucketName = rawBucket.bucketName;
     this.workBucketName = workBucket.bucketName;
-    this.neptuneGraphId = graph.attrGraphId;
-    this.neptuneGraphEndpoint = graph.attrEndpoint;
     this.faqKnowledgeBaseId = faqKb.knowledgeBaseId;
     this.faqBucketName = faqBucket.bucketName;
     this.faqDataSourceId = faqDataSource.dataSourceId;
@@ -113,14 +97,6 @@ export class GraphRAGStack extends cdk.NestedStack {
     new cdk.CfnOutput(this, 'WorkBucketName', {
       value: workBucket.bucketName,
       description: 'S3 bucket for intermediate processing cache',
-    });
-    new cdk.CfnOutput(this, 'NeptuneGraphId', {
-      value: graph.attrGraphId,
-      description: 'Neptune Analytics Graph ID',
-    });
-    new cdk.CfnOutput(this, 'NeptuneGraphEndpoint', {
-      value: graph.attrEndpoint,
-      description: 'Neptune Analytics Graph Endpoint',
     });
     new cdk.CfnOutput(this, 'FaqKnowledgeBaseId', {
       value: faqKb.knowledgeBaseId,
