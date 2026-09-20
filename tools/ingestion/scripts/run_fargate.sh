@@ -16,7 +16,8 @@
 #   --max-workers <N>         Override default worker count
 #   --cache-prefix <p>        Namespace every work-bucket key (e.g. "staging/") so a
 #                             staging run never touches production classified/extracted/embedded/
-#   --graph-id <id>           (load only) Override the task definition's GRAPH_ID
+#   --graph-id <id>           (load only) Load a graph other than the pinned production
+#                             one (task definition's NEPTUNE_GRAPH_ID). Blue/green only.
 #   --aliases                 (extract only) Generate chunk aliases (document expansion)
 #   --aliases-only            (extract only) Backfill aliases onto existing extracted JSONs
 #   --embed-input <mode>      (embed only) plain | enriched
@@ -85,7 +86,7 @@ if [[ -n "$CACHE_PREFIX" && "$CACHE_PREFIX" != */ ]]; then
   CACHE_PREFIX="${CACHE_PREFIX}/"
 fi
 if [[ "$PHASE" == "load" && -n "$CACHE_PREFIX" && -z "$GRAPH_ID_OVERRIDE" ]]; then
-  echo "WARNING: loading '$CACHE_PREFIX' embeddings into the task definition's default (production) graph."
+  echo "WARNING: loading '$CACHE_PREFIX' embeddings into the pinned (production) graph."
   echo "         Pass --graph-id <staging-graph-id> for a staging load. Continuing in 10s (Ctrl-C to abort)..."
   sleep 10
 fi
@@ -149,7 +150,9 @@ ENV_OVERRIDES='[{"name":"PHASE","value":"'"$PHASE"'"}'
 [[ -n "$MAX_WORKERS" ]] && ENV_OVERRIDES+=',{"name":"MAX_WORKERS","value":"'"$MAX_WORKERS"'"}'
 [[ -n "$CACHE_PREFIX" ]] && ENV_OVERRIDES+=',{"name":"CACHE_PREFIX","value":"'"$CACHE_PREFIX"'"}'
 # Container-level env overrides take precedence over the task definition's
-# environment, so this replaces the default GRAPH_ID for this run only.
+# environment. GRAPH_ID exists only for this override: entrypoint.sh turns it
+# into `load.py --graph-id`, and without it load.py falls back to the task
+# definition's NEPTUNE_GRAPH_ID (the pinned production graph).
 [[ -n "$GRAPH_ID_OVERRIDE" ]] && ENV_OVERRIDES+=',{"name":"GRAPH_ID","value":"'"$GRAPH_ID_OVERRIDE"'"}'
 [[ -n "$ALIASES" ]] && ENV_OVERRIDES+=',{"name":"ALIASES","value":"true"}'
 [[ -n "$ALIASES_ONLY" ]] && ENV_OVERRIDES+=',{"name":"ALIASES_ONLY","value":"true"}'

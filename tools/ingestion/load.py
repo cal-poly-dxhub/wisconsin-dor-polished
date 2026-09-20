@@ -20,8 +20,12 @@ and doc_ids listed in ``{cache_prefix}dedup/losers.json`` are skipped.
 Usage:
     python -m tools.ingestion.load \
         --work-bucket <work-bucket> \
-        --graph-id <neptune-graph-id> \
         --config tools/ingestion/config/ingest_config.yaml
+
+The target graph defaults to ``$NEPTUNE_GRAPH_ID`` (set on the Fargate task
+definition from the ``neptuneGraphId`` CDK context, so a routine load lands on
+the graph the retrieval Lambda reads). Pass ``--graph-id`` to override it, e.g.
+for a staging graph paired with ``--cache-prefix staging/``.
 """
 
 import argparse
@@ -1253,10 +1257,40 @@ def phase_10_integrity_checks(client, graph_id: str) -> dict:
     return stats
 
 
-def main():
+GRAPH_ID_ENV_VAR = "NEPTUNE_GRAPH_ID"
+
+
+def resolve_graph_id(cli_graph_id: str | None, env: dict[str, str] | None = None) -> str:
+    """Pick the graph to load: explicit --graph-id, else $NEPTUNE_GRAPH_ID.
+
+    The Fargate task definition carries NEPTUNE_GRAPH_ID (from the pinned
+    ``neptuneGraphId`` CDK context), so an operator running `run_fargate.sh load`
+    with no flags hits the same graph the retrieval Lambda queries. Passing
+    --graph-id is the deliberate opt-out for a staging/blue-green graph.
+    """
+    if cli_graph_id:
+        return cli_graph_id
+    from_env = (env if env is not None else os.environ).get(GRAPH_ID_ENV_VAR, "").strip()
+    if not from_env:
+        raise SystemExit(
+            f"No graph selected: pass --graph-id or set {GRAPH_ID_ENV_VAR}. "
+            "On Fargate this env var comes from the task definition (CDK context "
+            "'neptuneGraphId'); locally, export it before running."
+        )
+    return from_env
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Load documents into Neptune Analytics graph")
     parser.add_argument("--work-bucket", required=True)
-    parser.add_argument("--graph-id", required=True, help="Neptune Analytics graph identifier")
+    parser.add_argument(
+        "--graph-id",
+        default=None,
+        help=(
+            "Neptune Analytics graph identifier. Defaults to $NEPTUNE_GRAPH_ID (the "
+            "pinned production graph on Fargate); pass explicitly to load a staging graph."
+        ),
+    )
     parser.add_argument("--config", default="tools/ingestion/config/ingest_config.yaml")
     parser.add_argument("--start-phase", type=int, default=1, help="Resume from specific phase")
     parser.add_argument(
@@ -1290,10 +1324,14 @@ def main():
         help="Load doc_ids recorded in {cache-prefix}dedup/losers.json anyway (default skips "
         "them so a full load cannot resurrect nodes a dedup pass deleted).",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = build_arg_parser().parse_args()
 
     config = load_config(args.config)
-    client, graph_id = get_neptune_client(args.graph_id)
+    client, graph_id = get_neptune_client(resolve_graph_id(args.graph_id))
     logger.info(f"Graph: {graph_id}; cache prefix: '{args.cache_prefix}'")
     documents = load_embedded_docs(
         args.work_bucket,

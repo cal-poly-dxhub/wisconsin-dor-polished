@@ -22,7 +22,7 @@ for a targeted re-ingest attempt.
 Usage:
     AWS_PROFILE=<profile> AWS_REGION=us-east-1 \
       uv run python tools/ingestion/ops/purge_corrupt_case_law.py \
-        --graph-id g-ndvl4j73v4 \
+        --graph-id g-svphgiu4k6 \
         --work-bucket wis-work-bucket-c8e69250 \
         [--apply]   # default: dry-run
 """

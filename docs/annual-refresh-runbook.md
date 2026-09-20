@@ -63,7 +63,7 @@ pipeline that rebuilds the graph from them.
                │
                ▼  Stage 3: LOAD      (Fargate)
   ┌────────────────────────────┐
-  │  NEPTUNE ANALYTICS GRAPH   │  g-ndvl4j73v4  (us-east-1)
+  │  NEPTUNE ANALYTICS GRAPH   │  g-svphgiu4k6  (us-east-1)
   │  documents, chunks, edges, │  ← the chatbot reads from here at runtime
   │  vectors                   │
   └────────────────────────────┘
@@ -173,7 +173,7 @@ compare against after the load, and a quick "is the database up?" check.
 
 ```bash
 aws neptune-graph execute-query \
-  --graph-identifier g-ndvl4j73v4 \
+  --graph-identifier g-svphgiu4k6 \
   --language OPEN_CYPHER \
   --query-string "MATCH (c:Chunk) RETURN count(c) AS chunks" \
   /dev/stdout
@@ -188,20 +188,33 @@ Expected output (numbers will differ):
 Two more useful counts — documents and the newest WPAM edition loaded:
 
 ```bash
-aws neptune-graph execute-query --graph-identifier g-ndvl4j73v4 --language OPEN_CYPHER \
+aws neptune-graph execute-query --graph-identifier g-svphgiu4k6 --language OPEN_CYPHER \
   --query-string "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d) RETURN count(DISTINCT d) AS documents" /dev/stdout
 
-aws neptune-graph execute-query --graph-identifier g-ndvl4j73v4 --language OPEN_CYPHER \
+aws neptune-graph execute-query --graph-identifier g-svphgiu4k6 --language OPEN_CYPHER \
   --query-string "MATCH (d) WHERE d.id STARTS WITH 'wpam-' RETURN d.id ORDER BY d.id DESC LIMIT 3" /dev/stdout
 ```
 
 Also confirm the graph is at its normal size and idle:
 
 ```bash
-aws neptune-graph get-graph --graph-identifier g-ndvl4j73v4 \
+aws neptune-graph get-graph --graph-identifier g-svphgiu4k6 \
   --query '{status:status, memory:provisionedMemory}'
 # Expected: { "status": "AVAILABLE", "memory": 32 }
 ```
+
+> **Where `g-svphgiu4k6` comes from.** The graph is not a CloudFormation resource.
+> It is pinned by the `neptuneGraphId` context in `infra/cdk.json`, which CDK
+> feeds to both the retrieval Lambda and the Fargate ingestion task. If that pin
+> has moved since this runbook was written, read the current value first and use
+> it everywhere below:
+>
+> ```bash
+> jq -r '.context.neptuneGraphId' infra/cdk.json
+> ```
+>
+> `run_fargate.sh load` needs no `--graph-id`: the task definition carries the
+> pinned id as `NEPTUNE_GRAPH_ID` and `load.py` defaults to it.
 
 Write these numbers down — you will compare them in Step 3.10.
 
@@ -526,7 +539,7 @@ the resize, so the chatbot keeps working. **Cost:** 128 m-NCU ≈ **$12.80/hour*
 $3.20/hour normally — that is why Step 3.9 (scale back down) is not optional.
 
 ```bash
-aws neptune-graph update-graph --graph-identifier g-ndvl4j73v4 --provisioned-memory 128
+aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-memory 128
 ```
 
 Expected: a JSON block with `"status": "UPDATING"` and `"provisionedMemory": 128`.
@@ -534,7 +547,7 @@ Expected: a JSON block with `"status": "UPDATING"` and `"provisionedMemory": 128
 Wait until it is available again. Check every couple of minutes:
 
 ```bash
-aws neptune-graph get-graph --graph-identifier g-ndvl4j73v4 \
+aws neptune-graph get-graph --graph-identifier g-svphgiu4k6 \
   --query '{status:status, memory:provisionedMemory}'
 # Wait for: { "status": "AVAILABLE", "memory": 128 }
 ```
@@ -542,7 +555,7 @@ aws neptune-graph get-graph --graph-identifier g-ndvl4j73v4 \
 Or let the terminal wait for you:
 
 ```bash
-until [ "$(aws neptune-graph get-graph --graph-identifier g-ndvl4j73v4 --query status --output text)" = "AVAILABLE" ]; do
+until [ "$(aws neptune-graph get-graph --graph-identifier g-svphgiu4k6 --query status --output text)" = "AVAILABLE" ]; do
   echo "$(date +%H:%M) still resizing..."; sleep 60
 done; echo "Graph is AVAILABLE"
 ```
@@ -574,7 +587,7 @@ Watch the log for the ten phases in order. Each starts with a banner line
 (`Phase N: Name` between rows of `=`), followed by that phase's own progress lines:
 
 ```
-Graph: g-ndvl4j73v4; cache prefix: ''
+Graph: g-svphgiu4k6; cache prefix: ''
 Loaded 1003 documents for graph loading
 ============================================================
 Phase 1: Scaffold
@@ -631,7 +644,7 @@ To resume after a failure in, say, Phase 5:
 **Do this as soon as the load exits 0.** Every hour you forget costs ~$9.60 extra.
 
 ```bash
-aws neptune-graph update-graph --graph-identifier g-ndvl4j73v4 --provisioned-memory 32
+aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-memory 32
 ```
 
 Expected: `"status": "UPDATING"`, `"provisionedMemory": 32`. It takes 10–20 minutes to
@@ -650,7 +663,7 @@ count to have gone *up* a little (new WPAM edition, new guides) and the new docu
 from Step 3.2 to be present:
 
 ```bash
-aws neptune-graph execute-query --graph-identifier g-ndvl4j73v4 --language OPEN_CYPHER \
+aws neptune-graph execute-query --graph-identifier g-svphgiu4k6 --language OPEN_CYPHER \
   --query-string "MATCH (d) WHERE d.id = 'wpam-wisconsin-property-assessment-manual-2027' RETURN d.id, d.title" /dev/stdout
 # Expected: one row with the title. Empty "results":[] means the doc did not load.
 ```
@@ -668,11 +681,11 @@ baseline, run `after` alone and compare against the numbers below.
 ```bash
 # BEFORE the load (ideally right after Step 2.5):
 uv run python tools/ingestion/ops/run_recall_probe.py --mode baseline \
-  --graph-id g-ndvl4j73v4 --label "pre-refresh $(date +%Y-%m-%d)"
+  --graph-id g-svphgiu4k6 --label "pre-refresh $(date +%Y-%m-%d)"
 
 # AFTER Step 3.9:
 uv run python tools/ingestion/ops/run_recall_probe.py --mode after \
-  --graph-id g-ndvl4j73v4 --label "post-refresh $(date +%Y-%m-%d)"
+  --graph-id g-svphgiu4k6 --label "post-refresh $(date +%Y-%m-%d)"
 
 uv run python tools/ingestion/ops/run_recall_probe.py --compare-only
 ```
@@ -680,8 +693,8 @@ uv run python tools/ingestion/ops/run_recall_probe.py --compare-only
 The comparison prints a summary block for each run, then a per-question table:
 
 ```
-baseline: pre-refresh 2027-04-02 (graph g-ndvl4j73v4, 2027-04-02T14:03:11Z)
-after:    post-refresh 2027-04-02 (graph g-ndvl4j73v4, 2027-04-02T19:40:52Z)
+baseline: pre-refresh 2027-04-02 (graph g-svphgiu4k6, 2027-04-02T14:03:11Z)
+after:    post-refresh 2027-04-02 (graph g-svphgiu4k6, 2027-04-02T19:40:52Z)
 
 == baseline ==
   doc        n=118, recall@10=0.7119, recall@30=0.8644, recall@60=0.9153, mrr=0.5231, not_in_top_60=10
@@ -717,7 +730,7 @@ aws lambda get-function-configuration --function-name "$FN" \
   --query 'Environment.Variables.{NEPTUNE_GRAPH_ID:NEPTUNE_GRAPH_ID, FAQ_KNOWLEDGE_BASE_ID:FAQ_KNOWLEDGE_BASE_ID, RAW_BUCKET:RAW_BUCKET, AGENTIC_MODEL_ID:AGENTIC_MODEL_ID, FAQ_URL_TABLE_NAME:FAQ_URL_TABLE_NAME}'
 ```
 
-Export each of the printed values (`export NEPTUNE_GRAPH_ID=g-ndvl4j73v4` and so on), then:
+Export each of the printed values (`export NEPTUNE_GRAPH_ID=g-svphgiu4k6` and so on), then:
 
 ```bash
 # BEFORE the load:
@@ -965,7 +978,7 @@ mini-cycle later.
 
 ```bash
 # 1. Rebuild the list of rated questions from chat history:
-uv run python tools/ingestion/ops/build_recall_eval.py --graph-id g-ndvl4j73v4
+uv run python tools/ingestion/ops/build_recall_eval.py --graph-id g-svphgiu4k6
 #    (writes tools/ingestion/tests/recall_eval_queries.yaml)
 
 # 2. Preview, then attach:
@@ -1107,13 +1120,13 @@ done
 aws s3 cp s3://wis-work-bucket-c8e69250/rollback-$STAMP/manifest.json s3://wis-work-bucket-c8e69250/manifest.json
 
 # 2. Scale up (Step 3.7), wait for AVAILABLE
-aws neptune-graph update-graph --graph-identifier g-ndvl4j73v4 --provisioned-memory 128
+aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-memory 128
 
 # 3. Full load (Step 3.8)
 ./tools/ingestion/scripts/run_fargate.sh load
 
 # 4. Scale down (Step 3.9)
-aws neptune-graph update-graph --graph-identifier g-ndvl4j73v4 --provisioned-memory 32
+aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-memory 32
 ```
 
 The load's Phase 9 removes chunks and documents that are no longer in the caches, so the
@@ -1242,10 +1255,10 @@ export AWS_CA_BUNDLE=$(.venv/bin/python3 -c "import certifi; print(certifi.where
 aws sts get-caller-identity
 
 # ---------- 1. Baseline ----------
-aws neptune-graph get-graph --graph-identifier g-ndvl4j73v4 --query '{status:status,memory:provisionedMemory}'
-aws neptune-graph execute-query --graph-identifier g-ndvl4j73v4 --language OPEN_CYPHER \
+aws neptune-graph get-graph --graph-identifier g-svphgiu4k6 --query '{status:status,memory:provisionedMemory}'
+aws neptune-graph execute-query --graph-identifier g-svphgiu4k6 --language OPEN_CYPHER \
   --query-string "MATCH (c:Chunk) RETURN count(c) AS chunks" /dev/stdout
-uv run python tools/ingestion/ops/run_recall_probe.py --mode baseline --graph-id g-ndvl4j73v4 --label "pre-refresh"
+uv run python tools/ingestion/ops/run_recall_probe.py --mode baseline --graph-id g-svphgiu4k6 --label "pre-refresh"
 # (optional, ~40 min) uv run python tools/ingestion/ops/run_graph_regression.py --mode baseline
 
 # ---------- 2. Backup caches ----------
@@ -1266,16 +1279,16 @@ aws logs tail /ecs/wis-dor-ingestion --follow
 aws logs tail /ecs/wis-dor-ingestion --follow
 
 # ---------- 5. Scale up, load, scale down ----------
-aws neptune-graph update-graph --graph-identifier g-ndvl4j73v4 --provisioned-memory 128
-until [ "$(aws neptune-graph get-graph --graph-identifier g-ndvl4j73v4 --query status --output text)" = "AVAILABLE" ]; do sleep 60; done
+aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-memory 128
+until [ "$(aws neptune-graph get-graph --graph-identifier g-svphgiu4k6 --query status --output text)" = "AVAILABLE" ]; do sleep 60; done
 ./tools/ingestion/scripts/run_fargate.sh load
 aws logs tail /ecs/wis-dor-ingestion --follow           # wait for "Graph loading complete!" + exit 0
-aws neptune-graph update-graph --graph-identifier g-ndvl4j73v4 --provisioned-memory 32
+aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-memory 32
 
 # ---------- 6. Validate ----------
-aws neptune-graph execute-query --graph-identifier g-ndvl4j73v4 --language OPEN_CYPHER \
+aws neptune-graph execute-query --graph-identifier g-svphgiu4k6 --language OPEN_CYPHER \
   --query-string "MATCH (c:Chunk) RETURN count(c) AS chunks" /dev/stdout
-uv run python tools/ingestion/ops/run_recall_probe.py --mode after --graph-id g-ndvl4j73v4 --label "post-refresh"
+uv run python tools/ingestion/ops/run_recall_probe.py --mode after --graph-id g-svphgiu4k6 --label "post-refresh"
 uv run python tools/ingestion/ops/run_recall_probe.py --compare-only
 # (optional) uv run python tools/ingestion/ops/run_graph_regression.py --mode after
 #            uv run python tools/ingestion/ops/run_graph_regression.py --compare-only

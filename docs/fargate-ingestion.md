@@ -113,7 +113,7 @@ the run. It forwards all CLI args verbatim to every phase.
 | `--smart` | extract, embed | Only re-process docs whose raw S3 object is newer than its cache |
 | `--reclassify` | extract | Force LLM reclassification even if the classification cache is warm |
 | `--max-workers <N>` | extract, embed | Override concurrency |
-| `--start-phase <N>` | load | Resume from load sub-phase N (**1–9**) |
+| `--start-phase <N>` | load | Resume from load sub-phase N (**1–10**) |
 | `--stop-after-phase <N>` | load | Stop after sub-phase N completes |
 
 > **Concurrency defaults are pinned by the task def.** `extract.py` defaults to
@@ -213,8 +213,8 @@ cluster cost nothing when no tasks are running.
 - **VPC** — 2 public subnets, no NAT gateways, `maxAzs: 2`
 - **ECS Cluster** — `wis-dor-ingestion`
 - **ECR Repository** — `wis-dor-ingestion`, keeps the last **5** images (`removalPolicy: DESTROY`, `emptyOnDelete: true`)
-- **Fargate Task Definition** — 2 vCPU / 8 GB, container name `ingestion`, pre-set env: `AWS_REGION`, `RAW_BUCKET`, `WORK_BUCKET`, `GRAPH_ID`, `MAX_WORKERS=3`
-- **IAM Task Role** — S3 (raw + work buckets), Bedrock (`InvokeModel`), Neptune Graph (execute/read/write/delete/get), Textract (analyze/detect/start/get)
+- **Fargate Task Definition** — 2 vCPU / 8 GB, container name `ingestion`, pre-set env: `AWS_REGION`, `RAW_BUCKET`, `WORK_BUCKET`, `NEPTUNE_GRAPH_ID` (the graph pinned by the `neptuneGraphId` CDK context; `load.py` defaults to it), `MAX_WORKERS=3`. `TEXTRACT_STAGING_BUCKET` is intentionally unset: the Textract fallback is skipped (PyMuPDF result kept) until a staging bucket is configured.
+- **IAM Task Role** — S3 (raw + work buckets), Bedrock (`InvokeModel`), Neptune Graph (execute/read/write/delete/get) on the pinned graph, Textract (analyze/detect/start/get)
 - **CloudWatch Log Group** — `/ecs/wis-dor-ingestion`, `ONE_MONTH` (30-day) retention
 - **Security Group** — outbound-only (`allowAllOutbound: true`, no ingress)
 

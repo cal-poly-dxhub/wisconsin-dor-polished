@@ -101,7 +101,7 @@
     "@aws-cdk/aws-lambda:useCdkManagedLogGroup": true,
     "@aws-cdk/core:addConstructMetadataFailed": true,
     "@aws-cdk/aws-lambda:codeFromBucketObjectVersionNotSpecified": true,
-    "neptuneGraphIdOverride": "g-svphgiu4k6",
-    "stagingGraphId": "g-svphgiu4k6"
+    "_comment_neptuneGraphId": "Neptune Analytics graph the deployed stack reads and writes. It is NOT a CDK resource: graphs are created and loaded out of band (Fargate `run_fargate.sh load`) and promoted by changing this pin. Synth FAILS if it is missing. Blue/green + rollback procedure: infra/README.md.",
+    "neptuneGraphId": "g-svphgiu4k6"
   }
 }

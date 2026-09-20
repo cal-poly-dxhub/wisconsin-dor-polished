@@ -21,7 +21,7 @@ Run with --dry-run (default) to preview, --apply to execute.
 Usage:
     python tools/ingestion/ops/purge_orphan_chunks.py \\
         --work-bucket wis-work-bucket-c8e69250 \\
-        --graph-id g-ndvl4j73v4
+        --graph-id g-svphgiu4k6
     # add --apply to actually delete
 """
 

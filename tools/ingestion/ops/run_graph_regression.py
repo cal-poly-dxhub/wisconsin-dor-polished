@@ -54,7 +54,9 @@ silent passes.
 Requires the agentic_retrieval Lambda env (Neptune graph id, FAQ KB id) — run
 it with the same AWS profile/region and env vars the Lambda uses. The relevant
 env vars are FAQ_KNOWLEDGE_BASE_ID, RAW_BUCKET, AGENTIC_MODEL_ID, and the
-Neptune graph id (NeptuneClient reads NEPTUNE_GRAPH_ID / GRAPH_ID).
+Neptune graph id (NeptuneClient reads NEPTUNE_GRAPH_ID; the pinned production
+value is the `neptuneGraphId` context in infra/cdk.json, and pointing this at a
+blue/green graph is just a different NEPTUNE_GRAPH_ID).
 
 The LLM-judge equivalence pass (§7 grading step 4) is intentionally NOT run
 here — it needs both baseline+after answers side by side. Use --compare-only

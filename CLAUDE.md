@@ -16,8 +16,8 @@ bun run deploy                 # bundle + cdk deploy (uses --profile and region 
 
 # CDK must be run from infra/:
 cd infra
-AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk diff -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG
-AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk diff -c stackName=WisconsinBotGraphRAG
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk deploy -c stackName=WisconsinBotGraphRAG --require-approval never
 ```
 
 ### Testing
@@ -45,7 +45,7 @@ bun dev                        # local dev server (Next.js + Turbopack)
 ```bash
 # First-time: deploy infra + build/push Docker image
 cd infra
-AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk deploy -c useGraphRAG=true -c stackName=WisconsinBotGraphRAG --require-approval never
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk deploy -c stackName=WisconsinBotGraphRAG --require-approval never
 cd ../tools/ingestion/docker
 ./build_and_push.sh              # builds container image and pushes to ECR
 
@@ -128,7 +128,8 @@ uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e692
 #     --eval-yaml tools/ingestion/tests/recall_eval_queries.yaml
 #   (regenerate the YAML first with tools/ingestion/ops/build_recall_eval.py)
 # Staging / A-B a pipeline change without touching prod caches or the prod graph:
-#   every phase accepts --cache-prefix staging/ (and load --graph-id <other graph>);
+#   every phase accepts --cache-prefix staging/ (and load --graph-id <other graph>,
+#   which needs that graph's ARN on the Fargate task role first — infra/README.md);
 #   raw-recall eval: tools/ingestion/ops/run_recall_probe.py --mode baseline|after --graph-id ...
 # Neptune must be at 128 mCU for a full load (Phase 8 OOMs below that); scale back to 32 after.
 # 16 m-NCU is rejected ("storage memory constraints") — confirmed 2026-09-18 on a FRESH graph too,
@@ -183,9 +184,13 @@ AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> uv run pytho
 AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> uv run python -m tools.ingestion.embed \
   --work-bucket wis-work-bucket-c8e69250 --config tools/ingestion/config/ingest_config.yaml
 
-# Load into Neptune graph (9 sub-phases)
-AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> uv run python -m tools.ingestion.load \
-  --work-bucket wis-work-bucket-c8e69250 --graph-id g-ndvl4j73v4 \
+# Load into Neptune graph (10 sub-phases)
+# --graph-id defaults to $NEPTUNE_GRAPH_ID; export it (the pinned graph id from
+# infra/cdk.json) or pass --graph-id explicitly for a staging graph.
+AWS_CA_BUNDLE=$CERT AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> \
+  NEPTUNE_GRAPH_ID=$(jq -r '.context.neptuneGraphId' infra/cdk.json) \
+  uv run python -m tools.ingestion.load \
+  --work-bucket wis-work-bucket-c8e69250 \
   --config tools/ingestion/config/ingest_config.yaml
 
 # FAQ sync
@@ -232,7 +237,9 @@ Responses stream to the frontend via API Gateway WebSocket. The `websocket_utils
 
 ### GraphRAG Data Model
 
-Neptune Analytics graph with 1024-dim vectors and IAM auth. **Live graph as of 2026-09-18: `g-svphgiu4k6`** (re-indexed WPAM), selected by the `neptuneGraphIdOverride` context pinned in `infra/cdk.json`; the CDK-owned construct graph `g-ndvl4j73v4` is the rollback until it is deleted. Fargate `load` targets the CDK-owned graph unless you pass `--graph-id`; the task role is also granted the `stagingGraphId` context graph. Use `--graph-id g-svphgiu4k6` for loads until the construct is re-pointed.
+Neptune Analytics graph with 1024-dim vectors and IAM auth. **Live graph: `g-svphgiu4k6`** (re-indexed WPAM, 2026-09-18).
+
+The graph is **not a CDK resource**: it is created and loaded out of band and selected by the single `neptuneGraphId` context pinned in `infra/cdk.json`. `infra/stacks/stack.ts` reads it and fails synth if it is missing (no fallback), then feeds both consumers — the retrieval Lambda (env + IAM) and the Fargate ingestion task (env `NEPTUNE_GRAPH_ID` + task-role IAM). So a routine `run_fargate.sh load` with no flags lands on the live graph; `--graph-id` remains an explicit override for a staging/blue-green graph (whose ARN must be added to the task role first — see `infra/README.md` for the blue/green and rollback procedure).
 
 **Node types:** Framework → Document → Chunk (with vector embeddings).
 
@@ -275,7 +282,7 @@ Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeli
 - **Python Lambdas use Pydantic v2** for input validation and serialization. Models use `BaseModel` with `model_validate()` / `model_dump()`.
 - **CamelCase serialization** — `CamelCaseModel` base class in shared types converts snake_case Python to camelCase JSON via alias generator.
 - **Lambda bundling** — Python deps are installed during CDK synth via Docker bundling (pip install in bundling image). Each Lambda in `backend/lambdas/` has its own `requirements.txt`.
-- **CDK context flags** — `stackName`, `domainName`, `hostedZoneName`, `hostedZoneId` are passed via `-c` flag. `useGraphRAG=true` is always set (legacy path removed).
+- **CDK context flags** — `stackName`, `domainName`, `hostedZoneName`, `hostedZoneId` are passed via `-c` flag. `neptuneGraphId` is pinned in `infra/cdk.json` (synth fails without it; `-c neptuneGraphId=...` overrides for a one-off). There is no `useGraphRAG` flag — nothing reads it.
 - **Embedding model** — Titan Embed Text V2 (1024 dimensions) used throughout for both Bedrock KBs and Neptune vector search.
 - **Bedrock model IDs** — Inference profiles require the full format: `us.anthropic.claude-sonnet-4-6` (not bare model IDs or old `-v1:0` suffix forms). Check `aws bedrock list-inference-profiles` for valid IDs.
 - **Region in scripts** — `tools/ingestion/*.py` use `os.environ.get("AWS_REGION", "us-east-1")` for boto3 clients. Always set `AWS_REGION` explicitly when running locally.

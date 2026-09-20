@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest *)",
+      "Bash(uv run ruff check *)",
+      "Bash(uv run ruff format --check *)",
+      "Bash(bunx eslint *)",
+      "Bash(bunx tsc --noEmit *)",
+      "Bash(bun test *)",
+      "Bash(bun run test)",
+      "Bash(cdk diff *)",
+      "Bash(aws s3 ls *)",
+      "Bash(aws s3api head-object *)",
+      "Bash(aws logs filter-log-events *)",
+      "Bash(aws logs get-log-events *)",
+      "Bash(aws logs describe-log-streams *)",
+      "Bash(aws logs tail *)",
+      "Bash(aws logs start-query *)",
+      "Bash(aws logs get-query-results *)",
+      "Bash(aws dynamodb scan *)",
+      "Bash(aws dynamodb get-item *)",
+      "Bash(aws dynamodb describe-table *)",
+      "Bash(aws ecs describe-tasks *)",
+      "Bash(aws neptune-graph get-graph *)",
+      "Bash(aws lambda get-function-configuration *)",
+      "Bash(aws bedrock list-inference-profiles *)"
+    ]
+  }
+}
