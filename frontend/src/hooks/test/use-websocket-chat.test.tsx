@@ -1,4 +1,6 @@
 /** @bun */
+// Keep first: sets NEXT_PUBLIC_API_BASE_URL before `lib/http` is evaluated.
+import './setup-env';
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -117,7 +119,8 @@ describe('useWebSocketChat Hook Tests', () => {
       await result.current.sendMessage('What is Wisconsin?');
     });
 
-    expect(mockWsSendMessage).toHaveBeenCalledWith('What is Wisconsin?');
+    // The hook forwards the optional suppressTopicShift flag as a 2nd arg.
+    expect(mockWsSendMessage).toHaveBeenCalledWith('What is Wisconsin?', undefined);
 
     // Optimistic query should be in the store
     store = useChatStore.getState();

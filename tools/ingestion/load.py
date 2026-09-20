@@ -5,7 +5,7 @@ Implements 10 sequential sub-phases:
 1. Scaffold (frameworks + hierarchy)
 2. Document nodes (with the case-law title sink guard)
 3. Statute hierarchy (PART_OF)
-4. Hierarchy links (sub-document + universal)
+4. Hierarchy links (stub Statute / AdminRule to framework)
 5. Chunk nodes
 6. Case Law CITES (Statute→CaseLaw reverse edges)
 7. Stub resolution (DEFINED_BY edges from stubs to statute chunks)
@@ -118,7 +118,6 @@ DOC_METADATA_KEYS: tuple[str, ...] = (
     "implements_refs",
     "topics",
     "s3_key",
-    "_parent_id",
 )
 
 _EMBEDDING_KEYS: frozenset[str] = frozenset({"chunks", "doc_embedding", "embed_input_mode"})
@@ -561,27 +560,14 @@ def phase_3_statute_hierarchy(client, graph_id: str):
     )
 
 
-def phase_4_hierarchy_links(client, graph_id: str, documents: list[dict]):
-    logger.info("Phase 4: Sub-document links + universal hierarchy...")
+def phase_4_hierarchy_links(client, graph_id: str):
+    """Attach stub Statute / AdminRule nodes to their framework.
 
-    pairs = [
-        {"parent_id": doc["_parent_id"], "child_id": doc["doc_id"]}
-        for doc in documents
-        if doc.get("_parent_id")
-    ]
-    logger.info(f"  {len(pairs)} HAS_SUBSECTION links")
-
-    flush_cap = 400
-    for start in range(0, len(pairs), flush_cap):
-        chunk = pairs[start : start + flush_cap]
-        execute_query(
-            client,
-            graph_id,
-            "UNWIND $rows AS row "
-            "MATCH (parent {id: row.parent_id}), (child {id: row.child_id}) "
-            "MERGE (parent)-[:HAS_SUBSECTION]->(child)",
-            {"rows": chunk},
-        )
+    This phase used to also write HAS_SUBSECTION edges from a document's
+    ``_parent_id``, but nothing in the pipeline ever set that key, so the
+    edge list was always empty. Removed 2026-09-19.
+    """
+    logger.info("Phase 4: Universal hierarchy...")
 
     execute_query(
         client,
@@ -1108,21 +1094,20 @@ def phase_9_cleanup(
 ):
     """Garbage-collect orphan nodes left over from prior loads.
 
-    Three specific classes:
+    Two specific classes:
       1. Orphan Statute STUBs — created on demand by phase 3 / phase 8 when
          a chunk's regex matches a section we never indexed full text for.
          If after the whole load the stub has zero incoming AND zero
          outgoing relationships, it's a regex hallucination (e.g., a
          partial number that looked like a statute ref). Safe to delete.
-      2. Orphan Topic nodes — phase 5 sometimes creates canonical Topics
-         from LLM cluster output that no document maps to (the LLM names a
-         canonical that isn't a "member" of any cluster, so the doc→topic
-         edge is never wired). Topics with zero COVERS_TOPIC are dead
-         weight in the index.
-      3. Stale CaseLaw nodes — parallel-reporter duplicates from prior loads
+      2. Stale CaseLaw nodes — parallel-reporter duplicates from prior loads
          that were later deduplicated from S3. Their extracted cache no
          longer exists, so they'll never be updated. Delete any CaseLaw
          node whose ID isn't in the current document set.
+
+    A third class, orphan Topic nodes, was GC'd here until 2026-09-19. No
+    phase has created a Topic node or a COVERS_TOPIC edge for a long time,
+    so the query only ever deleted zero rows.
 
     This phase is run-once-and-safe. MERGE-idempotent phases above will
     not re-create the orphans because the underlying conditions for stub
@@ -1132,11 +1117,10 @@ def phase_9_cleanup(
 
     We DELIBERATELY do not GC:
       - Stub Statutes that have ANY edge — they're real placeholders.
-      - Topics with at least one COVERS_TOPIC — the agent uses these.
       - Stub AdminRules — much smaller volume; defer until we see the
         same pattern.
     """
-    logger.info("Phase 9: Cleaning up orphan stubs and topics...")
+    logger.info("Phase 9: Cleaning up orphan stubs...")
 
     stub_orphans = execute_query(
         client,
@@ -1150,18 +1134,6 @@ def phase_9_cleanup(
     )
     deleted_stubs = stub_orphans.get("results", [{}])[0].get("deleted", 0)
     logger.info(f"  Deleted {deleted_stubs} orphan Statute stubs (no incoming/outgoing edges)")
-
-    topic_orphans = execute_query(
-        client,
-        graph_id,
-        "MATCH (t:Topic) "
-        "WHERE NOT (t)<-[:COVERS_TOPIC]-() "
-        "WITH t LIMIT 5000 "
-        "DETACH DELETE t "
-        "RETURN count(t) AS deleted",
-    )
-    deleted_topics = topic_orphans.get("results", [{}])[0].get("deleted", 0)
-    logger.info(f"  Deleted {deleted_topics} orphan Topic nodes (no incoming COVERS_TOPIC)")
 
     # Stale CaseLaw nodes: compare graph against the extracted/ prefix in S3
     # (the authoritative document set), not against what was loaded this run.
@@ -1342,7 +1314,7 @@ def main():
         (1, "Scaffold", lambda: phase_1_scaffold(client, graph_id, config)),
         (2, "Document Nodes", lambda: phase_2_document_nodes(client, graph_id, documents, config)),
         (3, "Statute Hierarchy", lambda: phase_3_statute_hierarchy(client, graph_id)),
-        (4, "Hierarchy Links", lambda: phase_4_hierarchy_links(client, graph_id, documents)),
+        (4, "Hierarchy Links", lambda: phase_4_hierarchy_links(client, graph_id)),
         (5, "Chunk Nodes", lambda: phase_5_chunk_nodes(client, graph_id, documents)),
         (6, "Case Law CITES", lambda: phase_6_case_law_cites(client, graph_id, documents)),
         (

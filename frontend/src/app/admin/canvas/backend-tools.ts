@@ -16,6 +16,8 @@
 //                   post-retrieval adequacy judge.
 //   - `refine_query` — removed; refinement is now the `auto_refine` pipeline
 //                   stage, which emits a tool_result under that name.
+//   - `get_authority_chain` / `list_framework_docs` — retired from
+//                   TOOL_DEFINITIONS; their panes were removed with them.
 export const BACKEND_TOOL_NAMES = [
   'faq_search',
   'vector_search',
@@ -24,8 +26,6 @@ export const BACKEND_TOOL_NAMES = [
   'get_section',
   'get_document',
   'get_neighbors',
-  'get_authority_chain',
-  'list_framework_docs',
   'find_case_law',
   'fetch_case_opinion',
   'list_worksheets',

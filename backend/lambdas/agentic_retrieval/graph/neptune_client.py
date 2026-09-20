@@ -318,30 +318,6 @@ class NeptuneClient:
         )
         return results
 
-    def get_authority_chain(self, node_id: str, max_depth: int = 5) -> list[dict]:
-        """Trace the governance hierarchy from a node up to the root framework."""
-        results = self.query(
-            f"MATCH p=(d {{id: $id}})-[:PART_OF|BELONGS_TO|DERIVED_FROM*1..{max_depth}]->(root) "
-            "WHERE NOT (root)-[:PART_OF|BELONGS_TO|DERIVED_FROM]->() "
-            "UNWIND nodes(p) AS node "
-            "RETURN DISTINCT node.id AS id, node.title AS title, "
-            "node.authority_level AS authority_level, labels(node) AS labels",
-            {"id": node_id},
-            query_name="get_authority_chain",
-        )
-        return results
-
-    def list_framework_docs(self, framework_id: str) -> list[dict]:
-        """List all documents belonging to a framework."""
-        results = self.query(
-            "MATCH (d)-[:BELONGS_TO]->(f:Framework {id: $fw_id}) "
-            "RETURN d.id AS id, d.title AS title, d.doc_type AS doc_type, "
-            "d.source_url AS source_url, labels(d) AS labels",
-            {"fw_id": framework_id},
-            query_name="list_framework_docs",
-        )
-        return results
-
     def get_chunks_for_doc(self, doc_id: str) -> list[dict]:
         """Get all chunks for a document with full metadata."""
         results = self.query(
@@ -512,58 +488,6 @@ class NeptuneClient:
             {"statute_ids": sorted(set(statute_ids))},
             query_name="get_case_chunks_for_statutes",
         )
-
-    def get_chunk_statute_ids(self, chunk_ids: list[str]) -> list[str]:
-        """Return statute IDs cited by the given chunks (via CITES edges)."""
-        if not chunk_ids:
-            return []
-        results = self.query(
-            "UNWIND $chunk_ids AS cid "
-            "MATCH (c:Chunk {id: cid})-[:CITES]->(s:Statute) "
-            "RETURN DISTINCT s.id AS statute_id",
-            {"chunk_ids": chunk_ids},
-            query_name="get_chunk_statute_ids",
-        )
-        return [r["statute_id"] for r in results if r.get("statute_id")]
-
-    def rank_neighbors_by_shared_statutes(
-        self,
-        neighbor_doc_ids: list[str],
-        chunk_statute_ids: list[str],
-        limit: int = 3,
-    ) -> list[str]:
-        """Rank neighbor docs by how many statutes they share with query chunks.
-
-        Returns doc IDs ordered by shared statute count (descending). Used to
-        pick the most topically relevant neighbors for citation scanning.
-        """
-        if not neighbor_doc_ids or not chunk_statute_ids:
-            return []
-        results = self.query(
-            "UNWIND $doc_ids AS did "
-            "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: did}) "
-            "MATCH (c)-[:CITES]->(s:Statute) "
-            "WHERE s.id IN $statute_ids "
-            "RETURN d.id AS doc_id, count(DISTINCT s) AS shared_statutes "
-            "ORDER BY shared_statutes DESC "
-            f"LIMIT {int(limit)}",
-            {"doc_ids": neighbor_doc_ids, "statute_ids": chunk_statute_ids},
-            query_name="rank_neighbors_by_shared_statutes",
-        )
-        return [r["doc_id"] for r in results if r.get("doc_id")]
-
-    def get_chunks_text_for_docs(self, doc_ids: list[str]) -> list[str]:
-        """Fetch chunk text for the given docs. Returns a flat list of text strings."""
-        if not doc_ids:
-            return []
-        results = self.query(
-            "UNWIND $doc_ids AS did "
-            "MATCH (c:Chunk)-[:EXTRACTED_FROM]->(d {id: did}) "
-            "RETURN c.text AS text",
-            {"doc_ids": doc_ids},
-            query_name="get_chunks_text_for_docs",
-        )
-        return [r["text"] for r in results if r.get("text")]
 
     def get_statute_backfill(self, chunk_ids: list[str]) -> list[dict]:
         """Resolve the statute text that a set of source chunks CITES.

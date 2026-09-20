@@ -69,14 +69,6 @@ range = [1, 5]
 stage = "caselaw_backfill"
 model_override = false
 
-[env.BROAD_DISCOVERY_CAP]
-default = 15
-type = "int"
-description = "Max chunks returned by the broad discovery arm (same pipeline as narrow, additive docs only)"
-range = [0, 25]
-stage = "broad_discovery"
-model_override = false
-
 [env.DIVERSITY_CAP_PER_DOC]
 default = 3
 type = "int"
@@ -107,22 +99,6 @@ type = "int"
 description = "Minimum reserved vector_search slots for FAQs/gov-pubs/guides (authority 6-7)"
 range = [0, 10]
 stage = "authority_quota"
-model_override = false
-
-[env.ENRICH_CAP_PER_DOC]
-default = 5
-type = "int"
-description = "Max auto-enrichment neighbors kept per top parent document"
-range = [0, 25]
-stage = "auto_enrichment"
-model_override = false
-
-[env.ENRICH_CAP_PER_TYPE]
-default = 4
-type = "int"
-description = "Max auto-enrichment neighbors kept per doc_type, within a document's cap"
-range = [0, 25]
-stage = "auto_enrichment"
 model_override = false
 
 [env.SEARCH_DOCUMENT_FETCH_K]
@@ -253,7 +229,14 @@ model_override = false
 [env.ENABLE_DISAMBIGUATION]
 default = "false"
 type = "bool"
-description = "Enable the disambiguation pre-check before the agentic loop starts"
+description = "Legacy pre-loop classifier; superseded by the adequacy judge (Task 71); off since 2026-09-19, keep for possible revival"
+stage = "loop"
+model_override = false
+
+[env.ENABLE_TOPIC_SHIFT]
+default = "false"
+type = "bool"
+description = "Legacy pre-loop classifier; superseded by the adequacy judge (Task 71); off since 2026-09-19, keep for possible revival"
 stage = "loop"
 model_override = false
 

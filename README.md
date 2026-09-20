@@ -61,7 +61,7 @@ A property tax Q&A assistant for the Wisconsin Department of Revenue (DOR). User
 3. EventBridge triggers the **Agentic Retrieval Lambda** directly (no Step Function)
 4. The Lambda runs a Claude tool-use loop:
    - Searches a Bedrock FAQ Knowledge Base (`faq_search`) for quick-answer matches
-   - Calls Neptune graph tools (`vector_search`, `get_neighbors`, `get_authority_chain`) to find
+   - Calls Neptune graph tools (`vector_search`, `search_document`, `get_neighbors`) to find
      relevant document chunks and their legal context
    - Claude decides when it has enough evidence and produces a cited answer
 5. The same Lambda streams the answer, source documents, and FAQs back to the client over WebSocket
@@ -185,7 +185,7 @@ The Neptune Analytics graph stores the full Wisconsin property tax knowledge bas
 
 - **Node types:** Framework, Document (carrying doc-type labels like `Statute`, `CaseLaw`, `AssessmentManual`), Chunk (with vector embeddings), Topic
 - **Authority hierarchy:** 9 levels of legal precedence from Constitution down to USPAP standards
-- **Edge types:** `CITES`, `IMPLEMENTS`, `PART_OF`, `BELONGS_TO`, `HAS_SUBSECTION`, `EXTRACTED_FROM`, `DEFINED_BY`, `DERIVED_FROM`, `COVERS_TOPIC`
+- **Edge types:** `CITES`, `PART_OF`, `BELONGS_TO`, `EXTRACTED_FROM`, `DEFINED_BY`, `DERIVED_FROM`
 - **Embeddings:** Amazon Titan Embed Text V2 (1024 dimensions)
 
 Documents are ingested via a multi-phase pipeline (see `CLAUDE.md` for full ingestion commands, and `docs/` for details):

@@ -11,7 +11,6 @@ from typing import Any
 from agent_tools.stages import (
     authority_quota,
     authority_tiebreak,
-    auto_enrichment,
     auto_refine,
     broad_discovery,
     caselaw_backfill,
@@ -30,7 +29,6 @@ VECTOR_SEARCH_STAGES = [
     diversity_cap,
     authority_quota,
     authority_tiebreak,
-    auto_enrichment,
     citation_extraction,
     statute_backfill,
     caselaw_backfill,
@@ -76,8 +74,6 @@ def run_vector_search(
         tool_name=tool_name,
         top_k=top_k,
         chunk_count=len(ctx.chunks),
-        graph_context_doc_count=len(ctx.graph_context),
-        graph_context_neighbor_count=sum(len(v) for v in ctx.graph_context.values()),
         related_case_law_count=len(ctx.related_case_law),
         statute_backfill_count=len(ctx.statute_backfill),
         caselaw_backfill_count=len(ctx.caselaw_backfill),
@@ -86,10 +82,6 @@ def run_vector_search(
         **_executor._query_fields(ctx.refined_query),
     )
 
-    # graph_context is intentionally NOT included in the model-facing result
-    # (Direction 1, Option A). It was consumed by auto_enrichment /
-    # citation_extraction / caselaw_backfill above. Surfacing it to the model
-    # just floods the tool result with low-cite-rate neighbor stubs.
     result: dict[str, Any] = {
         "chunks": ctx.chunks,
         "pre_dedup_count": ctx.pre_dedup_count,

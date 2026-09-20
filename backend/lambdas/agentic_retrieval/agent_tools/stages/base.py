@@ -44,9 +44,6 @@ class StageContext:
     # authority_tiebreak / statute_backfill source snapshot
     backfill_source_chunks: list[dict] = field(default_factory=list)
 
-    # auto_enrichment (internal-only; not surfaced to the model)
-    graph_context: dict[str, list[dict]] = field(default_factory=dict)
-
     # citation_extraction
     related_case_law: list[dict] = field(default_factory=list)
 

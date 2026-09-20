@@ -138,13 +138,14 @@ their `phase_N_*` functions (there is no CLI-step vs. function offset).
 | 6 | Case Law CITES | `(Statute)-[:CITES]->(CaseLaw)` reverse edges |
 | 7 | Stub Resolution | `DEFINED_BY` edges from Statute/AdminRule stubs to matching chunks |
 | 8 | Vector Upserts | `neptune.algo.vectors.upsert` per chunk (parallel, 8 workers) |
-| 9 | Orphan Cleanup | GC orphan Statute stubs, orphan Topics, stale CaseLaw nodes |
+| 9 | Orphan Cleanup | GC orphan Statute stubs and stale CaseLaw nodes |
 
 > There is no longer a semantic-edge / topic-clustering phase — an earlier
 > "Phase 9" that classified `RELATED_TO`/`SUPPLEMENTS`/`SUPERSEDES`/`CONFLICTS_WITH`
-> edges via an LLM was removed. Current Phase 9 is orphan cleanup.
-> `ops/delete_semantic_edges.py` deletes the old edges from a live graph that was
-> loaded before the removal.
+> edges via an LLM was removed. Current Phase 9 is orphan cleanup. The one-shot
+> `ops/delete_semantic_edges.py`, which stripped those edges from a graph loaded
+> before the removal, was deleted on 2026-09-19; every live graph has been
+> reloaded since.
 
 ## Monitoring
 
@@ -212,8 +213,8 @@ cluster cost nothing when no tasks are running.
 - **VPC** — 2 public subnets, no NAT gateways, `maxAzs: 2`
 - **ECS Cluster** — `wis-dor-ingestion`
 - **ECR Repository** — `wis-dor-ingestion`, keeps the last **5** images (`removalPolicy: DESTROY`, `emptyOnDelete: true`)
-- **Fargate Task Definition** — 2 vCPU / 8 GB, container name `ingestion`, pre-set env: `AWS_REGION`, `RAW_BUCKET`, `WORK_BUCKET`, `GRAPH_ID`, `MAX_WORKERS=3`, `TEXTRACT_STAGING_BUCKET`
-- **IAM Task Role** — S3 (raw + work buckets, plus the Textract staging bucket `textract-chunk-result-dhgoel`), Bedrock (`InvokeModel`), Neptune Graph (execute/read/write/delete/get), Textract (analyze/detect/start/get)
+- **Fargate Task Definition** — 2 vCPU / 8 GB, container name `ingestion`, pre-set env: `AWS_REGION`, `RAW_BUCKET`, `WORK_BUCKET`, `GRAPH_ID`, `MAX_WORKERS=3`
+- **IAM Task Role** — S3 (raw + work buckets), Bedrock (`InvokeModel`), Neptune Graph (execute/read/write/delete/get), Textract (analyze/detect/start/get)
 - **CloudWatch Log Group** — `/ecs/wis-dor-ingestion`, `ONE_MONTH` (30-day) retention
 - **Security Group** — outbound-only (`allowAllOutbound: true`, no ingress)
 
@@ -230,7 +231,7 @@ from the nested stack's own outputs. The run scripts discover all of these via
 | Auth | `AWS_PROFILE=<your-profile>` | IAM task role (automatic) |
 | SSL certs | `AWS_CA_BUNDLE=$CERT` | Not needed (base image has certs) |
 | `state_laws_dir` | Local statute PDFs used for section-level refs | Degrades gracefully to chapter-only refs |
-| Textract staging | `TEXTRACT_STAGING_BUCKET` (defaults to `textract-chunk-result-dhgoel`) | Same, set via task-def env var |
+| Textract staging | `TEXTRACT_STAGING_BUCKET`, unset by default | Not set on the task def |
 | Logs | Terminal stdout | CloudWatch `/ecs/wis-dor-ingestion` |
 | Failure recovery | Restart manually | Re-run the same command; caching skips completed work |
 

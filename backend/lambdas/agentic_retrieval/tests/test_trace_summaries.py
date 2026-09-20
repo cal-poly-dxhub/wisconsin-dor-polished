@@ -42,7 +42,7 @@ class TestBuildToolCallSummary:
         assert build_tool_call_summary("vector_search", {}, None) == ""
         assert build_tool_call_summary("faq_search", {"query": ""}, None) == ""
         assert build_tool_call_summary("get_neighbors", {"doc_id": ""}, None) == ""
-        assert build_tool_call_summary("get_authority_chain", {}, None) == ""
+        assert build_tool_call_summary("find_case_law", {}, None) == ""
         assert build_tool_call_summary("prepare_answer", {}, None) == "with 0 cited sources"
         assert (
             build_tool_call_summary("prepare_answer", {"cited_doc_ids": None}, None)

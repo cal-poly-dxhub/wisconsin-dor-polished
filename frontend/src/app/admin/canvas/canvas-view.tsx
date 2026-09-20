@@ -17,8 +17,6 @@ import { FaqSearchPane } from './components/faq-search-pane';
 import { ThinkingPane } from './components/thinking-pane';
 import { PlaceholderPane } from './components/placeholder-pane';
 import { GetDocumentPane } from './components/get-document-pane';
-import { GetAuthorityChainPane } from './components/get-authority-chain-pane';
-import { ListFrameworkDocsPane } from './components/list-framework-docs-pane';
 import { FetchCaseOpinionPane } from './components/fetch-case-opinion-pane';
 import { FindCaseLawPane } from './components/find-case-law-pane';
 import { GetFlowchartPane, ListFlowchartsPane } from './components/flowchart-panes';
@@ -94,7 +92,6 @@ function vectorSearchPaneData(pane: ToolPane) {
     scoreBuckets: m.scoreBuckets as Record<string, number> | undefined,
     targetWpamYear: m.targetWpamYear as number | undefined,
     caseLawCount: m.caseLawCount as number | undefined,
-    autoEnrichedCount: m.autoEnrichedCount as number | undefined,
     statuteBackfill: m.statuteBackfill as
       | { chunkId: string; docId: string; sourceRank: number }[]
       | undefined,
@@ -510,26 +507,6 @@ export const TOOL_PANES: Record<string, PaneRenderer> = {
         docId: str(pane.metadata.docId) || pane.callSummary,
         status: ((pane.metadata.documentCount as number) ?? 0) > 0 ? 'ok' : 'miss',
         latencyMs: num(pane.metadata.latencyMs),
-      }}
-    />
-  ),
-
-  get_authority_chain: (pane) => (
-    <GetAuthorityChainPane
-      data={{
-        chainLength: (pane.metadata.chainLength as number) ?? 0,
-        latencyMs: num(pane.metadata.latencyMs),
-        summary: pane.callSummary,
-      }}
-    />
-  ),
-
-  list_framework_docs: (pane) => (
-    <ListFrameworkDocsPane
-      data={{
-        documentCount: (pane.metadata.documentCount as number) ?? 0,
-        latencyMs: num(pane.metadata.latencyMs),
-        summary: pane.callSummary,
       }}
     />
   ),

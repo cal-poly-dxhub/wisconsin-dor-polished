@@ -998,20 +998,31 @@ def chunks_detail_handler(docId: str) -> Response:
         return create_json_response(500, create_error_body(e))
 
 
+# The metadata this endpoint stamps onto an ad-hoc uploaded document. It must
+# match the per-category block in tools/ingestion/config/document_manifest.yaml,
+# because extract.py reads framework_id / doc_type / authority_level straight
+# off the .metadata.json sidecar. Every framework_id here must be a framework in
+# tools/ingestion/config/ingest_config.yaml and every doc_type a key of its
+# `doc_types` map (test_ingest_categories.py enforces both) -- an id that is not
+# there loads a document into a framework node that does not exist.
 INGEST_CATEGORIES = {
     "constitution": {
-        "framework_id": "FW-WI-CONST",
+        "framework_id": "FW-CONSTITUTION",
         "authority_level": 1,
         "doc_type": "constitution",
     },
-    "statutes": {"framework_id": "FW-WI-STAT", "authority_level": 2, "doc_type": "statute"},
-    "admin_rules": {"framework_id": "FW-WI-ADMIN", "authority_level": 4, "doc_type": "admin_rule"},
-    "wpam": {"framework_id": "FW-WPAM", "authority_level": 5, "doc_type": "manual"},
-    "faq_pages": {"framework_id": "FW-WI-DOR", "authority_level": 6, "doc_type": "faq"},
-    "gov_publications": {"framework_id": "FW-WI-DOR", "authority_level": 7, "doc_type": "guide"},
-    "news_pages": {"framework_id": "FW-WI-DOR", "authority_level": 7, "doc_type": "advisory"},
+    "statutes": {"framework_id": "FW-STATUTES", "authority_level": 2, "doc_type": "statute"},
+    "admin_rules": {
+        "framework_id": "FW-ADMIN-RULES",
+        "authority_level": 4,
+        "doc_type": "admin_rule",
+    },
+    "wpam": {"framework_id": "FW-WPAM", "authority_level": 5, "doc_type": "assessment_manual"},
+    "faq_pages": {"framework_id": "FW-FAQ", "authority_level": 6, "doc_type": "faq_page"},
+    "gov_publications": {"framework_id": "FW-GOV-PUBS", "authority_level": 7, "doc_type": "guide"},
+    "news_pages": {"framework_id": "FW-GOV-PUBS", "authority_level": 7, "doc_type": "advisory"},
     "complex_inquiry_pages": {
-        "framework_id": "FW-WI-DOR",
+        "framework_id": "FW-GOV-PUBS",
         "authority_level": 7,
         "doc_type": "advisory",
     },

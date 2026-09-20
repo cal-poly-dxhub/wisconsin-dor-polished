@@ -305,7 +305,7 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
           'iaao-standard-mass-appraisal',
         ],
         neighborEdges: [
-          { title: 'Chapter 70 — Property Assessment', relationship: 'IMPLEMENTS' },
+          { title: 'Chapter 70 — Property Assessment', relationship: 'CITES' },
           { title: 'Tax 12 — Assessor Certification', relationship: 'RELATED_TO' },
           { title: 'Tax 18 — Agricultural Land', relationship: 'RELATED_TO' },
           { title: '2026 Property Owner\'s Guide', relationship: 'RELATED_TO' },

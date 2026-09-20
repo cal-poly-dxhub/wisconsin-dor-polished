@@ -70,7 +70,6 @@ select = [
 "tools/ingestion/extract.py" = ["E501"]
 "tools/ingestion/ingest_case_law.py" = ["E501"]
 "tools/ingestion/load.py" = ["E501"]
-"tools/ingestion/ops/cleanup_orphan_chunks.py" = ["E501"]
 "tools/ingestion/ops/test_diversity.py" = ["E501"]
 "tools/ingestion/tests/test_case_slug.py" = ["E501"]
 "tools/ingestion/tests/test_pymupdf_tables.py" = ["E501"]

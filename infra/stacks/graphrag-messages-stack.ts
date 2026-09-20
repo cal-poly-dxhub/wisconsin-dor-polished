@@ -13,7 +13,6 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   chatHistoryTable: cdk.aws_dynamodb.ITable;
   websocketCallbackUrl: string;
   neptuneGraphId: string;
-  neptuneGraphEndpoint: string;
   rawBucketName: string;
   faqKnowledgeBaseId: string;
   faqUrlTable: cdk.aws_dynamodb.ITable;
@@ -61,13 +60,12 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           FAQ_URL_TABLE_NAME: props.faqUrlTable.tableName,
           MODEL_CONFIG_TABLE_NAME: props.modelConfigTable.tableName,
           LOG_LEVEL: 'INFO',
-          // Overrides the retrieval.toml default (false) to preserve this
-          // stack's currently-deployed behavior.
-          ENABLE_DISAMBIGUATION: 'true',
-          // Enables the TOPIC_SHIFT verdict: a follow-up that opens an
-          // unrelated subject short-circuits with a soft "start a new chat?"
-          // suggestion instead of running the loop. Only acts mid-conversation.
-          ENABLE_TOPIC_SHIFT: 'true',
+          // Legacy pre-loop classifier, superseded by the adequacy judge
+          // (Task 71). Off since 2026-09-19. Flip either back to 'true' to
+          // revive it — the topic-shift nudge ("start a new chat?") comes
+          // from the same Haiku call, so it returns with these.
+          ENABLE_DISAMBIGUATION: 'false',
+          ENABLE_TOPIC_SHIFT: 'false',
           // Post-retrieval adequacy judge (2026-09-18): every query runs the
           // research loop; a Haiku judge then grades the answer plan against
           // the retrieved evidence (ANSWER / CLARIFY / DECLINE) and Phase B
@@ -148,7 +146,22 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
       })
     );
 
-    // Bedrock permissions (scoped to specific models)
+    // Bedrock: InvokeModel on '*'. Deliberately unscoped, not "scoped to
+    // specific models" as this comment used to claim. Three of the four model
+    // ids below are cross-region inference profiles (us.*), which resolve to
+    // per-region foundation-model ARNs at call time, so a scoped resource list
+    // has to enumerate the profile ARN plus every regional model ARN it can
+    // route to. Models this Lambda actually invokes (see config/retrieval.toml
+    // and backend/lambdas/agentic_retrieval/config.py):
+    //   us.anthropic.claude-sonnet-4-6              agent loop (Phase A),
+    //                                               answer stream (Phase B),
+    //                                               auto-refine
+    //   us.anthropic.claude-haiku-4-5-20251001-v1:0 adequacy judge
+    //                                               (and the disabled pre-loop
+    //                                               disambiguation classifier)
+    //   amazon.titan-embed-text-v2:0                vector_search query
+    //                                               embedding
+    // Nova 2 Lite is ingestion-only (Fargate), not invoked here.
     agenticRetrievalHandler.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,

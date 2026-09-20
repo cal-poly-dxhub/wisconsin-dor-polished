@@ -60,7 +60,7 @@ def test_execute_tool_get_document_not_found():
 
 def test_execute_tool_get_document_accepts_node_id_alias():
     """The model sometimes calls get_document with node_id (the param name
-    used by get_neighbors/get_authority_chain) instead of doc_id. Accept it
+    used by get_neighbors) instead of doc_id. Accept it
     rather than raising KeyError, which would crash the whole agent loop."""
     from agent_tools import execute_tool
 
@@ -195,6 +195,29 @@ def test_refine_query_tool_removed_from_definitions():
 
     names = {t["toolSpec"]["name"] for t in TOOL_DEFINITIONS}
     assert "refine_query" not in names
+
+
+def test_retired_tools_absent_from_definitions():
+    """get_authority_chain and list_framework_docs were retired: the loader
+    never builds the hierarchy they walked, and framework listing never earned
+    a cite. `clarify` was never a real tool (the adequacy judge asks instead)."""
+    from agent_tools import TOOL_DEFINITIONS
+
+    names = {t["toolSpec"]["name"] for t in TOOL_DEFINITIONS}
+    assert "get_authority_chain" not in names
+    assert "list_framework_docs" not in names
+    assert "clarify" not in names
+
+
+def test_get_neighbors_edge_types_only_lists_edges_the_loader_writes():
+    """IMPLEMENTS and COVERS_TOPIC are in the data model docs but no loader
+    phase ever creates them, so they must not be offered to the model."""
+    from agent_tools import TOOL_DEFINITIONS
+
+    spec = next(t["toolSpec"] for t in TOOL_DEFINITIONS if t["toolSpec"]["name"] == "get_neighbors")
+    blob = str(spec)
+    assert "IMPLEMENTS" not in blob
+    assert "COVERS_TOPIC" not in blob
 
 
 # ---------------------------------------------------------------------------
@@ -605,28 +628,22 @@ def test_get_neighbors_ranked_result_includes_trace_context():
     assert result["total_cases"] == 10
 
 
-def test_vector_search_enrichment_runs_but_is_not_surfaced():
-    """Auto-enrichment still runs internally (feeding case-law discovery) but
-    is NOT surfaced to the model — graph_context is absent from the result
-    (Direction 1, Option A)."""
+def test_vector_search_does_not_enrich_with_graph_neighbors():
+    """The auto_enrichment stage was removed: its neighbor fetch was never
+    returned to the model and no downstream stage read it, so vector_search
+    must not spend a get_neighbors round-trip per top parent doc."""
     from agent_tools import execute_tool
 
     mock_neptune = MagicMock()
     mock_neptune.vector_search.return_value = [
         {"chunk_id": "c1", "text": "test", "score": 0.9, "doc_id": "doc-1"},
     ]
-    mock_neptune.get_neighbors.return_value = [
-        {"id": "related-doc", "title": "Related", "labels": ["Document"], "relationship": "CITES"},
-        {"id": "chunk-99", "title": None, "labels": ["Chunk"], "relationship": "EXTRACTED_FROM"},
-    ]
     mock_neptune.resolve_case_citations.return_value = []
 
     with patch("agent_tools.executor.embed_query", return_value=[0.1] * 1024):
         result = execute_tool("vector_search", {"query": "test"}, mock_neptune)
 
-    # Enrichment still fires internally for the top parent doc.
-    mock_neptune.get_neighbors.assert_called_once_with("doc-1")
-    # But nothing is surfaced to the model.
+    mock_neptune.get_neighbors.assert_not_called()
     assert "graph_context" not in result
 
 

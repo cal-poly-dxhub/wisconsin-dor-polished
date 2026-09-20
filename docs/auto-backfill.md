@@ -41,14 +41,18 @@ mutate a shared `StageContext` in place. In order:
 | 4 | `diversity_cap` | Cap chunks per doc (`DIVERSITY_CAP_PER_DOC`, default **3**) |
 | 5 | `authority_quota` | Reserve top_k slots for primary sources before filling the rest |
 | 6 | `authority_tiebreak` | Within a score bucket, higher authority wins |
-| 7 | `auto_enrichment` | Graph neighbors of the top-3 docs — **internal only** |
-| 8 | `citation_extraction` | Regex case citations from chunk text → resolve to CaseLaw |
-| 9 | `statute_backfill` | Chunk `CITES` → the cited statute's text |
-| 10 | `caselaw_backfill` | Cited statute stubs → chunks of cases that cite them |
-| 11 | `broad_discovery` | Second search arm on the user's original query |
+| 7 | `citation_extraction` | Regex case citations from chunk text → resolve to CaseLaw |
+| 8 | `statute_backfill` | Chunk `CITES` → the cited statute's text |
+| 9 | `caselaw_backfill` | Cited statute stubs → chunks of cases that cite them |
+| 10 | `broad_discovery` | Second search arm on the user's original query |
 
-Stages 1–6 shape the primary result set; stages 8–11 are the backfill arms.
-Stage 7 is a signal-gathering step whose output is not surfaced (see below).
+Stages 1–6 shape the primary result set; stages 7–10 are the backfill arms.
+
+> An eighth stage, `auto_enrichment`, sat between 6 and 7 until 2026-09-19. It
+> fetched `get_neighbors` for the top-3 parent docs into `ctx.graph_context`,
+> which was never returned to the model and which no downstream stage read, so
+> it cost up to 3 Neptune round-trips per search and bought nothing. Removed
+> along with `ENRICH_CAP_PER_DOC` / `ENRICH_CAP_PER_TYPE`.
 
 ### The primary result set (stages 1–6)
 
@@ -148,25 +152,6 @@ keeps only chunks from docs *not* already in the narrow results.
   arm. Output: `ctx.broad_discovery` → `broad_discovery`; `broad_skipped` /
   `broad_query` report whether it ran.
 
-## The internal-only signal: auto-enrichment
-
-**Stage:** `auto_enrichment.py`
-
-Fetches graph neighbors (`get_neighbors`) for the top-3 distinct parent doc_ids,
-ranked by edge priority then authority and capped per doc-type
-(`ENRICH_CAP_PER_DOC` default 5, `ENRICH_CAP_PER_TYPE` default 4). Chunk-labeled
-neighbors are filtered out.
-
-**This output (`ctx.graph_context`) is deliberately NOT returned to the model** —
-surfacing it floods the tool result with low-cite-rate neighbor stubs. Today it is
-consumed only for log counts in `pipeline.py`.
-
-> **Heads-up for maintainers.** The `auto_enrichment.py` docstring claims its
-> `graph_context` powers `citation_extraction` and `caselaw_backfill`. That is
-> **stale** — those stages read `ctx.chunks` and `ctx.statute_backfill`, not
-> `ctx.graph_context`. As wired today, auto-enrichment is effectively a no-op
-> beyond logging. (It also references deleted spec docs.)
-
 ## Post-answer: opinion backfill
 
 The four `vector_search` arms surface case law as **metadata stubs** (title,
@@ -187,14 +172,13 @@ S3 key, and fetches the full opinion `.txt`. This runs **before**
 
 ## Not wired: neighbor-doc citation discovery
 
-The Neptune client carries `get_chunk_statute_ids`,
-`rank_neighbors_by_shared_statutes`, `get_chunks_text_for_docs`, and
-`get_cases_for_subsections` — building blocks for a "rank neighbor docs by shared
-statutes, then scan their chunk text for citations" discovery path. **None of
-these has a production caller** (only `tests/test_neptune_client.py` references
-them). If you're tracing how case law reaches the agent, it's via the four arms
-above, not this path. Treat those client methods as dead code until something
-wires them into the pipeline.
+`get_cases_for_subsections` is the last surviving building block of a "rank
+neighbor docs by shared statutes, then scan their chunk text for citations"
+discovery path that was never wired up. Its companions
+(`get_chunk_statute_ids`, `rank_neighbors_by_shared_statutes`,
+`get_chunks_text_for_docs`) were deleted on 2026-09-19 — only their own unit
+tests called them. If you're tracing how case law reaches the agent, it's via
+the four arms above, not this path.
 
 ## Cost summary
 
@@ -204,7 +188,6 @@ wires them into the pipeline.
 | Statute backfill | 1 (`get_statute_backfill`) | up to 3 statute chunks |
 | Case-law backfill | 1 (`get_case_chunks_for_statutes_with_embeddings`) + 1 embed | up to 5 case chunks |
 | Broad discovery | 1 vector search + 1 embed | up to `top_k` additive chunks |
-| Auto-enrichment | up to 3 (`get_neighbors`) | none (internal-only) |
 | Opinion backfill | per-stub resolve + S3 fetch (cap 3) | full opinion text for cited cases |
 
 All arms are additive and best-effort; a failure in any one logs a warning and
@@ -213,10 +196,10 @@ leaves the rest of the result intact.
 ## Files
 
 - `agent_tools/pipeline.py` — `run_vector_search`, `VECTOR_SEARCH_STAGES`
-- `agent_tools/stages/{citation_extraction,statute_backfill,caselaw_backfill,broad_discovery,auto_enrichment}.py`
+- `agent_tools/stages/{citation_extraction,statute_backfill,caselaw_backfill,broad_discovery}.py`
 - `agent_tools/stages/base.py` — `StageContext` / `StageResult`
 - `agent_tools/executor.py` — `extract_citations`, `_rank_chunks_by_relevance`
 - `graph/neptune_client.py` — `resolve_case_citations`, `get_statute_backfill`, `get_case_chunks_for_statutes_with_embeddings`
 - `handler.py` — post-answer opinion backfill (`_OPINION_BACKFILL_CAP`)
 - `case_law.py` — `fetch_case_opinion`, opinion-card building
-- Tests: `tests/test_pipeline.py`, `test_statute_backfill.py`, `test_caselaw_backfill.py`, `test_auto_enrichment.py`, `test_neptune_client.py`
+- Tests: `tests/test_pipeline.py`, `test_statute_backfill.py`, `test_caselaw_backfill.py`, `test_neptune_client.py`

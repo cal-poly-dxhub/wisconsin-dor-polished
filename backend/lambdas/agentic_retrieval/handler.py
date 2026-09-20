@@ -292,9 +292,8 @@ def handler(event: dict, context) -> dict[str, Any]:
             finding = judge_answer_plan(
                 effective_query,
                 chat_history,
-                # The fallback paths (clarify tool, turn budget exhausted,
-                # model answered in prose) produce no plan — judge the text
-                # they did produce.
+                # The fallback paths (turn budget exhausted, model answered in
+                # prose) produce no plan — judge the text they did produce.
                 result.fallback_answer
                 if result.fallback_answer is not None
                 else result.answer_plan,
@@ -348,13 +347,13 @@ def handler(event: dict, context) -> dict[str, Any]:
             result.fallback_answer = None
 
         if result.fallback_answer is not None:
-            # Edge case: clarify tool, turn budget exhausted, or model responded
-            # with text instead of calling prepare_answer. No Phase B needed.
-            # Attach only the docs the loop actually cited: clarify and the
-            # text-fallback path return an empty cited set (no cards), while
-            # turn_budget_exhausted returns all discovered docs (show what it
-            # found). Building from cited_doc_ids honors both without dumping
-            # the pre-loop seed onto a refusal or clarifying question.
+            # Edge case: turn budget exhausted, or the model responded with text
+            # instead of calling prepare_answer. No Phase B needed. Attach only
+            # the docs the loop actually cited: the text-fallback path returns
+            # an empty cited set (no cards), while turn_budget_exhausted returns
+            # all discovered docs (show what it found). Building from
+            # cited_doc_ids honors both without dumping the pre-loop seed onto
+            # a refusal or clarifying question.
             answer = result.fallback_answer
             fallback_cited = set(result.cited_doc_ids)
             fallback_chunks = [c for c in result.all_chunks if c.get("doc_id") in fallback_cited]
