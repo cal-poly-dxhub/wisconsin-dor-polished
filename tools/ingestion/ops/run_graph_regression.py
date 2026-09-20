@@ -554,6 +554,27 @@ def verify_case_ids_exist(case_ids: list[str]) -> dict[str, bool]:
     return existence
 
 
+def _answer_as_shown(run: dict) -> str:
+    """The answer as the tester sees it, for the LLM-judge rubric.
+
+    Since Task 75 the writer no longer restates the judge's clarification
+    question in the prose; the UI renders the question and its chips in a
+    block under the answer. Append that block so a rubric that expects the
+    answer to "end by asking …" grades what is actually on screen.
+    """
+    answer = run.get("answer") or ""
+    finding = run.get("finding") or {}
+    clar = finding.get("clarification") or {}
+    if finding.get("verdict") == "CLARIFY" and clar.get("question"):
+        opts = clar.get("options") or []
+        block = f"\n\n[Clarification shown to the user: {clar['question']}"
+        if opts:
+            block += " Options: " + "; ".join(str(o) for o in opts)
+        block += "]"
+        return answer + block
+    return answer
+
+
 def grade_verdict(entry: dict, run: dict) -> dict:
     """Check the adequacy-judge finding against a case's verdict expectations.
 
@@ -663,7 +684,9 @@ def grade(entry: dict, run: dict, case_existence: dict[str, bool], run_judge: bo
     judge_verdict = None
     judge_reason = ""
     if rubric and run_judge:
-        j = judge_answer(entry["query"], answer, rubric, run["cited_doc_ids"])
+        j = judge_answer(
+            entry["query"], _answer_as_shown(run), rubric, run["cited_doc_ids"]
+        )
         judge_verdict = j["verdict"]
         judge_reason = j["reason"]
     # A case with a rubric must earn a PASS; a case without a rubric is not
@@ -1128,7 +1151,7 @@ def _run_single(mode: str, query_id: str) -> None:
     )
 
 
-def regrade(mode: str) -> None:
+def regrade(mode: str, out_path: str | None = None) -> None:
     """Re-grade a saved run against the current golden-set YAML — no re-run.
 
     Use after fixing a must_cite/must_contain expectation in the YAML so the
@@ -1136,7 +1159,7 @@ def regrade(mode: str) -> None:
     the retrieval path. Case-hallucination existence flags are preserved from
     the original run (already recorded per query).
     """
-    out_path = BASELINE_PATH if mode == "baseline" else AFTER_PATH
+    out_path = out_path or (BASELINE_PATH if mode == "baseline" else AFTER_PATH)
     if not os.path.exists(out_path):
         logger.error(f"No saved run at {out_path} to re-grade.")
         sys.exit(1)
@@ -1267,7 +1290,7 @@ def main() -> None:
     if args.regrade:
         if not args.mode:
             parser.error("--regrade requires --mode {baseline,after}")
-        regrade(args.mode)
+        regrade(args.mode, getattr(args, 'out', None))
         return
     if args.phase_b_only:
         if not args.mode:
