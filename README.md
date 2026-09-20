@@ -59,25 +59,31 @@ A property tax Q&A assistant for the Wisconsin Department of Revenue (DOR). User
 1. User sends a message via WebSocket (authenticated by Cognito)
 2. A `ChatMessageReceived` event is published to EventBridge
 3. EventBridge triggers the **Agentic Retrieval Lambda** directly (no Step Function)
-4. The Lambda runs a Claude tool-use loop:
-   - Searches a Bedrock FAQ Knowledge Base (`faq_search`) for quick-answer matches
-   - Calls Neptune graph tools (`vector_search`, `search_document`, `get_neighbors`) to find
-     relevant document chunks and their legal context
-   - Claude decides when it has enough evidence and produces a cited answer
-5. The same Lambda streams the answer, source documents, and FAQs back to the client over WebSocket
-   (single Lambda, single DynamoDB write)
+4. The Lambda runs a Claude tool-use loop (Phase A) over a 14-tool registry:
+   - A Bedrock FAQ Knowledge Base search (`faq_search`) and an initial `vector_search` are
+     seeded deterministically before the first model turn; a semantic router may also seed a
+     WPAM decision flowchart
+   - Claude calls Neptune graph tools (`vector_search`, `search_document`, `list_sections`,
+     `get_section`, `get_neighbors`, `find_case_law`, …) until it calls `prepare_answer`
+     with the documents it intends to cite
+5. A **post-retrieval adequacy judge** (Claude Haiku) reads the plan against every retrieved
+   chunk and returns ANSWER, CLARIFY or DECLINE. The verdict is injected into the answer
+   context; a CLARIFY also sends clarification chips to the client
+6. The same Lambda streams the answer, source documents, and FAQs back to the client over
+   WebSocket (Phase B — single Lambda, single DynamoDB write)
 
 ### Key Components
 
 | Component | Description |
 |-----------|-------------|
 | **Frontend** (`frontend/`) | Next.js app served via CloudFront. Real-time streaming via WebSocket, Cognito auth, Zustand state management. |
-| **Agentic Retrieval** (`backend/lambdas/agentic_retrieval/`) | Core retrieval engine — a Claude tool-use loop backed by Neptune Analytics vector search and graph traversal. Also streams the answer, documents, and FAQs to the frontend over WebSocket. |
-| **Chat API** (`backend/lambdas/chat_api/`) | REST endpoint that initiates a chat and publishes the `ChatMessageReceived` event to EventBridge. |
+| **Agentic Retrieval** (`backend/lambdas/agentic_retrieval/`) | Core retrieval engine — a 14-tool Claude loop backed by Neptune Analytics vector search and graph traversal, a post-retrieval adequacy judge, and the answer stream. Also delivers documents, FAQs and flowcharts to the frontend over WebSocket. |
+| **Chat API** (`backend/lambdas/chat_api/`) | REST endpoints for sessions, chat history, feedback, and the `Admins`-gated `/admin/*` routes. Publishes `ChatMessageReceived` to EventBridge. |
 | **WebSocket Handlers** (`backend/lambdas/websocket/`) | Connect / disconnect / default WebSocket route handlers. |
-| **Neptune Analytics** | Knowledge graph storing documents, chunks (with 1024-dim vector embeddings), topics, and a 9-level authority hierarchy (Constitution → Statutes → Case Law → Admin Rules → WPAM → FAQs → Gov Pubs → IAAO → USPAP). |
+| **Neptune Analytics** | Knowledge graph storing framework, document and chunk nodes (1024-dim vector embeddings) under a 9-level authority hierarchy (Constitution → Statutes → Case Law → Admin Rules → WPAM → FAQs → Gov Pubs → IAAO → USPAP). Pinned by the `neptuneGraphId` CDK context, not created by CDK. |
+| **Worksheets & flowcharts** (`tools/ingestion/{worksheets,flowcharts}/`) | TID `.xlsx` forms and WPAM decision charts, served from S3 JSON sidecars through dedicated tools instead of the graph. |
 | **Sessions** (`infra/stacks/sessions-stack.ts`) | Cognito user pool, HTTP API, WebSocket API, DynamoDB sessions + chat history. |
-| **Infrastructure** (`infra/`) | CDK stacks. Entry point: `infra/bin/wisconsin-app.ts`. |
+| **Infrastructure** (`infra/`) | CDK stacks. Entry point: `infra/bin/wisconsin-app.ts`. See [`infra/README.md`](infra/README.md). |
 
 ## Project Layout
 
@@ -137,9 +143,12 @@ bun dev            # Next.js dev server with Turbopack
 ### Test
 
 ```bash
-bun run test       # Jest (TypeScript)
+bun run test       # frontend bun tests + infra Jest synth tests
 bun run pytest     # pytest (Python, via uv)
 ```
+
+See [`docs/testing.md`](docs/testing.md) for the full test map, the two known-flaky
+harness cases, and which tests to update when you change a subsystem.
 
 ### Lint
 
@@ -170,7 +179,8 @@ bun run first-time   # uploads model configs + syncs FAQ data
 
 #### Local Frontend Environment
 
-Copy `frontend/.env.example` to `frontend/.env.local` and populate from CDK outputs:
+Create `frontend/.env.local` (there is no checked-in `.env.example`) and populate it from
+the deployed stack's CloudFormation outputs:
 
 ```
 WisconsinBotStack.ApiBaseUrl        -> NEXT_PUBLIC_API_BASE_URL
@@ -183,15 +193,18 @@ WisconsinBotStack.CognitoUserPoolClientId -> NEXT_PUBLIC_USER_POOL_CLIENT_ID
 
 The Neptune Analytics graph stores the full Wisconsin property tax knowledge base:
 
-- **Node types:** Framework, Document (carrying doc-type labels like `Statute`, `CaseLaw`, `AssessmentManual`), Chunk (with vector embeddings), Topic
+- **Node labels:** `Framework`; one per-doc-type document label (`Constitution`, `Statute`, `CaseLaw`, `AdminRule`, `AssessmentManual`, `FAQ`, `Guide`, `Advisory`, `Template`, `FormInstruction`, `IAOStandard`, `USPAPStandard`); and `Chunk` (with vector embeddings). Citation stubs are ordinary `Statute`/`AdminRule`/`CaseLaw` nodes carrying `stub = true`. **There are no `Topic` nodes.**
+- **Edge types — the complete list the loader writes:** `DERIVED_FROM` (Framework→Framework), `BELONGS_TO` (Doc→Framework), `PART_OF` (statute hierarchy), `EXTRACTED_FROM` (Chunk→Doc), `CITES` (Chunk→Statute/AdminRule and Statute→CaseLaw), `DEFINED_BY` (stub→Chunk). `IMPLEMENTS`, `HAS_SUBSECTION` and `COVERS_TOPIC` appear only in older notes; nothing creates them.
 - **Authority hierarchy:** 9 levels of legal precedence from Constitution down to USPAP standards
-- **Edge types:** `CITES`, `PART_OF`, `BELONGS_TO`, `EXTRACTED_FROM`, `DEFINED_BY`, `DERIVED_FROM`
 - **Embeddings:** Amazon Titan Embed Text V2 (1024 dimensions)
+- **The graph is not a CDK resource.** It is created and loaded out of band and selected by the `neptuneGraphId` context in `infra/cdk.json`; synth fails without it. See [`infra/README.md`](infra/README.md).
 
 Documents are ingested via a multi-phase pipeline (see `CLAUDE.md` for full ingestion commands, and `docs/` for details):
-1. Upload PDFs to S3
-2. Extract + classify (PyMuPDF with Textract fallback) — see `docs/chunk-quality-controls.md`
+1. Upload PDFs to S3 (manifest-driven scraper with content-hash change detection)
+2. Extract + classify + generate chunk aliases — PyMuPDF first; the Textract fallback only runs when `TEXTRACT_STAGING_BUCKET` is configured. See `docs/chunk-quality-controls.md`
 3. Embed chunks with Titan
-4. Load into Neptune graph (10 sub-phases: scaffold → document nodes → statute hierarchy → hierarchy links → chunk nodes → case-law CITES → stub resolution → vector upserts → orphan cleanup → integrity checks)
+4. Load into Neptune (**10 sub-phases**: scaffold → document nodes → statute hierarchy → hierarchy links → chunk nodes → case-law CITES → stub resolution → vector upserts → orphan cleanup → integrity checks) — see [the load-phase table](docs/graphrag-engineering-guide.md#load-phases)
+
+Full architecture reference: [`docs/graphrag-engineering-guide.md`](docs/graphrag-engineering-guide.md).
 
 

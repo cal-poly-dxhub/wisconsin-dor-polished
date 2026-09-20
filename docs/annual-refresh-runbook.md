@@ -214,7 +214,18 @@ aws neptune-graph get-graph --graph-identifier g-svphgiu4k6 \
 > ```
 >
 > `run_fargate.sh load` needs no `--graph-id`: the task definition carries the
-> pinned id as `NEPTUNE_GRAPH_ID` and `load.py` defaults to it.
+> pinned id as `NEPTUNE_GRAPH_ID` and `load.py` defaults to it. **Nothing in this
+> runbook should ever pass `--graph-id`** — that flag exists only for the
+> blue/green case below.
+>
+> **Loading a different (blue/green) graph is an engineer job, not a refresh step.**
+> The Fargate task role is scoped to the *pinned* graph only, so a load onto a new
+> graph fails with an access-denied error until someone adds that graph's ARN to
+> the `neptune-graph` statement in `infra/stacks/ingestion-stack.ts`, deploys, and
+> reverts that line after promotion. (The alternative is running `load` locally
+> with your own credentials.) The full create → grant → load → validate → promote →
+> rollback procedure is in [`infra/README.md`](../infra/README.md). The annual
+> refresh does **not** need it: it reloads the graph that is already pinned.
 
 Write these numbers down — you will compare them in Step 3.10.
 
@@ -407,10 +418,17 @@ minutes each. A typical yearly refresh of ~40 changed documents is **1–3 hours
 full re-extract of everything is ~4 hours.)
 
 **Cost:** Fargate ≈ $0.12/hour (so ~$0.40). AI calls: classification of each new
-document ≈ pennies; alias generation ≈ **$10 if every chunk in the corpus changed** —
-smart mode only regenerates aliases for changed chunks, so expect **$1–4**. If a PDF is a
-scanned image the job falls back to AWS Textract (a few dollars per hundred pages) —
-rare for DOR documents.
+document ≈ pennies; alias generation ≈ **$2.70 even if every chunk in the corpus changed**
+(aliases are only generated for statutes, admin rules and DOR news pages — the doc types
+the embed actually uses — so the other ~72% of chunks cost nothing). Smart mode only
+regenerates aliases for changed chunks, so a normal refresh is well under a dollar.
+
+> **Scanned PDFs are not OCR'd today.** The AWS Textract fallback needs a staging bucket
+> (`TEXTRACT_STAGING_BUCKET`) which is deliberately not set on the Fargate task, so when a
+> PDF defeats the text extractor the job logs the skip and keeps whatever text it got
+> rather than failing. DOR documents are digital PDFs, so this effectively never fires — but
+> if a newly added document comes out nearly empty in Step 3.10's validation, this is why.
+> Turning it on is an engineer change (add the bucket to `ingestion-stack.ts`).
 
 ```bash
 ./tools/ingestion/scripts/run_fargate.sh extract --smart
@@ -481,7 +499,7 @@ aws ecs describe-tasks --cluster wis-dor-ingestion --tasks <task-arn-from-above>
 | Exit code 137 | Out of memory (a very large PDF) | Re-run the same command; the finished documents are cached and skipped. If it repeats on the same document, call an engineer (Section 7). |
 | `CannotPullContainerError` | The Docker image is missing from the registry | An engineer must run `build_and_push.sh` (Section 7). |
 | Job runs but a document you expect is not mentioned | Its raw file date is older than its cache (scrape said "unchanged") | That is correct behavior — nothing changed. To force one document: `run_fargate.sh extract --source-filter <doc-id> --force`. |
-| Textract-related errors | Scanned PDF; Textract quota | Re-run later; if persistent, call an engineer. |
+| Log says `TEXTRACT_STAGING_BUCKET is not set; skipping the Textract fallback` | A PDF defeated the text extractor and there is no OCR staging bucket configured | Not an error — the job keeps the partial text and continues. Check that document in Step 3.10; if it really is a scanned image, call an engineer. |
 
 Re-running the extract command is always safe: it skips anything already done.
 
@@ -608,7 +626,7 @@ Phase 7: Stub Resolution
 Phase 8: Vector Upserts
 Phase 8: Upserting chunk vectors (parallel workers=8)...
 Phase 9: Orphan Cleanup
-Phase 9: Cleaning up orphan stubs and topics...
+Phase 9: Cleaning up orphan stubs...
 Phase 10: Integrity Checks
 
 Graph loading complete!
@@ -733,12 +751,20 @@ aws lambda get-function-configuration --function-name "$FN" \
 Export each of the printed values (`export NEPTUNE_GRAPH_ID=g-svphgiu4k6` and so on), then:
 
 ```bash
+# Match production: the adequacy judge is ON in prod, so run the harness with it on.
+export ADEQUACY_JUDGE_ENABLED=true
+
 # BEFORE the load:
 uv run python tools/ingestion/ops/run_graph_regression.py --mode baseline
 # AFTER the load:
 uv run python tools/ingestion/ops/run_graph_regression.py --mode after
 uv run python tools/ingestion/ops/run_graph_regression.py --compare-only
 ```
+
+The golden set is **63 cases**. Three of them are not clean signals and should not be
+treated as refresh failures: `gq-full-value-annual` and `gq-prior-year-roll` are flaky,
+and `gq-bor-interpreter-waiver` never passes by design (it is a DOR content question, not
+a retrieval bug). See [testing.md](testing.md) for the detail.
 
 Each run ends with a grade summary:
 
@@ -747,7 +773,7 @@ Each run ends with a grade summary:
   [B] gr-0007: OK  [judge PASS: answer states the 30-day objection window ...]
   [D] gr-0012: FAIL missing must_cite ['statutes-70']
   ...
-39/41 passed intra-run gates (2 flagged; 2 external/blocked excluded).
+39/45 passed intra-run gates (flagged cases listed above).
 Gate = must_cite AND judge(rubric) AND no-hallucination.
 ```
 
@@ -977,8 +1003,9 @@ mini-cycle later.
 **Time:** 10–20 minutes. **Cost:** < $1 (embedding calls).
 
 ```bash
-# 1. Rebuild the list of rated questions from chat history:
-uv run python tools/ingestion/ops/build_recall_eval.py --graph-id g-svphgiu4k6
+# 1. Rebuild the list of rated questions from chat history (no --graph-id: it reads
+#    the ChatHistoryTable, not the graph):
+uv run python tools/ingestion/ops/build_recall_eval.py
 #    (writes tools/ingestion/tests/recall_eval_queries.yaml)
 
 # 2. Preview, then attach:

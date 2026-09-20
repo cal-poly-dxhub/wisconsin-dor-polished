@@ -1,108 +1,144 @@
 # Task List
 
-## Roadmap as of 2026-09-18
+_Finished history (the PR #28-#33 sprint, Tasks 21/45/46/49/50/52/58/61/64/65) moved to
+[docs/archive/tasks-2026-09.md](archive/tasks-2026-09.md) on 2026-09-19. This file is the
+live roadmap and the open tasks, plus Tasks 69-76 as recent context._
 
-The bot is done as a research problem: every tester-reported retrieval issue has a shipped, harness-guarded fix, the Assessment Manual is fully indexed (Task 72), and the tracked set scores 37/42. What remains:
+## Roadmap as of 2026-09-19
 
-1. **Adequacy judge (Task 71) — ON in prod since 2026-09-18 evening** (commit f7714ff): one clean 63-case run, classic 41/45 vs 40/45 judge-off, scope 14/17 vs 10/17, 0 regressions; CLARIFY on 18/63 accepted as intended (ask on a real source-derived fork; flowcharts and chips are complementary). Watch tester feedback on the chips this week; rollback = flip the two CDK flags. Retests done in the harness (Task 73); DOR to retest in the app.
-2. **Security before any public move** (handoff plan §3): WebSocket $connect authorizer, session ownership checks, close self-signup. ~1 day.
-3. **Handoff**: SSO with Amy/Brad, cost sheet (Neptune 32 m-NCU is the floor — 16 rejected on a fresh graph; lever: drop the 15 non-current WPAM editions to likely fit 16), annual-refresh runbook.
-4. **Content threads after the 09-17 DOR meeting** (Task 73): refresh the stale SL-405 instructions PDF + harness case (Innovation Grant); gate alias generation to the doc types the embed uses; retest maintenance-vs-revaluation and residential grades on the re-indexed graph. Still with DOR: BOR interpreter reference, mobile homes vs §70.11(49). Closed: Prime Leather, "clear height", plain-language glossary, manufacturing-appeal filing.
-5. **Housekeeping**: the Neptune graph construct is gone from `graphrag-stack.ts` and `neptuneGraphId` in `infra/cdk.json` is now the single pin, so the next deploy deletes rollback graph `g-ndvl4j73v4` — deploy after 09-25 (or later) so the rollback stays available until then. Remove `disambiguationClassifier` / `PROPERTY_TYPE_CHOICES` once the judge has a week of traffic.
+The bot is done as a research problem: every tester-reported retrieval issue has a shipped,
+harness-guarded fix, the Assessment Manual is fully indexed (Task 72), and the repo has been
+through a three-PR cleanup (Task 76). What remains:
 
-Decided: Sonnet 5 rejected (stops researching early); vocab-swap map retired (document expansion replaced it); live graph is `g-svphgiu4k6` via `neptuneGraphIdOverride` in `infra/cdk.json`.
+1. **Security pass — the only thing blocking a public move.** Handoff plan §3: a WebSocket
+   `$connect` authorizer (there is none today), session-ownership checks on
+   `send_message` / `get_session_history` / `feedback`, closing self-signup, and adopting
+   the console-managed `Admins` Cognito group into CDK via `cdk import`. ~1 day.
+2. **Handoff** (Task 66): SSO with Amy/Brad, cost sheet, runbook walkthrough. The cost
+   sheet's standing facts: Neptune 32 m-NCU is the floor (16 rejected again on a **fresh**
+   graph 2026-09-18, so it is corpus size, not reload bloat); the lever to try for 16 is
+   dropping the 15 non-current WPAM editions, which costs nothing in answer quality because
+   retrieval already filters to the current edition.
+3. **DOR-dependent items.** Still with DOR: the BOR interpreter reference (Task 60c —
+   `gq-bor-interpreter-waiver` stays red by design) and mobile homes vs §70.11(49)
+   (Task 59). Closed by DOR: Prime Leather, "clear height", the plain-language glossary,
+   manufacturing-appeal filing.
+4. **`gq-full-value-annual` is a ranking miss, not a content gap** (Task 73). The
+   maintenance-vs-revaluation material IS in the graph (WPAM Ch. 4, pp. 59-61) but vector
+   search prefers the §70.05(5) compliance chunks in Ch. 6. Manuals are not alias-enriched
+   by design, so the gold-query lever does not apply. Parked unless DOR retests and objects.
+   It is also the one stable delta between the recent harness runs.
+5. **Phase 3 hierarchy evaluation.** `PART_OF` is written on every load and queried at
+   retrieval time, but nothing measures whether statute hierarchy traversal actually
+   improves an answer. Worth an evaluation before anyone invests further in graph shape.
+6. **Dead extraction fields.** `extract.py` still writes `topics` and `implements_refs`
+   into every extracted JSON and `load.py` still carries them in `DOC_METADATA_KEYS`, but
+   no load phase reads them into the graph and there are no `Topic` nodes or `COVERS_TOPIC`
+   / `IMPLEMENTS` edges. Decide: drop the fields, or wire them up.
+7. **Prompt compression** (Tasks 43, 44) — still not started, still optional.
 
-## TODO
+**Done and no longer on the list:**
 
-| # | Task | Status (audit 2026-09-12) | Related Responses |
-|---|------|---------------------------|-------------------|
-| 43 | Prompt rewrite: compress FRAMEWORK APPLICABILITY section | Not started — still verbose 9-tier listing | — |
-| 44 | Prompt rewrite: compress CITATION RULES section | Not started — still ~18 rules | — |
-| 45 | Scholar-sourced case-law dedup pass (docket-number keyed) | One-time pass done; durable prevention (docket in extract.py + load.py secondary key) still needed | dark-store/Lowe's dup |
-| 46 | Backfill case-law titles from opinion-text captions | Prod fixed 2026-09-11 (Phase 2 reload rewrote 1139 doubled titles). Root cause was NOT the caption parser: `embed.py` never refreshed metadata from `extracted/`, so every full load re-applied the July-4 cache. Durable fix tracked in 64. 115 Scholar-path bare-citation titles remain (original scope). | — |
-| 47 | Route case-law / flat-structure docs straight to search_document (skip list_sections/get_section) | Not started — tool descriptions still steer to list_sections/get_section first | — |
-| 48 | Investigate WPAM get_section gap — agents re-search doc-globally after get_section on same chapter | Open investigation — no findings recorded; get_section still z-score ranks | — |
-| 49 | Validate Scholar-fetched opinion matches requested citation (prevent citation→text mis-assignment) | One-time purge done; durable citation-match guard still needed | dark-store/Lowe's |
-| 51 | Disambiguation follow-up logic + classifier accuracy (BLOCKED — awaiting Wisconsin validation) | Core logic shipped; chip replies fixed 2026-09-11 (PR #38: chip label resolves to the original question, no re-classification). Accuracy tuning still blocked on DOR's validated list | TID net-new-construction query |
-| 58 | Vocabulary-bridge (vocab-swap) for citizen-term → statute-term gaps | RETIRED 2026-09-14 — `vocab_swap` / `vocab_injection` stages deleted after the post-reload harness with the map OFF scored 33/42 (baseline 32/42) and all three mobile-home / camping-trailer cases passed, camping trailer citing the 4/29/26 advisory. Document expansion (Task 65) replaced it | §70.11(49) family |
-| 59 | Mobile-home §70.11(49) reliability + legal-applicability question | End-to-end PASSES on the Task 65 staging graph (§70.11(49) presented as its own exemption section). Raw vector rank for the bare phrase stays low because grounded aliases describe (49) as camper/RV/park-model — consistent with Valeah's 09-10 statement. The legal question (does (49) cover residential mobile homes?) still goes to DOR | §70.11(49) / §66.0435 / §70.17(3) |
-| 60 | DOR/SME content questions (client-side, not retrieval bugs) | Open — carry to DOR: maintenance-vs-revaluation source, residential grade scale + images, BOR interpreter reference, stale mfg-appeal guide | — |
-| 61 | Content-gap ingestion — treaty pub + Innovation Grant FAQ | DONE (2026-09-10) — napt-treaty-update.pdf + slf-ig FAQ ingested & verified (2/2 target queries PASS). assrlist dropped: it's a link-fabrication issue → Task 62 | — |
-| 62 | Reliability — client-side answer truncation + citation-link integrity | Open — raised in priority: tester-visible. Truncation is frontend stream/render (server sends full answer). Assessor-directory URL fabrication reproduced by the judge again 09-11; add link-resolves-to-retrieved-doc validation | — |
-| 63 | Confidentiality follow-up — git-history purge decision | Open — decision needed BEFORE the repo moves to DOR's account (handoff = their eyes on history). Folded into Task 66 | — |
-| 64 | Reconcile stale-embedding backlog (~1166 docs) | BUILT 2026-09-14 (branch fix/ingestion-metadata-integrity): extracted/ overlays doc metadata at load, embed --smart does metadata-only refresh, Phase 2 case-law title guard, Phase 10 integrity assertion, ops/purge_dedup_losers.py + losers.json skip. Purge APPLIED to S3 (63 losers: 54 docket dups, 6 parallel-cite dups, 2 Task-49 corrupt nodes, 3 ghost statutes-document-*). DONE 2026-09-14: full reload ran 19:06–19:17 PT at 128 m-NCU, Phase 10 clean (0 doubled titles, 0 orphans), CaseLaw 1202→1146, corrupt + ghost ids gone, graph back at 32 | — |
-| 65 | Document expansion — generated plain-language aliases + gold tester queries prepended to chunk embed input; statute subsection-per-chunk split; staging-graph evaluation | PROMOTED 2026-09-12. Prod harness 33→34 (with link repair), mobile-home passes 3/3 runs; raw recall doc MRR 0.52→0.59, statute-expected recall@10 79%→93%. Vocab-swap-OFF harness 2026-09-14: 34/42, all recreational-home cases still pass (camping trailer loses the 4/29/26 advisory citation but still states §70.11(49)); turns −16 | camping trailer / mobile home §70.11(49) Post-reload 2026-09-14 (advisories enriched): swap ON 32/42, swap OFF 33/42, camping trailer cites the 4/29/26 advisory with the map off → map retired |
-| 66 | Handoff engineering — move to DOR's AWS account as-is (117-user division access) | Plan written: docs/handoff-plan.md (inventory, SSO, security checklist, cost model, repo transfer, 12-step sequence). Top security items to fix pre-rollout: WebSocket $connect has no authorizer; session routes don't check ownership; self-signup open on the public URL | — |
-| 67 | Annual-refresh runbook for DOR (data-only maintenance, ~20–25% FTE) | DONE 2026-09-14: docs/annual-refresh-runbook.md (17-step data-only refresh, mid-year single-doc cycle, backup/rollback, costs, when to call an engineer) | — |
-| 68 | DOR meeting 09-17 agenda | Agenda drafted: ~/Work/DxHub/wisdor/2026-09-17-dor-meeting-agenda.md (not in repo — client material) | — |
+- **Adequacy judge (Task 71) is ON in prod** since 2026-09-18, with `SCOPE_GATE_ENABLED=false`.
+  It owns scope and clarification. Rollback is flipping the two CDK flags.
+- **The pre-loop query classifier is legacy and OFF.** `ENABLE_DISAMBIGUATION` and
+  `ENABLE_TOPIC_SHIFT` default false. `disambiguation.py`, the `disambiguationClassifier`
+  prompt and `PROPERTY_TYPE_CHOICES` are retained only for that rollback path; delete them
+  once the judge has a longer run of production traffic.
+- **The old CDK-owned graph `g-ndvl4j73v4` was deleted on 2026-09-19.** `g-svphgiu4k6` is
+  live, pinned by the `neptuneGraphId` context in `infra/cdk.json`, and is not a CDK
+  resource at all (`infra/README.md` has the blue/green procedure).
+- **Repo cleanup PR A, PR B and PR C are merged** (Task 76), and the documentation pass
+  that followed them is done.
+
+**Standing decisions:** Sonnet 5 rejected (stops researching early); the vocab-swap map
+retired, replaced by document expansion; a DOR-authored plain-language glossary is NOT
+being pursued (document expansion already does it at ingest with no DOR maintenance).
+
+## Open tasks
+
+| # | Task | Status |
+|---|------|--------|
+| 43 | Prompt rewrite: compress FRAMEWORK APPLICABILITY section | Not started — still a verbose 9-tier listing |
+| 44 | Prompt rewrite: compress CITATION RULES section | Not started — still ~18 rules |
+| 47 | Route case-law / flat-structure docs straight to `search_document` | Not started — tool descriptions still steer to `list_sections` / `get_section` first |
+| 48 | Investigate the WPAM `get_section` gap — agents re-search doc-globally after `get_section` on the same chapter | Open investigation; no findings recorded |
+| 51 | Classifier accuracy + follow-up logic | **Effectively moot.** The classifier it tunes is legacy and off; the judge owns scope now. Keep only as the record of what the gate did, in case it is ever restored |
+| 59 | Mobile-home §70.11(49) reliability + the legal-applicability question | Open — the legal half is an SME question for DOR |
+| 60 | DOR/SME content questions | Open — (a) and (b) resolved by Tasks 72/69; (c) still with DOR; (d) dropped |
+| 62 | Reliability — client-side answer truncation + citation-link integrity | Open. Truncation is a frontend stream/render issue (the server sends the full answer). Link fabrication needs a resolves-to-retrieved-doc guard. Note: statute *page* links were fixed separately in Task 75 (`link_repair`) |
+| 63 | Confidentiality — the history-purge decision | Open. HEAD is clean; the decision is whether to rewrite the repo's history before it moves. Folded into Task 66 |
+| 66 | Handoff engineering — move to DOR's AWS account | Plan written: `docs/handoff-plan.md`. Security items in item 1 of the roadmap must land first |
+| — | Phase 3 hierarchy evaluation | Not started (roadmap item 5) |
+| — | Drop or wire up `topics` / `implements_refs` | Not started (roadmap item 6) |
 
 ## Done
 
+Full write-ups for the 2026-09 closures are in
+[docs/archive/tasks-2026-09.md](archive/tasks-2026-09.md). Recent work with its detail still
+in this file: Tasks 69-76 below, plus the Sonnet 5 decision.
+
 | # | Task |
 |---|------|
+| 1 | Disambiguate generic queries before full retrieval (superseded by Task 71) |
+| 2 | Fixing linking issues |
 | 3 | Tune model tone — reduce overconfident statements |
 | 4 | Replace Step Function with direct Lambda invoke |
-| 7 | Refactor agentic retrieval Lambda (main.py) |
+| 5 | Replace LLM classification with structural parsers |
+| 6 | Reduce PDF chunk size for consistency and precision |
+| 7 | Refactor agentic retrieval Lambda |
 | 8 | Add boilerplate stripping before chunking |
+| 9 | Reduce topic clustering batch size |
 | 10 | Externalize prompts from Lambda code |
 | 11 | Add managed compute for ingestion (Fargate) |
 | 12 | Fix WebSocket streaming hang on background tabs |
 | 13 | Harden authority hierarchy enforcement (authority-aware re-ranking) |
-| 9 | Reduce topic clustering batch size |
+| 14 | Improve case law discovery in the vector_search backfill arms |
 | 15 | Add settings modal with detailed trace toggle |
-| 6 | Reduce PDF chunk size for consistency and precision |
 | 16 | Support URL-based session routing and preserve "new chat" state on reload |
+| 17 | Handle multipart queries (split or unified answering strategy) |
 | 18 | Show traversed sources in UI during agentic retrieval |
 | 19 | Fix train-of-thought flicker on sidebar session hover |
-| 24 | Multi-citation source cards (aggregate inline citations per parent doc) |
-| 1 | Disambiguate generic queries before full retrieval |
-| 14 | Improve case law discovery in vector_search auto-enrichment |
-| 23 | Strip WPAM running headers from chunk text |
-| 25 | Fix WPAM 2025 garbled table chunks and heading metadata |
-| 2 | Fixing linking issues |
-| 22 | Apply over-fetch multiplier when target_wpam_year is set |
-| 29 | Enable prompt caching for agentic retrieval (switch to invoke_model) |
-| 30 | get_section chunk grid visualization — show cosine/z-score per chunk in trace UI |
-| 28 | WPAM 2019 heading loss — boilerplate stripper keeps TOC copy, strips real chapter start |
-| 36 | Full corpus refresh — scrape, ingest missing docs, reingest stale content |
-| 38 | Restructure tools/ directory — consolidate ingestion pipeline |
-| 32 | Show trimmed section page index in answer synthesis trace card |
-| 35 | Graph wiring overhaul — stubs as routing nodes, not dead ends |
-| 39 | Discover and ingest 2026 news pages |
-| 26 | Admin ingestion page — ingest documents via URL from the UI |
-| 17 | Handle multipart queries (split or unified answering strategy) |
 | 20 | Add user persona setting (government worker vs. citizen) |
+| 21 | z-score normalization on `search_document` — investigated, declined (archived) |
+| 22 | Apply over-fetch multiplier when target_wpam_year is set |
+| 23 | Strip WPAM running headers from chunk text |
+| 24 | Multi-citation source cards (aggregate inline citations per parent doc) |
+| 25 | Fix WPAM 2025 garbled table chunks and heading metadata |
+| 26 | Admin ingestion page — ingest documents via URL from the UI |
 | 27 | Fix sparse WPAM subheadings — use PyMuPDF `<header>` font tags |
-| 41 | Fix statute citation page numbers, card titles, and chunker page-header pollution |
+| 28 | WPAM 2019 heading loss — boilerplate stripper kept the TOC copy |
+| 29 | Enable prompt caching for agentic retrieval (switch to invoke_model) |
+| 30 | `get_section` chunk grid visualization in the trace UI |
+| 32 | Show trimmed section page index in the answer-synthesis trace card |
+| 35 | Graph wiring overhaul — stubs as routing nodes, not dead ends |
+| 36 | Full corpus refresh — scrape, ingest missing docs, reingest stale content |
+| 38 | Restructure `tools/` — consolidate the ingestion pipeline |
+| 39 | Discover and ingest 2026 news pages |
+| 40 | Harden inline linking prose — quote verbatim instead of paraphrasing |
+| 41 | Fix statute citation page numbers, card titles, chunker page-header pollution |
 | 42 | Markarian hierarchy query fails to ground `statutes-70` (turn-budget exhaustion) |
-| 5 | Replace LLM classification with structural parsers |
-| 21 | Add z-score normalization to search_document result filtering (investigated — declined) |
-| 52 | Subsection auto-backfill (C1) — superseded by the §70.11(49) nudge (#30), vocab-swap (#33), and document expansion (Task 65); closed 2026-09-12 |
-| 40 | Harden inline linking prose — quote verbatim instead of paraphrasing (answerStream "Use Source Language in Link Text" section) |
-| 50 | Rich feedback phase 2 — render richFeedback in the admin activity dashboard (RichFeedbackDisplay in activity-detail.tsx) |
-
-## Done — Feedback remediation sprint (PRs #28–#33, 2026-09)
-
-Shipped from the mixed/negative rich-feedback root-cause analysis. All merged to `main` and deployed (prompts via `upload_model_configs.py`; code via bundle + `cdk deploy`).
-
-| PR | Shipped |
-|----|---------|
-| #28 | Classifier scope broadening + rephrase out-of-scope message (fixes false refusals on in-scope questions) |
-| #29 | answerStream answer-accuracy guardrails + LLM-judge grader / Phase-B replay harness |
-| #30 | §70.11(49) subsection nudge + answerStream structure/conditional rules |
-| #31 | Trigger-gated vocab-injection search arm (later demoted to dormant fallback by #33) |
-| #32 | Scrub client-feedback provenance from public test YAMLs (HEAD-only) |
-| #33 | Promote vocab-swap to primary vocabulary mechanism (the recreational-home fix) |
+| 45 | Docket-keyed case-law dedup — one-time pass applied (archived) |
+| 46 | Case-law title backfill (archived; durable fix landed in Task 64) |
+| 49 | Scholar citation-to-text mis-assignment purge (archived) |
+| 50 | Rich feedback phase 2 — render `richFeedback` in the admin activity dashboard (archived) |
+| 52 | Subsection auto-backfill (C1) — tabled, then superseded (archived) |
+| 58 | Vocabulary bridge (vocab-swap) — retired 2026-09-14 (archived) |
+| 61 | Content-gap ingestion — treaty pub + Innovation Grant FAQ (archived) |
+| 64 | Reconcile the stale-embedding backlog (archived) |
+| 65 | Document expansion — aliases in the embed input (archived; now standing behavior) |
+| 67 | Annual-refresh runbook for DOR — `docs/annual-refresh-runbook.md` |
+| 68 | DOR meeting 09-17 agenda (client material, not in repo) |
+| 69 | WPAM Volume 2 + Lottery Credit forms page ingests |
+| 71 | Post-retrieval adequacy judge replaces the pre-loop scope gate |
+| 72 | WPAM Volume 1 was 89% un-indexed — chunker TOC fix + full re-index |
+| 74 | Admin pages — access audit, Chunks page overhaul, Canvas refresh |
+| 75 | Answer UX — clarification block, source-card grouping, admin page gate |
+| 76 | Repo cleanup — PR A / PR B / PR C, and the documentation pass |
 
 ---
 
 ## Task Details
-
----
-
----
-
----
 
 ### Task 43: Prompt rewrite — compress FRAMEWORK APPLICABILITY section
 
@@ -157,31 +193,9 @@ From 18 lines to ~6 lines.
 
 ---
 
-### Task 21: Add z-score normalization to search_document result filtering — INVESTIGATED, DECLINED (2026-08-13)
-
-**Verdict:** Do **not** ship blanket z-score filtering on `search_document` as proposed. Real-traffic replay shows it removes useful near-tie chunks far more often than it removes noise. The narrow gap-cliff variant (below) is defensible but low-value (~2 calls in 3 weeks).
-
-**Original hypothesis (why it *seemed* to work):** Z-score was ruled out for `vector_search` (2026-06-25) because heterogeneous sources create overlapping distributions. `search_document` operates within one document, so — the reasoning went — score differences should cleanly separate "this section answers the question" from "this section mentions a keyword in passing."
-
-**Method (real data, not synthetic):** Pulled all **22 real `search_document` calls** from CloudWatch over the prior 3 weeks (actual `doc_id` + sub-query pairs), then **replayed each against the live Neptune graph** (`g-ndvl4j73v4`): embed with Titan v2 → `vector_search(top_k=800)` → filter to target doc → recover the *full* within-doc score distribution (what the tool truncates with `[:top_k]`) → apply the exact z-logic already in `_rank_chunks_by_relevance` (`z ≥ 0.5`, keep ≥1). Note: `vector_search` returns Neptune's raw `score` per chunk, so no chunk re-embedding was needed. Replay harness: `/tmp/replay_search_document.py` (not committed).
-
-**Findings:**
-- **First half of the hypothesis confirmed:** single-doc distributions really are tight (std 0.04–0.25) vs. the heterogeneous cross-source case.
-- **Conclusion does NOT follow:** because the distribution is tight *and smoothly decaying*, `z ≥ 0.5` mostly slices through near-identical chunks. z-filter changed the result on **6 of 22 calls (27%)**, always shrinking. Of those 6 cut points, **5 severed near-ties** (last-kept vs. first-dropped gap 0.5–2.7%) and only **1 dropped a genuine low-relevance tail** (10% gap).
-- The WPAM/statute queries the task specifically motivated show scores decaying ~1% per rank (e.g. `[1.489, 1.472, 1.471, 1.463, 1.445]`) — z-filter would drop chunk #5 that's 1.2% behind #4. That's a near-tie, not noise.
-- Genuine "junk tails" inside the current `top_k` appear in only **3 of 22 calls**, all in **small case-law docs (7–17 chunks)** — precisely where z-statistics are least reliable (tiny *n*).
-
-**If revisited — the honest signal is an absolute relative-gap cliff, not a z-threshold:** only trim the tail when an adjacent chunk is >7–10% below the prior one. In this dataset that fires cleanly on the 2 small case-law calls and leaves smooth WPAM/statute distributions intact. Low ROI, but non-harmful.
-
-**Related discovery (see Tasks 47/48):** The tool-usage audit that came out of this replay found the real inefficiency isn't result filtering — it's *routing*. 11 of 22 calls re-ran `search_document` on a WPAM doc where `get_section` had already run on the same chapter, and case-law docs (flat structure) reach `search_document` after wasted `list_sections`/`get_document` hops.
-
-**Note:** file paths in the original task (`tools.py`, `neptune_client.py` at repo root) are stale post-Task-38. Current locations: `backend/lambdas/agentic_retrieval/agent_tools/executor.py` (`search_document` ~line 427, `_rank_chunks_by_relevance` ~line 149, `faq_search`), `backend/lambdas/agentic_retrieval/graph/neptune_client.py` (`vector_search` ~line 221).
-
----
-
 ### Task 47: Route case-law / flat-structure docs straight to search_document
 
-**Context (from the Task 21 tool-usage audit, 2026-08-13):** `search_document` is highly effective in practice — the target doc ended up **cited in 21 of 22 calls (95%)**, so it is NOT the "hail-mary" it reads like. But agents waste turns reaching it for flat-structured docs.
+**Context (from the Task 21 tool-usage audit, 2026-08-13 — full write-up in [docs/archive/tasks-2026-09.md](archive/tasks-2026-09.md#task-21)):** `search_document` is highly effective in practice — the target doc ended up **cited in 21 of 22 calls (95%)**, so it is NOT the "hail-mary" it reads like. But agents waste turns reaching it for flat-structured docs.
 
 **Finding:** Case-law docs have **`distinct_headings == chunk_count`** (verified in graph: `case-law-405-wis-2d-616` = 17 chunks / 17 headings; `case-law-2025-wi-app-43` = 7/7). Every chunk is its own "heading," so `list_sections`/`get_section` are structurally useless there — there is no chapter hierarchy to navigate. Short gov-pubs are similar. Yet the tool descriptions steer the agent toward `list_sections` → `get_section` first ("consider list_sections + get_section for multi-chapter documents"), so on case law the agent burns a `get_document` or `list_sections` hop before correctly falling back to `search_document`.
 
@@ -197,7 +211,7 @@ From 18 lines to ~6 lines.
 
 ### Task 48: Investigate WPAM get_section gap — agents re-search doc-globally after get_section
 
-**Context (from the Task 21 tool-usage audit, 2026-08-13):** The single biggest `search_document` usage pattern — **11 of 22 calls** — was the agent running `search_document` on a WPAM doc where it had *already* pulled a section via `get_section` on the same chapter in a prior turn.
+**Context (from the Task 21 tool-usage audit, 2026-08-13 — full write-up in [docs/archive/tasks-2026-09.md](archive/tasks-2026-09.md#task-21)):** The single biggest `search_document` usage pattern — **11 of 22 calls** — was the agent running `search_document` on a WPAM doc where it had *already* pulled a section via `get_section` on the same chapter in a prior turn.
 
 **Finding:** The dominant example is the "dark store / assessor should avoid distressed sales" query family: agent does `get_section(WPAM, "Chapter 13 Commercial Valuation")`, then next turn fires `search_document(WPAM, "assessor should avoid ... vacant dark distressed ...")`. The doc gets cited either way, so it *works* — but it means heading-based navigation didn't surface the specific passage on the first hop, forcing a doc-global re-search that costs an extra turn and re-runs the full 800-chunk over-fetch.
 
@@ -212,113 +226,17 @@ From 18 lines to ~6 lines.
 
 ---
 
-### Task 45: Scholar-sourced case-law dedup pass (docket-number keyed) — ONE-TIME PASS APPLIED (2026-08-13)
+### Task 51: Disambiguation follow-up logic + classifier accuracy — SUPERSEDED (2026-09-18)
 
-**Status:** `ops/dedup_case_law_docket.py` built and applied. Groups by UNION of docket ∪ normalized case-name, each gated by a ≥0.6 word-set-Jaccard text-similarity confirmation over the opinion body. **34 confident merges → 54 nodes deleted** (graph 1202→1148, 0 orphan chunks). The Lowe's `379`/`405` cross-host dup is resolved (kept `405`, edges re-pointed). **32 groups correctly flagged** (different opinions sharing a name/docket — e.g. `State v. Davis` ×3, and the appeals-vs-supreme same-docket trap `Tetra Tech`/`Baron` at sim 0.17). **2 groups routed to corruption** (see Task 49). Durable prevention (persist docket in `extract.py`, add as secondary key to `load.dedup_case_law_docs`) still TODO.
+> **Read this as a record, not a plan.** The pre-loop classifier this task tunes is legacy
+> and OFF in production: `ENABLE_DISAMBIGUATION` and `ENABLE_TOPIC_SHIFT` default false and
+> `SCOPE_GATE_ENABLED=false`. Scope and clarification are owned by the post-retrieval
+> adequacy judge (Task 71), which sees the corpus before it decides. Everything below
+> describes the gate as it behaved when it was on, and is the spec to restore if the flags
+> are ever flipped back. The DOR-validated clarify list, if it ever arrives, is now input
+> to the judge prompt's step 3, not to `disambiguationClassifier`.
 
-**Context:** The one-time `ops/dedup_case_law.py` pass (merged in #14) collapsed parallel-citation duplicates keyed on a shared CourtListener `source_url`. That caught every case whose opinion text came from CourtListener. It did **not** catch cases whose text came from the **Google Scholar fallback** in `ingest_case_law.py` (`upload_case`, tier 2 — fires when CourtListener returns no `opinion_id`).
-
-**Why the existing dedup missed them:** Scholar-sourced nodes never get a CourtListener opinion URL. Their `source_url` stays the bare `docs.legis.wisconsin.gov/document/courts/{citation}` — which is **different for each parallel citation of the same opinion** (`2023 WI App 22`, `990 N.W.2d 783`, `407 Wis. 2d 628` are three URLs for one case). Source-url-keyed dedup treats them as distinct, so all three nodes survive.
-
-**Quantified damage (2026-08-13):** Grouping case-law nodes by the docket number (`NNNNAP NNN`) parsed from their opinion text found **40 docket groups with >1 node = 69 redundant nodes**. This is a **floor, not a ceiling** — the quick docket regex only matched 211 of the 1,193 nodes with `.txt` (the older ~982 opinions use a caption format the probe regex didn't hit), so the true count is higher. Examples:
-- `2022AP289` → `case-law-2023-wi-app-22` + `case-law-990-n-w-2d-783` + `case-law-407-wis-2d-628` (Delavan Lake Sanitary District v. Walworth County)
-- `2021AP1076` → `case-law-2022-wi-app-40` + `case-law-978-n-w-2d-558` + `case-law-404-wis-2d-141` (Waupaca County v. Golla)
-
-**Impact:** Same class of bug the #14 pass fixed — the agent can cite one opinion under multiple node IDs, and citation cards fragment. Lower severity than the CL cohort only because it's fewer nodes.
-
-**Live example confirmed in a real answer (the dark-store/Lowe's answer, 2026-08-13):** The dark-store answer cited BOTH `case-law-405-wis-2d-616` (CourtListener URL) and `case-law-379-wis-2d-141` (legis URL) as if they were two separate Lowe's holdings. They are the **same Supreme Court opinion** — both carry docket `2019AP1987`, both open "Lowe's lost the case. The Wisconsin Supreme Court held…", identical internal citation sets. `379 Wis. 2d 141` is a **misattributed citation** for the 2023 WI 8 opinion. This is the cross-host case the #14 source_url dedup structurally cannot catch (one node CourtListener-sourced, one Scholar/legis-sourced → different URLs), and it produced exactly the user-visible fragmentation: two citation cards for one case, and prose that reads as if there's independent corroboration. **This validates that the dedup key MUST be the docket number, not source_url.**
-
-**Proposed:**
-1. **Pick a stable dedup key that survives the Scholar path.** The Wisconsin **docket / appeal number** (`2022AP289`) is one-per-case and appears verbatim in the opinion text. Parse it from the raw `.txt` (`raw/case-law/{reporter}/{slug}.txt`). Fall back to a normalized parsed caption where no docket is present (older opinions).
-2. **Extend `ops/dedup_case_law.py`** (or add a sibling pass) to group by docket, keep the reporter-priority winner, re-point `Statute-[:CITES]->loser` edges, `DETACH DELETE` losers + their chunks, and purge loser doc_ids from `extracted/`/`embedded/`. Reuse the merge/verify logic already in that script.
-3. **Durable prevention:** the load-time `dedup_case_law_docs()` (added in #14) only dedups by `source_url`. Add a secondary key so it also collapses by docket number (persist the parsed docket as a node/cache property during `extract.py` so `load.py` can group on it without re-reading S3).
-
-**Validation:** Re-run the docket grouping after the pass → expect 0 multi-node docket groups. Spot-check that each surviving winner keeps all inbound `Statute-[:CITES]` edges from the collapsed losers.
-
-**Key files:**
-- `tools/ingestion/ops/dedup_case_law.py` — extend with docket-keyed pass
-- `tools/ingestion/ingest_case_law.py` — `upload_case` (Scholar fallback), persist docket to metadata
-- `tools/ingestion/extract.py` — carry docket through to the embedded record
-- `tools/ingestion/load.py` — `dedup_case_law_docs` secondary key
-
----
-
-### Task 46: Backfill case-law titles from opinion-text captions
-
-**Context:** After #14, **52 case-law nodes still have citation-only titles** (e.g. `"998 N.W.2d 506"` instead of a case name). These are all Scholar-sourced nodes with bare `legis.wisconsin.gov` URLs — no case-name slug to recover offline, and CourtListener's citation index returns 404 for most (recent/unpublished WI App and late N.W.3d opinions CL hasn't ingested). So neither #14 backfill step could name them.
-
-**Finding (2026-08-13):** The case name **is** recoverable — not from the URL or CL, but from the **opinion text itself**, which was already scraped from Scholar and stored in `raw/case-law/{reporter}/{slug}.txt`. A caption parser hit **44 of 52** cleanly (e.g. `998-n-w-2d-506` → "Veritas Village, LLC v. City of Madison"). Breakdown:
-- **44 parsed** from the opinion caption (two dominant formats: the `Complete Title of Case:` block, and the inline `NAME, Role, v. NAME` header).
-- **5 parse failures** — text exists but caption is atypical (`961-n-w-2d-903`, `693-f-supp-3d-975`, `2021-wi-app-38`, `187-wis-2d-501` starts mid-opinion with no caption, `5-n-w-3d-952`).
-- **3 true stubs** — no `.txt` at all (`417-wis-2d-629`, `398-wis-2d-542`, `24-n-w-3d-601`); both CL and Scholar failed to return text, so no chunks and no caption. Only these 3 are genuinely unrecoverable from current data.
-
-**Severity:** Cosmetic only. Confirmed the bad title does **not** affect discoverability — every retrieval path (`caselaw_backfill` via `get_case_chunks_for_statutes_with_embeddings`, `citation_extraction` via `resolve_case_citations`, and the `fetch_case_opinion` tool) keys on chunks, embeddings, or the `citation` property, never `title`. 49 of the 52 have real opinion chunks and are fully discoverable; the title just renders a bare reporter number on the card.
-
-**Proposed:**
-1. **Harden the caption parser** — handle the two known formats plus the atypical cases; fix capitalization (opinion captions are ALL-CAPS → need a title-case pass with an acronym allowlist: LLC, U.S., D/B/A, LP, Inc., etc. — the probe produced "Llc", "U.s.", "D/b/a").
-2. **Run it as a backfill** — for each citation-only node, derive the S3 key from `doc_id` (`_reporter_for_slug`), read the `.txt`, parse the caption, set `title = "{case_name}, {citation}"`.
-3. **Sequence after Task 45** — do the docket dedup FIRST. Several of these 52 are duplicates of each other (the docket groups in Task 45 include them), so backfilling titles first would just name nodes that then get deleted. Title backfill is a natural byproduct of the dedup pass — the survivor gets the parsed caption as its title in the same operation.
-4. **Durable prevention:** fix the Scholar fallback in `ingest_case_law.py` to persist the parsed caption as `case_name` (currently it only captures the Scholar page `<h1>`, which came back empty for these 52). Then `extract.py`'s existing title logic produces a named title from the start — no backfill needed on future runs.
-
-**Remaining gap:** the 3 true stubs stay citation-only until CourtListener indexes them (or a manual name is supplied). Acceptable — they have no opinion text to answer from anyway.
-
-**Key files:**
-- `tools/ingestion/ops/dedup_case_law.py` — caption parser + title backfill (fold into the Task 45 pass)
-- `tools/ingestion/ingest_case_law.py` — `fetch_scholar_opinion` / `upload_case`, persist parsed caption as `case_name`
-- `tools/ingestion/extract.py` — title derivation already consumes `case_name`
-
----
-
-### Task 49: Validate Scholar-fetched opinion matches requested citation — CORRUPT NODES PURGED (2026-08-13), DURABLE FIX TODO
-
-**Context:** Surfaced while investigating Task 45. The Google Scholar fallback in `ingest_case_law.py` (`upload_case` → `fetch_scholar_opinion`) searches Scholar by citation string and stores the first opinion it scrapes. Scholar's citation search is fuzzy, so for some citations it returned and stored the **wrong opinion's text** — a citation→text mis-assignment. The node's citation/title describes one case; its chunks describe another.
-
-**Why it's worse than a dup:** these aren't extra copies — they're single nodes carrying the WRONG opinion. Because the chunks are wrong AND the node keeps inbound `Statute-[:CITES]->` edges, retrieval is corrupted: a statute citing the mis-assigned citation leads the agent to a different case's holdings.
-
-**Corpus scan (2026-08-13):** Detected via title-case-name vs opinion-body-case-name with zero shared party token, hand-verified against raw text. **2 genuine cases**, both Scholar/legis-sourced (confirming CL fetch-by-`opinion_id` is reliable — all CL-sourced scan hits were false positives: consolidated 7th-Cir opinions, drop-cap formatting, caption-parser noise):
-- `case-law-414-wis-2d-633` titled "WI State Legislature v. Kaul" but text is **Birge v. Simplicity Credit Union** (docket 2024AP567) — 20 statute CITES
-- `case-law-395-wis-2d-351` titled "Adams Outdoor Advertising" but text is **City of Waukesha v. Board of Review** (docket 2019AP1479) — 18 statute CITES
-
-**One-time cleanup DONE:** `ops/purge_corrupt_case_law.py` deleted both nodes + their chunks (graph 1148→1146, 0 orphan chunks) and purged their work-bucket caches. Edges dropped (not re-pointed — the citations genuinely belong to Kaul/Adams, for which no correct node exists; the correct Birge/Waukesha nodes survive independently). Dropped citations logged for targeted re-ingest: Kaul `414 Wis. 2d 633`, Adams `395 Wis. 2d 351`.
-
-**Coverage caveat:** title-vs-body detection only works when the title has a real name (not a bare citation) and the caption parses (~136 nodes comparable). A citation-vs-body-reporter check was tried but is too noisy (opinion headers often show only the neutral cite, not the reporter parallel cite the node carries) — deferred. The genuine risk is confined to the ~115 Scholar/legis nodes.
-
-**Durable fix (TODO):** In `fetch_scholar_opinion` / `upload_case`, after scraping, verify the scraped opinion's own citation (or docket, parsed from its caption) matches the requested citation before storing. On mismatch: reject and fall through to a stub rather than storing the wrong opinion. Prevents recurrence.
-
-**Key files:**
-- `tools/ingestion/ops/purge_corrupt_case_law.py` — one-time purge (hand-verified list; extend if more surface)
-- `tools/ingestion/ingest_case_law.py` — `fetch_scholar_opinion` / `upload_case` citation-match guard
-
----
-
-### Task 50: Rich feedback phase 2 — render richFeedback in the admin activity dashboard
-
-**Context:** Phase 1 (shipped, deployed 2026-08-13, PR #17) replaced thumbs up/down with a structured feedback modal + annotation mode. Submit now POSTs to `POST /session/{id}/feedback` writing the scalar `thumbUp` (derived from rating: up→true, mid/down→false) **plus** a nested `richFeedback` map + `feedbackSubmittedAt` onto the ChatHistoryTable row. Confirmed live: a real submission stored the full nested structure (rating, per-question yes/no + comments, source notes, broken-link picker, annotations with offsets, speed).
-
-**What's already wired (no work needed):**
-- Write path — `update_query_feedback` (`backend/lambdas/chat_api/main.py`) conditionally writes `richFeedback` (via `TypeSerializer`) + `feedbackSubmittedAt`.
-- Read path — `activity_detail_handler` (`GET /admin/activity/<id>`) already **returns** `richFeedback` + `feedbackSubmittedAt` (auto-deserialized). The detail API is done.
-- Shared contract — backend `RichFeedback` Pydantic model (`backend/layers/step_function_types/models.py`) mirrors the frontend Zod schema (`frontend/src/api/chat-api.ts`) and the store shape (`frontend/src/stores/feedback-store.ts`).
-- The admin GSI/list filters (up/down/rated/unrated) are unchanged and still work — they run on `thumbUp` only. **Do not** move the up/down signal out of the scalar `thumbUp` or the list filters + stat tiles break (would force a GSI rebuild).
-
-**What's left (frontend-only, no backend/infra):** the admin activity **detail drawer** receives `richFeedback` in the API response but ignores it. Render the structured breakdown when present, degrading gracefully for legacy rows that only have `thumbUp`/`feedback`.
-1. Extend the activity types in `frontend/src/hooks/use-activity-data.ts` (`ActivityItem`) with an optional `richFeedback` + `feedbackSubmittedAt`, mirroring the `RichFeedback` Zod shape.
-2. Render it in `frontend/src/app/admin/activity/_components/activity-detail.tsx` — overall rating, the three Response yes/nos + comments, source notes (which source, cited-fully, missed detail), broken links + reason, annotations (quote + comment, ideally anchored/quoted against the answer), speed. Fall back to the existing `thumbUp`/`feedback` display when `richFeedback` is absent.
-3. Optional list-view nicety: the list only projects `thumbUp`/`feedback` via the GSI, so a per-row rich summary needs either a `get_item` per row or a purpose-built projected summary attribute — defer that decision to this task; the minimum is the detail drawer.
-
-**Validation:** open `/admin/activity`, find the seeded rich-feedback submission, confirm the detail drawer renders rating=mid, sourcesOk=no with the source note, the annotation, speed=timely, etc.; confirm an old thumbs-only row still renders without error.
-
-**Key files:**
-- `frontend/src/hooks/use-activity-data.ts` — activity types
-- `frontend/src/app/admin/activity/_components/activity-detail.tsx` — detail rendering
-- `frontend/src/api/chat-api.ts` — reuse the `RichFeedback` Zod schema for the activity response
-- (reference) `backend/lambdas/chat_api/main.py` `activity_detail_handler` — already returns the field
-
----
-
-### Task 51: Disambiguation follow-up logic + classifier accuracy — BLOCKED (awaiting Wisconsin validation, 2026-08-27)
-
-**Status:** Core follow-up/topic-shift logic SHIPPED and deployed (us-east-1). Classifier accuracy tuning is ongoing and paused pending a validated list of clarify-worthy questions back from Wisconsin DOR. Revisit when they respond.
+**Status (historical):** Core follow-up/topic-shift logic SHIPPED and deployed (us-east-1). Classifier accuracy tuning was paused pending a validated list of clarify-worthy questions back from Wisconsin DOR.
 
 **What shipped (merged #24, prompt-only follow-ups pushed via `upload_model_configs.py`):**
 - Follow-ups are now classified. Removed the blanket `if chat_history: return PROCEED` guard in `disambiguation.py`, so a generic new topic raised mid-session is still disambiguated while a drill-down on an established property type proceeds. `classify_query` takes chat history (truncated prior turns).
@@ -346,79 +264,13 @@ From 18 lines to ~6 lines.
 
 ---
 
-### Task 52: Subsection auto-backfill (C1) — guarantee dense-statute subsections reach the answer
-
-**Status update (2026-09-10):** Largely SUPERSEDED. The §70.11(49) recreational-home problem this task targeted was solved for the **camping-trailer / RV / recreational-vehicle family** by the **vocab-swap** approach (Task 58, PR #33) — which promotes the statute vocabulary into the narrow vector-search arm so the controlling subsection surfaces at the top of retrieval, rather than auto-attaching it after the fact. The always-on C1 auto-backfill stage is **no longer the primary plan**. The subsection nudge (#30) and vocab-swap (#33) together cover the camping/RV case. Residual: **mobile-home** phrasing still doesn't reliably surface §70.11(49) — tracked as Task 59. The original tabled analysis is preserved below for reference.
-
-**Status:** TABLED (2026-08-27). Option A shipped (#26); this is the follow-on that makes the fix reliable. Deferred pending a decision on the cheaper prompt-nudge alternative vs. the always-on stage.
-
-**Context — why this exists:** The mobile-home exemptions query ("What exemptions can apply to a mobile home?") rated "mid" because the answer name-dropped **§ 70.11(49)** as plain text with no citation. § 70.11 is a dense enumerated section (~50 subsections packed multi-per-chunk by the chunker), and `get_section`'s semantic ranking silently drops a low-scoring subsection.
-
-**What already shipped (Option A, PR #26):** `get_section` gained a `subsection` param that fetches the `(N)` chunk verbatim, bypassing ranking. Regression-clean (0 regressions, turns net −1). **But a direct post-deploy test proved A is insufficient alone:** the agent loop is non-deterministic — on one run it went `vector_search → search_document → prepare_answer` (2 turns) and **never called `get_section` at all**, so the `subsection` param never fired and 70.11(49) would again be uncited. A only helps when the agent *chooses* to drill in.
-
-**Proposed (C1) — auto-backfill, independent of agent choice:** A backend stage (mirroring `statute_backfill`) that scans the top-N already-retrieved chunks for statute-subsection references (`§?\s*\d+\.\d+\(\d+[a-z]*\)`) resolving to a doc already in play, and attaches the matching subsection chunk — reusing the `_find_subsection_chunks` helper that landed in #26. Fires during retrieval assembly, so it adds **no agent turns / no tool calls** (the turn-bloat concern was Option A's, already cleared; C1 is turn-neutral by construction).
-
-**The real risk — context bloat, and how it's bounded:** C1 auto-attaches chunks the agent didn't ask for, diluting answer-context + costing tokens. Bound it with the same three levers the existing `statute_backfill` uses without blowing up:
-- **Cap** — `SUBSECTION_BACKFILL_CAP` (~2): at most N subsection chunks per query.
-- **Gate** — only trigger from subsection refs in the top-K retrieved chunks (not every `(N)` mentioned anywhere), to avoid firing on incidental cross-references like "…not exempt under 70.11(49)" in an unrelated answer.
-- **Dedup** — skip if the chunk is already in context (`already_have` set); `DIVERSITY_CAP_PER_DOC=3` clips downstream regardless.
-Higher blast radius than A: C1 is **always-on** (every query), not opt-in, so a loose gate affects all traffic. Needs the regression harness to confirm the gate isn't over-firing.
-
-**Cheaper alternative to evaluate FIRST (prompt nudge):** Add one line to `agenticRetrieval`: *"When a statute cross-references a specific subsection you'll cite (e.g. 70.11(49)), fetch it with get_section's `subsection` param before answering."* This raises how often the (already-safe) Option A fires, with near-zero risk and no always-on machinery. It doesn't *guarantee* firing like C1, but may close most of the gap. **Recommendation: try the nudge, measure with the harness (add the mobile-home query to the golden set as a direct guard), and only build C1 if the nudge proves unreliable.**
-
-**Content half already fixed:** the 2026-04-29 "prefabricated structures" advisory (§ 70.11(49)) was ingested (Task 39 follow-on), giving a directly linkable source for that exemption independent of A/C1.
-
-**Validation:** Add the mobile-home exemptions query ("What exemptions can apply to a mobile home?") to `graph_regression_queries.yaml` with `must_contain: ["70\\.11\\(49\\)|recreational prefabricated"]`; baseline → change → after-compare, watching the turns-delta guardrail and cited-doc drift.
-
-**Key files:**
-- `backend/lambdas/agentic_retrieval/agent_tools/executor.py` — `_find_subsection_chunks` (landed in #26), `get_section` handler
-- `backend/lambdas/agentic_retrieval/agent_tools/stages/statute_backfill.py` — template for the new stage
-- `config/model_configs.toml` + `_prompt_fallback.py` — `agenticRetrieval`, if doing the prompt-nudge alternative
-- `tools/ingestion/tests/graph_regression_queries.yaml` — add the mobile-home guard query
-
----
-
-### Feedback remediation sprint — shipped detail (PRs #28–#33)
-
-**PR #28 — Classifier scope broadening + rephrase out-of-scope message.** Broadened the pre-loop query classifier's in-scope topics (valuation/depreciation, transfer-fee ch.77/§77.25/RETR, assessor view / new construction, property-type definitions) so legitimate property-tax questions stop getting refused, and rewrote the out-of-scope message to invite the user to rephrase. Gated by a new prod-parity classifier regression harness (`tools/ingestion/ops/run_classifier_regression.py` + `classifier_regression_queries.yaml`). Prompt pushed via `upload_model_configs.py`.
-
-**PR #29 — answerStream accuracy guardrails + LLM-judge harness.** Added an "Answering Accurately" ruleset to the Phase-B answer prompt: actor/timeframe qualifiers (who can do what, when), numbering consistency (don't claim N steps then present M), no case-law for administrative mechanics, and exact approved wording for specific procedures. Also built the durable test tooling: an LLM-judge grader (grades each answer against a rubric, replacing brittle keyword checks) and a Phase-B replay path in `run_graph_regression.py` (`--candidate-answerstream` / `--phase-b-only`) that regenerates the answer against saved retrieval context for cheap prompt iteration.
-
-**PR #30 — §70.11(49) subsection nudge + answer structure/conditional rules.** Prompt rule directing the agent to fetch a cross-referenced numbered subsection verbatim via `get_section(subsection=…)` before answering, plus answerStream rules for themed section headings and restating a user's conditional in the conclusion.
-
-**PR #31 — Trigger-gated vocab-injection search arm (superseded).** An additive `vector_search` stage that, when a mapped trigger term appears, runs a vocabulary-augmented query and keeps only docs the main/broad arms missed. Strict no-op without a trigger term. It reliably *surfaced* the target advisory into context but the agent didn't always *cite* it; **demoted to a dormant fallback by #33**.
-
-**PR #32 — Scrub client-feedback provenance from public test YAMLs.** Replaced production queryIds with synthetic slugs and removed feedback-provenance framing (tester-complaint text, "expected failing" markers) from `graph_regression_queries.yaml` and `classifier_regression_queries.yaml`. HEAD-only — git history still contains the originals (see Task 63).
-
-**PR #33 — Promote vocab-swap to primary vocabulary mechanism.** New `vocab_swap` pipeline stage: after `auto_refine`, deterministically append the mapped statute vocabulary to the **narrow** arm's query (refine-then-swap, so the swap has the last word over the LLM refine) while the **broad** arm keeps the original query. Net effect: the controlling statute/advisory is promoted into the narrow top-k while the general framing is preserved — so the answer cites both. Validated on the camping-trailer/RV family (reliably cites §70.11(49) + the advisory + §70.111); anchors 7/7, no regressions; also reduced case-law-backfill context bloat. The #31 additive arm is retained dormant as a fallback.
-
----
-
-### Task 58: Vocabulary-bridge (vocab-swap) for citizen-term → statute-term gaps
-
-**Status:** RETIRED 2026-09-14. The `vocab_swap` and `vocab_injection` stages, their tests, and the `vocab_discovery` plumbing in `pipeline.py` / `phase_a.py` were deleted (commit f09e876) after document expansion (Task 65) made them redundant: post-reload harness with the map OFF = 33/42 vs 32/42 baseline, all recreational-home cases pass, camping trailer cites the 2026-04-29 advisory. The durable direction below (a DOR-authored glossary ingested as corpus content) still stands if new vocabulary gaps appear — that is the Sep 17 meeting ask.
-
-*Original write-up (historical):*
-
-Property tax is full of terms-of-art where everyday phrasing (e.g. "camping trailer", "mobile home") never embeds close to the controlling statute language ("recreational prefabricated home", §70.11(49)), so plain vector search lands on an adjacent-but-wrong section. `vocab_swap` bridges that gap with a small synonym map. The map is deliberately tiny (only the validated recreational-vehicle/manufactured-home rule today) because a *wrong* mapping steers the agent to a wrong answer. Growth should be **evidence-driven** — mine query logs for colloquial terms that missed content already in the corpus — and **legally validated per entry**. Candidate durable direction: a DOR-authored plain-language→statute glossary ingested as corpus content (DOR owns the correct mappings), rather than an ever-growing code table.
-
-**Key files:** `backend/lambdas/agentic_retrieval/agent_tools/stages/vocab_swap.py` (stage + `VOCAB_RULES` map shared with the dormant `vocab_injection.py`), `agent_tools/pipeline.py`.
-
 ### Task 59: Mobile-home §70.11(49) reliability + legal-applicability question
 
-**Status:** Open. The vocab-swap (#33) reliably fixes camping-trailer/RV phrasing but **mobile-home** phrasing still does not surface §70.11(49) (0/3 in a modal check). Two compounding causes: (1) mobile-home has more legitimately-competing statutes (§66.0435 permit fees, §70.17(3) real-property reclassification, RMH §70.111(19)(b)) that crowd the narrow arm, so the promotion doesn't stick; (2) an **SME question for DOR** — is §70.11(49) ("recreational prefabricated home") actually the controlling exemption for a *residential* mobile/manufactured home, or is it mainly for RVs/park models? The model's resistance may be partly correct. Needs DOR input; a stronger promotion may be warranted only if §70.11(49) is confirmed applicable.
+**Status:** Open. Camping-trailer / RV phrasing is reliably fixed (originally by the since-retired vocab-swap map, now by document expansion — Task 65), but **mobile-home** phrasing still does not reliably surface §70.11(49); `gq-mobile-home-exemptions` omitted it again on 2026-09-18. Two compounding causes: (1) mobile-home has more legitimately-competing statutes (§66.0435 permit fees, §70.17(3) real-property reclassification, RMH §70.111(19)(b)) that crowd the narrow arm, so the promotion doesn't stick; (2) an **SME question for DOR** — is §70.11(49) ("recreational prefabricated home") actually the controlling exemption for a *residential* mobile/manufactured home, or is it mainly for RVs/park models? The model's resistance may be partly correct. Needs DOR input; a stronger promotion may be warranted only if §70.11(49) is confirmed applicable.
 
 ### Task 60: DOR/SME content questions (client-side, not retrieval bugs)
 
 **Status:** Updated 2026-09-18 after the DOR meeting — (a) retest on the re-indexed graph (Task 72 may have surfaced it); (b) SUPERSEDED: the AA–E quality grades with cost factors (p. 27) and "Selecting the proper quality grade" (p. 58) ARE in WPAM Volume 2 (Task 69); only the per-grade example photographs are unserved (raster images, no image pipeline) — retest the text; (c) still open with DOR; (d) dropped — DOR guide issue, not a bot concern. Original notes: (a) **full-value annual assessment** — the "maintenance assessment vs revaluation" minimum-requirement framing isn't cleanly in the ingested WPAM; need a DOR source to cite; (b) **residential grade scale** (Excellent→Poor) + example images — not in the corpus (proprietary cost-manual material); DOR to supply text + define the image use-case; (c) **Board-of-Review interpreter** reference — §70.47(8m) is a *hearing* waiver, not an interpreter provision, and §70.47 has no interpreter requirement, so the original answer was essentially correct; confirm the intended reference with DOR; (d) **manufacturing-appeal filing** — the 2026 guide's "paper only" statement is stale (My Tax Account now accepts electronic filing); DOR guide update.
-
-### Task 61: Content-gap ingestion — treaty pub, Innovation Grant FAQ, assessor directory
-
-**Status:** DONE (2026-09-10) for the two content docs; assrlist deliberately dropped. Added `gov_publications-napt-treaty-update` + `faq_pages-slf-ig` to `document_manifest.yaml`, then ran a scoped incremental cycle: category-filtered scrape → `extract --smart` → `embed --smart` → two `--source-filter` loads (one per doc). Verified live against the production graph — both previously-failing ingestion-gap queries now PASS (must_cite + LLM-judge rubric): the treaty answer cites the 1854 pub, the Innovation Grant answer draws the fuller requirement set from the FAQ instead of the statute's shorter list.
-
-**assrlist.pdf NOT ingested (deliberate):** the assessor directory is a large municipality→contact table that embeds poorly as graph chunks, and the #25 defect (`2a4a9aed`, "who is the assessor for Town of Otsego…") was link *fabrication* — the bot invented a dead `revenue.wi.gov/Pages/SLF/assessors.aspx` URL and a courthouse phone number from its training prior, not from any retrieved chunk. That's a citation-link-integrity problem (Task 62), not a content gap; ingesting the directory would not reliably fix it.
-
-**Note — scope expanded at scrape time:** category-scoping the scrape to `faq_pages` + `gov_publications` also detected 13 existing docs whose upstream content had drifted (uploaded as a side effect). Those were extracted + embedded (S3) but, per the "keep it small" decision, NOT loaded into the graph — only the 2 target docs were loaded. The 13 remain a latent extracted/embedded-ahead-of-graph state (same class as Task 64).
 
 ### Task 62: Reliability — client-side answer truncation + citation-link integrity
 
@@ -431,33 +283,6 @@ Property tax is full of terms-of-art where everyday phrasing (e.g. "camping trai
 **Status:** Open (reduced). PR #32 replaced production queryIds and feedback framing in the two test YAMLs; `docs/tasks.md` has now also been scrubbed of its legacy production queryIds (replaced with neutral descriptors). Both scrubs are HEAD-only. Remaining decision: whether a git-history purge (`git filter-repo` + force-push) is warranted to remove the originals from history in this public repo.
 
 ---
-
-### Task 64: Reconcile stale-embedding backlog (~1166 docs)
-
-**Status:** DONE 2026-09-14. Loader fixes shipped on `fix/ingestion-metadata-integrity` (extracted/ metadata overlay, embed `--smart` metadata-only refresh, Phase 2 case-law title guard, Phase 10 integrity assertion, `ops/purge_dedup_losers.py` + `dedup/losers.json` skip). Purge applied to S3 (63 losers), then a full after-hours reload 2026-09-14 19:06–19:17 PT: Phase 10 clean (doubled titles 0, orphan chunks 0), CaseLaw 1202→1146, the 2 corrupt and 3 ghost ids gone, statutes-70 at 382 chunks. Post-reload harness 32–33/42 vs 32/42 baseline; recall probe doc MRR 0.52→0.63 vs the pre-expansion baseline.
-
-*Original write-up (historical):* surfaced 2026-09-10 during the Task 61 ingest. `embed --smart` reported `Smart mode: 1166/2364 documents have stale embeddings` — i.e. ~1166 docs whose `extracted/{doc_id}.json` is newer than their `embedded/{doc_id}.json`. A prior extract run (likely the corpus refresh) updated extractions that were never re-embedded, so the graph vectors/chunks for those docs lag the latest extraction.
-
-**Not harmful** — retrieval is internally consistent on the older vectors — but it means extraction-side improvements haven't propagated to ~half the corpus. The Task 61 embed run wrote fresh S3 `embedded/` for the stale docs it processed, but only the 2 target docs were **loaded** into the graph, so the graph side of the backlog is unchanged.
-
-**Fix:** a deliberate `embed --smart` (flush all stale to S3) followed by a **full load** (re-upserts ~9.6k vectors + reloads changed chunks, ~30–45 min, broad graph churn). Schedule it as its own pass with a before/after graph-regression baseline — not a drive-by during a small ingest. Worth first spot-checking a sample of the 1166 to confirm the extraction deltas are meaningful (real chunking/heading improvements) vs. volatile no-ops before paying for the full reload.
-
----
-
----
-
-### Task 65: Document expansion (aliases in the embed input) + statute subsection split
-
-**Why:** Retrieval misses happen when a user's everyday words ("camping trailer", "mobile home") never embed near the controlling legal term ("recreational prefabricated structure", § 70.11(49)). Measured 2026-09-11 with a direct Neptune rank probe: for "What exemptions can apply to a camping trailer?" the 2026-04-29 advisory was not in the top 60 and the § 70.11(49) statute chunk was not in the top 60 for ANY phrasing, including one that literally named the subsection. Two causes: (1) vocabulary gap, (2) the statute chunker packs subsections (45)–(49) into one 3,165-char chunk so no single-topic vector exists. Re-chunking alone barely moves the distance (1.196 → 1.176); prepending four plain-language questions moved the statute chunk from outside the top 60 to tied with the best competitor (1.224 → 0.852). The vocab-swap map (Task 58) is a query-side patch with a precision problem (fires on the term, not the intent: 4 of 15 matching production queries were not exemption questions) and requires an engineer to maintain; this is the durable replacement.
-
-**Mechanism:** at extract time, one Nova 2 Lite call per chunk produces 2–3 plain-language questions the chunk answers plus everyday synonyms for its terms of art, cached per chunk-content hash under `aliases/`. Gold tester queries (rated up, or negative feedback naming the missing source) are attached to the chunk they should hit. At embed time the input string is `title > heading > subheading`, the gold queries, the generated questions, the synonyms, then the chunk text. Stored chunk text and answer context are unchanged; only the vector moves. Mechanical guard: an alias is dropped unless its legal term appears verbatim in the passage. Statute sections with ≥2 top-level numbered subsections are split one subsection per chunk (merged up to ~1,200 chars) so each vector is about one thing.
-
-**Evaluation:** `tools/ingestion/ops/build_recall_eval.py` mines gold rows into `tests/recall_eval_queries.yaml`; `run_recall_probe.py` measures rank of the expected doc/chunk in raw vector search against any graph id (recall@10/30, MRR), baseline vs after. End-to-end: `run_graph_regression.py` with `NEPTUNE_GRAPH_ID` pointed at a staging graph, plus the LLM judge and the anchor set. Staging: every pipeline phase takes `--cache-prefix staging/` so production `extracted/` / `embedded/` are untouched; a separate Neptune graph is loaded from the staging caches; promotion is flipping the Lambda's graph id (blue/green), rollback is flipping it back.
-
-**Not doing:** chunk attributes for retrieval (Neptune has no lexical index; attribute matching would recreate the term-list problem). Aliases are not stored on graph nodes in this pass.
-
-**Key files:** `tools/ingestion/lib/aliases.py`, `extract.py` (`--aliases`, `--aliases-only`, `--cache-prefix`), `embed.py` (`--embed-input enriched`), `load.py` (`--cache-prefix`), `chunking/pdfChunker.py` (subsection split), `ops/attach_gold_queries.py`, `ops/build_recall_eval.py`, `ops/run_recall_probe.py`.
-
 
 ### Decision: agent model stays Sonnet 4.6 — Sonnet 5 evaluated and rejected (2026-09-14)
 
@@ -515,7 +340,7 @@ Remaining, in priority order:
 
 ### Task 72: WPAM Volume 1 was 89% un-indexed — chunker TOC heuristic fix + full re-index (2026-09-18)
 
-**Status:** PROMOTED 2026-09-18 19:39 CT. Re-indexed caches loaded into a fresh graph `g-svphgiu4k6` (Fargate, 128 m-NCU, Phase 10 clean, 42,093 chunks; WPAM 2026 = 1,308 chunks, Sausen on p. 822). Harness on the new graph, judge off: **37/42 vs 34/42** on the old graph, 0 regressions, 3 gains (incl. `gq-full-value-annual` — the maintenance-vs-revaluation DOR ask now answers from WPAM Ch. 4). WPAM cited in 30/45 cases vs 22. The Lambda now points at `g-svphgiu4k6` via the `neptuneGraphIdOverride` CDK context, pinned in `infra/cdk.json`; the CDK-owned graph `g-ndvl4j73v4` is the rollback (deploy with the context removed) — delete it after a week and re-point the CDK construct. Rollback caches at `rollback-20260918/`.
+**Status:** PROMOTED 2026-09-18 19:39 CT. Re-indexed caches loaded into a fresh graph `g-svphgiu4k6` (Fargate, 128 m-NCU, Phase 10 clean, 42,093 chunks; WPAM 2026 = 1,308 chunks, Sausen on p. 822). Harness on the new graph, judge off: **37/42 vs 34/42** on the old graph, 0 regressions, 3 gains (incl. `gq-full-value-annual` — the maintenance-vs-revaluation DOR ask now answers from WPAM Ch. 4). WPAM cited in 30/45 cases vs 22. The Lambda points at `g-svphgiu4k6` via the `neptuneGraphId` CDK context in `infra/cdk.json`, which is now the single pin for the whole stack — the graph construct was removed from `graphrag-stack.ts`, and the former rollback graph `g-ndvl4j73v4` was deleted on 2026-09-19. Rollback caches remain at `rollback-20260918/`; the blue/green and rollback procedure is in `infra/README.md`.
 
 **Root cause:** `chunk_document_wpam` prepends "Chapter N …" to every chunk, and its `is_probably_toc` had the branch "starts with Chapter N AND contains any digit-dash-digit token → TOC". Nearly every Manual page carries a footer like "7-40" that survives into the chunk, so ordinary prose chunks were discarded; the bare "appendix"/"glossary" keyword branch dropped more. Verified four ways: 194/952 pages of the 2026 PDF touched by any chunk; 9/40 random-page sentences findable anywhere in the graph; 2011 edition 1,088 chunks vs 204 for 2012–2026; local re-run of the production extractor reproduced 2.55M → 368K chars. This is why Sausen (p. 823), the Native American material (pp. 692–694, 803–813), Markarian's Ch. 22 discussion, and all of Ch. 21 were missing on 2026-09-16. An earlier "80% missing" claim had been retracted because graph and extracted-cache chunk counts matched — they did; the loss was upstream of both.
 
@@ -542,11 +367,13 @@ Remaining, in priority order:
 
 ### Task 74: Admin pages — access audit, Chunks page overhaul, Canvas brought up to the current pipeline (2026-09-18)
 
-**Access (audit only, no change yet):** any signed-in Cognito user can open every `/admin/*` page (the layout checks only for a session; no group check, no middleware, self-signup on). The admin HTTP APIs are properly gated (`require_admin()` → `Admins` Cognito group, which exists only in the console, not in CDK). So a tester sees the admin chrome with empty lists. The Canvas live-query mode works for any signed-in user because the WebSocket has no authorizer — same gap as the pre-public security item. Fix belongs in the security pass: group check in the admin layout + WebSocket `$connect` authorizer + `Admins` group in CDK.
+**Access (audit; the client-side half was fixed in Task 75).** At the time of the audit, any signed-in Cognito user could open every `/admin/*` page (the layout checks only for a session; no group check, no middleware, self-signup on). The admin HTTP APIs are properly gated (`require_admin()` → `Admins` Cognito group, which exists only in the console, not in CDK). So a tester sees the admin chrome with empty lists. The Canvas live-query mode works for any signed-in user because the WebSocket has no authorizer — same gap as the pre-public security item.
+
+**Since fixed:** Task 75 added the client-side group check (`hasAdminGroup` + `<ProtectedRoute requireAdmin>`), so `/admin/*` pages now require the `Admins` group on both sides. **Still open, both in the security pass:** the WebSocket `$connect` authorizer, and adopting the console-managed `Admins` group into CDK via `cdk import`.
 
 **Chunks page (shipped):** reads `extracted/` from S3 (pre-embedding artifact, never Neptune). Was one multi-MB, double-JSON-encoded response with every chunk's text, swallowed errors, a fake `manifest.json` document, and a live DOM node per chunk. Now: `GET /admin/chunks/{docId}/index?offset&limit` (metadata only) + `GET /admin/chunks/{docId}/text?offset&limit` (text on demand), single-encoded Powertools responses, manifest filtered, windowed grid, debounced search, real 403/404/network error states, page deep-links into `source_url#page=N`, WPAM/statute heading grouping. The unauthenticated `api/local-chunks` Next routes (path-join on user input) were deleted. Chat API Lambda still parses the whole extracted JSON per request (256 MB); bump memory rather than caching if it OOMs on WPAM.
 
-**Canvas (shipped):** panes added for get_flowchart / list_flowcharts (the router's turn-0 seed now renders), find_case_law, list_worksheets / get_worksheet, auto_refine, the scope-gate verdict, the adequacy judge (verdict, latency, chips from the `choices` message), a request/history header, and Phase B (streamed answer, resources, errors). `buildTurns` now materializes a tool_result with no matching tool_call (this, not "Coming soon", was why the flowchart seed and auto_refine vanished). Stale `clarify` / `refine_query` / `cite_documents` removed, dead corpus-manifest stub and unwired fixtures deleted, demo fixture regenerated by hand to cover the flowchart seed, judge CLARIFY with chips, a worksheet call and Phase B. `backend-tools.ts` mirrors the 16-tool registry with a test that fails when a tool has no pane. Backend follow-ups (not done): `tracing/emitter.py` `ALLOWED_METADATA_KEYS` lacks the worksheet keys, and `tracing/summaries.py` has no `find_case_law` / `list_flowcharts` branch; the judge Finding's prose (supported/unsupported/rationale) is not sent over the socket. Known pre-existing frontend test failures: `initial-vector-search-pane.test.tsx` ("Additive merge only" string no longer exists) and `use-websocket-chat.test.tsx` (needs `NEXT_PUBLIC_API_BASE_URL`); repo-root `eslint.config.ts` does not load under ESLint 8 — lint from `frontend/`.
+**Canvas (shipped):** panes added for get_flowchart / list_flowcharts (the router's turn-0 seed now renders), find_case_law, list_worksheets / get_worksheet, auto_refine, the scope-gate verdict, the adequacy judge (verdict, latency, chips from the `choices` message), a request/history header, and Phase B (streamed answer, resources, errors). `buildTurns` now materializes a tool_result with no matching tool_call (this, not "Coming soon", was why the flowchart seed and auto_refine vanished). Stale `clarify` / `refine_query` / `cite_documents` removed, dead corpus-manifest stub and unwired fixtures deleted, demo fixture regenerated by hand to cover the flowchart seed, judge CLARIFY with chips, a worksheet call and Phase B. `backend-tools.ts` mirrors the tool registry (14 tools after PR A removed `get_authority_chain` and `list_framework_docs`, plus `auto_refine` as a synthetic pane) with a test that fails when a tool has no pane. Backend follow-ups (not done): `tracing/emitter.py` `ALLOWED_METADATA_KEYS` lacks the worksheet keys, and `tracing/summaries.py` has no `find_case_law` / `list_flowcharts` branch; the judge Finding's prose (supported/unsupported/rationale) is not sent over the socket. The frontend test failures noted here (`initial-vector-search-pane.test.tsx`, `use-websocket-chat.test.tsx`) were fixed — `bun test src` is green as of 2026-09-19. Repo-root `eslint.config.ts` still does not load under ESLint 8; lint from `frontend/`.
 
 ### Task 75: Answer UX — clarification block, chip order, source-card grouping, no em dashes; admin page gate (2026-09-19)
 
@@ -556,3 +383,49 @@ Shipped with the judge ON after Isaac reviewed the live bot.
 - **No em dashes.** 145 em dashes scrubbed from every prompt in `config/model_configs.toml`, a "no dashes as punctuation" writer rule added, and all four `_prompt_fallback.py` mirrors regenerated byte-identical from the TOML (they had drifted for months; `test_prompt.py` was pinning the stale mirror and was updated). Style slice, 12 cases judge-on: 81 → 2 em dashes in answers, pass results unchanged (9/12 both), verdicts unchanged on 11/12.
 - **Admin page gate.** `/admin/*` layout requires the `Admins` Cognito group from the ID token (`hasAdminGroup` in auth-context, `<ProtectedRoute requireAdmin>`), showing an "Admin access required" panel otherwise. The group stays console-managed (2 members); adopt via `cdk import` in the security pass. Still open: WebSocket `$connect` authorizer + session ownership.
 - **Statute inline links (09-19, after Isaac's review of query 8265d1af):** `[§ 74.37](doc:statutes-74)` with no page opened page 1 of the chapter PDF although Phase B had been shown "§ 74.37 -> page 9". Fixed three ways: `phase_b.statute_section_pages` (cached, covers cited chapters plus any known corpus chapter referenced in chunks or the plan; the old `>= 70` filter dropped ch. 19/60/61), `link_repair` fills `#page=N` deterministically (`kind="paged"`, never invents), and the frontend sends a page-less statute link that names a section to the legislature's per-section page (`document/statutes/74.37`). Note: docs.legis returns intermittent 503s under bursts; "sometimes it works" is that server, not our URLs.
+
+### Task 76: Repo cleanup — PR A / PR B / PR C (2026-09-19)
+
+**Status:** DONE. Three merged PRs plus a documentation pass, all held to the same gate:
+the 63-case graph-regression harness must not lose ground.
+
+**PR A — retire dead retrieval surface.** Removed the `get_authority_chain` and
+`list_framework_docs` tools, the `clarify` pseudo-tool (executor + loop handling for a tool
+that was never in `TOOL_DEFINITIONS`), and the `auto_enrichment` pipeline stage with its
+`ENRICH_CAP_PER_DOC` / `ENRICH_CAP_PER_TYPE` knobs — it fetched neighbours into a context
+field nothing read, costing up to 3 Neptune round-trips per search. Turned the pre-loop
+classifier off by default, deleted dead loader and config paths, fixed the admin ingest doc
+ids, removed the mock-chat and orphan frontend components, made the Textract fallback
+fail-closed when `TEXTRACT_STAGING_BUCKET` is unset, and fixed the harness grader to grade
+the clarification block the way the UI shows it (plus `--regrade` honoring `--out`).
+
+**PR B — the graph pin.** `neptuneGraphId` in `infra/cdk.json` became the single pin for
+the whole stack, the Neptune construct left `graphrag-stack.ts`, and synth now fails
+outright if the pin is missing (no fallback). The old CDK-owned graph `g-ndvl4j73v4` was
+deleted on 2026-09-19. Loader cleanup landed alongside: Phase 4 no longer writes
+`HAS_SUBSECTION` (the `_parent_id` key it read was never set, so the edge list was always
+empty) and Phase 9 no longer GCs orphan `Topic` nodes (nothing creates them). Also deleted:
+`ops/delete_semantic_edges.py` and the unwired neighbor-doc citation-discovery helpers.
+
+**PR C — this documentation pass.** Every markdown file re-grounded against the code:
+the engineering guide rewritten as the single architecture reference (14 tools, the judge,
+the flowchart router, the real edge list, the real retry numbers), finished history moved
+to `docs/archive/tasks-2026-09.md`, and the stale names (`refine_query`,
+`get_authority_chain`, `list_framework_docs`, `cite_documents`, `vocab_swap`,
+`auto_enrichment`, `useGraphRAG`, `g-ndvl4j73v4`, Topic nodes, `IMPLEMENTS` /
+`HAS_SUBSECTION` / `COVERS_TOPIC`, "9 sub-phases") removed from every live doc.
+
+**The gate.** Two clean 63-case runs after the cleanup, both at **classic 39/45**, against
+a Thursday pre-cleanup baseline of **41/45**. The only stable delta is
+`gq-full-value-annual` (roadmap item 4 — a WPAM ranking miss, not a cleanup regression);
+the rest of the gap is the known flakiness in `gq-prior-year-roll` and judge noise. Scope
+slice: **15/17 and 13/17**. `gq-bor-interpreter-waiver` stays red by design — it is a DOR
+content question, not a retrieval bug.
+
+**Known follow-ups left behind, all code changes:** the frontend trace-metadata mirror
+(`frontend/src/components/messages/trace-metadata.ts`) has 24 keys to the backend's 73, and
+still lists `autoEnrichedCount` and `chainLength` from the two things PR A removed, under a
+header comment pointing at the long-gone `packages/graphrag/.../main.py`;
+`tracing/emitter.py` lacks the worksheet keys and `tracing/summaries.py` has no
+`find_case_law` / `list_flowcharts` branch (Task 74); `extract.py` still writes `topics` and
+`implements_refs` that nothing loads (roadmap item 6).

@@ -85,9 +85,16 @@ tiny tail fragments that the hard-cap split produced.
 
 ## Extraction (`pymupdf_extractor.py`)
 
-**PyMuPDF-first, Textract-fallback.** The corpus is digital-native, so OCR adds
-nothing and PyMuPDF is faster and free. Textract fires only when PyMuPDF fails the
-quality gate.
+**PyMuPDF-first.** The corpus is digital-native, so OCR adds nothing and PyMuPDF is
+faster and free.
+
+> **The Textract fallback is opt-in and currently off.** It needs a staging bucket for
+> its async output, and `TEXTRACT_STAGING_BUCKET` is deliberately unset on the Fargate
+> task definition. When PyMuPDF fails the quality gate and no staging bucket is
+> configured, `pdfChunker` logs
+> `TEXTRACT_STAGING_BUCKET is not set; skipping the Textract fallback` and keeps the
+> PyMuPDF result rather than failing the document. Everything written below about
+> Textract describes what happens once a staging bucket is configured.
 
 - **Body font size** (`_get_body_font_size`): character-count-weighted mode of
   rounded span sizes across all pages (default 12.0).
@@ -103,7 +110,9 @@ quality gate.
 - **Outputs**: `header_split` (text split on `<titles>`) and `line_page_mapping`
   (`list[(line, 1-based page)]`) — the basis for per-line page tracking.
 - **Quality gate** (`extraction_looks_good`): PyMuPDF output must have ≥5 lines,
-  ≥1 non-empty line, and average stripped length ≥3, or Textract takes over.
+  ≥1 non-empty line, and average stripped length ≥3. Below that, Textract takes over —
+  or, with no `TEXTRACT_STAGING_BUCKET`, the partial PyMuPDF result is kept and the skip
+  is logged (see the note above).
 
 ## Boilerplate stripping (`boilerplate.py`)
 

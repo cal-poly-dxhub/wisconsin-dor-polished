@@ -28,7 +28,7 @@ separate keys in the tool result (`statute_backfill`, `caselaw_backfill`,
 
 ## The `vector_search` pipeline
 
-`vector_search` executes an 11-stage pipeline defined in
+`vector_search` executes a **10-stage** pipeline defined in
 `agent_tools/pipeline.py` (`VECTOR_SEARCH_STAGES`). Each stage is a module under
 `agent_tools/stages/` exposing `run(ctx: StageContext) -> StageResult`; stages
 mutate a shared `StageContext` in place. In order:
@@ -48,11 +48,12 @@ mutate a shared `StageContext` in place. In order:
 
 Stages 1–6 shape the primary result set; stages 7–10 are the backfill arms.
 
-> An eighth stage, `auto_enrichment`, sat between 6 and 7 until 2026-09-19. It
-> fetched `get_neighbors` for the top-3 parent docs into `ctx.graph_context`,
-> which was never returned to the model and which no downstream stage read, so
-> it cost up to 3 Neptune round-trips per search and bought nothing. Removed
-> along with `ENRICH_CAP_PER_DOC` / `ENRICH_CAP_PER_TYPE`.
+> **Removed 2026-09-19.** An eleventh stage sat between 6 and 7: it fetched
+> `get_neighbors` for the top-3 parent docs into `ctx.graph_context`, which was
+> never returned to the model and which no downstream stage read, so it cost up
+> to 3 Neptune round-trips per search and bought nothing. Gone, along with its
+> `ENRICH_CAP_PER_DOC` / `ENRICH_CAP_PER_TYPE` knobs. Read
+> `VECTOR_SEARCH_STAGES` if you need to confirm the current list.
 
 ### The primary result set (stages 1–6)
 

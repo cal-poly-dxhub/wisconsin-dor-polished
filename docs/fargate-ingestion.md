@@ -106,15 +106,26 @@ the run. It forwards all CLI args verbatim to every phase.
 
 ### Options
 
+`run_fargate.sh` parses a fixed option list (an unknown flag is an error, not a
+pass-through):
+
 | Option | Phases | Description |
 |--------|--------|-------------|
 | `--source-filter <prefix>` | all | Only process doc IDs matching this prefix (e.g. `wpam-`) |
 | `--force` | extract, embed | Ignore cache, re-process everything |
-| `--smart` | extract, embed | Only re-process docs whose raw S3 object is newer than its cache |
+| `--smart` | extract, embed | Only re-process docs whose upstream artifact is newer than its cache |
 | `--reclassify` | extract | Force LLM reclassification even if the classification cache is warm |
+| `--aliases` | extract | Generate chunk aliases (document expansion); also on by default via `ingest_config.yaml` |
+| `--aliases-only` | extract | Skip extraction; backfill aliases onto existing `extracted/` JSONs |
+| `--embed-input <mode>` | embed | `plain` or `enriched` (default comes from `alias_enrichment.embed_input`) |
 | `--max-workers <N>` | extract, embed | Override concurrency |
 | `--start-phase <N>` | load | Resume from load sub-phase N (**1–10**) |
 | `--stop-after-phase <N>` | load | Stop after sub-phase N completes |
+| `--cache-prefix <p>` | all | Namespace every work-bucket key (e.g. `staging/`) so a staging run never touches production caches |
+| `--graph-id <id>` | load | **Blue/green only.** A routine load needs this flag omitted — the task definition sets `NEPTUNE_GRAPH_ID` from the `neptuneGraphId` pin in `infra/cdk.json` and `load.py` defaults to it. A non-pinned graph also needs its ARN added to the task role first (see [`infra/README.md`](../infra/README.md)). |
+
+The script warns and pauses 10 s if you pass `--cache-prefix` to `load` **without**
+`--graph-id`, because that would push staging embeddings into the production graph.
 
 > **Concurrency defaults are pinned by the task def.** `extract.py` defaults to
 > `--max-workers 3` and `embed.py` to `5`, but the CDK task definition always sets
@@ -124,28 +135,17 @@ the run. It forwards all CLI args verbatim to every phase.
 
 ## Load Sub-Phases
 
-`load.py` runs **10 sequential sub-phases**, numbered 1–10 (Phase 10 = integrity checks, added 2026-09-14) with a 1:1 mapping to
-their `phase_N_*` functions (there is no CLI-step vs. function offset).
+`load.py` runs **10 sequential sub-phases**, numbered 1–10 with a 1:1 mapping to their
+`phase_N_*` functions (there is no CLI-step vs. function offset).
 `--start-phase`/`--stop-after-phase` take integers in `[1, 10]`.
 
-| # | Name | What it does |
-|--:|------|--------------|
-| 1 | Scaffold | Framework nodes, `DERIVED_FROM` edges, statute-family Statute nodes + `BELONGS_TO` |
-| 2 | Document Nodes | MERGE per-doc-type labeled nodes; set properties (incl. WPAM `edition_year`) |
-| 3 | Statute Hierarchy | `PART_OF` edges (section → chapter, subsection → parent); MERGE stub parents |
-| 4 | Hierarchy Links | `HAS_SUBSECTION` sub-document links; wire orphan stubs to their framework |
-| 5 | Chunk Nodes | Purge stale chunks, then MERGE Chunk nodes + `EXTRACTED_FROM` + chunk-level `CITES` |
-| 6 | Case Law CITES | `(Statute)-[:CITES]->(CaseLaw)` reverse edges |
-| 7 | Stub Resolution | `DEFINED_BY` edges from Statute/AdminRule stubs to matching chunks |
-| 8 | Vector Upserts | `neptune.algo.vectors.upsert` per chunk (parallel, 8 workers) |
-| 9 | Orphan Cleanup | GC orphan Statute stubs and stale CaseLaw nodes |
+**The phase-by-phase table lives in one place:
+[graphrag-engineering-guide § Load phases](graphrag-engineering-guide.md#load-phases).**
+It also records what Phase 4 and Phase 9 stopped doing on 2026-09-19 (no
+`HAS_SUBSECTION` edges, no orphan-`Topic` GC) and why old notes mention "phases 1–11".
 
-> There is no longer a semantic-edge / topic-clustering phase — an earlier
-> "Phase 9" that classified `RELATED_TO`/`SUPPLEMENTS`/`SUPERSEDES`/`CONFLICTS_WITH`
-> edges via an LLM was removed. Current Phase 9 is orphan cleanup. The one-shot
-> `ops/delete_semantic_edges.py`, which stripped those edges from a graph loaded
-> before the removal, was deleted on 2026-09-19; every live graph has been
-> reloaded since.
+Phase 10 (integrity checks, added 2026-09-14) exits 1 on a failed assertion — do not
+re-run blindly after a `Phase 10 FAILED` line.
 
 ## Monitoring
 
@@ -231,7 +231,7 @@ from the nested stack's own outputs. The run scripts discover all of these via
 | Auth | `AWS_PROFILE=<your-profile>` | IAM task role (automatic) |
 | SSL certs | `AWS_CA_BUNDLE=$CERT` | Not needed (base image has certs) |
 | `state_laws_dir` | Local statute PDFs used for section-level refs | Degrades gracefully to chapter-only refs |
-| Textract staging | `TEXTRACT_STAGING_BUCKET`, unset by default | Not set on the task def |
+| Textract staging | `TEXTRACT_STAGING_BUCKET`, unset by default | Not set on the task def — so the Textract fallback is **skipped** and the PyMuPDF result is kept |
 | Logs | Terminal stdout | CloudWatch `/ecs/wis-dor-ingestion` |
 | Failure recovery | Restart manually | Re-run the same command; caching skips completed work |
 
@@ -242,18 +242,20 @@ from the nested stack's own outputs. The run scripts discover all of these via
 valid values and exits 1). Also confirm the image is pushed.
 
 **Out of memory (exit code 137):**
-The memory pressure is in the Vector Upserts step (Phase 8; scale Neptune to 128 m-NCU first), which
-UNWINDs chunk-text payloads into Neptune. It is guarded by module constants in
-`load.py` — `PHASE_5_BATCH_SIZE`, `PHASE_5_MAX_PAIRS_PER_FLUSH`, and
-`PHASE_5_MAX_BYTES_PER_FLUSH = 50_000` (cumulative-text-byte cap per flush). These
-are code constants, not env vars: to change them, edit `load.py` and rebuild the
-image. If the corpus grows substantially, also consider raising `memoryLimitMiB`
-in `ingestion-stack.ts`.
+The pressure is in the batched chunk writes (Phase 5) and the vector upserts (Phase 8) —
+scale Neptune to 128 m-NCU before a full load. The batch sizes are guarded by module
+constants in `load.py`: `PHASE_5_BATCH_SIZE`, `PHASE_5_MAX_PAIRS_PER_FLUSH`, and
+`PHASE_5_MAX_BYTES_PER_FLUSH = 50_000` (a cumulative-text-byte cap per flush, because a
+count-only cap does not prevent per-query OOM). These are code constants, not env vars:
+to change them, edit `load.py` and rebuild the image. If the corpus grows substantially,
+also consider raising `memoryLimitMiB` in `ingestion-stack.ts`.
 
 **Neptune throttling (slow load phase):**
-The Neptune client retries with exponential backoff (capped at 30 s) on
-`Throttling`/`UnprocessableException`. Scale the graph to 128 m-NCU for full
-re-ingestion (see the engineering guide), then back down afterward.
+`load.py`'s `execute_query` retries up to **8 times** with exponential backoff capped at
+**60 s**, catching both `ThrottlingException` and `UnprocessableException`. (The
+retrieval Lambda's client is deliberately more impatient — 3 attempts, 30 s cap.) Scale
+the graph to 128 m-NCU for a full re-ingestion, then back down to 32 afterward; 16 m-NCU
+is rejected by the service even on a fresh graph.
 
 **Image not found error:**
 Run `./build_and_push.sh` to push the latest code to ECR.

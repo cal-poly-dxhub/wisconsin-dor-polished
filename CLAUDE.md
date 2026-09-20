@@ -205,7 +205,15 @@ Flat layout: `backend/` (lambdas + layers), `infra/` (CDK stacks), `frontend/` (
 
 ### Retrieval Path
 
-EventBridge rule `wisconsin-dor.chat-api:ChatMessageReceived` → AgenticRetrieval Lambda directly (no Step Function). The Lambda runs the Claude tool loop (faq_search → Neptune vector_search/search_document/get_neighbors → answer), then streams documents, FAQs, and answer fragments over WebSocket itself. Single Lambda, single DynamoDB write.
+EventBridge rule `wisconsin-dor.chat-api:ChatMessageReceived` → AgenticRetrieval Lambda directly (no Step Function). Single Lambda, single DynamoDB write. In order:
+
+1. **Clarification resolve** — `resolve_pending_clarification` (`adequacy_judge.py`) folds a chip click or short reply into the question that prompted it, deterministically, before anything else runs.
+2. **Pre-loop seeds** — a deterministic `faq_search` and `vector_search` are seeded into turn-0 context, plus a `get_flowchart` result when the semantic flowchart router (`flowchart_router.py`) clears its gate. The old pre-loop query classifier (`disambiguation.py`) is **legacy and OFF** — `ENABLE_DISAMBIGUATION` / `ENABLE_TOPIC_SHIFT` default false and `SCOPE_GATE_ENABLED=false` in prod.
+3. **Phase A** — the Claude tool loop over the 14 tools in `agent_tools/definitions.py`, ending at `prepare_answer(cited_doc_ids, answer_plan)`.
+4. **Adequacy judge** (`adequacy_judge.py`, Haiku 4.5, `ADEQUACY_JUDGE_ENABLED=true`) — reads the plan against every retrieved chunk and returns a `Finding` with verdict ANSWER / CLARIFY / DECLINE. It owns scope and clarification; it never writes user-facing text, and it fails open to ANSWER.
+5. **Phase B** — the Finding is injected as a `## RETRIEVAL FINDING` block and the answer always streams. Statute link pages are filled deterministically (`loop/link_repair.py`) from the section→page index built in `loop/phase_b.py::statute_section_pages`. A CLARIFY also sends chips over the `choices` WebSocket message.
+
+`refine_query`, `clarify`, `cite_documents`, `get_authority_chain`, `list_framework_docs` and the `vocab_swap` / `auto_enrichment` stages no longer exist.
 
 ### Directory Responsibilities
 
@@ -216,8 +224,11 @@ EventBridge rule `wisconsin-dor.chat-api:ChatMessageReceived` → AgenticRetriev
   - `stacks/webapp-stack.ts` — Next.js frontend (deployed via CloudFront + `cdk-nextjs-standalone`)
   - `stacks/ingestion-stack.ts` — Fargate compute for ingestion (VPC, ECS cluster, task def, ECR)
   - `stacks/lambda-layers-stack.ts` — Shared Lambda layers
-- **backend/lambdas/** — Lambda source code (agentic_retrieval, chat_api, streaming, etc.)
-- **backend/layers/** — Lambda layers: `websocket_utils` (connection management + message models)
+- **backend/lambdas/** — three Lambda packages, and only three:
+  - `agentic_retrieval/` — the retrieval loop, adequacy judge, and answer stream. Entry point `handler.py` (there is no `main.py`); subpackages `loop/`, `agent_tools/` (+ `stages/`), `graph/`, `streaming/`, `tracing/`
+  - `chat_api/` — Powertools REST handler: sessions, history, feedback, `/admin/*`
+  - `websocket/` — `$connect` / `$disconnect` / `$default` route handlers
+- **backend/layers/** — Lambda layers: `websocket_utils` (connection management + message models), `step_function_types` (shared Pydantic contracts)
 - **frontend/** — Next.js frontend app
 - **tools/ingestion/** — Ingestion pipeline (renamed from `graphrag/`): scrape, extract, embed, load, case law
   - `extract.py` / `embed.py` / `load.py` — core pipeline phases
@@ -225,8 +236,9 @@ EventBridge rule `wisconsin-dor.chat-api:ChatMessageReceived` → AgenticRetriev
   - `ingest_case_law.py` — case law discovery from statute hyperlinks + CourtListener enrichment
   - `chunking/` — PDF extraction and chunking library (`pdfChunker.py`; used by `extract.py`)
   - `config/` — `ingest_config.yaml` (framework/doc-type/chunking params) + `document_manifest.yaml` (all corpus URLs)
-  - `lib/` — shared helpers (`case_annotations.py`, `faq_url_map.py`, `wpam_year.py`)
-  - `ops/` — one-shot / maintenance scripts (orphan-chunk cleanup, stale-extract cleanup, FAQ KB seeding)
+  - `lib/` — shared helpers (`aliases.py` (the shared `EnrichPolicy`), `case_annotations.py`, `faq_url_map.py`, `wpam_year.py`)
+  - `worksheets/` / `flowcharts/` — sidecar producers for the `get_worksheet` / `get_flowchart` tools (local steps, not Fargate phases)
+  - `ops/` — harnesses and one-shot maintenance scripts. The harnesses: `run_graph_regression.py` (63-case end-to-end accuracy harness, judge-on via `ADEQUACY_JUDGE_ENABLED=true`), `run_recall_probe.py` (raw vector recall@k / MRR against any graph id), `build_recall_eval.py` + `attach_gold_queries.py` (gold-query mining and attachment), `run_classifier_regression.py` (legacy — the pre-loop classifier it tests is off). One-shots: `purge_orphan_chunks.py`, `purge_dedup_losers.py`, `purge_corrupt_case_law.py`, `dedup_case_law.py`, `dedup_case_law_docket.py`, `clean_stale_extracts.py`, `seed_faq_url_table.py`, `extract_faq_qa_pairs.py`
   - `docker/` — `Dockerfile`, `entrypoint.sh`, `build_and_push.sh`, `requirements.txt`
   - `scripts/` — Fargate shell wrappers (`run_fargate.sh`, `run_full_ingest.sh`, `sync_faq_bucket.sh`)
 - **config/** — Shared configuration (model configs, etc.)
@@ -258,11 +270,13 @@ load phase creates them; `get_neighbors` no longer offers them as `edge_types`.
 
 **Ingestion config:** `tools/ingestion/config/ingest_config.yaml` — defines frameworks, doc types, chunking params, source-to-framework mappings.
 
-**Document manifest:** `tools/ingestion/config/document_manifest.yaml` — single source of truth for every corpus URL (~1,000 entries; news pages dominate). The scraper reads this file; all entries are plain URL strings (no overrides). `make_doc_id()` in `scrape_documents.py` derives stable S3 keys from category + URL with special handling for statutes (chapter number), admin rules (Tax chapter), WPAM (year), IAAO (CamelCase splitting + typo fix), and USPAP.
+**Document manifest:** `tools/ingestion/config/document_manifest.yaml` — single source of truth for every corpus URL (~1,000 entries; news pages dominate). Most entries are plain URL strings; an entry may instead be a `{url, doc_id, title, effective_date}` dict when the derived id or title is wrong (e.g. WPAM Volume 2, registered with a year-less `doc_id` so it is never edition-deduped against Volume 1 — see docs/tasks.md Task 69). `make_doc_id()` in `scrape_documents.py` derives stable S3 keys from category + URL with special handling for statutes (chapter number), admin rules (Tax chapter), WPAM (year), IAAO (CamelCase splitting + typo fix), and USPAP.
 
 ### PDF Processing Pipeline (`tools/ingestion/chunking/`)
 
-PyMuPDF-first extraction with Textract fallback. `pdfChunker.py` routes by source type (`CHUNKER_BY_SOURCE` dict) to strategy-specific chunking (statute, wpam, general). Each chunk gets `start_page`/`end_page` metadata for citation linking. Quality gate in `pymupdf_extractor.py` (`extraction_looks_good()`) triggers Textract fallback.
+PyMuPDF-first extraction. `pdfChunker.py` routes by source type (`CHUNKER_BY_SOURCE` dict) to strategy-specific chunking (statute, admin_rule, wpam, general). Each chunk gets `start_page`/`end_page` metadata for citation linking. Quality gate in `pymupdf_extractor.py` (`extraction_looks_good()`) decides whether the PyMuPDF result is usable.
+
+**The Textract fallback is skipped unless `TEXTRACT_STAGING_BUCKET` is set.** The async Textract path needs a staging bucket for its output, and the Fargate task definition deliberately leaves that var unset. When PyMuPDF fails the gate and no staging bucket is configured, `pdfChunker` logs the skip and keeps the PyMuPDF result rather than failing the document. The corpus is digital-native, so this is rare — but treat "Textract fallback" as opt-in infrastructure, not an automatic safety net.
 
 ### TID Worksheet Tool (`.xlsx` — separate from the graph)
 
@@ -291,13 +305,21 @@ Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeli
 
 ## WebSocket Contract
 
-Any change to messages sent over WebSocket (adding fields, changing `responseType` values, adding new message types, modifying trace/logging payloads) **must** update both sides:
+**Every message shape lives in exactly two files: `backend/layers/websocket_utils/models.py` (Pydantic, the wire truth) and `frontend/types/message-types.ts` (Zod). Read those before assuming a field exists.** Today the union covers `documents`, `faq`, `flowchart`, `answer-event`, `fragment`, `agent-event`, `error`, `choices` and `suggestion`. Note that `streamId` and `responseType` differ (`agent-trace`→`agent-event`; `resources`→`documents`/`faq`/`flowchart`) — the frontend enum keys off `streamId`, the Zod discriminated union off `responseType`. Keepalive heartbeats are raw `{"streamId": "heartbeat", "body": {}}` frames, deliberately outside the typed contract on both ends.
+
+`ChoicesContent` carries `choices: list[str]` plus three optional fields the frontend uses to render one lifted clarification block between the answer and the sources:
+
+- `question` — the single question to put to the user (absent on the legacy pre-loop disambiguation path, whose canned text already carries the question)
+- `axis` — short noun phrase naming the fact being asked about ("property classification")
+- `kind` — `"clarification"` (adequacy judge) or `"disambiguation"` (legacy classifier)
+
+Any change to messages sent over WebSocket (adding fields, changing `responseType` values, adding new message types, modifying trace/logging payloads) **must** update all three of:
 
 1. **Backend** — Python models in `backend/layers/websocket_utils/models.py` and the `send_json` router in `backend/layers/websocket_utils/utils.py`
 2. **Frontend** — Zod schemas in `frontend/types/message-types.ts` (the `MessageUnionSchema` discriminated union and `WebSocketMessageSchema`)
 3. **Handler** — The `messageHandler` switch in `frontend/src/hooks/use-websocket-chat.ts`
 
-The frontend validates every WebSocket message via `WebSocketMessageSchema.parse()`. If the backend sends a `responseType` or shape that isn't in the Zod union, the message is rejected and an error is shown to the user. This applies to trace/logging messages too — they flow through the same validated WebSocket path.
+The frontend validates every WebSocket message via `WebSocketMessageSchema.parse()`. If the backend sends a `responseType` or shape that isn't in the Zod union, the **entire frame is dropped** and an error is shown to the user. This applies to trace/logging messages too. Use `.nullish()` not `.optional()` for new Zod optional fields — Pydantic serializes unset `Optional` as `null`, which `z.optional()` rejects.
 
 ## Chat History & Activity Data (DynamoDB)
 
@@ -334,7 +356,9 @@ AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws dynamodb scan \
   --output json
 ```
 
-**Admin dashboard:** `/admin/activity` route in the frontend (dev-only, Cognito-gated). Fetches all items via `GET /admin/activity` API endpoint, caches locally for 1 hour with manual sync override. Supports filtering by time range, feedback status, and text search.
+**Admin dashboard:** `/admin/activity` in the frontend. **Every `/admin/*` page requires the `Admins` Cognito group** — server-side via `require_admin()` on each `/admin/*` API route, and client-side via `hasAdminGroup` in `auth-context` + `<ProtectedRoute requireAdmin>` in the admin layout (non-members see an "Admin access required" panel). The group is **console-managed, not in CDK**; adopting it via `cdk import` is part of the security pass. The activity page fetches all items via `GET /admin/activity`, caches locally for 1 hour with manual sync override, and filters by time range, feedback status, and text search.
+
+Other admin pages: `/admin/chunks` reads the pre-embedding `extracted/` artifacts from S3 via `GET /admin/chunks/{docId}/index` (metadata only, paginated) + `GET /admin/chunks/{docId}/text` (text on demand) — never Neptune. `/admin/canvas` visualizes a retrieval run and mirrors the current tool registry. `/admin/ingest` ingests a document by URL.
 
 **When user asks about recent queries or chat activity:** Prefer DynamoDB scan over CloudWatch logs — it returns structured data with the full question, answer, feedback, and timestamps. Offer to use the admin API endpoint or direct CLI scan depending on context.
 
@@ -417,7 +441,9 @@ AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws logs filter-log-events \
 
 All LLM prompts are externalized to `config/model_configs.toml` and loaded from DynamoDB at Lambda cold-start. The TOML is the source of truth; DynamoDB is the runtime store.
 
-**Entries:** `agenticRetrieval` (agentic system prompt), `answerStream` (Phase B answer generation), `personaGovernment` / `personaCitizen` (persona suffixes).
+**Entries:** `agenticRetrieval` (Phase A system prompt), `answerStream` (Phase B answer generation, including how to honor the `## RETRIEVAL FINDING` block), `adequacyJudge` (the judge's rubric + output schema), `personaGovernment` / `personaCitizen` (persona suffixes), and `disambiguationClassifier` (legacy — retained only for the scope-gate rollback path).
+
+`backend/lambdas/agentic_retrieval/_prompt_fallback.py` mirrors these byte-identically as a cold-start fallback. Regenerate it from the TOML whenever a prompt changes — `tests/test_prompt.py` pins load-bearing phrases and will catch drift.
 
 **Iteration workflow:**
 ```bash
