@@ -142,6 +142,9 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
             }
             containerRef.current = node;
           }}
+          // Marks the element that actually scrolls the chat. answer-toc.tsx
+          // finds it with closest('[data-chat-scroll]') to observe and scroll.
+          data-chat-scroll
           className={`scrollbar-thin scrollbar-track-transparent scrollbar-thumb-gray-300/30 hover:scrollbar-thumb-gray-400/50 dark:scrollbar-thumb-gray-600/30 dark:hover:scrollbar-thumb-gray-500/50 h-full overflow-y-auto ${
             variant === 'borderless' || variant === 'narrow' || variant === 'wide'
               ? 'bg-transparent'

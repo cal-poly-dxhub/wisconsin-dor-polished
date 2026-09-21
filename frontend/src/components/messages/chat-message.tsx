@@ -20,6 +20,7 @@ import type { FlowchartContent } from '@messages/websocket-interface';
 
 import './chat-message.css';
 import AnimatedMarkdown, { type SourceTone, toneForAuthorityLevel } from './animated-markdown';
+import { AnswerToc } from './answer-toc';
 import { formatTraceMetadata } from './trace-metadata';
 import { Button } from '../ui/button';
 import { ButtonGroup } from '../ui/button-group';
@@ -344,10 +345,10 @@ export function InlineSources({ items, streamingComplete, citationsByDoc, flowch
   if (flowchart) parts.push('1 flowchart');
 
   return (
-    <div className="mt-4">
+    <div className="mt-5">
       <button
         onClick={() => setOpen(prev => !prev)}
-        className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-[color,background-color,border-color] cursor-pointer mb-3"
+        className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-[color,background-color,border-color] cursor-pointer mb-3.5"
       >
         <FileText className="h-3.5 w-3.5" />
         <span>Sources ({parts.join(', ')})</span>
@@ -513,6 +514,8 @@ export function ChatMessage({
   onSendMessage,
 }: ChatMessageProps) {
   const messageRef = useRef<HTMLDivElement>(null);
+  // Wraps the answer prose only — the TOC reads its rendered headings.
+  const answerBodyRef = useRef<HTMLDivElement>(null);
 
   const isThinking =
     status === 'pending' || status === 'sending' || status === 'sent';
@@ -646,7 +649,21 @@ export function ChatMessage({
 
     return (
       <div className="chat-response-aligned">
-        <StreamResponse content={response} streamingComplete={streamingComplete} docUrls={docUrls} docTones={docTones} />
+        {/* The TOC rail is positioned against this wrapper, which spans the
+            answer prose only — never the clarification block or source cards. */}
+        <div className="answer-with-toc">
+          <div ref={answerBodyRef} className="answer-body">
+            <StreamResponse content={response} streamingComplete={streamingComplete} docUrls={docUrls} docTones={docTones} />
+          </div>
+          {!annotationActive && (
+            <AnswerToc
+              messageId={queryId}
+              bodyRef={answerBodyRef}
+              content={response}
+              streamingComplete={streamingComplete}
+            />
+          )}
+        </div>
         {/* The clarification sits between the answer and the sources: the open
             fork is read right after the prose that left it open, instead of
             being stranded below the source grid. */}
@@ -663,7 +680,7 @@ export function ChatMessage({
         <InlineSources items={items ?? []} streamingComplete={streamingComplete} citationsByDoc={citationsByDoc} flowchart={flowchart} />
       </div>
     );
-  }, [response, streamingComplete, items, docUrls, docTones, citationsByDoc, flowchart, choices, clarification, queryId, onSendMessage]);
+  }, [response, streamingComplete, items, docUrls, docTones, citationsByDoc, flowchart, choices, clarification, queryId, onSendMessage, annotationActive]);
 
   const containerClassName = useMemo(
     () => `font-sans ${isAnnotatingThis ? 'annotate-active' : ''} ${className || ''}`,

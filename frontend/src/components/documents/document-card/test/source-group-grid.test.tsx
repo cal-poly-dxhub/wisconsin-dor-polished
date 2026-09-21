@@ -67,10 +67,9 @@ describe('SourceGroupGrid', () => {
     for (const key of ['s1', 'c1', 'a1', 'w1', 'g1', 'f1']) {
       expect(html).toContain(`card:${key}`);
     }
-    expect(html).not.toContain('aria-expanded="false"');
   });
 
-  test('collapses all but the first two groups above 6 items', () => {
+  test('every group is its own open column, even above 6 items', () => {
     const html = renderToString(
       <SourceGroupGrid
         entries={[
@@ -84,15 +83,16 @@ describe('SourceGroupGrid', () => {
         ]}
       />
     );
-    // Statutes + Case Law open...
-    expect(html).toContain('card:s1');
-    expect(html).toContain('card:c1');
-    // ...everything below stays collapsed (header only, no card).
-    for (const key of ['a1', 'w1', 'g1', 'f1', 'n1']) {
-      expect(html).not.toContain(`card:${key}`);
+    for (const key of ['s1', 'c1', 'a1', 'w1', 'g1', 'f1', 'n1']) {
+      expect(html).toContain(`card:${key}`);
     }
-    expect(html).toContain('Admin Rules');
-    expect(html).toContain('aria-expanded="false"');
+    // One column (section) per non-empty group, in authority order.
+    const sections = html.match(/<section /g) ?? [];
+    expect(sections.length).toBe(6);
+    expect(html.indexOf('Statutes &amp; Constitution')).toBeLessThan(html.indexOf('Case Law'));
+    expect(html.indexOf('Case Law')).toBeLessThan(html.indexOf('Admin Rules'));
+    // Columns cap their height and scroll rather than growing.
+    expect(html).toContain('overflow-y-auto');
   });
 
   test('renders the flowchart card above the groups, outside them', () => {
