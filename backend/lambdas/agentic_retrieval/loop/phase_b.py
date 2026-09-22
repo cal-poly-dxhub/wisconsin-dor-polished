@@ -142,13 +142,14 @@ def finalize_answer_links(
     repaired, stats = repair_citation_links(
         answer, retrieved_doc_ids, group_chunks_by_doc(chunks or []), section_pages=section_pages
     )
-    if stats["repointed"] or stats["stripped"] or stats.get("paged"):
+    if stats["repointed"] or stats["stripped"] or stats.get("paged") or stats.get("dual"):
         _log(
             "answer_link_repaired",
             query_id=query_id,
             repointed=stats["repointed"],
             stripped=stats["stripped"],
             paged=stats.get("paged", 0),
+            dual=stats.get("dual", 0),
             changes=stats["changes"],
             stage="final",
         )
@@ -344,6 +345,7 @@ def stream_answer(
         repair_totals["repointed"] += stats["repointed"]
         repair_totals["stripped"] += stats["stripped"]
         repair_totals["paged"] = repair_totals.get("paged", 0) + stats.get("paged", 0)
+        repair_totals["dual"] = repair_totals.get("dual", 0) + stats.get("dual", 0)
         repair_changes.extend(stats["changes"])
         return fixed
 
@@ -464,13 +466,19 @@ def stream_answer(
             ws_connection_alive[0] = False
 
     stream_latency = round((time.perf_counter() - stream_started) * 1000)
-    if repair_totals["repointed"] or repair_totals["stripped"] or repair_totals.get("paged"):
+    if (
+        repair_totals["repointed"]
+        or repair_totals["stripped"]
+        or repair_totals.get("paged")
+        or repair_totals.get("dual")
+    ):
         _log(
             "answer_link_repaired",
             query_id=query_id,
             repointed=repair_totals["repointed"],
             stripped=repair_totals["stripped"],
             paged=repair_totals.get("paged", 0),
+            dual=repair_totals.get("dual", 0),
             changes=repair_changes,
             stage="stream",
         )

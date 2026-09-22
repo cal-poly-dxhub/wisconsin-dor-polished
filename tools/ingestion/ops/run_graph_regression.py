@@ -297,10 +297,15 @@ def _phase_b_generate(
         text, stats = repair_citation_links(
             text, set(retrieved_doc_ids), by_doc, section_pages=section_pages
         )
-        if stats.get("repointed") or stats.get("stripped") or stats.get("paged"):
+        if (
+            stats.get("repointed")
+            or stats.get("stripped")
+            or stats.get("paged")
+            or stats.get("dual")
+        ):
             logger.info(
                 f"  link repair: {stats['repointed']} repointed, {stats['stripped']} stripped, "
-                f"{stats.get('paged', 0)} paged"
+                f"{stats.get('paged', 0)} paged, {stats.get('dual', 0)} dual"
             )
     return text
 

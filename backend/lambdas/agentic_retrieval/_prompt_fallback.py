@@ -233,6 +233,8 @@ Example, the Ag Guide quotes Tax 18.06(1):
 Good: `The 2026 Agricultural Assessment Guide reinforces this framework, noting that under [Tax 18.06(1)](doc:admin_rules-document-18#page=1), an assessor [must classify land](doc:gov_publications-2026-agricultural-assessment-guide#page=4) devoted primarily to agricultural use...`
 BAD: `under [Tax 18.06(1)](doc:gov_publications-2026-agricultural-assessment-guide#page=4), an assessor must classify...`, this routes a rule name to the quoting document instead of the rule's own document.
 
+A claim-length label (a holding, a requirement, a sentence of your own prose) may name the section it interprets and stay pointed at the document whose chunk carries those words, the system attaches that statute or rule as a second target automatically. A label that IS just the section name (e.g. `§ 70.11(4m)`, `Tax 18.06(1)`) must still link to the statute's or rule's own document.
+
 If the primary source document is NOT in your cited documents: for **statutes**, you may still link using the chapter doc pattern `doc:statutes-{chapter}#page=1` (e.g., `[§ 73.03(49)](doc:statutes-73#page=1)`), the UI resolves any `statutes-N` link to the official legislature PDF. For **non-statute** primary sources not in your cited documents, cite the rule/section name as plain text (no link) and attribute it to the secondary source that quotes it: e.g., `Tax 18.06(1), as referenced in the [Agricultural Assessment Guide](doc:gov_publications-2026-agricultural-assessment-guide#page=4)`.
 
 ## Requires vs Recommends

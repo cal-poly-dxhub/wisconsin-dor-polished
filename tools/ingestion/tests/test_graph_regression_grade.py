@@ -292,3 +292,29 @@ def test_ids_and_tags_are_anded():
 
 def test_no_filters_returns_everything():
     assert filter_entries(_ENTRIES) == _ENTRIES
+
+
+# ── dual citation links (`&ref=`) vs. the golden-set regex gates ─────────────
+
+
+def test_dual_href_does_not_trip_the_chapter_conflation_guard():
+    """A dual link carries a second doc id inside the fragment; the golden-set
+    `must_not_contain` hrefs anchor on the PRIMARY target, so a ref tail must
+    not match them, and must not read as a second citation."""
+    import re
+
+    answer = (
+        "Villages appoint under [§ 61.19](doc:statutes-61#page=3). The court held that "
+        "[a partially constructed building cannot be tax exempt under § 70.11(4m)]"
+        "(doc:case-law-2025-wi-app-43#page=1&ref=statutes-70#page=5)."
+    )
+    entry = {
+        "must_cite": ["statutes-70", "case-law-2025-wi-app-43"],
+        "must_not_contain": [r"\[§\s*61\.19[^\]]*\]\(doc:statutes-62"],
+    }
+    run = make_run(answer=answer, cited_doc_ids=["statutes-70", "case-law-2025-wi-app-43"])
+    g = grade(entry, run, {}, run_judge=False)
+    assert g["notcontain_pass"] is True
+    assert g["cite_pass"] is True
+    # Cite extraction from the answer text yields only the primary targets.
+    assert re.findall(r"doc:([^)#]+)", answer) == ["statutes-61", "case-law-2025-wi-app-43"]
