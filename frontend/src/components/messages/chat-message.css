@@ -177,6 +177,9 @@
 .markdown-container .source-link--iaao { background: rgba(225, 29, 72, 0.06); border-color: rgba(225, 29, 72, 0.15); color: #be123c; }
 .markdown-container .source-link--uspap { background: rgba(225, 29, 72, 0.06); border-color: rgba(225, 29, 72, 0.15); color: #be123c; }
 .markdown-container .source-link--default { background: rgba(107, 114, 128, 0.06); border-color: rgba(107, 114, 128, 0.15); color: #6b7280; }
+/* Dual-source: a muted violet-blue sitting between statute blue (#3b82f6) and
+   case-law violet (#8b5cf6) — it is neither, it is "both". */
+.markdown-container .source-link--dual { background: rgba(99, 102, 241, 0.06); border-color: rgba(99, 102, 241, 0.18); color: #6366f1; }
 
 /* Source type tints — dark mode (subtle) */
 .dark .markdown-container .source-link--statute { background: rgba(59, 130, 246, 0.07); border-color: rgba(59, 130, 246, 0.15); color: #93c5fd; }
@@ -188,6 +191,105 @@
 .dark .markdown-container .source-link--iaao { background: rgba(244, 63, 94, 0.07); border-color: rgba(244, 63, 94, 0.15); color: #fda4af; }
 .dark .markdown-container .source-link--uspap { background: rgba(244, 63, 94, 0.07); border-color: rgba(244, 63, 94, 0.15); color: #fda4af; }
 .dark .markdown-container .source-link--default { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.08); color: #d1d5db; }
+.dark .markdown-container .source-link--dual { background: rgba(129, 140, 248, 0.07); border-color: rgba(129, 140, 248, 0.18); color: #a5b4fc; }
+
+/* Dual-source inline citation: one link, two targets (the document whose words
+   the label quotes + the statute/admin-rule section it names). */
+.markdown-container .source-link-dual {
+  position: relative;
+  display: inline-block;
+}
+
+.markdown-container .source-link-dual .source-link {
+  cursor: pointer;
+}
+
+.markdown-container .source-link-dual-dots {
+  opacity: 0.75;
+}
+
+.markdown-container .source-link-dual-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 15rem;
+  max-width: min(22rem, 78vw);
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--popover, var(--card));
+  color: var(--popover-foreground, var(--foreground));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  font-size: 0.85em;
+  line-height: 1.35;
+  text-align: left;
+}
+
+/* `display: flex` above would otherwise beat the UA's [hidden] { display: none }. */
+.markdown-container .source-link-dual-popover[hidden] {
+  display: none;
+}
+
+.markdown-container .source-link-dual-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.4em 0.5em;
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.markdown-container .source-link-dual-row:hover {
+  background: var(--muted);
+  text-decoration: none;
+}
+
+.markdown-container .source-link-dual-row--inert {
+  opacity: 0.6;
+}
+
+.markdown-container .source-link-dual-dot {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+}
+
+.markdown-container .source-link-dual-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.markdown-container .source-link-dual-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-container .source-link-dual-page {
+  font-size: 0.85em;
+  color: var(--muted-foreground);
+}
+
+.markdown-container .source-link-dual-row svg {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  opacity: 0.55;
+}
+
+.dark .markdown-container .source-link-dual-popover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
 
 /* Blockquotes */
 .markdown-container blockquote {

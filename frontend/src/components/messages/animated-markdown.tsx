@@ -1,8 +1,14 @@
 'use client';
 
-import React, { memo, useMemo } from 'react';
+import React, { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+import {
+  DOC_HREF_PREFIX,
+  parseDocHref,
+  type DocHrefTarget,
+} from '@/lib/parse-doc-href';
 
 export interface AnimatedMarkdownProps {
   content: string;
@@ -10,6 +16,8 @@ export interface AnimatedMarkdownProps {
   animationDuration?: string;
   docUrls?: Record<string, string>;
   docTones?: Record<string, SourceTone>;
+  /** doc_id → human title, keyed exactly like docUrls. Used by the dual-source popover. */
+  docTitles?: Record<string, string>;
 }
 
 const WORD_SPLIT = /(\s+)/;
@@ -53,7 +61,9 @@ function splitAnimated(
 }
 
 
-export type SourceTone = 'statute' | 'case-law' | 'admin-rule' | 'wpam' | 'faq' | 'gov-pub' | 'iaao' | 'uspap' | 'default';
+// `dual` is not an authority tier — it marks a link that carries TWO targets
+// (a primary document plus the statute/admin-rule section its label names).
+export type SourceTone = 'statute' | 'case-law' | 'admin-rule' | 'wpam' | 'faq' | 'gov-pub' | 'iaao' | 'uspap' | 'dual' | 'default';
 
 // Authority level → tone. This is the deterministic classification: the
 // backend already assigns every document an authority tier (1–9), which maps
@@ -102,49 +112,96 @@ function extractText(node: React.ReactNode): string {
   return '';
 }
 
+function ExternalGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V10m-4-8h5m0 0v5m0-5L7.5 8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
 function SourceLink({ href, tone, children }: { href: string; tone: SourceTone; children: React.ReactNode }) {
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" className={`source-link source-link--${tone}`}>
       {children}
-      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V10m-4-8h5m0 0v5m0-5L7.5 8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-      </svg>
+      <ExternalGlyph />
     </a>
   );
 }
 
-const DOC_HREF_PREFIX = 'doc:';
 const STATUTE_DOC_RE = /^statutes-(\d+[A-Za-z]*)$/;
+const ADMIN_DOC_RE = /^admin_rules-tax-(\d+[A-Za-z]*)$/;
 
-// Extract the bare doc_id from a `doc:<id>#page=N` href (no page fragment → whole rest).
+// Extract the bare PRIMARY doc_id from a `doc:` href (single or dual form).
 function docIdFromHref(href: string | undefined): string | undefined {
-  if (!href || !href.startsWith(DOC_HREF_PREFIX)) return undefined;
-  const rest = href.slice(DOC_HREF_PREFIX.length);
-  const hashIdx = rest.indexOf('#page=');
-  return hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
+  return parseDocHref(href)?.docId;
 }
 
-// Resolve a link's source tone. Prefer the deterministic authority-level tone
+// Resolve a doc_id's source tone. Prefer the deterministic authority-level tone
 // keyed by doc_id (docTones, built from the source cards the backend sent);
 // fall back to text/href heuristics only when the doc isn't a known card.
+function toneForDoc(
+  docId: string | undefined,
+  docTones: Record<string, SourceTone> | undefined,
+  labelText: string,
+  resolvedHref: string
+): SourceTone {
+  if (docId && docTones) {
+    const tone = docTones[docId];
+    if (tone) return tone;
+  }
+  return classifySource(labelText, resolvedHref || (docId ?? ''));
+}
+
 function resolveTone(
   href: string | undefined,
   children: React.ReactNode,
   resolvedHref: string,
   docTones?: Record<string, SourceTone>
 ): SourceTone {
-  const docId = docIdFromHref(href);
-  if (docId && docTones) {
-    const tone = docTones[docId];
-    if (tone) return tone;
-  }
-  return classifySource(extractText(children), resolvedHref);
+  return toneForDoc(docIdFromHref(href), docTones, extractText(children), resolvedHref);
 }
 
 // "§ 74.37", "s. 70.32(2)(c)", "74.37" -> "74.37" when it belongs to `chapter`.
 function sectionFromLabel(label: string, chapter: string): string | undefined {
   const m = label.match(new RegExp(`(?<![\\d.])${chapter}\\.(\\d+)`));
   return m ? `${chapter}.${m[1]}` : undefined;
+}
+
+/**
+ * Turn one parsed `doc:` target into a real URL. Shared by single links and by
+ * each row of a dual link, so a statute `ref` falls back to the legislature's
+ * per-section page exactly the way a single statute link does.
+ */
+function resolveTarget(
+  target: DocHrefTarget,
+  docUrls: Record<string, string>,
+  label: string
+): string | undefined {
+  const { docId, page } = target;
+  let baseUrl = docUrls[docId];
+  const statuteMatch = docId.match(STATUTE_DOC_RE);
+  if (statuteMatch && page === undefined) {
+    // A statute link with no page (the chapter was not among the retrieved
+    // documents and the writer had no page to give). Send the reader to the
+    // legislature's per-section page when the label names a section, e.g.
+    // "§ 74.37" -> docs.legis.wisconsin.gov/document/statutes/74.37, instead
+    // of page 1 of a 60-page chapter PDF.
+    const section = sectionFromLabel(label, statuteMatch[1]);
+    if (section) return `https://docs.legis.wisconsin.gov/document/statutes/${section}`;
+  }
+  if (!baseUrl) {
+    if (statuteMatch) {
+      baseUrl = `https://docs.legis.wisconsin.gov/statutes/statutes/${statuteMatch[1]}.pdf`;
+    } else {
+      return undefined;
+    }
+  }
+  if (page !== undefined) {
+    const stripped = baseUrl.replace(/#.*$/, '');
+    return `${stripped}#page=${page}`;
+  }
+  return baseUrl;
 }
 
 function resolveHref(
@@ -154,35 +211,230 @@ function resolveHref(
 ): string | undefined {
   if (!href) return href;
   if (href.startsWith(DOC_HREF_PREFIX) && docUrls) {
-    const rest = href.slice(DOC_HREF_PREFIX.length);
-    const hashIdx = rest.indexOf('#page=');
-    const docId = hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
-    const pageOverride = hashIdx >= 0 ? parseInt(rest.slice(hashIdx + 6), 10) : NaN;
-    let baseUrl = docUrls[docId];
-    const statuteMatch = docId.match(STATUTE_DOC_RE);
-    if (statuteMatch && Number.isNaN(pageOverride)) {
-      // A statute link with no page (the chapter was not among the retrieved
-      // documents and the writer had no page to give). Send the reader to the
-      // legislature's per-section page when the label names a section, e.g.
-      // "§ 74.37" -> docs.legis.wisconsin.gov/document/statutes/74.37, instead
-      // of page 1 of a 60-page chapter PDF.
-      const section = sectionFromLabel(label, statuteMatch[1]);
-      if (section) return `https://docs.legis.wisconsin.gov/document/statutes/${section}`;
-    }
-    if (!baseUrl) {
-      if (statuteMatch) {
-        baseUrl = `https://docs.legis.wisconsin.gov/statutes/statutes/${statuteMatch[1]}.pdf`;
-      } else {
-        return undefined;
-      }
-    }
-    if (!Number.isNaN(pageOverride) && pageOverride > 0) {
-      const stripped = baseUrl.replace(/#.*$/, '');
-      return `${stripped}#page=${pageOverride}`;
-    }
-    return baseUrl;
+    const parsed = parseDocHref(href);
+    if (!parsed) return undefined;
+    return resolveTarget(parsed, docUrls, label);
   }
   return href;
+}
+
+/**
+ * A readable name for one target of a dual link. Prefers the title the source
+ * card uses (docTitles is built from the same resource items); otherwise
+ * renders statutes and admin rules in their citation form and falls back to
+ * the bare doc id for everything else.
+ */
+function titleForTarget(
+  target: DocHrefTarget,
+  docTitles: Record<string, string> | undefined,
+  label: string
+): string {
+  const known = docTitles?.[target.docId];
+  if (known) return known;
+  const statuteMatch = target.docId.match(STATUTE_DOC_RE);
+  if (statuteMatch) {
+    const section = sectionFromLabel(label, statuteMatch[1]);
+    return section ? `§ ${section} · Wis. Stats.` : `Wis. Stat. ch. ${statuteMatch[1]}`;
+  }
+  const adminMatch = target.docId.match(ADMIN_DOC_RE);
+  if (adminMatch) {
+    const section = sectionFromLabel(label, adminMatch[1]);
+    return section
+      ? `Tax ${section} · Wis. Adm. Code`
+      : `Wis. Adm. Code ch. Tax ${adminMatch[1]}`;
+  }
+  return target.docId;
+}
+
+interface DualRow {
+  key: 'primary' | 'ref';
+  url?: string;
+  title: string;
+  page?: number;
+  tone: SourceTone;
+}
+
+/**
+ * An inline citation that carries two targets: the document whose words the
+ * label quotes (primary) and the statute / admin-rule section that label names
+ * (ref).
+ *
+ * It renders as a real `<a href={primary}>` so middle-click, cmd/ctrl-click and
+ * "open in new tab" behave like any other link. Only a PLAIN left click is
+ * intercepted, and it opens a small popover offering both targets.
+ */
+function DualSourceLink({
+  primaryUrl,
+  rows,
+  children,
+}: {
+  primaryUrl?: string;
+  rows: DualRow[];
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const popoverId = useId();
+
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (e: MouseEvent | TouchEvent) => {
+      const node = wrapRef.current;
+      if (node && e.target instanceof Node && !node.contains(e.target)) close();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        close();
+        // Put focus back on the link the popover belongs to.
+        wrapRef.current?.querySelector('a')?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('touchstart', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, close]);
+
+  // Plain left click opens the chooser; every modified click (cmd/ctrl/shift/
+  // alt) and middle click falls through to normal anchor behavior on the
+  // PRIMARY target.
+  const onClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    setOpen(prev => !prev);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLAnchorElement>) => {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      setOpen(prev => !prev);
+    }
+  };
+
+  return (
+    <span className="source-link-dual" ref={wrapRef}>
+      <a
+        href={primaryUrl ?? '#'}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="source-link source-link--dual"
+        role="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={popoverId}
+        onClick={onClick}
+        onKeyDown={onKeyDown}
+      >
+        {children}
+        {/* Two dots = two sources. Decorative; the popover carries the meaning. */}
+        <svg
+          className="source-link-dual-dots"
+          width="12"
+          height="12"
+          viewBox="0 0 16 16"
+          fill="currentColor"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <circle cx="5" cy="8" r="2" />
+          <circle cx="11" cy="8" r="2" />
+        </svg>
+      </a>
+      <span
+        id={popoverId}
+        className="source-link-dual-popover"
+        role="dialog"
+        aria-label="Two sources"
+        hidden={!open}
+      >
+        {rows.map(row =>
+          row.url ? (
+            <a
+              key={row.key}
+              href={row.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="source-link-dual-row"
+              onClick={close}
+            >
+              <span className={`source-link-dual-dot source-link--${row.tone}`} aria-hidden="true" />
+              <span className="source-link-dual-text">
+                <span className="source-link-dual-title">{row.title}</span>
+                {row.page !== undefined && (
+                  <span className="source-link-dual-page">{`p. ${row.page}`}</span>
+                )}
+              </span>
+              <ExternalGlyph />
+            </a>
+          ) : (
+            <span key={row.key} className="source-link-dual-row source-link-dual-row--inert">
+              <span className={`source-link-dual-dot source-link--${row.tone}`} aria-hidden="true" />
+              <span className="source-link-dual-text">
+                <span className="source-link-dual-title">{row.title}</span>
+                {row.page !== undefined && (
+                  <span className="source-link-dual-page">{`p. ${row.page}`}</span>
+                )}
+              </span>
+            </span>
+          )
+        )}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * The `a:` renderer shared by the animated and non-animated component maps.
+ * Single-target hrefs take exactly the path they always took; only a href that
+ * parses with a `ref` gets the dual treatment.
+ */
+function renderAnchor(
+  children: React.ReactNode,
+  href: string | undefined,
+  docUrls?: Record<string, string>,
+  docTones?: Record<string, SourceTone>,
+  docTitles?: Record<string, string>
+): React.ReactElement {
+  const label = extractText(children);
+  const parsed = href && docUrls ? parseDocHref(href) : null;
+
+  if (parsed?.ref && docUrls) {
+    const primaryUrl = resolveTarget(parsed, docUrls, label);
+    const refUrl = resolveTarget(parsed.ref, docUrls, label);
+    if (!primaryUrl && !refUrl) return <span>{children}</span>;
+    const rows: DualRow[] = [
+      {
+        key: 'primary',
+        url: primaryUrl,
+        title: titleForTarget(parsed, docTitles, label),
+        page: parsed.page,
+        tone: toneForDoc(parsed.docId, docTones, label, primaryUrl ?? ''),
+      },
+      {
+        key: 'ref',
+        url: refUrl,
+        title: titleForTarget(parsed.ref, docTitles, label),
+        page: parsed.ref.page,
+        tone: toneForDoc(parsed.ref.docId, docTones, label, refUrl ?? ''),
+      },
+    ];
+    return (
+      <DualSourceLink primaryUrl={primaryUrl ?? refUrl} rows={rows}>
+        {children}
+      </DualSourceLink>
+    );
+  }
+
+  const resolved = resolveHref(href, docUrls, label);
+  if (!resolved) return <span>{children}</span>;
+  const tone = resolveTone(href, children, resolved, docTones);
+  return <SourceLink href={resolved} tone={tone}>{children}</SourceLink>;
 }
 
 const AnimatedMarkdown = memo(function AnimatedMarkdown({
@@ -191,16 +443,13 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
   animationDuration = '1s',
   docUrls,
   docTones,
+  docTitles,
 }: AnimatedMarkdownProps) {
   const components = useMemo<Components>(() => {
     if (!animate) {
       return {
-        a: ({ children, href }) => {
-          const resolved = resolveHref(href, docUrls, extractText(children));
-          if (!resolved) return <span>{children}</span>;
-          const tone = resolveTone(href, children, resolved, docTones);
-          return <SourceLink href={resolved} tone={tone}>{children}</SourceLink>;
-        },
+        a: ({ children, href }) =>
+          renderAnchor(children, href, docUrls, docTones, docTitles),
       };
     }
 
@@ -221,12 +470,8 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
         <strong {...props}>{wrap(children, 'strong')}</strong>
       ),
       em: ({ children, ...props }) => <em {...props}>{wrap(children, 'em')}</em>,
-      a: ({ children, href }) => {
-        const resolved = resolveHref(href, docUrls, extractText(children));
-        if (!resolved) return <span>{children}</span>;
-        const tone = resolveTone(href, children, resolved, docTones);
-        return <SourceLink href={resolved} tone={tone}>{children}</SourceLink>;
-      },
+      a: ({ children, href }) =>
+        renderAnchor(children, href, docUrls, docTones, docTitles),
       blockquote: ({ children, ...props }) => (
         <blockquote {...props}>{wrap(children, 'bq')}</blockquote>
       ),
@@ -247,7 +492,7 @@ const AnimatedMarkdown = memo(function AnimatedMarkdown({
         </div>
       ),
     };
-  }, [animate, animationDuration, docUrls, docTones]);
+  }, [animate, animationDuration, docUrls, docTones, docTitles]);
 
   return (
     <ReactMarkdown

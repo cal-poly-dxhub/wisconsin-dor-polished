@@ -86,6 +86,30 @@ describe('parseInlineCitations', () => {
     ]);
   });
 
+  test('attributes a dual-source link to the PRIMARY doc, not the ref', () => {
+    const md =
+      'The court in [*Hermann*](doc:case_law-hermann#page=3&ref=statutes-74#page=12) read § 74.37.';
+    const result = parseInlineCitations(md);
+    expect(result.get('case_law-hermann')).toEqual([{ label: 'Hermann', page: 3 }]);
+    expect(result.has('statutes-74')).toBe(false);
+  });
+
+  test('a dual link whose primary has no page yields no citation', () => {
+    const md = '[Hermann](doc:case_law-hermann#ref=statutes-74#page=12)';
+    expect(parseInlineCitations(md).size).toBe(0);
+  });
+
+  test('dual and single links to the same primary doc merge onto one card', () => {
+    const md = [
+      '[Hermann](doc:case_law-hermann#page=3&ref=statutes-74#page=12)',
+      '[Hermann at 9](doc:case_law-hermann#page=9)',
+    ].join(' and ');
+    expect(parseInlineCitations(md).get('case_law-hermann')).toEqual([
+      { label: 'Hermann', page: 3 },
+      { label: 'Hermann at 9', page: 9 },
+    ]);
+  });
+
   test('returns empty map for text without doc links', () => {
     const md = 'No citations here, just [a link](https://example.com).';
     const result = parseInlineCitations(md);

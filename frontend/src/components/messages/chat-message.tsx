@@ -241,6 +241,7 @@ interface StreamResponseProps {
   streamingComplete?: boolean;
   docUrls?: Record<string, string>;
   docTones?: Record<string, SourceTone>;
+  docTitles?: Record<string, string>;
 }
 
 
@@ -262,6 +263,7 @@ export function StreamResponse({
   streamingComplete,
   docUrls,
   docTones,
+  docTitles,
 }: StreamResponseProps) {
   // Latch animate to its initial value. If the message was streaming when
   // this component mounted, keep animate=true forever — the per-word spans
@@ -285,6 +287,7 @@ export function StreamResponse({
           animationDuration="0.6s"
           docUrls={docUrls}
           docTones={docTones}
+          docTitles={docTitles}
         />
       </div>
     </div>
@@ -596,11 +599,15 @@ export function ChatMessage({
   // links be colored by what the document actually IS (the backend's authority
   // tier) instead of guessing from the surrounding prose. Same keying as docUrls.
   const [docTones, setDocTones] = useState<Record<string, SourceTone>>({});
+  // doc_id → the same human title the source card shows. Only the dual-source
+  // citation popover reads this; single links never show a title.
+  const [docTitles, setDocTitles] = useState<Record<string, string>>({});
   useEffect(() => {
     let cancelled = false;
     async function build() {
       const map: Record<string, string> = {};
       const tones: Record<string, SourceTone> = {};
+      const titles: Record<string, string> = {};
       const setBoth = (id: string, tone: SourceTone | undefined) => {
         if (tone) tones[id] = tone;
       };
@@ -622,17 +629,23 @@ export function ChatMessage({
           }
           setBoth(doc.documentId, tone);
           if (rawId !== doc.documentId) setBoth(rawId, tone);
+          if (doc.title) {
+            titles[doc.documentId] = doc.title;
+            if (rawId !== doc.documentId && !titles[rawId]) titles[rawId] = doc.title;
+          }
         } else if (item.type === 'faq') {
           const faq = item.data as FAQ;
           if (faq.sourceUrl) {
             map[faq.faqId] = faq.sourceUrl;
           }
           tones[faq.faqId] = 'faq';
+          if (faq.question) titles[faq.faqId] = faq.question;
         }
       }
       if (!cancelled) {
         setDocUrls(map);
         setDocTones(tones);
+        setDocTitles(titles);
       }
     }
     build();
@@ -653,7 +666,7 @@ export function ChatMessage({
             answer prose only — never the clarification block or source cards. */}
         <div className="answer-with-toc">
           <div ref={answerBodyRef} className="answer-body">
-            <StreamResponse content={response} streamingComplete={streamingComplete} docUrls={docUrls} docTones={docTones} />
+            <StreamResponse content={response} streamingComplete={streamingComplete} docUrls={docUrls} docTones={docTones} docTitles={docTitles} />
           </div>
           {!annotationActive && (
             <AnswerToc
@@ -680,7 +693,7 @@ export function ChatMessage({
         <InlineSources items={items ?? []} streamingComplete={streamingComplete} citationsByDoc={citationsByDoc} flowchart={flowchart} />
       </div>
     );
-  }, [response, streamingComplete, items, docUrls, docTones, citationsByDoc, flowchart, choices, clarification, queryId, onSendMessage, annotationActive]);
+  }, [response, streamingComplete, items, docUrls, docTones, docTitles, citationsByDoc, flowchart, choices, clarification, queryId, onSendMessage, annotationActive]);
 
   const containerClassName = useMemo(
     () => `font-sans ${isAnnotatingThis ? 'annotate-active' : ''} ${className || ''}`,
