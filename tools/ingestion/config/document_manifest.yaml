@@ -184,6 +184,12 @@ categories:
       - https://www.revenue.wi.gov/DORForms/sl-101.pdf
       - https://www.revenue.wi.gov/DORForms/sl-103.pdf
       - https://www.revenue.wi.gov/DOR%20Publications/napt-treaty-update.pdf
+      # Innovation Grant: fair market compensation guide for volunteer firefighters /
+      # EMS (0.44 fringe multiplier, BLS median hourly wage by county appendix).
+      # Tester feedback 2026-09-22 (Task 77).
+      - url: https://www.revenue.wi.gov/DOR%20Publications/ig-fmc-factsheet.pdf
+        doc_id: gov_publications-ig-fmc-factsheet
+        title: "Innovation Grants: Determining Fair Market Compensation for Volunteer Firefighters and EMS Practitioners"
 
   form_instructions:
     framework_id: FW-GOV-PUBS

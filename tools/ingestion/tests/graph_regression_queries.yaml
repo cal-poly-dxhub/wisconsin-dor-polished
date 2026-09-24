@@ -1099,6 +1099,42 @@ queries:
       form_instructions-ig-inst (live PDF states Phase 1: Oct 1 – Dec 31, 2026;
       Phase 2: Jan 1 – March 31, 2027).
 
+  - queryId: ig-fmc-fringe-benefits
+    stratum: B
+    tags: [ingestion-gap, innovation-grant]
+    query: "When determining fair market compensation for volunteer firefighters or EMS practitioners for the Innovation Grant, how should the costs for fringe benefits be calculated?"
+    rubric: >
+      PASS only if the answer gives DOR's rule from the fair market compensation
+      guide: use the highest of (1) fringe benefit costs actually incurred for the
+      volunteer, (2) fringe benefit costs incurred for a non-volunteer equivalent,
+      or (3) if no fringe costs were incurred, multiply the fair market wages
+      figure by 0.44 (based on BLS data for the West North Central region).
+      FAIL if it only says fringe benefits are part of total cost and points the
+      user to the DOR web page, or if it invents a different multiplier.
+    must_cite: [gov_publications-ig-fmc-factsheet]
+    must_contain: ["0\\.44|44%|44 percent"]
+    notes: >
+      Task 77. Tester (DOR) thumbs-down 2026-09-22 (fff17348): the bot cited the
+      statute and FAQ and deferred to the web page because the guide was not
+      ingested. Ingested 2026-09-24.
+
+  - queryId: ig-fmc-adams-emt-wage
+    stratum: B
+    tags: [ingestion-gap, innovation-grant]
+    query: "For determining fair market compensation for volunteer EMS practitioners for the Innovation Grant, what is the median hourly wage for Emergency Medical Technicians in Adams county based on U.S. Bureau of Labor Statistics information in 2025?"
+    rubric: >
+      PASS only if the answer states the Adams County EMT figure from the 2025
+      table in DOR's fair market compensation guide, $22.45, and attributes it to
+      that guide. A reasonable note that the figure comes from a specific table
+      year is fine. FAIL if it says the figure is not available, points the user
+      to the web page instead of giving it, or gives a different number.
+    must_cite: [gov_publications-ig-fmc-factsheet]
+    must_contain: ["22\\.45"]
+    notes: >
+      Task 77. Tester thumbs-down 2026-09-22 (88e732b9): "The correct answer is
+      $22.45 based on the Determining Fair Market Compensation document." The
+      guide's appendix has per-county BLS median wage tables by year.
+
   - queryId: gq-scope-innovation-grant-count
     stratum: B
     tags: [scope, borderline-in-scope]
