@@ -659,7 +659,13 @@ def grade_verdict(entry: dict, run: dict) -> dict:
     }
 
 
-def grade(entry: dict, run: dict, case_existence: dict[str, bool], run_judge: bool = True) -> dict:
+def grade(
+    entry: dict,
+    run: dict,
+    case_existence: dict[str, bool],
+    run_judge: bool = True,
+    imported: dict | None = None,
+) -> dict:
     """Grade one run against its golden-set expectations.
 
     Gating checks (determine overall pass):
@@ -696,12 +702,18 @@ def grade(entry: dict, run: dict, case_existence: dict[str, bool], run_judge: bo
     rubric = (entry.get("rubric") or "").strip()
     judge_verdict = None
     judge_reason = ""
-    if rubric and run_judge:
-        j = judge_answer(
-            entry["query"], _answer_as_shown(run), rubric, run["cited_doc_ids"]
-        )
+    judge_source = None
+    if rubric and imported is not None:
+        # Graded outside the harness (Claude Code on subscription, from
+        # --export-rubrics) and merged back with --import-grades.
+        judge_verdict = "PASS" if imported.get("judge_pass") else "FAIL"
+        judge_reason = str(imported.get("judge_reason") or "")
+        judge_source = "external"
+    elif rubric and run_judge:
+        j = judge_answer(entry["query"], _answer_as_shown(run), rubric, run["cited_doc_ids"])
         judge_verdict = j["verdict"]
         judge_reason = j["reason"]
+        judge_source = "bedrock"
     # A case with a rubric must earn a PASS; a case without a rubric is not
     # judge-gated. An ERROR verdict is NOT a pass (fail-closed).
     judge_pass = True if not rubric else (judge_verdict == "PASS")
@@ -732,6 +744,7 @@ def grade(entry: dict, run: dict, case_existence: dict[str, bool], run_judge: bo
         "has_rubric": bool(rubric),
         "judge_verdict": judge_verdict,
         "judge_reason": judge_reason,
+        "judge_source": judge_source,
         "judge_pass": judge_pass,
         "overall_pass": overall_pass,
     }
@@ -749,6 +762,59 @@ def _checkpoint(out_path: str, mode: str, runs: list[dict], grades: list[dict]) 
     os.replace(tmp, out_path)
 
 
+def load_imported_grades(path: str | None) -> dict[str, dict]:
+    """``{queryId: {judge_pass, judge_reason}}`` from an --import-grades file.
+
+    Accepts that mapping directly or ``{"grades": [{"queryId", ...}, ...]}``.
+    """
+    if not path:
+        return {}
+    with open(path) as f:
+        raw = json.load(f)
+    items = raw.get("grades", raw) if isinstance(raw, dict) else raw
+    if isinstance(items, list):
+        items = {str(g["queryId"]): g for g in items}
+    return {str(k): v for k, v in items.items()}
+
+
+def export_rubrics(out_path: str, export_path: str) -> None:
+    """Write what the rubric judge needs, per case, for grading outside the harness.
+
+    Each item carries the question, rubric, cited ids and the answer exactly as
+    the judge would see it (``_answer_as_shown``), plus the judge's system
+    prompt once at the top, so an external grader applies the same standard.
+    """
+    with open(out_path) as f:
+        data = json.load(f)
+    entries = {e["queryId"]: e for e in load_queries()}
+    cases = []
+    for run in data["runs"]:
+        entry = entries.get(run["queryId"])
+        rubric = ((entry or {}).get("rubric") or "").strip()
+        if not rubric:
+            continue
+        cases.append(
+            {
+                "queryId": run["queryId"],
+                "query": entry["query"],
+                "rubric": rubric,
+                "cited_doc_ids": run["cited_doc_ids"],
+                "answer": _answer_as_shown(run),
+            }
+        )
+    with open(export_path, "w") as f:
+        json.dump(
+            {
+                "judge_system_prompt": JUDGE_SYSTEM_PROMPT,
+                "output_format": {"<queryId>": {"judge_pass": "bool", "judge_reason": "str"}},
+                "cases": cases,
+            },
+            f,
+            indent=2,
+        )
+    logger.info(f"Exported {len(cases)} rubric cases to {export_path}")
+
+
 def run_mode(
     mode: str,
     resume: bool = True,
@@ -758,6 +824,7 @@ def run_mode(
     agenticretrieval_prompt: str | None = None,
     workers: int = 1,
     tags: list[str] | None = None,
+    run_judge: bool = True,
 ) -> None:
     entries = filter_entries(load_queries(), ids=ids, tags=tags)
     if out_path is None:
@@ -797,7 +864,7 @@ def run_mode(
         )
         case_existence = verify_case_ids_exist(_cited_case_ids(run["cited_doc_ids"]))
         run["case_existence"] = case_existence
-        return run, grade(entry, run, case_existence)
+        return run, grade(entry, run, case_existence, run_judge=run_judge)
 
     # Queries are independent (run_one_query is self-contained; the Lambda
     # modules' caches — flowchart vectors, case-law index — are read-mostly and
@@ -1164,7 +1231,12 @@ def _run_single(mode: str, query_id: str) -> None:
     )
 
 
-def regrade(mode: str, out_path: str | None = None) -> None:
+def regrade(
+    mode: str,
+    out_path: str | None = None,
+    run_judge: bool = True,
+    imported: dict[str, dict] | None = None,
+) -> None:
     """Re-grade a saved run against the current golden-set YAML — no re-run.
 
     Use after fixing a must_cite/must_contain expectation in the YAML so the
@@ -1187,7 +1259,13 @@ def regrade(mode: str, out_path: str | None = None) -> None:
             logger.warning(f"  {run['queryId']} no longer in golden set — keeping as-is")
             continue
         case_existence = run.get("case_existence", {})
-        g = grade(entry, run, case_existence)
+        g = grade(
+            entry,
+            run,
+            case_existence,
+            run_judge=run_judge,
+            imported=(imported or {}).get(run["queryId"]),
+        )
         new_grades.append(g)
         logger.info(
             f"  {run['queryId']} [{g['stratum']}]: "
@@ -1270,6 +1348,24 @@ def main() -> None:
         "different TOML. Only affects full runs (--mode), not --phase-b-only.",
     )
     parser.add_argument(
+        "--no-judge",
+        action="store_true",
+        help="Skip the Bedrock rubric judge (rubric cases stay ungraded). Pair with "
+        "--export-rubrics, grade in Claude Code, then --regrade --import-grades.",
+    )
+    parser.add_argument(
+        "--export-rubrics",
+        default="",
+        help="Write the saved run's rubric cases (question, rubric, cited ids, answer as "
+        "shown, judge prompt) to this JSON for external grading; no API calls.",
+    )
+    parser.add_argument(
+        "--import-grades",
+        default="",
+        help="JSON of external rubric verdicts ({queryId: {judge_pass, judge_reason}} or "
+        "{'grades': [...]}); with --regrade, merged instead of calling the judge.",
+    )
+    parser.add_argument(
         "--phase-b-only",
         action="store_true",
         help="Re-run ONLY Phase B (+ judge) on a saved run's stored answer_context "
@@ -1300,10 +1396,23 @@ def main() -> None:
     if args.compare_only:
         compare()
         return
+    if args.export_rubrics:
+        if not args.mode:
+            parser.error("--export-rubrics requires --mode {baseline,after}")
+        export_rubrics(
+            out_path or (BASELINE_PATH if args.mode == "baseline" else AFTER_PATH),
+            args.export_rubrics,
+        )
+        return
     if args.regrade:
         if not args.mode:
             parser.error("--regrade requires --mode {baseline,after}")
-        regrade(args.mode, getattr(args, 'out', None))
+        regrade(
+            args.mode,
+            getattr(args, "out", None),
+            run_judge=not args.no_judge,
+            imported=load_imported_grades(args.import_grades or None),
+        )
         return
     if args.phase_b_only:
         if not args.mode:
@@ -1326,6 +1435,7 @@ def main() -> None:
         agenticretrieval_prompt=agenticretrieval_prompt,
         workers=args.workers,
         tags=tags,
+        run_judge=not args.no_judge,
     )
 
 
