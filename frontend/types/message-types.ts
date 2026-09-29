@@ -72,6 +72,9 @@ export const AnswerEventTypeSchema = z.object({
   responseType: z.literal('answer-event'),
   event: z.enum(['start', 'stop']),
   queryId: z.string(),
+  // On 'stop': the complete persisted answer, used to reconcile the
+  // fragment-assembled text (Task 62).
+  answer: z.string().nullish(),
 });
 
 export const FragmentContentSchema = z.object({

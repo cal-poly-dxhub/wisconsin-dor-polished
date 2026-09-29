@@ -92,6 +92,10 @@ class AnswerEventType(WebSocketMessage):
     response_type: Literal["answer-event"] = "answer-event"
     event: Literal["start", "stop"]
     query_id: str
+    # On "stop": the complete answer exactly as persisted. The client replaces
+    # its fragment-assembled text with it, so a dropped or rejected fragment
+    # can never leave a truncated answer on screen (Task 62).
+    answer: str | None = None
 
 
 class FragmentContent(WebSocketMessage):

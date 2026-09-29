@@ -318,3 +318,56 @@ def test_dual_href_does_not_trip_the_chapter_conflation_guard():
     assert g["cite_pass"] is True
     # Cite extraction from the answer text yields only the primary targets.
     assert re.findall(r"doc:([^)#]+)", answer) == ["statutes-61", "case-law-2025-wi-app-43"]
+
+
+# ── External (Claude Code) rubric grades: --import-grades ─────────────────────
+
+
+def test_imported_grade_gates_a_rubric_case_without_calling_the_judge():
+    entry = {
+        "queryId": "gq-fake",
+        "query": "q",
+        "must_cite": ["statutes-70"],
+        "rubric": "PASS if X.",
+    }
+    ok = grade(
+        entry,
+        make_run(),
+        {},
+        run_judge=False,
+        imported={"judge_pass": True, "judge_reason": "has X"},
+    )
+    assert ok["judge_verdict"] == "PASS" and ok["judge_source"] == "external"
+    assert ok["overall_pass"] is True
+
+    bad = grade(
+        entry,
+        make_run(),
+        {},
+        run_judge=False,
+        imported={"judge_pass": False, "judge_reason": "no X"},
+    )
+    assert bad["judge_verdict"] == "FAIL" and bad["overall_pass"] is False
+
+
+def test_ungraded_rubric_case_does_not_pass():
+    entry = {"queryId": "gq-fake", "query": "q", "must_cite": [], "rubric": "PASS if X."}
+    g = grade(entry, make_run(), {}, run_judge=False)
+    assert g["judge_verdict"] is None and g["overall_pass"] is False
+
+
+def test_load_imported_grades_accepts_both_shapes(tmp_path):
+    import json
+
+    from tools.ingestion.ops.run_graph_regression import load_imported_grades
+
+    a = tmp_path / "a.json"
+    a.write_text(json.dumps({"gq-a": {"judge_pass": True, "judge_reason": "ok"}}))
+    assert load_imported_grades(str(a))["gq-a"]["judge_pass"] is True
+
+    b = tmp_path / "b.json"
+    b.write_text(
+        json.dumps({"grades": [{"queryId": "gq-b", "judge_pass": False, "judge_reason": "x"}]})
+    )
+    assert load_imported_grades(str(b))["gq-b"]["judge_pass"] is False
+    assert load_imported_grades(None) == {}
