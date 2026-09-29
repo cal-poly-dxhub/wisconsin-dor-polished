@@ -296,7 +296,7 @@ Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeli
 - **Python Lambdas use Pydantic v2** for input validation and serialization. Models use `BaseModel` with `model_validate()` / `model_dump()`.
 - **CamelCase serialization** — `CamelCaseModel` base class in shared types converts snake_case Python to camelCase JSON via alias generator.
 - **Lambda bundling** — Python deps are installed during CDK synth via Docker bundling (pip install in bundling image). Each Lambda in `backend/lambdas/` has its own `requirements.txt`.
-- **CDK context flags** — `stackName`, `domainName`, `hostedZoneName`, `hostedZoneId` are passed via `-c` flag. `neptuneGraphId` is pinned in `infra/cdk.json` (synth fails without it; `-c neptuneGraphId=...` overrides for a one-off). There is no `useGraphRAG` flag — nothing reads it.
+- **CDK context flags** — `stackName`, `domainName`, `hostedZoneName`, `hostedZoneId` are passed via `-c` flag. `neptuneGraphId` is pinned in `infra/cdk.json` (synth fails without it; `-c neptuneGraphId=...` overrides for a one-off). There is no `useGraphRAG` flag — nothing reads it. `sso` (optional, off when absent) federates DOR's identity provider into Cognito — see `infra/README.md` "DOR single sign-on".
 - **Embedding model** — Titan Embed Text V2 (1024 dimensions) used throughout for both Bedrock KBs and Neptune vector search.
 - **Bedrock model IDs** — Inference profiles require the full format: `us.anthropic.claude-sonnet-4-6` (not bare model IDs or old `-v1:0` suffix forms). Check `aws bedrock list-inference-profiles` for valid IDs.
 - **Region in scripts** — `tools/ingestion/*.py` use `os.environ.get("AWS_REGION", "us-east-1")` for boto3 clients. Always set `AWS_REGION` explicitly when running locally.

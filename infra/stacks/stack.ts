@@ -8,6 +8,7 @@ import { GraphRAGMessagesStack } from './graphrag-messages-stack';
 import { IngestionStack } from './ingestion-stack';
 import { CloudWatchIam } from './cloudwatch-iam';
 import { WebAppStack } from './webapp-stack';
+import { parseSsoConfig } from './sso';
 
 const RESET_ClOUDWATCH_IAM_ROLE = false;
 
@@ -41,6 +42,9 @@ export class WisconsinBotStack extends cdk.Stack {
         'Stack providing GraphRAG services (Neptune Analytics + S3).',
     });
 
+    // Optional DOR single sign-on; absent or disabled changes nothing.
+    const sso = parseSsoConfig(this.node.tryGetContext('sso'));
+
     const sessionsStack = new SessionsStack(this, 'WisconsinSessionsStack', {
       description:
         'Stack providing API and WebSocket session services for the Wisconsin bot.',
@@ -48,6 +52,7 @@ export class WisconsinBotStack extends cdk.Stack {
       websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
       rawBucketName: graphRAGStack.rawBucketName,
       workBucketName: graphRAGStack.workBucketName,
+      sso,
     });
 
     const graphRAGMessagesStack = new GraphRAGMessagesStack(
@@ -132,6 +137,7 @@ export class WisconsinBotStack extends cdk.Stack {
       domainName,
       hostedZoneName,
       hostedZoneId,
+      extraEnvironment: sessionsStack.ssoFrontendEnv,
     });
 
     new cdk.CfnOutput(this, 'ApiBaseUrl', {

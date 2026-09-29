@@ -29,6 +29,7 @@ import { FeedbackModal } from './feedback/feedback-modal';
 import { AnnotationController } from './feedback/annotation-controller';
 import { RetrievalModal } from './retrieval-modal';
 import { ClarificationBlock } from './clarification-block';
+import { AnswerDisclaimer } from './answer-disclaimer';
 import { FlowchartBanner, FlowchartSourceCard } from './flowchart-walkthrough';
 import { TopicShiftSuggestion } from './topic-shift-suggestion';
 
@@ -851,6 +852,8 @@ export function ChatMessage({
             items={items ?? []}
             onOpenRetrieval={() => setRetrievalModalOpen(true)}
           />
+
+          {streamingComplete && <AnswerDisclaimer />}
         </div>
       </div>
       <RetrievalModal queryId={queryId} open={retrievalModalOpen} onClose={() => setRetrievalModalOpen(false)} />

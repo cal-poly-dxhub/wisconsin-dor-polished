@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/card';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { getSsoSettings, startSsoSignIn } from '@/lib/sso';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -24,6 +25,17 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const sso = getSsoSettings();
+
+  const handleSso = async () => {
+    setIsLoading(true);
+    try {
+      await startSsoSignIn();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to start sign-in');
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,6 +63,18 @@ export default function LoginPage() {
             Enter your email and password to sign in to your account
           </CardDescription>
         </CardHeader>
+        {sso && (
+          <CardContent className="space-y-4 pb-0">
+            <Button type="button" variant="outline" className="w-full" onClick={handleSso} disabled={isLoading}>
+              {sso.label}
+            </Button>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="h-px flex-1 bg-border" />
+              or use your email
+              <span className="h-px flex-1 bg-border" />
+            </div>
+          </CardContent>
+        )}
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
             <div className="space-y-2">

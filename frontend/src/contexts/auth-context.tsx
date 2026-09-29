@@ -16,6 +16,7 @@ import {
   ConfirmSignUpParams,
   ConfirmForgotPasswordParams,
 } from '@/lib/auth';
+import { signOutDestination } from '@/lib/sso';
 
 interface AuthContextType {
   session: CognitoUserSession | null;
@@ -26,7 +27,9 @@ interface AuthContextType {
   signIn: (params: SignInParams) => Promise<void>;
   signUp: (params: SignUpParams) => Promise<{ userConfirmed: boolean }>;
   confirmSignUp: (params: ConfirmSignUpParams) => Promise<void>;
-  signOut: () => Promise<void>;
+  /** Clears the session; resolves to the URL to load next (the Cognito
+   *  logout endpoint after an SSO sign-in, otherwise /login). */
+  signOut: () => Promise<string>;
   resendConfirmationCode: (email: string) => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
   confirmForgotPassword: (params: ConfirmForgotPasswordParams) => Promise<void>;
@@ -89,8 +92,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const signOut = async () => {
+    const destination = signOutDestination();
     await cognitoSignOut();
     setSession(null);
+    // Drop per-user browser state: unsent feedback drafts (the user's own
+    // words) and tab-scoped caches such as the admin activity summary.
+    try {
+      localStorage.removeItem('wisco:feedback');
+      sessionStorage.clear();
+    } catch {
+      // Storage can be unavailable (private mode); nothing to clear then.
+    }
+    return destination;
   };
 
   const resendConfirmationCode = async (email: string) => {

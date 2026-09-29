@@ -294,45 +294,47 @@ categories:
         doc_id: news_pages-innovation-grant-first-round-awards-2026-06-26
         title: "DOR Announces First Round Innovation Grant Awards (press release, June 26, 2026)"
         effective_date: "2026-06-26"
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-08.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-19.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-21.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-25.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-28.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-02-04.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-02-19.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-02-23.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-01.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-09.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-12.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-15.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-18.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-18b.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-18c.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-04-20.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-04-22.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-04-23.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-04-26.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-05-03.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-05-19.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-06-03.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-06-07.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-06-14.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-07-26.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-07-29.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-07-30.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-08-02.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-08-13.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-09-15.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-10-06.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-10-21.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-10-25.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-11-01.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-11-01b.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-11-01c.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-11-05.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-12-15.aspx
-      - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-12-20.aspx
+      # 2021 Assessor News pages: all 39 return 404 on revenue.wi.gov (checked
+      # 2026-09-28) and none were ever scraped. Kept for the record.
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-08.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-19.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-21.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-25.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-01-28.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-02-04.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-02-19.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-02-23.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-01.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-09.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-12.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-15.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-18.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-18b.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-03-18c.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-04-20.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-04-22.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-04-23.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-04-26.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-05-03.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-05-19.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-06-03.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-06-07.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-06-14.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-07-26.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-07-29.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-07-30.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-08-02.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-08-13.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-09-15.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-10-06.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-10-21.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-10-25.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-11-01.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-11-01b.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-11-01c.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-11-05.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-12-15.aspx
+      # - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2021-12-20.aspx
       - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2022-01-10.aspx
       - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2022-01-13.aspx
       - https://www.revenue.wi.gov/Pages/SLF/Assessor-News/2022-01-19.aspx
