@@ -73,3 +73,67 @@ Context flags: `stackName`, plus `domainName` / `hostedZoneName` /
 Always `cdk diff` before deploying and read the resource list: the graph is
 outside CloudFormation precisely so that an unrelated change can never take the
 corpus with it.
+
+## DOR single sign-on (SSO)
+
+Users can sign in through DOR's identity provider, federated into the Cognito
+user pool over SAML 2.0 or OIDC. It is driven by one optional CDK context
+value, `sso`, handled in `stacks/sso.ts`. **With `sso` absent (the default) a
+deploy changes nothing**; email/password sign-in keeps working in every mode.
+
+Because the user pool will be recreated when the stack moves to DOR's AWS
+account (Task 66), register DOR's provider against the pool in *that* account.
+The Cognito values DOR registers include the pool id, so doing it here first
+means doing it twice.
+
+### Stage 1: redirect flow without DOR (optional dry run)
+
+```jsonc
+// infra/cdk.json -> "context"
+"sso": {
+  "enabled": true,
+  "domainPrefix": "wisconsin-dor-chat",
+  "appUrls": ["https://<web app origin>", "http://localhost:3000"]
+}
+```
+
+This adds a Cognito domain and turns on the authorization-code flow for the
+app client (callback `<origin>/auth/callback`, sign-out `<origin>/login`). The
+login page shows **Sign in with single sign-on**, which goes to Cognito's own
+sign-in page, so the whole round trip can be tested with an ordinary pool
+account. `cdk diff`: one new `AWS::Cognito::UserPoolDomain`, the app client
+updated in place, nothing replaced.
+
+### Stage 2: DOR's provider
+
+Send DOR's identity team the stack outputs `SamlAcsUrl` and `SamlEntityId`
+(SAML) or `OidcRedirectUri` (OIDC). Get back:
+
+| | SAML | OIDC |
+|---|---|---|
+| From DOR | federation metadata URL | issuer URL, client id, client secret |
+| Email claim | defaults to `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress` | defaults to `email` |
+
+Store an OIDC client secret in Secrets Manager (never in `cdk.json`), then add
+a `provider` block:
+
+```jsonc
+"provider": {
+  "type": "saml",                       // or "oidc"
+  "name": "DOR",                        // Cognito provider name
+  "label": "Sign in with your DOR account",
+  "metadataUrl": "https://...",         // SAML
+  // "issuerUrl": "...", "clientId": "...", "clientSecretName": "wisconsin-dor/sso-client-secret",  // OIDC
+  // "emailAttribute": "..."            // only if DOR's claim differs from the default
+}
+```
+
+The button now goes straight to DOR (`identity_provider=DOR`). The pool
+requires `email`, so a sign-in fails if DOR does not send the email claim.
+
+**Admins.** Federated users appear in the pool as `DOR_<id>`. Add them to the
+console-managed `Admins` group as today; mapping a DOR group automatically
+would need a pre-token-generation Lambda.
+
+**Email/password alongside SSO.** Both stay on. Retiring email sign-up for
+SSO-only is part of the security pass (closing self-signup).

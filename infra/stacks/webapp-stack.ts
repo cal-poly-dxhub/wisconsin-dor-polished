@@ -15,6 +15,8 @@ export interface WebAppStackProps extends cdk.StackProps {
   domainName?: string;
   hostedZoneName?: string;
   hostedZoneId?: string;
+  /** Additional build-time env, e.g. the SSO settings from SessionsStack. */
+  extraEnvironment?: Record<string, string>;
 }
 
 export class WebAppStack extends cdk.NestedStack {
@@ -53,6 +55,7 @@ export class WebAppStack extends cdk.NestedStack {
         NEXT_PUBLIC_API_BASE_URL: props.httpApiUrl,
         NEXT_PUBLIC_WEBSOCKET_URL: props.websocketApiUrl,
         WORK_BUCKET_NAME: props.workBucketName,
+        ...props.extraEnvironment,
       },
       overrides: {
         nextjsServer: {

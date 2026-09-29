@@ -8,6 +8,7 @@ import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
+import { SsoConfig, SsoResources } from './sso';
 
 export interface SessionsStackProps extends cdk.StackProps {
   stepFunctionTypesLayer: lambda.LayerVersion;
@@ -16,6 +17,8 @@ export interface SessionsStackProps extends cdk.StackProps {
   // for the admin chunk-inspection endpoints.
   rawBucketName: string;
   workBucketName: string;
+  /** DOR single sign-on (see ./sso.ts). Undefined leaves the pool as it was. */
+  sso?: SsoConfig;
 }
 
 export class SessionsStack extends cdk.NestedStack {
@@ -27,6 +30,8 @@ export class SessionsStack extends cdk.NestedStack {
   public readonly httpApiUrl: string;
   public readonly websocketApiUrl: string;
   public readonly apiHandler: lambda.Function;
+  /** Extra NEXT_PUBLIC_* env for the web app when SSO is on; empty otherwise. */
+  public readonly ssoFrontendEnv: Record<string, string>;
 
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
@@ -63,6 +68,11 @@ export class SessionsStack extends cdk.NestedStack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    const sso = props.sso
+      ? new SsoResources(this, 'Sso', { userPool: this.userPool, config: props.sso })
+      : undefined;
+    this.ssoFrontendEnv = sso?.frontendEnv ?? {};
+
     this.userPoolClient = new cognito.UserPoolClient(this, 'UserPoolClient', {
       userPool: this.userPool,
       authFlows: {
@@ -70,7 +80,10 @@ export class SessionsStack extends cdk.NestedStack {
         userSrp: true,
       },
       generateSecret: false,
+      ...sso?.clientOptions,
     });
+    // The client names the provider, so the provider must exist first.
+    if (sso?.provider) this.userPoolClient.node.addDependency(sso.provider);
 
     this.sessionsTable = new dynamodb.Table(this, 'SessionTable', {
       partitionKey: {

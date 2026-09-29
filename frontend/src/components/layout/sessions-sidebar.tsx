@@ -192,11 +192,12 @@ export function SessionsSidebar() {
 
   const handleSignOut = async () => {
     try {
-      await signOut();
+      const destination = await signOut();
       // Full reload, not router.push: the chat store, the React Query cache
       // and the WebSocket all live in memory, and a client-side navigation
-      // would hand them to whoever signs in next on this tab.
-      window.location.assign('/login');
+      // would hand them to whoever signs in next on this tab. After an SSO
+      // sign-in the destination is Cognito's logout, which returns to /login.
+      window.location.assign(destination);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Failed to sign out';
