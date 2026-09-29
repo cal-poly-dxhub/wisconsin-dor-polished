@@ -179,6 +179,39 @@ describe('useWebSocketChat Hook Tests', () => {
     expect(store.queries[queryId].response.content).toBe('Hello world!');
   });
 
+  test('stop event with the full answer replaces a truncated stream (Task 62)', async () => {
+    const Wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useWebSocketChat({ websocketUrl: 'wss://x' }), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await result.current.sendMessage('Q');
+    });
+
+    const queryId = 'server-query-789';
+    act(() => {
+      mockMessageHandler!({ responseType: 'answer-event', event: 'start', queryId });
+    });
+    // Only the first fragment arrives; the second was lost in transit.
+    act(() => {
+      mockMessageHandler!({ responseType: 'fragment', queryId, content: { fragment: 'The levy limit ' } });
+    });
+    act(() => {
+      mockMessageHandler!({
+        responseType: 'answer-event',
+        event: 'stop',
+        queryId,
+        answer: 'The levy limit is set by § 66.0602.',
+      });
+    });
+
+    const q = useChatStore.getState().queries[queryId];
+    expect(q.status).toBe('completed');
+    expect(q.response.content).toBe('The levy limit is set by § 66.0602.');
+  });
+
   test('should handle API send error gracefully', async () => {
     mockWsSendMessage.mockImplementationOnce(() =>
       Promise.reject(new Error('Network error'))

@@ -9,6 +9,9 @@ import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSendMessage, useCreateSession } from './api/chat';
 import { WebSocket } from 'partysocket';
+
+/** How long a dropped socket may take to reconnect before the session is given up. */
+const RECONNECT_GRACE_MS = 30_000;
 import {
   MessageUnion,
   MessageHandler,
@@ -165,17 +168,36 @@ export const useValidatedWebSocket = (
     [handleError]
   );
 
+  // A dropped socket is reopened by partysocket against the same sessionId
+  // ($connect re-binds the session to the new connection), so the chat keeps
+  // its session. Only if it stays closed do we give the session up, and the
+  // next message then starts a new one, as before.
+  const giveUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearGiveUpTimer = useCallback(() => {
+    if (giveUpTimerRef.current) {
+      clearTimeout(giveUpTimerRef.current);
+      giveUpTimerRef.current = null;
+    }
+  }, []);
+  useEffect(() => clearGiveUpTimer, [clearGiveUpTimer]);
+
   const handleOpen = useCallback(
     (_event: Event) => {
+      clearGiveUpTimer();
       setConnectionState('open');
     },
-    [setConnectionState]
+    [setConnectionState, clearGiveUpTimer]
   );
 
   const handleClose = useCallback(
     (_event: CloseEvent) => {
       setConnectionState('closed');
-      setSessionId(null); // Session ID invalid on close
+      if (!giveUpTimerRef.current) {
+        giveUpTimerRef.current = setTimeout(() => {
+          giveUpTimerRef.current = null;
+          setSessionId(null);
+        }, RECONNECT_GRACE_MS);
+      }
     },
     [setConnectionState, setSessionId]
   );

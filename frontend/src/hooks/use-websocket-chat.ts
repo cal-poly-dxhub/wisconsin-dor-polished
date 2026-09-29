@@ -12,6 +12,8 @@ import type { MessageUnion } from '@messages/websocket-interface';
 import type { ConnectionState, Query } from '../stores/types';
 import { ChatError } from '@/components/errors/chat-error';
 import { useChatError } from '@/components/errors/use-chat-error';
+import { getSessionHistory } from '@/api/chat-api';
+import { inFlightQueryIds, isInFlight, recoverAnswer } from '@/lib/stream-recovery';
 
 export interface UseWebSocketChatOptions {
   websocketUrl: string;
@@ -36,6 +38,7 @@ export function useWebSocketChat(
   const setConnectionState = useChatStore(state => state.setConnectionState);
   const updateQueryStatus = useChatStore(state => state.updateQueryStatus);
   const appendQueryResponse = useChatStore(state => state.appendQueryResponse);
+  const updateQueryResponse = useChatStore(state => state.updateQueryResponse);
   const updateQueryResources = useChatStore(
     state => state.updateQueryResources
   );
@@ -151,7 +154,19 @@ export function useWebSocketChat(
                 console.log(
                   `[WS Timing] STREAM STOP | duration=${streamDuration.toFixed(1)}ms | fragments=${fragmentCountRef.current} | queryId=${message.queryId}`
                 );
-                // Fragments already appended in real-time — just finalize status
+                // The stop event carries the complete persisted answer. If the
+                // fragments we assembled differ (one was dropped or rejected, or
+                // the server regenerated after a failed stream), take the
+                // server's text so the answer on screen is never truncated.
+                if (message.answer) {
+                  const shown = useChatStore.getState().queries[message.queryId]?.response.content ?? '';
+                  if (shown !== message.answer) {
+                    console.warn(
+                      `[WS] Answer reconciled from stop event | shown=${shown.length} chars, final=${message.answer.length} chars`
+                    );
+                    updateQueryResponse(message.queryId, message.answer);
+                  }
+                }
                 updateQueryStatus(message.queryId, 'completed');
                 setChatState('idle');
                 queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] });
@@ -226,6 +241,7 @@ export function useWebSocketChat(
       queryClient,
       replaceQueryId,
       flushFragments,
+      updateQueryResponse,
     ]
   );
 
@@ -268,6 +284,41 @@ export function useWebSocketChat(
   useEffect(() => {
     setSessionId(sessionId);
   }, [sessionId, setSessionId]);
+
+  // When the socket drops while an answer is on its way, the rest of the
+  // stream is lost, but the Lambda keeps going and persists the full answer.
+  // Poll the session history for it and swap it in (Task 62).
+  const recoveringRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (connectionState !== 'closed') return;
+    const store = useChatStore.getState();
+    const historySessionId = store.sessionId;
+    if (!historySessionId) return;
+
+    for (const queryId of inFlightQueryIds(store.queries)) {
+      if (recoveringRef.current.has(queryId)) continue;
+      recoveringRef.current.add(queryId);
+      console.warn(`[WS] Connection lost mid-answer; recovering ${queryId} from history`);
+      recoverAnswer({
+        queryId,
+        fetchHistory: () => getSessionHistory(historySessionId),
+        stillWaiting: () => isInFlight(useChatStore.getState().queries[queryId]),
+      }).then(answer => {
+        recoveringRef.current.delete(queryId);
+        if (!isInFlight(useChatStore.getState().queries[queryId])) return;
+        if (answer) {
+          updateQueryResponse(queryId, answer);
+          updateQueryStatus(queryId, 'completed');
+        } else {
+          const text = 'The connection dropped before this answer finished. Please ask again.';
+          setQueryError(queryId, { message: text, userMessage: text, retryable: true });
+          updateQueryStatus(queryId, 'failed');
+        }
+        setChatState('idle');
+        queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] });
+      });
+    }
+  }, [connectionState, updateQueryResponse, updateQueryStatus, setQueryError, setChatState, queryClient]);
 
   // Track send time for roundtrip measurement
   const sendTimestampRef = useRef(0);

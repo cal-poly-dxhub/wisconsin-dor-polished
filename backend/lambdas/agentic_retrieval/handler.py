@@ -26,6 +26,7 @@ from loop.phase_b import (
     apply_persona,
     build_answer_context,
     finalize_answer_links,
+    send_answer_stop,
     statute_section_pages,
     stream_answer,
 )
@@ -467,6 +468,8 @@ def handler(event: dict, context) -> dict[str, Any]:
             )
 
             answer = ""  # Will be populated by streaming or fallback
+            stream_interrupted = False
+            answer_context = ""  # set in both branches below; grounds the URL guard
             # chapter -> {section -> page} for the writer's index AND the
             # deterministic page fill in the link repair (cached per container).
             section_pages = statute_section_pages(cited_chunks, cited, neptune, result.answer_plan)
@@ -513,6 +516,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                         retrieved_doc_ids=retrieved_doc_ids,
                         cited_chunks=result.all_chunks,
                         section_pages=section_pages,
+                        grounding_text=answer_context,
                     )
                 except Exception as phase_b_exc:
                     logger.error(
@@ -543,6 +547,10 @@ def handler(event: dict, context) -> dict[str, Any]:
                         except Exception as fallback_exc:
                             logger.error(f"Phase B non-streaming fallback failed: {fallback_exc}")
                             answer = "(Answer generation failed — please retry)"
+                        # The stream died mid-answer: the client holds partial
+                        # fragments and never saw "stop". Finish it below, after
+                        # the link pass, with the text that is persisted.
+                        stream_interrupted = True
             else:
                 # No WebSocket — generate answer without streaming for DB save
                 answer_context = build_answer_context(
@@ -581,7 +589,10 @@ def handler(event: dict, context) -> dict[str, Any]:
                 retrieved_doc_ids,
                 result.all_chunks,
                 section_pages=section_pages,
+                grounding_text=answer_context,
             )
+            if stream_interrupted:
+                send_answer_stop(ws_server, user_query.query_id, answer, ws_connection_alive)
 
         # Streaming is done. If the judge asked for a clarification, offer its
         # question and options using the existing generic `choices` wire type
