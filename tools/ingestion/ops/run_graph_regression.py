@@ -286,8 +286,14 @@ def _phase_b_generate(
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"  answer generation failed: {exc}")
         return ""
-    # Mirror the Lambda's pre-persist link repair (loop/phase_b.finalize_answer_links)
-    # so the harness grades what production actually emits.
+    # Mirror the Lambda's pre-persist pass (loop/phase_b.finalize_answer_links):
+    # the URL guard, then the link repair, so the harness grades what
+    # production actually emits.
+    from loop.url_guard import guard_external_urls
+
+    text, url_stats = guard_external_urls(text, answer_context)
+    if url_stats["reduced"]:
+        logger.info(f"  url guard: {url_stats['reduced']} invented URL(s) cut to host")
     if retrieved_doc_ids is not None:
         from loop.link_repair import repair_citation_links
 
