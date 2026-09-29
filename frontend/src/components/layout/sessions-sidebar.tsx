@@ -2,11 +2,9 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/contexts/auth-context';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { ChevronLeft, Moon, Sun, LogOut, Loader2, Plus, MoreHorizontal, Pencil, Trash2, Settings } from 'lucide-react';
+import { ChevronLeft, Loader2, Plus, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import Image from 'next/image';
-import { useTheme } from 'next-themes';
 import {
   Popover,
   PopoverContent,
@@ -33,6 +31,7 @@ import { useNewChat } from '@/hooks/use-new-chat';
 import { formatDistanceToNow } from 'date-fns';
 import { SettingsModal } from '@/components/settings/settings-modal';
 import { iconForTitle } from './topic-icon';
+import { ProfileMenu } from './profile-menu';
 
 export function SessionsSidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -43,9 +42,7 @@ export function SessionsSidebar() {
   const [renameValue, setRenameValue] = useState('');
   const [deleteModal, setDeleteModal] = useState<{ sessionId: string; title: string } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
-  const { signOut, session } = useAuth();
-  const router = useRouter();
-  const { theme, setTheme } = useTheme();
+  const { signOut, session, isAdmin } = useAuth();
   const currentSessionId = useChatStore((state) => state.sessionId);
 
   const { data: sessionsData, isLoading, error, refetch } = useSessionsList();
@@ -196,18 +193,16 @@ export function SessionsSidebar() {
   const handleSignOut = async () => {
     try {
       await signOut();
-      toast.success('Signed out successfully');
-      router.push('/login');
+      // Full reload, not router.push: the chat store, the React Query cache
+      // and the WebSocket all live in memory, and a client-side navigation
+      // would hand them to whoever signs in next on this tab.
+      window.location.assign('/login');
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Failed to sign out';
       toast.error(errorMessage);
     }
     setPopoverOpen(false);
-  };
-
-  const toggleTheme = () => {
-    setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
   const email = session?.getIdToken().payload.email as string | undefined;
@@ -393,46 +388,13 @@ export function SessionsSidebar() {
                   {userInitial}
                 </button>
               </PopoverTrigger>
-              <PopoverContent side="right" align="end" collisionPadding={16} className="w-56">
-                <div className="space-y-1">
-                  {/* Email header */}
-                  <div className="px-2 py-2 border-b border-border">
-                    <p className="text-xs text-muted-foreground truncate">
-                      {email}
-                    </p>
-                  </div>
-
-                  {/* Settings */}
-                  <button
-                    onClick={() => { setSettingsOpen(true); setPopoverOpen(false); }}
-                    className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-foreground transition-colors hover:bg-muted cursor-pointer"
-                  >
-                    <Settings className="h-4 w-4" />
-                    <span>Settings</span>
-                  </button>
-
-                  {/* Theme Toggle */}
-                  <button
-                    onClick={toggleTheme}
-                    className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-foreground transition-colors hover:bg-muted cursor-pointer"
-                  >
-                    {theme === 'dark' ? (
-                      <Sun className="h-4 w-4" />
-                    ) : (
-                      <Moon className="h-4 w-4" />
-                    )}
-                    <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
-                  </button>
-
-                  {/* Sign out */}
-                  <button
-                    onClick={handleSignOut}
-                    className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-foreground transition-colors hover:bg-muted cursor-pointer"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    <span>Sign out</span>
-                  </button>
-                </div>
+              <PopoverContent side="right" align="end" collisionPadding={16} className="w-64 p-1.5" onOpenAutoFocus={(e) => e.preventDefault()}>
+                <ProfileMenu
+                  email={email}
+                  isAdmin={isAdmin}
+                  onOpenSettings={() => { setSettingsOpen(true); setPopoverOpen(false); }}
+                  onSignOut={handleSignOut}
+                />
               </PopoverContent>
             </Popover>
           </div>
@@ -460,46 +422,13 @@ export function SessionsSidebar() {
                 </div>
               </button>
             </PopoverTrigger>
-            <PopoverContent side="right" align="end" collisionPadding={16} className="w-56">
-              <div className="space-y-1">
-                {/* Email header */}
-                <div className="px-2 py-2 border-b border-border">
-                  <p className="text-xs text-muted-foreground truncate">
-                    {email}
-                  </p>
-                </div>
-
-                {/* Settings */}
-                <button
-                  onClick={() => { setSettingsOpen(true); setPopoverOpen(false); }}
-                  className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-foreground transition-colors hover:bg-muted cursor-pointer"
-                >
-                  <Settings className="h-4 w-4" />
-                  <span>Settings</span>
-                </button>
-
-                {/* Theme Toggle */}
-                <button
-                  onClick={toggleTheme}
-                  className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-foreground transition-colors hover:bg-muted cursor-pointer"
-                >
-                  {theme === 'dark' ? (
-                    <Sun className="h-4 w-4" />
-                  ) : (
-                    <Moon className="h-4 w-4" />
-                  )}
-                  <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
-                </button>
-
-                {/* Sign out */}
-                <button
-                  onClick={handleSignOut}
-                  className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-foreground transition-colors hover:bg-muted cursor-pointer"
-                >
-                  <LogOut className="h-4 w-4" />
-                  <span>Sign out</span>
-                </button>
-              </div>
+            <PopoverContent side="right" align="end" collisionPadding={16} className="w-64 p-1.5" onOpenAutoFocus={(e) => e.preventDefault()}>
+              <ProfileMenu
+                email={email}
+                isAdmin={isAdmin}
+                onOpenSettings={() => { setSettingsOpen(true); setPopoverOpen(false); }}
+                onSignOut={handleSignOut}
+              />
             </PopoverContent>
           </Popover>
         )}

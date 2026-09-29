@@ -91,6 +91,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const signOut = async () => {
     await cognitoSignOut();
     setSession(null);
+    // Drop per-user browser state: unsent feedback drafts (the user's own
+    // words) and tab-scoped caches such as the admin activity summary.
+    try {
+      localStorage.removeItem('wisco:feedback');
+      sessionStorage.clear();
+    } catch {
+      // Storage can be unavailable (private mode); nothing to clear then.
+    }
   };
 
   const resendConfirmationCode = async (email: string) => {
