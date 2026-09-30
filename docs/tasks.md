@@ -17,7 +17,9 @@ through a three-PR cleanup (Task 76). What remains:
    ensured by CDK. **F1 (closing self-signup) is deliberately left open until SSO** (Isaac,
    2026-09-30). Hardening also done 2026-09-30: user pool + all four DynamoDB tables RETAIN,
    PITR on sessions + chat history, HTTP API CORS pinned to `allowedOrigins` (cdk.json),
-   throttling (HTTP API 25 rps / burst 50, message route 5 / 10; WebSocket 20 / 40), Lambda
+   throttling (HTTP API 25 rps / burst 50, message route 10 / 30; WebSocket 20 / 40) plus a
+   per-user limit of 8 messages / minute and 60 / hour (chat_api, `MessageRateLimitTable`;
+   real peaks were 4 / min and 19 / hour), Lambda
    log retention 731 → 90 days, IAM `*` scoped (EventBridge default bus, ManageConnections on
    the socket API, Bedrock to Anthropic models + Titan Embed v2). Still open from §3: the
    `LOG_*_QUERY_TEXT` flags (kept on for triage until handoff), WAF, dependency audit.
