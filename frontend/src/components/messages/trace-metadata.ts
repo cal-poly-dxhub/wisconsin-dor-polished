@@ -1,31 +1,25 @@
-// Allow-list mirrors ALLOWED_METADATA_KEYS in
-// packages/graphrag/lambdas/agentic_retrieval/main.py. Any key not listed
-// here is dropped before rendering — defense-in-depth in case a backend
-// version slips through with free-form content.
-const ALLOWED_METADATA_KEYS = new Set([
+// The subset of the backend's ALLOWED_METADATA_KEYS
+// (backend/lambdas/agentic_retrieval/tracing/emitter.py) that this formatter
+// renders. Any key not listed is dropped before rendering: defense-in-depth in
+// case a backend version slips through with free-form content. It only needs
+// the keys formatTraceMetadata reads; a test fails if one of them is no longer
+// on the backend list, which is how stale keys used to linger here.
+export const ALLOWED_METADATA_KEYS = new Set([
   'chunkCount',
   'docCount',
   'neighborCount',
   'topScore',
   'faqCount',
   'documentCount',
-  'chainLength',
   'opinionChars',
-  'refined',
   'citedDocCount',
   'latencyMs',
   'keywordFallback',
-  'preDedupCount',
-  'authorityBreakdown',
-  'relationshipCounts',
-  'discoveryCounts',
-  'caseLawCount',
-  'autoEnrichedCount',
-  'scoreBuckets',
-  'targetWpamYear',
-  'discoveryTitles',
-  'faqScoreThreshold',
-  'faqScores',
+  'sectionCount',
+  'caseCount',
+  'worksheetCount',
+  'sheetCount',
+  'flowchartCount',
 ]);
 
 export function sanitizeTraceMetadata(
@@ -53,9 +47,13 @@ export function formatTraceMetadata(metadata: unknown): string {
   addCount('chunkCount', 'chunk');
   addCount('docCount', 'source');
   addCount('documentCount', 'document');
-  addCount('chainLength', 'authority step');
   addCount('citedDocCount', 'citation');
   addCount('opinionChars', 'char');
+  addCount('sectionCount', 'section');
+  addCount('caseCount', 'case');
+  addCount('worksheetCount', 'worksheet');
+  addCount('sheetCount', 'sheet');
+  addCount('flowchartCount', 'flowchart');
 
   const neighborCount = m.neighborCount;
   if (typeof neighborCount === 'number' && neighborCount > 0) {
@@ -69,9 +67,6 @@ export function formatTraceMetadata(metadata: unknown): string {
   const latencyMs = m.latencyMs;
   if (typeof latencyMs === 'number' && latencyMs > 0) {
     parts.push(`${latencyMs}ms`);
-  }
-  if (m.refined === true) {
-    parts.push('refined');
   }
   if (m.keywordFallback === true) {
     parts.push('keyword fallback');

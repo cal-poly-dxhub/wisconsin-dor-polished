@@ -80,9 +80,7 @@ Given the text below, extract:
 2. **title** - document title
 3. **statute_refs** - list of Wisconsin Statute section references (e.g., ["70.32", "70.05", "73.03"])
 4. **admin_rule_refs** - list of administrative rule references (e.g., ["Tax 18.05", "Tax 12.01"])
-5. **implements_refs** - list of statutes this document operationally implements (e.g., ["70.32"] if this is a DOR policy that implements that statute)
-6. **topics** - 1-5 topic keywords relevant to Wisconsin property assessment/taxation
-7. **summary** - 2-3 sentence summary
+5. **summary** - 2-3 sentence summary
 
 Return valid JSON only. No markdown fencing.
 
@@ -382,8 +380,6 @@ def process_case_law_document(
         "citation": citation,
         "statute_refs": statute_refs,
         "admin_rule_refs": [],
-        "implements_refs": [],
-        "topics": [],
         "source_url": source_url,
         "full_text": f"{title}\n{selected_text}" if selected_text else title,
         "chunks": chunks,
@@ -933,8 +929,6 @@ def process_document(
             "summary": classification.get("summary", ""),
             "statute_refs": classification.get("statute_refs", []),
             "admin_rule_refs": classification.get("admin_rule_refs", []),
-            "implements_refs": classification.get("implements_refs", []),
-            "topics": classification.get("topics", []),
             "source_url": metadata.get("source_url", "n/a"),
             "effective_date": metadata.get("effective_date", ""),
             "full_text": full_text,
