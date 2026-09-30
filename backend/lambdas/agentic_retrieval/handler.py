@@ -26,6 +26,7 @@ from loop.phase_b import (
     apply_persona,
     build_answer_context,
     finalize_answer_links,
+    linked_doc_ids,
     send_answer_stop,
     statute_section_pages,
     stream_answer,
@@ -339,6 +340,7 @@ def handler(event: dict, context) -> dict[str, Any]:
                 },
             )
 
+        prose_plan = False
         if finding is not None and result.fallback_answer is not None:
             # One prose path: with the judge on, a fallback (the model refused
             # or clarified in its own words, or ran out of turns) is treated as
@@ -346,6 +348,9 @@ def handler(event: dict, context) -> dict[str, Any]:
             # DECLINE is two plain sentences and an honest-no keeps its shape.
             result.answer_plan = result.fallback_answer
             result.fallback_answer = None
+            # An ANSWER / CLARIFY from prose still deserves grounding and source
+            # cards; a DECLINE stays two plain sentences with none.
+            prose_plan = finding.verdict != "DECLINE"
 
         if result.fallback_answer is not None:
             # Edge case: turn budget exhausted, or the model responded with text
@@ -403,7 +408,18 @@ def handler(event: dict, context) -> dict[str, Any]:
             # === Normal path: Phase B streaming ===
             # 1. Build resources from cited_doc_ids
             cited = set(result.cited_doc_ids)
-            cited_chunks = [c for c in result.all_chunks if c.get("doc_id") in cited]
+            # The model answered in prose without selecting sources (it never
+            # called prepare_answer). Rather than write from the plan alone,
+            # give Phase B the chunks the agent saw (the pre-loop seeds and any
+            # tool results); only the ones the answer links become cards, after
+            # the stream (see below), so the seed is never dumped as cards.
+            uncurated = prose_plan and not cited
+            context_docs = (
+                {c.get("doc_id") for c in result.all_chunks if c.get("doc_id")}
+                if uncurated
+                else cited
+            )
+            cited_chunks = [c for c in result.all_chunks if c.get("doc_id") in context_docs]
             # Everything Phase A touched (cited + discovered + any chunk's doc):
             # the citation-link repair may repoint a conflated statute/admin-rule
             # link to any of these, but never to a doc outside this set.
@@ -469,10 +485,13 @@ def handler(event: dict, context) -> dict[str, Any]:
 
             answer = ""  # Will be populated by streaming or fallback
             stream_interrupted = False
+            ws_connection_alive = [False]  # replaced below when a socket is live
             answer_context = ""  # set in both branches below; grounds the URL guard
             # chapter -> {section -> page} for the writer's index AND the
             # deterministic page fill in the link repair (cached per container).
-            section_pages = statute_section_pages(cited_chunks, cited, neptune, result.answer_plan)
+            section_pages = statute_section_pages(
+                cited_chunks, context_docs, neptune, result.answer_plan
+            )
             if ws_server and result.connection_alive:
                 ws_connection_alive = [result.connection_alive]
 
@@ -497,13 +516,14 @@ def handler(event: dict, context) -> dict[str, Any]:
                 answer_context = build_answer_context(
                     user_query.query,
                     cited_chunks,
-                    cited,
+                    context_docs,
                     cited_discovery,
                     cited_opinions,
                     result.answer_plan,
                     chat_history=chat_history,
                     neptune_client=neptune,
                     finding=finding,
+                    uncurated=uncurated,
                 )
                 try:
                     answer = stream_answer(
@@ -556,13 +576,14 @@ def handler(event: dict, context) -> dict[str, Any]:
                 answer_context = build_answer_context(
                     user_query.query,
                     cited_chunks,
-                    cited,
+                    context_docs,
                     cited_discovery,
                     cited_opinions,
                     result.answer_plan,
                     chat_history=chat_history,
                     neptune_client=neptune,
                     finding=finding,
+                    uncurated=uncurated,
                 )
                 try:
                     response = bedrock.converse(
@@ -593,6 +614,41 @@ def handler(event: dict, context) -> dict[str, Any]:
             )
             if stream_interrupted:
                 send_answer_stop(ws_server, user_query.query_id, answer, ws_connection_alive)
+
+            if uncurated:
+                # Cards for exactly the retrieved documents the answer links,
+                # sent after the stream (the answer decides which were used).
+                pre_stream_faq = faq_resource
+                cited = linked_doc_ids(answer) & context_docs
+                cited_discovery = {cid: result.discovery.get(cid, "seed") for cid in cited}
+                rag_documents = build_rag_documents(
+                    [c for c in result.all_chunks if c.get("doc_id") in cited],
+                    cited,
+                    cited_discovery,
+                    {},
+                    neptune_client=neptune,
+                )
+                faq_resource = pre_stream_faq or build_cited_faq_resource(
+                    result.faq_entries, cited
+                )
+                _log(
+                    "prose_plan_sources",
+                    query_id=user_query.query_id,
+                    context_doc_count=len(context_docs),
+                    linked_doc_count=len(cited),
+                    rag_document_count=len(rag_documents),
+                )
+                if ws_server and ws_connection_alive and ws_connection_alive[0]:
+                    try:
+                        send_resources(
+                            ws_server,
+                            user_query.query_id,
+                            rag_documents,
+                            # A high-confidence FAQ already went out before the stream.
+                            None if pre_stream_faq else faq_resource,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.warning("Failed to send prose-plan source cards", exc_info=True)
 
         # Streaming is done. If the judge asked for a clarification, offer its
         # question and options using the existing generic `choices` wire type

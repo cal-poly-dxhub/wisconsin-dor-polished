@@ -581,3 +581,107 @@ class TestPreLoopClassification:
         )
         # PROCEED does not short-circuit — the agentic loop runs.
         run_loop.assert_called_once()
+
+
+class TestProsePlanSources:
+    """With the judge on, a prose fallback (no prepare_answer) is written by Phase B.
+
+    ANSWER / CLARIFY must be grounded in the chunks the agent saw and get source
+    cards for exactly the retrieved docs the answer links; DECLINE stays bare.
+    """
+
+    CHUNKS = [
+        {"doc_id": "statutes-70", "text": "70.109 Presumption of taxability.", "start_page": 5},
+        {"doc_id": "gov_publications-unrelated", "text": "Something else.", "start_page": 1},
+    ]
+
+    def _run(self, fresh_modules, monkeypatch, verdict):
+        handler, phase_a, adequacy = fresh_modules(
+            "handler", "loop.phase_a", "adequacy_judge", env={"ADEQUACY_JUDGE_ENABLED": "true"}
+        )
+        result = phase_a.AgentLoopResult(
+            cited_doc_ids=[],
+            all_chunks=list(self.CHUNKS),
+            all_doc_ids={"statutes-70", "gov_publications-unrelated"},
+            discovery={},
+            fetched_opinions={},
+            faq_resource=None,
+            answer_plan="",
+            trace_log=[],
+            connection_alive=True,
+            fallback_answer="Exemption turns on the owner and the use. Which applies?",
+            high_confidence_faq=None,
+            faq_entries=[],
+        )
+        monkeypatch.setattr(handler, "run_agentic_loop", MagicMock(return_value=result))
+        monkeypatch.setattr(
+            handler,
+            "judge_answer_plan",
+            lambda *a, **kw: adequacy.Finding(verdict=verdict, supported="", unsupported=""),
+        )
+        monkeypatch.setattr(handler, "get_ws_connection_from_session", MagicMock(return_value=None))
+        monkeypatch.setattr(handler, "get_chat_history", lambda sid: [])
+        monkeypatch.setattr(handler, "save_chat_history", lambda *a, **kw: None)
+        monkeypatch.setattr(handler, "statute_section_pages", lambda *a, **kw: {})
+        monkeypatch.setattr(handler, "build_cited_faq_resource", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            handler,
+            "process_event",
+            lambda e: SimpleNamespace(query="q", query_id="q-1", session_id="s-1", persona=None),
+        )
+        monkeypatch.setattr(handler.asyncio, "run", lambda coro: coro.close())
+
+        context_calls, rag_calls = [], []
+
+        def fake_context(query, chunks, docs, *a, uncurated=False, **kw):
+            context_calls.append({"docs": set(docs), "uncurated": uncurated})
+            return "ctx"
+
+        monkeypatch.setattr(handler, "build_answer_context", fake_context)
+        monkeypatch.setattr(
+            handler, "build_rag_documents", lambda chunks, cited, *a, **kw: rag_calls.append(set(cited)) or []
+        )
+        monkeypatch.setattr(
+            handler.bedrock,
+            "converse",
+            MagicMock(
+                return_value={
+                    "output": {
+                        "message": {
+                            "content": [
+                                {"text": "Under [§ 70.109](doc:statutes-70#page=5) property is presumed taxable."}
+                            ]
+                        }
+                    }
+                }
+            ),
+        )
+        handler.handler({"query": "q", "query_id": "q-1", "session_id": "s-1"}, SimpleNamespace(aws_request_id="r"))
+        return context_calls, rag_calls
+
+    def test_clarify_is_grounded_and_cards_only_what_it_links(self, fresh_modules, monkeypatch):
+        context_calls, rag_calls = self._run(fresh_modules, monkeypatch, "CLARIFY")
+        assert context_calls == [
+            {"docs": {"statutes-70", "gov_publications-unrelated"}, "uncurated": True}
+        ]
+        # Cards: the linked doc only, never the whole seed.
+        assert rag_calls[-1] == {"statutes-70"}
+
+    def test_decline_stays_without_sources(self, fresh_modules, monkeypatch):
+        context_calls, rag_calls = self._run(fresh_modules, monkeypatch, "DECLINE")
+        assert context_calls == [{"docs": set(), "uncurated": False}]
+        assert rag_calls == [set()]
+
+
+def test_linked_doc_ids_reads_primary_and_dual_targets(fresh_modules):
+    (phase_b,) = fresh_modules("loop.phase_b")
+    answer = (
+        "[§ 70.11](doc:statutes-70#page=5) and [the guide says](doc:gov_publications-pb060#page=3"
+        "&ref=statutes-70#page=9) plus [ref only](doc:wpam-2026#ref=admin_rules-tax-12)."
+    )
+    assert phase_b.linked_doc_ids(answer) == {
+        "statutes-70",
+        "gov_publications-pb060",
+        "wpam-2026",
+        "admin_rules-tax-12",
+    }

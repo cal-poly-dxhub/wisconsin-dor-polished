@@ -371,7 +371,11 @@ def run_one_query(
                 finding = judge_mod.judge_answer_plan(
                     query,
                     chat_history,
-                    result.answer_plan,
+                    # Mirrors handler.py: a prose fallback has no plan, so the
+                    # judge reads the text it did produce.
+                    result.fallback_answer
+                    if result.fallback_answer is not None
+                    else result.answer_plan,
                     cited_chunks,
                     result.discovery,
                     cited_doc_ids=cited_set,
@@ -384,11 +388,21 @@ def run_one_query(
     # Phase B: build context (independent of answerStream) then generate the
     # answer text non-streaming with the (possibly candidate) answerStream prompt.
     answer_context = ""
+    prose_plan = False
     if finding is not None and result.fallback_answer:
         # Mirrors handler.py: under a finding the fallback text becomes the plan
         # and Phase B writes the answer (one prose path).
         result.answer_plan = result.fallback_answer
         result.fallback_answer = None
+        prose_plan = finding.verdict != "DECLINE"
+    # Mirrors handler.py: a prose ANSWER / CLARIFY with no selected sources is
+    # written from every chunk the agent saw, and cites what the answer links.
+    uncurated = prose_plan and not cited_doc_ids
+    context_docs = (
+        {c.get("doc_id") for c in result.all_chunks if c.get("doc_id")}
+        if uncurated
+        else set(cited_doc_ids)
+    )
     if not result.fallback_answer:
         ctx_kwargs: dict = {}
         if finding is not None:
@@ -396,12 +410,13 @@ def run_one_query(
         answer_context = build_answer_context(
             query=query,
             cited_chunks=result.all_chunks,
-            cited_doc_ids=set(cited_doc_ids),
+            cited_doc_ids=context_docs,
             discovery=result.discovery,
             fetched_opinions=result.fetched_opinions,
             answer_plan=result.answer_plan,
             chat_history=chat_history,
             neptune_client=neptune,
+            uncurated=uncurated,
             **ctx_kwargs,
         )
     answer_text = _phase_b_generate(
@@ -414,9 +429,13 @@ def run_one_query(
         ),
         chunks=result.all_chunks,
         section_pages=statute_section_pages(
-            result.all_chunks, set(cited_doc_ids), neptune, result.answer_plan
+            result.all_chunks, context_docs, neptune, result.answer_plan
         ),
     )
+    if uncurated:
+        from loop.phase_b import linked_doc_ids
+
+        cited_doc_ids = sorted(linked_doc_ids(answer_text) & context_docs)
 
     # Per-cited-doc discovery attribution: which retrieval path surfaced each
     # cited doc. This is what makes the baseline↔after comparison exact —
