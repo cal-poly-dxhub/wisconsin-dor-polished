@@ -503,9 +503,11 @@ export class SessionsStack extends cdk.NestedStack {
     (devStage.node.defaultChild as apigatewayv2.CfnStage).routeSettings = {
       // Sized for a room of ~30 people pressing send together (a training
       // or demo); the per-user limit below is what bounds one account.
+      // routeSettings is raw CloudFormation JSON (not an L2 prop), so the
+      // keys must be PascalCase; camelCase fails at deploy, not at synth.
       'POST /session/{sessionId}/message': {
-        throttlingRateLimit: 10,
-        throttlingBurstLimit: 30,
+        ThrottlingRateLimit: 10,
+        ThrottlingBurstLimit: 30,
       },
     };
 
