@@ -9,6 +9,7 @@ import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSendMessage, useCreateSession } from './api/chat';
 import { WebSocket } from 'partysocket';
+import { getIdToken } from '@/lib/auth';
 
 /** How long a dropped socket may take to reconnect before the session is given up. */
 const RECONNECT_GRACE_MS = 30_000;
@@ -49,7 +50,6 @@ export const useValidatedWebSocket = (
   const [sessionId, setSessionId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const websocketUrl = useMemo(() => {
-    // TODO: useMemo or useEffect?
     return sessionId ? `${options.urlBase}?sessionId=${sessionId}` : '';
   }, [options.urlBase, sessionId]);
 
@@ -235,7 +235,14 @@ export const useValidatedWebSocket = (
       return;
     }
 
-    wsRef.current = new WebSocket(websocketUrl, [], wsOptions);
+    // $connect requires the Cognito ID token (browsers cannot set headers on a
+    // WebSocket handshake, so it goes in the query string). A URL provider is
+    // re-evaluated on every reconnect, so each attempt carries a fresh token.
+    const urlProvider = async () => {
+      const token = await getIdToken();
+      return token ? `${websocketUrl}&token=${encodeURIComponent(token)}` : websocketUrl;
+    };
+    wsRef.current = new WebSocket(urlProvider, [], wsOptions);
     const ws = wsRef.current;
     ws.addEventListener('open', handleOpen);
     ws.addEventListener('close', handleClose);

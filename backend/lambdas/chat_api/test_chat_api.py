@@ -25,6 +25,7 @@ with patch.dict(os.environ, {"SESSIONS_TABLE_NAME": "test-sessions-table", "LOG_
         chunks_text_handler,
         create_session_handler,
         feedback_handler,
+        get_session_history_handler,
         handler,
         send_message_handler,
     )
@@ -37,6 +38,11 @@ with patch.dict(os.environ, {"SESSIONS_TABLE_NAME": "test-sessions-table", "LOG_
 # like @patch_dynamodb() would resolve to the wrong module when the full
 # suite runs and fail with "module 'main' ... does not have the attribute
 # 'dynamodb'". patch.object against the captured module is immune to that swap.
+# A session row owned by the default test caller (claims sub "test-user").
+OWNED_SESSION = {"Item": {"sessionId": {"S": "test-session-id"}, "userId": {"S": "test-user"}}}
+OWNED_S1 = {"Item": {"sessionId": {"S": "s-1"}, "userId": {"S": "test-user"}}}
+
+
 def patch_dynamodb():
     return patch.object(chat_api_main, "dynamodb")
 
@@ -156,7 +162,7 @@ def test_send_message_success(mock_dynamodb, mock_eventbridge):
     """
 
     # Mock DynamoDB response for session validation
-    mock_dynamodb.get_item.return_value = {"Item": {"sessionId": {"S": "test-session-id"}}}
+    mock_dynamodb.get_item.return_value = OWNED_SESSION
 
     # Mock EventBridge response
     mock_eventbridge.put_events.return_value = {"FailedEntryCount": 0, "Entries": []}
@@ -216,7 +222,7 @@ def test_send_message_writes_pending_row(mock_dynamodb, mock_eventbridge):
     keyed by the same queryId returned to the caller and later overwritten by
     the async worker.
     """
-    mock_dynamodb.get_item.return_value = {"Item": {"sessionId": {"S": "test-session-id"}}}
+    mock_dynamodb.get_item.return_value = OWNED_SESSION
     mock_eventbridge.put_events.return_value = {"FailedEntryCount": 0, "Entries": []}
     _set_current_event(json_body={"message": "How is my home assessed?"})
 
@@ -252,7 +258,7 @@ def test_send_message_invalid_request(mock_dynamodb):
     """
 
     # Mock DynamoDB response for session validation
-    mock_dynamodb.get_item.return_value = {"Item": {"sessionId": {"S": "test-session-id"}}}
+    mock_dynamodb.get_item.return_value = OWNED_SESSION
 
     # Body missing the required 'message' field.
     _set_current_event(json_body={"invalid_field": "some value"})
@@ -323,7 +329,7 @@ def test_send_message_eventbridge_error(mock_dynamodb, mock_eventbridge):
     """
 
     # Mock DynamoDB response for session validation
-    mock_dynamodb.get_item.return_value = {"Item": {"sessionId": {"S": "test-session-id"}}}
+    mock_dynamodb.get_item.return_value = OWNED_SESSION
 
     # Mock EventBridge to raise an error
     mock_eventbridge.put_events.side_effect = RuntimeError("AWS EventBridge service error")
@@ -517,7 +523,7 @@ def test_activity_list_falls_back_during_index_rollout(mock_dynamodb):
 @patch_dynamodb()
 def test_feedback_legacy_payload_writes_only_scalars(mock_dynamodb):
     """A plain thumbUp/feedback payload must not write richFeedback."""
-    mock_dynamodb.get_item.return_value = {"Item": {"sessionId": {"S": "s-1"}}}
+    mock_dynamodb.get_item.return_value = OWNED_S1
     _set_current_event(
         json_body={"queryId": "q-1", "thumbUp": True, "feedback": "great"}
     )
@@ -541,7 +547,7 @@ def test_feedback_legacy_payload_writes_only_scalars(mock_dynamodb):
 @patch_dynamodb()
 def test_feedback_rich_payload_writes_derived_thumb_and_map(mock_dynamodb):
     """A rich payload derives thumbUp from rating and stores a richFeedback map."""
-    mock_dynamodb.get_item.return_value = {"Item": {"sessionId": {"S": "s-1"}}}
+    mock_dynamodb.get_item.return_value = OWNED_S1
     _set_current_event(
         json_body={
             "queryId": "q-2",
@@ -824,3 +830,43 @@ def test_chunks_index_requires_work_bucket_config():
         response = chunks_index_handler("wpam-2026")
 
     assert response.status_code == 400
+
+
+# ── Session ownership (security pass F3) ─────────────────────────────────────
+
+
+@patch_dynamodb()
+def test_another_users_session_is_reported_as_not_found(mock_dynamodb):
+    mock_dynamodb.get_item.return_value = {
+        "Item": {"sessionId": {"S": "s-1"}, "userId": {"S": "someone-else"}}
+    }
+    _set_current_event(json_body={"message": "hi", "queryId": "q-1", "thumbUp": True})
+
+    assert get_session_history_handler("s-1")["statusCode"] == 404
+    assert send_message_handler("s-1")["statusCode"] == 404
+    assert feedback_handler("s-1")["statusCode"] == 404
+    mock_dynamodb.query.assert_not_called()
+    mock_dynamodb.update_item.assert_not_called()
+
+
+@patch_dynamodb()
+def test_legacy_session_without_owner_is_not_reachable(mock_dynamodb):
+    mock_dynamodb.get_item.return_value = {"Item": {"sessionId": {"S": "s-old"}}}
+    _set_current_event()
+    assert get_session_history_handler("s-old")["statusCode"] == 404
+
+
+@patch_dynamodb()
+def test_feedback_on_a_query_outside_the_session_is_rejected(mock_dynamodb):
+    mock_dynamodb.get_item.return_value = OWNED_S1
+    mock_dynamodb.update_item.side_effect = ClientError(
+        {"Error": {"Code": "ConditionalCheckFailedException", "Message": "no"}}, "UpdateItem"
+    )
+    _set_current_event(json_body={"queryId": "someone-elses-query", "thumbUp": False})
+
+    response = feedback_handler("s-1")
+
+    assert response["statusCode"] == 400
+    kwargs = mock_dynamodb.update_item.call_args.kwargs
+    assert kwargs["ConditionExpression"] == "sessionId = :sid"
+    assert kwargs["ExpressionAttributeValues"][":sid"] == {"S": "s-1"}

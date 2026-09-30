@@ -132,7 +132,7 @@ The button now goes straight to DOR (`identity_provider=DOR`). The pool
 requires `email`, so a sign-in fails if DOR does not send the email claim.
 
 **Admins.** Federated users appear in the pool as `DOR_<id>`. Add them to the
-console-managed `Admins` group as today; mapping a DOR group automatically
+`Admins` group (created by CDK, members added by hand) as today; mapping a DOR group automatically
 would need a pre-token-generation Lambda.
 
 **Email/password alongside SSO.** Both stay on. Retiring email sign-up for

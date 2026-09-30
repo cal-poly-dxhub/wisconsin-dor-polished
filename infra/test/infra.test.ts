@@ -4,6 +4,7 @@ import { Template } from 'aws-cdk-lib/assertions';
 import { GraphRAGStack } from '../stacks/graphrag-stack';
 import { WisconsinBotStack } from '../stacks/stack';
 import { parseSsoConfig, SsoResources } from '../stacks/sso';
+import { AdminsGroup } from '../stacks/admins-group';
 
 describe('GraphRAGStack', () => {
   function synth(): Template {
@@ -102,5 +103,25 @@ describe('DOR single sign-on (sso context)', () => {
     expect(() => parseSsoConfig({ ...base, provider: { type: 'saml', name: 'DOR' } })).toThrow(/metadataUrl/);
     expect(() => parseSsoConfig({ ...base, provider: { type: 'oidc', name: 'DOR', issuerUrl: 'https://x' } })).toThrow(/clientSecretName/);
     expect(() => parseSsoConfig({ ...base, domainPrefix: 'Bad_Prefix' })).toThrow(/domainPrefix/);
+  });
+});
+
+describe('Admins group (security pass F4)', () => {
+  test('is ensured idempotently and never deleted with the stack', () => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, 'Admins');
+    const userPool = new cognito.UserPool(stack, 'Pool');
+    new AdminsGroup(stack, 'AdminsGroup', { userPool });
+    const t = Template.fromStack(stack);
+
+    const [res] = Object.values(t.findResources('Custom::AWS')) as { Properties: Record<string, unknown> }[];
+    const create = JSON.stringify(res.Properties.Create);
+    expect(create).toContain('createGroup');
+    expect(create).toContain('\\"GroupName\\":\\"Admins\\"');
+    expect(create).toContain('GroupExistsException');
+    expect(res.Properties.Delete).toBeUndefined();
+    t.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: { Statement: [{ Action: 'cognito-idp:CreateGroup', Effect: 'Allow' }] },
+    });
   });
 });

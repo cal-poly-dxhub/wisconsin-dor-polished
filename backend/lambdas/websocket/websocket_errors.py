@@ -66,6 +66,20 @@ class SessionNotFound(WebSocketError):
         return response
 
 
+class Unauthorized(WebSocketError):
+    """Raised when $connect carries no valid Cognito ID token."""
+
+    def __init__(self, reason: str):
+        super().__init__(status_code=401, details={"reason": reason})
+        self.reason = reason
+
+    def to_response(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        response = {"error": {"message": "Sign in again to continue."}}
+        if extra:
+            response["error"].update(extra)
+        return response
+
+
 class UnexpectedError(WebSocketError):
     """
     Raised when an unexpected error occurs while processing a WebSocket request.

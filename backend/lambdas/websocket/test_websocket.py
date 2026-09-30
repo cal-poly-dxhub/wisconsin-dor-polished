@@ -6,9 +6,40 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+os.environ.setdefault("USER_POOL_ID", "us-east-1_TESTPOOL")
+os.environ.setdefault("USER_POOL_CLIENT_ID", "test-client")
 
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "layers"))
+
+
+# ── Cognito ID tokens signed with a throwaway RSA key ────────────────────────
+import time  # noqa: E402
+
+import jwt  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
+
+_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_ISSUER = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TESTPOOL"
+
+
+def make_token(**overrides) -> str:
+    claims = {
+        "sub": "user-1",
+        "iss": _ISSUER,
+        "aud": "test-client",
+        "token_use": "id",
+        "exp": int(time.time()) + 600,
+        **overrides,
+    }
+    return jwt.encode(claims, _KEY, algorithm="RS256", headers={"kid": "k1"})
+
+
+def use_test_signing_key():
+    """Point connect's JWKS client at the throwaway key (no network)."""
+    import connect
+
+    connect._jwks.get_signing_key_from_jwt = lambda _t: MagicMock(key=_KEY.public_key())
 
 
 class TestWebSocketHandlers:
@@ -24,7 +55,7 @@ class TestWebSocketHandlers:
                 "stage": "dev",
                 "eventType": "CONNECT",
             },
-            "queryStringParameters": {"sessionId": "test-session-456"},
+            "queryStringParameters": {"sessionId": "test-session-456", "token": make_token()},
         }
 
     @pytest.fixture
@@ -65,6 +96,8 @@ class TestWebSocketHandlers:
         """Test successful WebSocket connection"""
         from connect import handler
 
+        use_test_signing_key()
+
         # Mock successful DynamoDB update_item
         mock_dynamodb.update_item.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}}
 
@@ -75,7 +108,10 @@ class TestWebSocketHandlers:
         call_args = mock_dynamodb.update_item.call_args
         assert call_args[1]["Key"]["sessionId"]["S"] == "test-session-456"
         assert call_args[1]["ExpressionAttributeValues"][":cid"]["S"] == "test-connection-123"
-        assert call_args[1]["ConditionExpression"] == "attribute_exists(sessionId)"
+        assert call_args[1]["ExpressionAttributeValues"][":uid"]["S"] == "user-1"
+        assert call_args[1]["ConditionExpression"] == (
+            "attribute_exists(sessionId) AND userId = :uid"
+        )
 
         # Verify successful response
         assert result["statusCode"] == 200
@@ -191,3 +227,65 @@ class TestWebSocketHandlers:
 
         assert validated_event.requestContext.connectionId == "test-connection-123"
         assert validated_event.requestContext.eventType == "DISCONNECT"
+
+
+class TestConnectAuth:
+    """$connect rejects a missing/invalid token and a session the caller does not own."""
+
+    def _event(self, token):
+        qs = {"sessionId": "s-1"}
+        if token is not None:
+            qs["token"] = token
+        return {
+            "requestContext": {
+                "connectionId": "c-1",
+                "domainName": "example.com",
+                "stage": "dev",
+                "eventType": "CONNECT",
+            },
+            "queryStringParameters": qs,
+        }
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            None,
+            "not-a-jwt",
+            make_token(aud="some-other-client"),
+            make_token(iss="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_OTHER"),
+            make_token(token_use="access"),
+            make_token(exp=int(time.time()) - 5),
+        ],
+        ids=["missing", "garbage", "wrong-aud", "wrong-issuer", "access-token", "expired"],
+    )
+    @patch("connect.dynamodb")
+    def test_bad_token_is_rejected_before_touching_the_session(self, mock_dynamodb, token):
+        from connect import handler
+
+        use_test_signing_key()
+        result = handler(self._event(token), MagicMock())
+        assert result["statusCode"] == 401
+        mock_dynamodb.update_item.assert_not_called()
+
+    @patch("connect.dynamodb")
+    def test_session_owned_by_someone_else_is_rejected(self, mock_dynamodb):
+        from botocore.exceptions import ClientError
+        from connect import handler
+
+        use_test_signing_key()
+        mock_dynamodb.update_item.side_effect = ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException", "Message": "x"}}, "UpdateItem"
+        )
+        result = handler(self._event(make_token()), MagicMock())
+        assert result["statusCode"] == 404
+
+    @patch("connect.logger")
+    @patch("connect.dynamodb")
+    def test_the_token_is_never_logged(self, mock_dynamodb, mock_logger):
+        from connect import handler
+
+        use_test_signing_key()
+        token = make_token()
+        handler(self._event(token), MagicMock())
+        logged = " ".join(str(c) for c in mock_logger.mock_calls)
+        assert token not in logged

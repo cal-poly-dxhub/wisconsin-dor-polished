@@ -162,18 +162,26 @@ def write_pending_message(session_id: str, query_id: str, query: str) -> None:
         logger.warning(f"Failed to write pending message {query_id}: {e}")
 
 
-def validate_session_exists(session_id: str) -> None:
-    """Validate that a session exists in DynamoDB."""
+def require_session_owner(session_id: str) -> None:
+    """The session must exist AND belong to the caller (the JWT ``sub``).
+
+    A session owned by someone else is reported exactly like a missing one
+    (404), so a guessed or leaked session id reveals nothing. Sessions from
+    before ownership was recorded (no ``userId``) belong to no one.
+    """
+    user_id = get_user_id_from_jwt()
     try:
         response = dynamodb.get_item(
             TableName=session_table_name, Key={"sessionId": {"S": session_id}}
         )
-
     except Exception as e:
-        logger.error(f"Error checking session existence: {e}")
+        logger.error(f"Error checking session ownership: {e}")
         raise DynamoDBError("get_item", details={"session_id": session_id, "error": str(e)}) from e
 
-    if "Item" not in response:
+    item = response.get("Item")
+    if not item or item.get("userId", {}).get("S") != user_id:
+        if item:
+            logger.warning(f"Session {session_id} requested by a user who does not own it")
         raise SessionNotFoundError(session_id)
 
 
@@ -456,13 +464,25 @@ def update_query_feedback(session_id: str, feedback_request: FeedbackRequest):
             expr_values[":richFeedback"] = TypeSerializer().serialize(rich_json)
             expr_values[":submittedAt"] = {"S": datetime.now(UTC).isoformat()}
 
+        # The query must belong to this (already ownership-checked) session;
+        # without the condition any queryId could be rated, or created.
+        expr_values[":sid"] = {"S": session_id}
         dynamodb.update_item(
             TableName=message_table_name,
             Key={"queryId": {"S": feedback_request.query_id}},
             UpdateExpression=update_expr,
+            ConditionExpression="sessionId = :sid",
             ExpressionAttributeValues=expr_values,
             ExpressionAttributeNames={"#rating": "rating"},
         )
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            raise ValidationError(reason="That query is not part of this session.") from e
+        logger.error(f"Failed to update query feedback in DynamoDB: {e}")
+        raise DynamoDBError(
+            "update_item",
+            details={"session_id": session_id, "queryId": feedback_request.query_id},
+        ) from e
     except Exception as e:
         logger.error(f"Failed to update query feedback in DynamoDB: {e}")
         raise DynamoDBError(
@@ -479,7 +499,7 @@ def update_query_feedback(session_id: str, feedback_request: FeedbackRequest):
 def get_session_history_handler(session_id: str) -> dict[str, Any]:
     """Get chat history for a session."""
     try:
-        validate_session_exists(session_id)
+        require_session_owner(session_id)
 
         response = dynamodb.query(
             TableName=message_table_name,
@@ -1239,7 +1259,7 @@ def _make_doc_id(category: str, url: str) -> str:
 def feedback_handler(session_id) -> dict[str, Any]:
     """Assign feedback to a particular query."""
     try:
-        validate_session_exists(session_id)
+        require_session_owner(session_id)
 
         body = app.current_event.json_body
         feedback_request = validate_feedback_request(body)
@@ -1302,7 +1322,7 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
     query_id = str(uuid.uuid4())
 
     try:
-        validate_session_exists(session_id)
+        require_session_owner(session_id)
 
         body = app.current_event.json_body
         message_request = validate_message_request(body)

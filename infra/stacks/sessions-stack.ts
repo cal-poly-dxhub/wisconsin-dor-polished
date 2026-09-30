@@ -8,6 +8,7 @@ import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
+import { AdminsGroup } from './admins-group';
 import { SsoConfig, SsoResources } from './sso';
 
 export interface SessionsStackProps extends cdk.StackProps {
@@ -36,12 +37,6 @@ export class SessionsStack extends cdk.NestedStack {
   constructor(scope: Construct, id: string, props: SessionsStackProps) {
     super(scope, id, props);
 
-    // NOTE: the `Admins` user-pool group (gates every /admin/* API via
-    // require_admin() in chat_api and the /admin pages via
-    // <ProtectedRoute requireAdmin>) was created by hand in the console and is
-    // NOT managed here. Declaring it as a CfnUserPoolGroup would fail on
-    // create because the group already exists; adopt it with `cdk import`
-    // during the security pass rather than recreating it.
     this.userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: 'wisconsin-user-pool',
       selfSignUpEnabled: true,
@@ -67,6 +62,10 @@ export class SessionsStack extends cdk.NestedStack {
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
+
+    // The `Admins` group gates every /admin/* API (require_admin() in chat_api)
+    // and the /admin pages (<ProtectedRoute requireAdmin>). See admins-group.ts.
+    new AdminsGroup(this, 'AdminsGroup', { userPool: this.userPool });
 
     const sso = props.sso
       ? new SsoResources(this, 'Sso', { userPool: this.userPool, config: props.sso })
@@ -252,6 +251,10 @@ export class SessionsStack extends cdk.NestedStack {
       }),
       environment: {
         SESSIONS_TABLE_NAME: this.sessionsTable.tableName,
+        // $connect verifies the caller's Cognito ID token against these and
+        // binds the connection only to a session that caller owns.
+        USER_POOL_ID: this.userPool.userPoolId,
+        USER_POOL_CLIENT_ID: this.userPoolClient.userPoolClientId,
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
