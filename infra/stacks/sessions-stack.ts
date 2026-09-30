@@ -9,6 +9,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { AdminsGroup } from './admins-group';
+import { setLogRetention } from './log-retention';
 import { SsoConfig, SsoResources } from './sso';
 
 export interface SessionsStackProps extends cdk.StackProps {
@@ -20,6 +21,8 @@ export interface SessionsStackProps extends cdk.StackProps {
   workBucketName: string;
   /** DOR single sign-on (see ./sso.ts). Undefined leaves the pool as it was. */
   sso?: SsoConfig;
+  /** Browser origins allowed to call the HTTP API (CORS). Unset allows any. */
+  allowedOrigins?: string[];
 }
 
 export class SessionsStack extends cdk.NestedStack {
@@ -31,6 +34,8 @@ export class SessionsStack extends cdk.NestedStack {
   public readonly httpApiUrl: string;
   public readonly websocketApiUrl: string;
   public readonly apiHandler: lambda.Function;
+  /** Scopes execute-api:ManageConnections for the Lambdas that post to sockets. */
+  public readonly websocketApiId: string;
   /** Extra NEXT_PUBLIC_* env for the web app when SSO is on; empty otherwise. */
   public readonly ssoFrontendEnv: Record<string, string>;
 
@@ -60,7 +65,8 @@ export class SessionsStack extends cdk.NestedStack {
         requireSymbols: true,
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      // Every user account lives here; never delete it with the stack.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
     // The `Admins` group gates every /admin/* API (require_admin() in chat_api)
@@ -89,7 +95,10 @@ export class SessionsStack extends cdk.NestedStack {
         name: 'sessionId',
         type: cdk.aws_dynamodb.AttributeType.STRING,
       },
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      // User data: kept if the stack is deleted, restorable to any second in
+      // the last 35 days.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       billingMode: cdk.aws_dynamodb.BillingMode.PAY_PER_REQUEST,
     });
 
@@ -122,7 +131,9 @@ export class SessionsStack extends cdk.NestedStack {
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      // Every query and answer; kept if the stack is deleted, with PITR.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
     });
 
     // // TODO: use separate conversation IDs instead of session IDs
@@ -229,7 +240,10 @@ export class SessionsStack extends cdk.NestedStack {
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['events:PutEvents'],
-        resources: ['*'],
+        // emit_message_event publishes to the default bus only.
+        resources: [
+          `arn:aws:events:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:event-bus/default`,
+        ],
       })
     );
 
@@ -321,14 +335,10 @@ export class SessionsStack extends cdk.NestedStack {
       })
     );
 
-    // Grant API Gateway Management API permissions for sending WebSocket messages
-    defaultHandler.addToRolePolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: ['execute-api:ManageConnections'],
-        resources: ['*'],
-      })
-    );
+    // Logs carry request details; keep 90 days rather than the 731-day default.
+    for (const fn of [apiHandler, connectHandler, disconnectHandler, defaultHandler]) {
+      setLogRetention(fn, logs.RetentionDays.THREE_MONTHS);
+    }
 
     const websocketApi = new apigatewayv2.WebSocketApi(
       this,
@@ -337,6 +347,19 @@ export class SessionsStack extends cdk.NestedStack {
         apiName: 'Wisconsin Sessions WebSocket API',
         description: 'WebSocket API for managing chat sessions',
       }
+    );
+
+    this.websocketApiId = websocketApi.apiId;
+
+    // API Gateway Management API (post_to_connection) on this socket API only.
+    defaultHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['execute-api:ManageConnections'],
+        resources: [
+          `arn:aws:execute-api:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:${websocketApi.apiId}/*/*/@connections/*`,
+        ],
+      })
     );
 
     const connectIntegration =
@@ -398,6 +421,10 @@ export class SessionsStack extends cdk.NestedStack {
       loggingLevel: 'INFO', // 'ERROR' | 'INFO' | 'OFF'
       dataTraceEnabled: false, // true => full req/resp (verbose)
       detailedMetricsEnabled: true,
+      // Whole-API ceiling (all users together). Answers stream server-side
+      // via post_to_connection, which these limits do not count.
+      throttlingRateLimit: 20,
+      throttlingBurstLimit: 40,
     };
 
     // Grant API Gateway permission to write to CloudWatch Logs
@@ -418,7 +445,10 @@ export class SessionsStack extends cdk.NestedStack {
       apiName: 'Wisconsin Sessions API',
       description: 'HTTP API for managing chat sessions',
       corsPreflight: {
-        allowOrigins: ['*'],
+        // The web app's own origin(s) from the `allowedOrigins` context
+        // (infra/cdk.json). A fresh account has no CloudFront URL until its
+        // first deploy, so unset falls back to any origin.
+        allowOrigins: props.allowedOrigins?.length ? props.allowedOrigins : ['*'],
         allowMethods: [
           apigatewayv2.CorsHttpMethod.GET,
           apigatewayv2.CorsHttpMethod.POST,
@@ -450,7 +480,17 @@ export class SessionsStack extends cdk.NestedStack {
       httpApi,
       stageName: 'dev',
       autoDeploy: true,
+      // Whole-API ceiling (all users together), well above normal use.
+      throttle: { rateLimit: 25, burstLimit: 50 },
     });
+    // The one route that spends Bedrock money: sending a chat message. A
+    // tighter ceiling so a runaway client cannot run up the model bill.
+    (devStage.node.defaultChild as apigatewayv2.CfnStage).routeSettings = {
+      'POST /session/{sessionId}/message': {
+        throttlingRateLimit: 5,
+        throttlingBurstLimit: 10,
+      },
+    };
 
     this.httpApiUrl = devStage.url;
 

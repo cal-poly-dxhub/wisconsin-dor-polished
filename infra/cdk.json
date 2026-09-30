@@ -102,6 +102,11 @@
     "@aws-cdk/core:addConstructMetadataFailed": true,
     "@aws-cdk/aws-lambda:codeFromBucketObjectVersionNotSpecified": true,
     "_comment_neptuneGraphId": "Neptune Analytics graph the deployed stack reads and writes. It is NOT a CDK resource: graphs are created and loaded out of band (Fargate `run_fargate.sh load`) and promoted by changing this pin. Synth FAILS if it is missing. Blue/green + rollback procedure: infra/README.md.",
-    "neptuneGraphId": "g-svphgiu4k6"
+    "neptuneGraphId": "g-svphgiu4k6",
+    "_comment_allowedOrigins": "Browser origins allowed to call the HTTP API (CORS): the web app's CloudFront URL plus local dev. In a fresh account set it after the first deploy prints WebAppUrl; unset allows any origin.",
+    "allowedOrigins": [
+      "https://d11c3qt90tkvk2.cloudfront.net",
+      "http://localhost:3000"
+    ]
   }
 }
