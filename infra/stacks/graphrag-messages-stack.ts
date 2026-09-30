@@ -1,6 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import { setLogRetention } from './log-retention';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
@@ -12,6 +14,8 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   sessionsTable: cdk.aws_dynamodb.ITable;
   chatHistoryTable: cdk.aws_dynamodb.ITable;
   websocketCallbackUrl: string;
+  /** Scopes execute-api:ManageConnections to the chat socket API. */
+  websocketApiId: string;
   /**
    * Neptune Analytics graph to query, pinned by the `neptuneGraphId` CDK
    * context (infra/cdk.json). Scopes both the Lambda env and its IAM.
@@ -103,11 +107,16 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
     // Read access to the model config table for externalized system prompt.
     props.modelConfigTable.grantReadData(agenticRetrievalHandler);
 
+    // Logs carry query text previews; keep 90 days rather than 731.
+    setLogRetention(agenticRetrievalHandler, logs.RetentionDays.THREE_MONTHS);
+
     agenticRetrievalHandler.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['execute-api:ManageConnections'],
-        resources: ['*'],
+        resources: [
+          `arn:aws:execute-api:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:${props.websocketApiId}/*/*/@connections/*`,
+        ],
       })
     );
 
@@ -150,13 +159,13 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
       })
     );
 
-    // Bedrock: InvokeModel on '*'. Deliberately unscoped, not "scoped to
-    // specific models" as this comment used to claim. Three of the four model
-    // ids below are cross-region inference profiles (us.*), which resolve to
-    // per-region foundation-model ARNs at call time, so a scoped resource list
-    // has to enumerate the profile ARN plus every regional model ARN it can
-    // route to. Models this Lambda actually invokes (see config/retrieval.toml
-    // and backend/lambdas/agentic_retrieval/config.py):
+    // Bedrock, scoped by model family rather than by exact model so a model
+    // can still be swapped through an env var without a CDK change. The us.*
+    // ids are cross-region inference profiles: calling one needs the profile
+    // ARN (this account) AND the foundation model in each region it routes to
+    // (us-east-1, us-east-2, us-west-2), hence the region wildcard. Models this
+    // Lambda actually invokes (see config/retrieval.toml and
+    // backend/lambdas/agentic_retrieval/config.py):
     //   us.anthropic.claude-sonnet-4-6              agent loop (Phase A),
     //                                               answer stream (Phase B),
     //                                               auto-refine
@@ -173,7 +182,11 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           'bedrock:InvokeModel',
           'bedrock:InvokeModelWithResponseStream',
         ],
-        resources: ['*'],
+        resources: [
+          `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:inference-profile/us.anthropic.*`,
+          'arn:aws:bedrock:*::foundation-model/anthropic.*',
+          `arn:aws:bedrock:${cdk.Stack.of(this).region}::foundation-model/amazon.titan-embed-text-v2:0`,
+        ],
       })
     );
 

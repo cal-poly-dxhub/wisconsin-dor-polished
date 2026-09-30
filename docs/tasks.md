@@ -15,8 +15,12 @@ through a three-PR cleanup (Task 76). What remains:
    binds only a session the caller owns; F3 history / message / feedback require session
    ownership, and feedback only updates a query in that session; F4 the `Admins` group is
    ensured by CDK. **F1 (closing self-signup) is deliberately left open until SSO** (Isaac,
-   2026-09-30). Still open from §3: CORS origin, API throttling, IAM `*` scoping, log flags /
-   retention, RETAIN + deletion protection, PITR.
+   2026-09-30). Hardening also done 2026-09-30: user pool + all four DynamoDB tables RETAIN,
+   PITR on sessions + chat history, HTTP API CORS pinned to `allowedOrigins` (cdk.json),
+   throttling (HTTP API 25 rps / burst 50, message route 5 / 10; WebSocket 20 / 40), Lambda
+   log retention 731 → 90 days, IAM `*` scoped (EventBridge default bus, ManageConnections on
+   the socket API, Bedrock to Anthropic models + Titan Embed v2). Still open from §3: the
+   `LOG_*_QUERY_TEXT` flags (kept on for triage until handoff), WAF, dependency audit.
 2. **Handoff** (Task 66): SSO with Amy/Brad, cost sheet, runbook walkthrough. The cost
    sheet's standing facts: Neptune 32 m-NCU is the floor (16 rejected again on a **fresh**
    graph 2026-09-18, so it is corpus size, not reload bloat); the lever to try for 16 is

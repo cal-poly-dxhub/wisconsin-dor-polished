@@ -53,6 +53,8 @@ export class WisconsinBotStack extends cdk.Stack {
       rawBucketName: graphRAGStack.rawBucketName,
       workBucketName: graphRAGStack.workBucketName,
       sso,
+      // The web app's origin(s) for HTTP API CORS; pinned in infra/cdk.json.
+      allowedOrigins: this.node.tryGetContext('allowedOrigins'),
     });
 
     const graphRAGMessagesStack = new GraphRAGMessagesStack(
@@ -66,6 +68,7 @@ export class WisconsinBotStack extends cdk.Stack {
         sessionsTable: sessionsStack.sessionsTable,
         chatHistoryTable: sessionsStack.chatHistoryTable,
         websocketCallbackUrl: sessionsStack.websocketCallbackUrl,
+        websocketApiId: sessionsStack.websocketApiId,
         neptuneGraphId,
         rawBucketName: graphRAGStack.rawBucketName,
         faqKnowledgeBaseId: graphRAGStack.faqKnowledgeBaseId,
