@@ -24,6 +24,9 @@ class QueryStringParameters(BaseModel):
     """Query string parameters for websocket events"""
 
     sessionId: str = Field(description="Session ID for the websocket connection")
+    # Cognito ID token. Browsers cannot set headers on a WebSocket handshake,
+    # so it rides in the query string (never logged).
+    token: str | None = Field(default=None, description="Cognito ID token (JWT)")
     model_config = ConfigDict(extra="ignore")
 
 
@@ -73,7 +76,8 @@ def validate_connect_event(event: dict[str, Any]) -> ConnectEvent:
     try:
         return ConnectEvent.model_validate(event)
     except pydantic.ValidationError as e:
-        logger.error(f"Connect event validation failed: {str(e)}")
+        # include_input=False: the input holds the query string and its token.
+        logger.error(f"Connect event validation failed: {e.errors(include_input=False)}")
         raise ValidationError() from e
 
 

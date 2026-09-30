@@ -94,11 +94,12 @@ step-function-types = ["pydantic>=2.11.7"]
 dev = [
     "boto3>=1.40.7",
     "pydantic>=2.11.7",
+    "pyjwt[crypto]>=2.10.1",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.1.0",
     "toml>=0.10.2",
 ]
-websocket = ["pydantic>=2.11.7"]
+websocket = ["pydantic>=2.11.7", "pyjwt[crypto]>=2.10.1"]
 websocket-utils = ["pydantic>=2.11.7"]
 
 [tool.pytest.ini_options]

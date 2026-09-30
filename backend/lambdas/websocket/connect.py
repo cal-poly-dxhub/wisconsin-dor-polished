@@ -4,10 +4,11 @@ import time
 from datetime import datetime
 
 import boto3
+import jwt
 from botocore.exceptions import ClientError
 from response_utils import create_error_response, create_websocket_response
 from validators import validate_connect_event
-from websocket_errors import SessionNotFound, WebSocketError, create_error_body
+from websocket_errors import SessionNotFound, Unauthorized, WebSocketError, create_error_body
 
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
@@ -15,9 +16,42 @@ logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), lo
 # Initialize DynamoDB client
 dynamodb = boto3.client("dynamodb")
 table_name = os.environ.get("SESSIONS_TABLE_NAME")
+user_pool_id = os.environ.get("USER_POOL_ID", "")
+user_pool_client_id = os.environ.get("USER_POOL_CLIENT_ID", "")
+_region = user_pool_id.split("_", 1)[0] if user_pool_id else os.environ.get("AWS_REGION", "")
+_issuer = f"https://cognito-idp.{_region}.amazonaws.com/{user_pool_id}"
+# Module-level so the signing keys are fetched once per container and cached.
+_jwks = jwt.PyJWKClient(f"{_issuer}/.well-known/jwks.json", cache_keys=True)
 
 
-def record_session_data(session_id: str, connection_id: str):
+def verify_id_token(token: str | None) -> str:
+    """Return the ``sub`` of a valid Cognito ID token for this app client.
+
+    Checks the RS256 signature against the pool's JWKS, expiry, issuer,
+    audience (the app client id) and ``token_use == "id"`` (the same token
+    the HTTP API's JWT authorizer accepts).
+    """
+    if not token:
+        raise Unauthorized("missing token")
+    try:
+        key = _jwks.get_signing_key_from_jwt(token).key
+        claims = jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            audience=user_pool_client_id,
+            issuer=_issuer,
+            options={"require": ["exp", "iss", "aud", "sub"]},
+        )
+    except jwt.PyJWTError as e:
+        raise Unauthorized(f"invalid token: {type(e).__name__}") from e
+    if claims.get("token_use") != "id":
+        raise Unauthorized("not an ID token")
+    return claims["sub"]
+
+
+def record_session_data(session_id: str, connection_id: str, user_id: str):
+    """Bind the connection to the session, only if the caller owns it."""
     try:
         dynamodb.update_item(
             TableName=table_name,
@@ -25,11 +59,14 @@ def record_session_data(session_id: str, connection_id: str):
             UpdateExpression="SET connectionId = :cid, #ts = :ts, #ttl = :ttl",
             ExpressionAttributeNames={"#ts": "timestamp", "#ttl": "ttl"},
             ExpressionAttributeValues={
+                ":uid": {"S": user_id},
                 ":cid": {"S": connection_id},
                 ":ts": {"S": datetime.now().isoformat()},
                 ":ttl": {"N": str(int(time.time()) + 7200)},
             },
-            ConditionExpression="attribute_exists(sessionId)",
+            # Someone else's session (or a legacy one with no owner) fails the
+            # same way as a missing one, so a leaked session id reveals nothing.
+            ConditionExpression="attribute_exists(sessionId) AND userId = :uid",
         )
         logger.info(
             f"Successfully updated session {session_id} with connection ID: {connection_id}"
@@ -50,17 +87,15 @@ def handler(event, context):
     """
 
     try:
-        logger.info(f"Received connect event: {event}")
+        # The query string carries the user's ID token: never log the raw event.
         validated_event = validate_connect_event(event)
-        logger.info(
-            f"Query string params of validated event: {validated_event.queryStringParameters}"
-        )
 
         connection_id = validated_event.requestContext.connectionId
         session_id = validated_event.queryStringParameters.sessionId
+        logger.info(f"Connect request for session {session_id} (connection {connection_id})")
 
-        logger.info("Recording session data for connection")
-        record_session_data(session_id, connection_id)
+        user_id = verify_id_token(validated_event.queryStringParameters.token)
+        record_session_data(session_id, connection_id, user_id)
 
         logger.info(
             f"Connection established for session {session_id} with connection ID: {connection_id}"

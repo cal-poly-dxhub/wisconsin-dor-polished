@@ -945,8 +945,8 @@ All routes live in one Powertools Lambda (`backend/lambdas/chat_api/main.py`).
 
 The frontend `/admin/*` layout also requires the `Admins` group from the ID token
 (`hasAdminGroup` in `auth-context`, `<ProtectedRoute requireAdmin>`), showing an "Admin
-access required" panel otherwise. **The group is console-managed, not in CDK** — adopt it
-via `cdk import` in the security pass. The chunks pages read `extracted/` from S3, which
+access required" panel otherwise. The group is ensured by CDK (`infra/stacks/admins-group.ts`);
+its members are added by hand. The chunks pages read `extracted/` from S3, which
 is a pre-embedding artifact and never Neptune.
 
 ### Key invariants
