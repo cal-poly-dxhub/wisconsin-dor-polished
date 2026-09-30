@@ -125,6 +125,14 @@ def group_chunks_by_doc(chunks: list[dict]) -> dict[str, list[dict]]:
     return by_doc
 
 
+_LINKED_DOC_RE = re.compile(r"\(doc:([^)#&\s]+)|[#&]ref=([^)#&\s]+)")
+
+
+def linked_doc_ids(answer: str) -> set[str]:
+    """Every doc id the answer links inline, primary targets and dual-link refs."""
+    return {a or b for a, b in _LINKED_DOC_RE.findall(answer or "")}
+
+
 def finalize_answer_links(
     answer: str,
     query_id: str,
@@ -202,8 +210,14 @@ def build_answer_context(
     chat_history: list[dict] | None = None,
     neptune_client: NeptuneClient | None = None,
     finding: "Finding | None" = None,
+    uncurated: bool = False,
 ) -> str:
     """Build the context message for Phase B answer generation.
+
+    ``uncurated`` marks documents the research agent never selected (it
+    answered in prose, so they are just what was retrieved for the question):
+    the writer is told to cite only the ones it relies on, since the handler
+    turns exactly the linked ones into source cards.
 
     ``finding`` is the adequacy judge's verdict on ``answer_plan`` (see
     ``adequacy_judge``). When present it is rendered as a delimited
@@ -234,6 +248,12 @@ def build_answer_context(
         parts.append(render_finding_block(finding))
 
     parts.append("## Retrieved Documents and Chunks\n")
+    if uncurated:
+        parts.append(
+            "These are the sources retrieved for this question. Use them for the "
+            "substance of the answer and link the ones you draw on; you do not need to "
+            "cite every one.\n"
+        )
 
     # Group chunks by document
     chunks_by_doc: dict[str, list[dict]] = {}
