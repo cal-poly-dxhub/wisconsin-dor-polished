@@ -10,6 +10,7 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useSendMessage, useCreateSession } from './api/chat';
 import { WebSocket } from 'partysocket';
 import { getIdToken } from '@/lib/auth';
+import { sendErrorMessage } from '@/lib/send-error-message';
 
 /** How long a dropped socket may take to reconnect before the session is given up. */
 const RECONNECT_GRACE_MS = 30_000;
@@ -116,8 +117,7 @@ export const useValidatedWebSocket = (
       handleError(
         new ChatError(error, {
           recoverable: true,
-          userMessage:
-            'An error occurred while sending a message. Please try again.',
+          userMessage: sendErrorMessage(error),
         })
       );
     },

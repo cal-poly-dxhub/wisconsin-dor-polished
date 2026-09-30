@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -22,6 +23,7 @@ from chat_api_errors import (
     DynamoDBError,
     EventBridgeError,
     ForbiddenError,
+    RateLimitedError,
     SessionCreationError,
     SessionNotFoundError,
     ValidationError,
@@ -33,6 +35,13 @@ router = Router()
 dynamodb = boto3.client("dynamodb")
 session_table_name = os.environ["SESSIONS_TABLE_NAME"]
 message_table_name = os.environ["MESSAGES_TABLE_NAME"]
+# Per-user send limits (see check_message_rate_limit). The table is optional so
+# a stack without it (or a test) simply runs unlimited.
+rate_limit_table_name = os.environ.get("RATE_LIMIT_TABLE_NAME", "")
+RATE_LIMITS = (
+    ("minute", 60, int(os.environ.get("MESSAGES_PER_MINUTE", "8"))),
+    ("hour", 3600, int(os.environ.get("MESSAGES_PER_HOUR", "60"))),
+)
 eventbridge = boto3.client("events")
 
 cors_config = CORSConfig(
@@ -183,6 +192,44 @@ def require_session_owner(session_id: str) -> None:
         if item:
             logger.warning(f"Session {session_id} requested by a user who does not own it")
         raise SessionNotFoundError(session_id)
+
+
+def check_message_rate_limit(user_id: str, now: float | None = None) -> None:
+    """Count this message against the caller's per-minute and per-hour limits.
+
+    The API Gateway throttle is a ceiling for all users together; this is the
+    per-user bound on Bedrock spend. Fixed windows, one atomic conditional
+    counter per window in the rate-limit table, expired by DynamoDB TTL.
+    Real peaks (2026-09) were 4 / minute and 19 / hour for the busiest user.
+    Fails open: a DynamoDB error never blocks a message.
+    """
+    if not rate_limit_table_name:
+        return
+    now = time.time() if now is None else now
+    for window, seconds, limit in RATE_LIMITS:
+        bucket = int(now // seconds)
+        try:
+            dynamodb.update_item(
+                TableName=rate_limit_table_name,
+                Key={"key": {"S": f"{user_id}#{window}#{bucket}"}},
+                UpdateExpression="ADD #n :one SET expiresAt = :exp",
+                ConditionExpression="attribute_not_exists(#n) OR #n < :limit",
+                ExpressionAttributeNames={"#n": "count"},
+                ExpressionAttributeValues={
+                    ":one": {"N": "1"},
+                    ":limit": {"N": str(limit)},
+                    ":exp": {"N": str((bucket + 1) * seconds + 60)},
+                },
+            )
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                logger.warning(f"Rate limit hit for user {user_id} ({window}, limit {limit})")
+                raise RateLimitedError(window, int((bucket + 1) * seconds - now) + 1) from e
+            logger.error(f"Rate limit check failed open: {e}")
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Rate limit check failed open: {e}")
+            return
 
 
 def validate_message_request(body: dict[str, Any]) -> MessageRequest:
@@ -1323,6 +1370,7 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
 
     try:
         require_session_owner(session_id)
+        check_message_rate_limit(get_user_id_from_jwt())
 
         body = app.current_event.json_body
         message_request = validate_message_request(body)

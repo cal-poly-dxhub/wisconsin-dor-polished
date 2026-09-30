@@ -870,3 +870,53 @@ def test_feedback_on_a_query_outside_the_session_is_rejected(mock_dynamodb):
     kwargs = mock_dynamodb.update_item.call_args.kwargs
     assert kwargs["ConditionExpression"] == "sessionId = :sid"
     assert kwargs["ExpressionAttributeValues"][":sid"] == {"S": "s-1"}
+
+
+# ── Per-user message rate limit ──────────────────────────────────────────────
+
+
+@patch_dynamodb()
+def test_rate_limit_counts_minute_and_hour_windows(mock_dynamodb):
+    with patch.object(chat_api_main, "rate_limit_table_name", "rl-table"):
+        chat_api_main.check_message_rate_limit("user-1", now=3600 * 10 + 30)
+
+    keys = [c.kwargs["Key"]["key"]["S"] for c in mock_dynamodb.update_item.call_args_list]
+    assert keys == ["user-1#minute#600", "user-1#hour#10"]
+    first = mock_dynamodb.update_item.call_args_list[0].kwargs
+    assert first["ConditionExpression"] == "attribute_not_exists(#n) OR #n < :limit"
+    assert first["ExpressionAttributeValues"][":limit"] == {"N": "8"}
+
+
+@patch_dynamodb()
+def test_send_message_over_the_limit_returns_429_and_emits_nothing(mock_dynamodb):
+    mock_dynamodb.get_item.return_value = OWNED_SESSION
+    mock_dynamodb.update_item.side_effect = ClientError(
+        {"Error": {"Code": "ConditionalCheckFailedException", "Message": "x"}}, "UpdateItem"
+    )
+    _set_current_event(json_body={"message": "hi"})
+    with (
+        patch.object(chat_api_main, "rate_limit_table_name", "rl-table"),
+        patch_eventbridge() as mock_eb,
+    ):
+        response = send_message_handler("test-session-id")
+
+    assert response["statusCode"] == 429
+    assert "retryAfterSeconds" in json.loads(response["body"])["error"]
+    mock_eb.put_events.assert_not_called()
+
+
+@patch_dynamodb()
+def test_rate_limit_fails_open_on_dynamodb_errors(mock_dynamodb):
+    mock_dynamodb.update_item.side_effect = ClientError(
+        {"Error": {"Code": "ProvisionedThroughputExceededException", "Message": "x"}},
+        "UpdateItem",
+    )
+    with patch.object(chat_api_main, "rate_limit_table_name", "rl-table"):
+        chat_api_main.check_message_rate_limit("user-1")  # must not raise
+
+
+@patch_dynamodb()
+def test_no_table_means_no_limit(mock_dynamodb):
+    with patch.object(chat_api_main, "rate_limit_table_name", ""):
+        chat_api_main.check_message_rate_limit("user-1")
+    mock_dynamodb.update_item.assert_not_called()

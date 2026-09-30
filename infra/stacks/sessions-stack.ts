@@ -216,6 +216,21 @@ export class SessionsStack extends cdk.NestedStack {
     });
 
     this.apiHandler = apiHandler;
+
+    // Per-user message limits (chat_api check_message_rate_limit): one
+    // counter item per user per minute / hour window, expired by TTL. The API
+    // Gateway throttle is shared by all users; this bounds each account's
+    // Bedrock spend. Ephemeral data, so nothing to retain.
+    const rateLimitTable = new dynamodb.Table(this, 'MessageRateLimitTable', {
+      partitionKey: { name: 'key', type: dynamodb.AttributeType.STRING },
+      timeToLiveAttribute: 'expiresAt',
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+    rateLimitTable.grantReadWriteData(apiHandler);
+    apiHandler.addEnvironment('RATE_LIMIT_TABLE_NAME', rateLimitTable.tableName);
+    apiHandler.addEnvironment('MESSAGES_PER_MINUTE', '8');
+    apiHandler.addEnvironment('MESSAGES_PER_HOUR', '60');
     this.sessionsTable.grantReadWriteData(apiHandler);
     this.chatHistoryTable.grantReadWriteData(apiHandler);
 
@@ -486,9 +501,11 @@ export class SessionsStack extends cdk.NestedStack {
     // The one route that spends Bedrock money: sending a chat message. A
     // tighter ceiling so a runaway client cannot run up the model bill.
     (devStage.node.defaultChild as apigatewayv2.CfnStage).routeSettings = {
+      // Sized for a room of ~30 people pressing send together (a training
+      // or demo); the per-user limit below is what bounds one account.
       'POST /session/{sessionId}/message': {
-        throttlingRateLimit: 5,
-        throttlingBurstLimit: 10,
+        throttlingRateLimit: 10,
+        throttlingBurstLimit: 30,
       },
     };
 

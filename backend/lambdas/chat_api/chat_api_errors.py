@@ -153,6 +153,32 @@ class UnauthorizedError(ChatAPIError):
         return response
 
 
+class RateLimitedError(ChatAPIError):
+    """Raised when one user sends messages faster than the per-user limit."""
+
+    def __init__(self, window: str, retry_after_seconds: int):
+        super().__init__(
+            f"Per-user message limit hit ({window})",
+            status_code=429,
+            details={"window": window, "retry_after_seconds": retry_after_seconds},
+        )
+        self.window = window
+        self.retry_after_seconds = retry_after_seconds
+
+    def to_response(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Convert error to response body."""
+        response = {
+            "error": {
+                "message": "You're sending messages faster than the assistant allows. "
+                "Please wait a moment and try again.",
+                "retryAfterSeconds": self.retry_after_seconds,
+            },
+        }
+        if extra:
+            response["error"].update(extra)
+        return response
+
+
 class ForbiddenError(ChatAPIError):
     """Raised when an authenticated user lacks the required role/group."""
 
