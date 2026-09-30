@@ -124,8 +124,6 @@ def test_result_shape_matches_load_contract() -> None:
         "summary",
         "statute_refs",
         "admin_rule_refs",
-        "implements_refs",
-        "topics",
         "source_url",
         "chunks",
     }

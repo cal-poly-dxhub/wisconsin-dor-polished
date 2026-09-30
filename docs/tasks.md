@@ -31,10 +31,8 @@ through a three-PR cleanup (Task 76). What remains:
 5. **Phase 3 hierarchy evaluation.** `PART_OF` is written on every load and queried at
    retrieval time, but nothing measures whether statute hierarchy traversal actually
    improves an answer. Worth an evaluation before anyone invests further in graph shape.
-6. **Dead extraction fields.** `extract.py` still writes `topics` and `implements_refs`
-   into every extracted JSON and `load.py` still carries them in `DOC_METADATA_KEYS`, but
-   no load phase reads them into the graph and there are no `Topic` nodes or `COVERS_TOPIC`
-   / `IMPLEMENTS` edges. Decide: drop the fields, or wire them up.
+6. ~~**Dead extraction fields.**~~ Done 2026-09-30: `topics` and `implements_refs` dropped
+   from the classifier prompt, `extract.py` and `load.py` (nothing ever loaded them).
 7. **Prompt compression** (Tasks 43, 44) — still not started, still optional.
 
 **Done and no longer on the list:**
@@ -73,7 +71,6 @@ being pursued (document expansion already does it at ingest with no DOR maintena
 | 79 | User sign in / sign out | Sign in/out already existed (login, signup, forgot-password pages; sign out in the sessions sidebar). Polished 2026-09-28: one shared `ProfileMenu` for both sidebar states (avatar + name + email header, Admin tag, Light/Dark/System switch, sign out below a divider, no auto-focus ring on open); sign-out now hard-reloads to `/login` and clears feedback drafts + sessionStorage so the next user on a shared tab sees nothing of the last one; dead `UserMenu` removed. DOR SSO is the follow-up |
 | 80 | DOR single sign-on | Scaffolding built 2026-09-28, off by default (`cdk diff` with no `sso` context: no Cognito change). `infra/stacks/sso.ts` (optional `sso` context: Cognito domain, code flow, SAML or OIDC provider, outputs for DOR) + `frontend/src/lib/sso.ts` (PKCE redirect, tokens stored for amazon-cognito-identity-js so refresh and API auth are unchanged) + `/auth/callback` + login button + SSO-aware sign-out. Runbook: `infra/README.md` "DOR single sign-on". Needs from DOR: protocol, metadata URL or issuer/client, email claim. Register against the pool in DOR's account after Task 66 |
 | — | Phase 3 hierarchy evaluation | Not started (roadmap item 5) |
-| — | Drop or wire up `topics` / `implements_refs` | Not started (roadmap item 6) |
 
 ## Done
 
@@ -425,7 +422,9 @@ the rest of the gap is the known flakiness in `gq-prior-year-roll` and judge noi
 slice: **15/17 and 13/17**. `gq-bor-interpreter-waiver` stays red by design — it is a DOR
 content question, not a retrieval bug.
 
-**Known follow-ups left behind, all code changes:** the frontend trace-metadata mirror
+**Known follow-ups left behind** (all done 2026-09-30: trace allow-lists reconciled with a
+parity test, worksheet/flowchart summaries added, `autoEnrichedCount` removed, dead
+extraction fields dropped)**:** the frontend trace-metadata mirror
 (`frontend/src/components/messages/trace-metadata.ts`) has 24 keys to the backend's 73, and
 still lists `autoEnrichedCount` and `chainLength` from the two things PR A removed, under a
 header comment pointing at the long-gone `packages/graphrag/.../main.py`;

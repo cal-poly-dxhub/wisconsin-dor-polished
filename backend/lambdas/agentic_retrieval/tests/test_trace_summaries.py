@@ -63,7 +63,6 @@ class TestBuildToolResultSummary:
                 {"doc_id": "doc-a", "text": "y", "score": 0.85},
                 {"doc_id": "doc-b", "text": "z", "score": 0.80},
             ],
-            "graph_context": {"doc-a": [{"id": "doc-c"}]},
         }
         s = build_tool_result_summary("vector_search", result, self._mock_neptune())
         assert s["status"] == "ok"
@@ -71,7 +70,7 @@ class TestBuildToolResultSummary:
         assert set(s["doc_ids"]) == {"doc-a", "doc-b"}
         assert s["metadata"]["chunkCount"] == 3
         assert s["metadata"]["docCount"] == 2
-        assert s["metadata"]["autoEnrichedCount"] == 1
+        assert "autoEnrichedCount" not in s["metadata"]  # auto_enrichment was retired
         assert s["metadata"]["topScore"] == pytest.approx(0.91)
 
     def test_get_neighbors(self):
@@ -258,3 +257,38 @@ class TestSummarizBedrockResponse:
         assert s["stop_reason"] == "tool_use"
         assert s["input_tokens"] == 10
         assert s["model_latency_ms"] == 150
+
+
+# ── Tools added after the original summaries (worksheets, flowcharts, sections) ──
+
+
+def test_every_tool_has_its_own_log_summary():
+    """No tool in the registry falls through to the generic result_keys summary."""
+    from agent_tools.definitions import TOOL_DEFINITIONS
+    from tracing.summaries import summarize_tool_result
+
+    for tool in TOOL_DEFINITIONS:
+        name = tool["toolSpec"]["name"]
+        assert "result_keys" not in summarize_tool_result(name, {}), name
+
+
+def test_worksheet_and_flowchart_metadata_survive_the_allow_list():
+    from tracing.emitter import ALLOWED_METADATA_KEYS
+
+    neptune = MagicMock()
+    for tool, result in (
+        ("list_worksheets", {"worksheets": [{"worksheet_id": "tidbase"}]}),
+        ("get_worksheet", {"worksheet_id": "tidbase", "sheets": [{"sheet": "Base"}]}),
+        ("list_flowcharts", {"flowcharts": [{"flowchart_id": "a"}, {"flowchart_id": "b"}]}),
+        ("get_flowchart", {"flowchart_id": "a", "title": "A", "source": {}}),
+    ):
+        meta = build_tool_result_summary(tool, result, neptune)["metadata"]
+        assert meta, tool
+        dropped = set(meta) - ALLOWED_METADATA_KEYS
+        assert not dropped, (tool, dropped)
+
+
+def test_call_summaries_name_the_worksheet_and_flowchart():
+    ws = build_tool_call_summary("get_worksheet", {"worksheet_id": "tidbase", "sheet": "Base"})
+    assert ws == "Base in tidbase"
+    assert build_tool_call_summary("get_flowchart", {"flowchart_id": "ag-use"}) == "ag-use"

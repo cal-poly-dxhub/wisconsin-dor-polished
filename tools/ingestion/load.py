@@ -119,8 +119,6 @@ DOC_METADATA_KEYS: tuple[str, ...] = (
     "effective_date",
     "statute_refs",
     "admin_rule_refs",
-    "implements_refs",
-    "topics",
     "s3_key",
 )
 

@@ -1,6 +1,12 @@
 /** @bun */
 import { describe, test, expect } from 'bun:test';
-import { formatTraceMetadata, sanitizeTraceMetadata } from '../trace-metadata';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  ALLOWED_METADATA_KEYS,
+  formatTraceMetadata,
+  sanitizeTraceMetadata,
+} from '../trace-metadata';
 
 describe('formatTraceMetadata', () => {
   test('renders vector_search subtitle with counts + score + latency', () => {
@@ -40,9 +46,12 @@ describe('formatTraceMetadata', () => {
     expect(formatTraceMetadata({})).toBe('');
   });
 
-  test('renders refined flag', () => {
-    expect(formatTraceMetadata({ refined: true })).toBe('refined');
-    expect(formatTraceMetadata({ refined: false })).toBe('');
+  test('renders section, case, worksheet and flowchart counts', () => {
+    expect(formatTraceMetadata({ sectionCount: 12 })).toBe('12 sections');
+    expect(formatTraceMetadata({ caseCount: 1 })).toBe('1 case');
+    expect(formatTraceMetadata({ worksheetCount: 4 })).toBe('4 worksheets');
+    expect(formatTraceMetadata({ sheetCount: 3 })).toBe('3 sheets');
+    expect(formatTraceMetadata({ flowchartCount: 6 })).toBe('6 flowcharts');
   });
 
   test('drops disallowed keys so raw text cannot reach the UI', () => {
@@ -75,5 +84,21 @@ describe('sanitizeTraceMetadata', () => {
     expect(sanitizeTraceMetadata(undefined)).toEqual({});
     expect(sanitizeTraceMetadata(null)).toEqual({});
     expect(sanitizeTraceMetadata('string')).toEqual({});
+  });
+});
+
+describe('ALLOWED_METADATA_KEYS', () => {
+  test('is a subset of the backend allow-list (tracing/emitter.py)', () => {
+    const emitter = readFileSync(
+      join(import.meta.dir, '../../../../../backend/lambdas/agentic_retrieval/tracing/emitter.py'),
+      'utf8',
+    );
+    const block = emitter.slice(emitter.indexOf('ALLOWED_METADATA_KEYS = frozenset('));
+    const backend = new Set(
+      [...block.slice(0, block.indexOf('\n)')).matchAll(/"(\w+)"/g)].map(m => m[1]),
+    );
+    expect(backend.size).toBeGreaterThan(20);
+    const stale = [...ALLOWED_METADATA_KEYS].filter(k => !backend.has(k));
+    expect(stale).toEqual([]);
   });
 });

@@ -50,14 +50,11 @@ def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
 
     if tool_name == "vector_search":
         chunks = result.get("chunks", [])
-        graph_context = result.get("graph_context", {})
         return {
             "tool_name": tool_name,
             "status": "ok",
             "chunk_count": len(chunks),
             "top_doc_ids": [chunk.get("doc_id") for chunk in chunks[:5]],
-            "graph_context_doc_count": len(graph_context),
-            "graph_context_neighbor_count": sum(len(v) for v in graph_context.values()),
         }
 
     if tool_name == "search_document":
@@ -108,6 +105,55 @@ def summarize_tool_result(tool_name: str, result: dict) -> dict[str, Any]:
             "citation": result.get("citation"),
             "raw_key": result.get("raw_key", ""),
             "opinion_chars": len(result.get("text", "")),
+        }
+
+    if tool_name == "list_sections":
+        sections = result.get("sections", [])
+        return {
+            "tool_name": tool_name,
+            "status": "ok" if sections else "miss",
+            "doc_id": result.get("doc_id"),
+            "section_count": len(sections),
+        }
+
+    if tool_name == "get_section":
+        chunks = result.get("chunks", [])
+        return {
+            "tool_name": tool_name,
+            "status": "ok" if chunks else "miss",
+            "doc_id": result.get("doc_id"),
+            "heading": result.get("heading"),
+            "chunk_count": len(chunks),
+        }
+
+    if tool_name == "list_worksheets":
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "worksheet_count": len(result.get("worksheets", [])),
+        }
+
+    if tool_name == "get_worksheet":
+        sheets = result.get("sheets", [])
+        return {
+            "tool_name": tool_name,
+            "status": "ok" if sheets else "miss",
+            "worksheet_id": result.get("worksheet_id"),
+            "sheet_count": len(sheets),
+        }
+
+    if tool_name == "list_flowcharts":
+        return {
+            "tool_name": tool_name,
+            "status": "ok",
+            "flowchart_count": len(result.get("flowcharts", [])),
+        }
+
+    if tool_name == "get_flowchart":
+        return {
+            "tool_name": tool_name,
+            "status": "ok" if result.get("flowchart_id") else "miss",
+            "flowchart_id": result.get("flowchart_id"),
         }
 
     if tool_name == "prepare_answer":
@@ -182,6 +228,12 @@ def build_tool_call_summary(tool_name: str, tool_input: dict, neptune_client=Non
     if tool_name == "fetch_case_opinion":
         citation = tool_input.get("citation", "")
         return citation
+    if tool_name == "get_worksheet":
+        worksheet_id = tool_input.get("worksheet_id", "")
+        sheet = tool_input.get("sheet", "")
+        return f"{sheet} in {worksheet_id}" if sheet else worksheet_id
+    if tool_name == "get_flowchart":
+        return tool_input.get("flowchart_id", "")
     if tool_name == "prepare_answer":
         cited = tool_input.get("cited_doc_ids", []) or []
         n = len(cited)
@@ -241,8 +293,6 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             (float(c.get("score", 0.0)) for c in chunks),
             default=0.0,
         )
-        graph_context = result.get("graph_context", {}) or {}
-        auto_enriched_count = sum(len(v) for v in graph_context.values())
         pre_dedup_count = result.get("pre_dedup_count", n_chunks)
         target_wpam_year = result.get("target_wpam_year")
         authority_breakdown: dict[str, int] = {}
@@ -317,7 +367,6 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
             "broadChunkCount": broad_chunk_count,
             "totalChunkCount": n_chunks + broad_chunk_count,
             "docCount": n_docs,
-            "autoEnrichedCount": auto_enriched_count,
             "topScore": round(top_score, 4),
             "preDedupCount": pre_dedup_count,
             "authorityBreakdown": authority_breakdown,
@@ -603,6 +652,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
     elif tool_name == "list_flowcharts":
         n = len(result.get("flowcharts", []))
         summary_text = f"Listed {n} decision {'flowchart' if n == 1 else 'flowcharts'}"
+        metadata = {"flowchartCount": n}
 
     elif tool_name == "get_flowchart":
         # Mirrors the router-seeded flowchart trace (phase_a) so a chart the

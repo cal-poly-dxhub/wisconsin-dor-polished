@@ -33,7 +33,6 @@ ALLOWED_METADATA_KEYS = frozenset(
         "relationshipCounts",
         "discoveryCounts",
         "caseLawCount",
-        "autoEnrichedCount",
         "scoreBuckets",
         "targetWpamYear",
         "discoveryTitles",
@@ -89,6 +88,12 @@ ALLOWED_METADATA_KEYS = frozenset(
         "routerMatchedOn",
         "sourceUrl",
         "wpamPage",
+        # list_flowcharts / list_worksheets / get_worksheet (TID worksheets).
+        "flowchartCount",
+        "worksheetCount",
+        "worksheetId",
+        "sheetCount",
+        "sheetNames",
     }
 )
 

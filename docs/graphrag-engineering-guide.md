@@ -333,9 +333,9 @@ connectivity (no VPC — IAM is the only protection).
 
 > **There are no `Topic` nodes.** No load phase has created one for a long time; the
 > orphan-Topic garbage collection in Phase 9 was removed on 2026-09-19 because it only
-> ever deleted zero rows. `extract.py` still writes `topics` and `implements_refs` into
-> the extracted JSON and `load.py` still carries them in `DOC_METADATA_KEYS`, but nothing
-> reads them into the graph — dead data, tracked in [tasks](tasks.md).
+> ever deleted zero rows. The `topics` and `implements_refs` classification fields that
+> once fed them were dropped from `extract.py` and `load.py` on 2026-09-30; older cached
+> extracted/classified JSON may still carry them, and the loader ignores them.
 
 ### Authority hierarchy (9 levels)
 
@@ -745,26 +745,20 @@ human-readable strings and camelCase metadata; the UI picks a verb and renders.
 is still `pending`, replaces it in place (one slot transitions "Searching" → "Found N").
 Dot states: error (red), miss (hollow + muted), done (solid), pending (hollow).
 
-### Metadata allow-list — a real and measurable drift
+### Metadata allow-list
 
-`ALLOWED_METADATA_KEYS` in `tracing/emitter.py` is a **73-key** frozenset. Its frontend
-mirror, the `ALLOWED_METADATA_KEYS` Set in
-`frontend/src/components/messages/trace-metadata.ts`, has **24 keys**. Both exist as
-defense-in-depth so raw query/chunk text cannot leak to the UI.
+`ALLOWED_METADATA_KEYS` in `tracing/emitter.py` is the backend allow-list: any trace
+metadata key not on it is dropped (with a warning log) before it is sent. The frontend
+`ALLOWED_METADATA_KEYS` in `frontend/src/components/messages/trace-metadata.ts` is
+deliberately a **subset**: only the keys `formatTraceMetadata` renders in the compact
+trace summary line. Both exist as defense-in-depth so raw query/chunk text cannot leak
+to the UI.
 
-Two things to know before you touch either:
-
-- The frontend Set only governs the compact trace *summary* line. A key present in the
-  backend but missing from the mirror is dropped from that summary but still present in
-  the raw payload — so the 73-vs-24 gap is mostly harmless, not 49 broken features.
-- The mirror is *also* stale in the other direction: it still lists `autoEnrichedCount`
-  and `chainLength`, keys from the removed `auto_enrichment` stage and the retired
-  `get_authority_chain` tool, and its header comment points at the long-gone
-  `packages/graphrag/lambdas/agentic_retrieval/main.py`. Cleaning that up is a code
-  change, not a docs change; it is noted in [tasks](tasks.md).
-
-Worksheet keys are also missing from the backend allow-list, and `tracing/summaries.py`
-has no `find_case_law` / `list_flowcharts` branch — both noted as Task 74 follow-ups.
+A frontend test (`format-trace-metadata.test.ts`) reads `emitter.py` and fails if a
+frontend key is no longer on the backend list, so a retired key cannot linger in the
+mirror again. When a tool starts emitting a new metadata key, add it to `emitter.py`
+(a backend test checks that every tool's summary metadata survives the allow-list), and
+to the frontend Set only if the summary line should show it.
 
 ---
 
