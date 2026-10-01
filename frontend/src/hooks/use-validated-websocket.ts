@@ -49,6 +49,10 @@ export const useValidatedWebSocket = (
     'connecting' | 'open' | 'closing' | 'closed'
   >('connecting');
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
   const wsRef = useRef<WebSocket | null>(null);
   const websocketUrl = useMemo(() => {
     return sessionId ? `${options.urlBase}?sessionId=${sessionId}` : '';
@@ -64,11 +68,28 @@ export const useValidatedWebSocket = (
   const setChatState = useChatStore(s => s.setChatState);
   const storeSessionId = useChatStore(s => s.sessionId);
 
-  // Sync local sessionId with store: close WS on reset, adopt on external set.
+  // A dropped socket is reopened by partysocket against the same sessionId
+  // ($connect re-binds the session to the new connection), so the chat keeps
+  // its session. Only if it stays closed do we give the session up, and the
+  // next message then starts a new one, as before.
+  const giveUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearGiveUpTimer = useCallback(() => {
+    if (giveUpTimerRef.current) {
+      clearTimeout(giveUpTimerRef.current);
+      giveUpTimerRef.current = null;
+    }
+  }, []);
+  useEffect(() => clearGiveUpTimer, [clearGiveUpTimer]);
+
+  // The store's sessionId is the source of truth for which session the socket
+  // serves. A new chat (store reset to null) drops the session at once, so the
+  // next message creates a fresh one; selecting another session moves the
+  // socket to it. Either way the old socket is closed by the connection
+  // effect's cleanup (listeners detached first), so the reconnect grace below
+  // never mistakes an intentional switch for a dropped connection.
   useEffect(() => {
-    if (storeSessionId === null && sessionId !== null) {
-      wsRef.current?.close();
-    } else if (storeSessionId !== null && sessionId === null) {
+    if (storeSessionId !== sessionId) {
+      clearGiveUpTimer();
       setSessionId(storeSessionId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -168,18 +189,6 @@ export const useValidatedWebSocket = (
     [handleError]
   );
 
-  // A dropped socket is reopened by partysocket against the same sessionId
-  // ($connect re-binds the session to the new connection), so the chat keeps
-  // its session. Only if it stays closed do we give the session up, and the
-  // next message then starts a new one, as before.
-  const giveUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearGiveUpTimer = useCallback(() => {
-    if (giveUpTimerRef.current) {
-      clearTimeout(giveUpTimerRef.current);
-      giveUpTimerRef.current = null;
-    }
-  }, []);
-  useEffect(() => clearGiveUpTimer, [clearGiveUpTimer]);
 
   const handleOpen = useCallback(
     (_event: Event) => {
@@ -193,9 +202,11 @@ export const useValidatedWebSocket = (
     (_event: CloseEvent) => {
       setConnectionState('closed');
       if (!giveUpTimerRef.current) {
+        // Only ever give up the session that dropped, never one adopted since.
+        const droppedSession = sessionIdRef.current;
         giveUpTimerRef.current = setTimeout(() => {
           giveUpTimerRef.current = null;
-          setSessionId(null);
+          if (sessionIdRef.current === droppedSession) setSessionId(null);
         }, RECONNECT_GRACE_MS);
       }
     },
