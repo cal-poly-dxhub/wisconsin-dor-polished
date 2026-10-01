@@ -2,7 +2,7 @@
 // Keep first: sets NEXT_PUBLIC_API_BASE_URL before `lib/http` is evaluated.
 import './setup-env';
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { JSDOM } from 'jsdom';
 
@@ -45,7 +45,12 @@ mock.module('../../components/errors/use-chat-error', () => ({
   useChatError: () => ({ handleError: () => {} }),
 }));
 
-const { useValidatedWebSocket } = await import('../use-validated-websocket');
+// use-websocket-chat.test.tsx mock.module()s this hook, and Bun's module mocks
+// are process-wide; the query suffix loads the real file as its own module.
+const realHookPath: string = '../use-validated-websocket.ts?real';
+const { useValidatedWebSocket } = (await import(
+  realHookPath
+)) as typeof import('../use-validated-websocket');
 const { useChatStore } = await import('../../stores/chat-store');
 
 // Capture the 30 s reconnect-grace timer instead of waiting for it.
@@ -78,6 +83,8 @@ describe('useValidatedWebSocket session handling', () => {
     useChatStore.getState().reset();
   });
   afterEach(() => {
+    // Unmount every hook so none stays subscribed to the shared store.
+    cleanup();
     globalThis.setTimeout = realSetTimeout;
     useChatStore.getState().reset();
   });
