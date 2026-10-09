@@ -371,3 +371,13 @@ def test_load_imported_grades_accepts_both_shapes(tmp_path):
     )
     assert load_imported_grades(str(b))["gq-b"]["judge_pass"] is False
     assert load_imported_grades(None) == {}
+
+
+def test_must_cite_list_entry_is_any_of():
+    entry = {"queryId": "gq-fake", "query": "q", "must_cite": [["doc-a", "doc-b"], "statutes-70"]}
+    g = grade(entry, make_run(cited_doc_ids=["doc-b", "statutes-70"]), {}, run_judge=False)
+    assert g["cite_hits"] == {"doc-a | doc-b": True, "statutes-70": True}
+    assert g["cite_pass"] is True
+
+    g = grade(entry, make_run(cited_doc_ids=["statutes-70"]), {}, run_judge=False)
+    assert g["cite_hits"]["doc-a | doc-b"] is False and g["cite_pass"] is False
