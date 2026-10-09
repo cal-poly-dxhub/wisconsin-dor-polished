@@ -24,7 +24,9 @@ through a three-PR cleanup (Task 76). What remains:
    the socket API, Bedrock to Anthropic models + Titan Embed v2). Still open from §3: the
    `LOG_*_QUERY_TEXT` flags (kept on for triage until handoff), WAF, dependency audit.
 2. **Handoff** (Task 66): SSO with Amy/Brad, cost sheet, runbook walkthrough. The cost
-   sheet's standing facts: Neptune 32 m-NCU is the floor (16 rejected again on a **fresh**
+   sheet (handoff plan §4) was rebuilt from the real bill on 2026-10-08: ~$1,265/month
+   expected for 112 staff (~$965 with the FAQ index on a managed OpenSearch node); Neptune is
+   $0.96/h, not the $3.20/h first assumed. Standing facts: Neptune 32 m-NCU is the floor (16 rejected again on a **fresh**
    graph 2026-09-18, so it is corpus size, not reload bloat); the lever to try for 16 is
    dropping the 15 non-current WPAM editions, which costs nothing in answer quality because
    retrieval already filters to the current edition.

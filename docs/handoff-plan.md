@@ -51,7 +51,7 @@ Also managed by CDK bootstrap, not the app: the `CDKToolkit` stack (`cdk bootstr
 | `FaqUrlTable` | 633 items | `python tools/ingestion/ops/seed_faq_url_table.py --table <FaqUrlTableName> --faqs documents/faqs.json`. |
 | `ChatHistoryTable` / `SessionTable` | 1,039 queries / 688 sessions | **Recommend not migrating.** They are pilot-tester data keyed to Cognito `sub`s that will not exist under SSO; DOR should decide retention (§3). If DOR wants the pilot Q&A for analysis, export once with `aws dynamodb scan` to S3/CSV and hand it over out-of-band. |
 | Cognito users | 38 users, 2 in `Admins` | **Not migrated** — SSO replaces them (§2). Re-create the `Admins` group (or its SSO-claim equivalent). |
-| Bedrock model access | — | Manual console step in DOR's account: enable Anthropic Claude Sonnet 4.6, Claude Haiku 4.5, Amazon Nova 2 Lite, Titan Embed Text v2, and (extract.py doc classification) Claude Sonnet 4. Verify cross-region inference profile IDs with `aws bedrock list-inference-profiles` — the code uses `us.anthropic.claude-sonnet-4-6`, `us.anthropic.claude-haiku-4-5-20251001-v1:0`, `us.amazon.nova-2-lite-v1:0`, `amazon.titan-embed-text-v2:0`. Ask the AWS account manager to raise Bedrock TPM quotas before a 117-user rollout. |
+| Bedrock model access | — | Manual console step in DOR's account: enable Anthropic Claude Sonnet 4.6, Claude Haiku 4.5, Amazon Nova 2 Lite, Titan Embed Text v2, and (extract.py doc classification) Claude Sonnet 4. Verify cross-region inference profile IDs with `aws bedrock list-inference-profiles` — the code uses `us.anthropic.claude-sonnet-4-6`, `us.anthropic.claude-haiku-4-5-20251001-v1:0`, `us.amazon.nova-2-lite-v1:0`, `amazon.titan-embed-text-v2:0`. Ask the AWS account manager to raise Bedrock TPM quotas before a 112-user rollout. |
 | ECR image | 6 images | `cd tools/ingestion/docker && ./build_and_push.sh` against the new repo URI. |
 | Neptune provisioned memory | 32 (floor) | Set on the graph, not by CDK. 16 was rejected by the service ("storage memory constraints") — retested 2026-09-18 on a **fresh** graph and rejected again, so it is corpus size, not reload bloat. 32 is the resting tier in the new account too; 128 only during a full load. The one lever to try for 16: drop the 15 non-current WPAM editions. |
 | Route53 / ACM | none today | Only if DOR provides a domain; pass the three `-c` context values. |
@@ -100,7 +100,7 @@ Frontend
 ### Questions for Amy / Brad (blocks the infra work)
 
 1. IdP product and protocol they will issue (Entra ID OIDC? SAML metadata URL?). Who owns the app registration on their side, and what redirect URIs do they need from us?
-2. Which claim carries group membership, and the exact group names for (a) all SLF division users, (b) admins. Do they want the 117 users scoped by group, or is "anyone who can log in to the IdP" acceptable?
+2. Which claim carries group membership, and the exact group names for (a) all SLF division users, (b) admins. Do they want the 112 users scoped by group, or is "anyone who can log in to the IdP" acceptable?
 3. MFA: enforced at the IdP (then Cognito `mfa: OFF` is correct) or do they expect Cognito to enforce it?
 4. Session lifetime policy (the app client currently issues 30-day refresh tokens).
 5. Does the ISO require the app be reachable only from the State network / VPN, or is public CloudFront with SSO acceptable?
@@ -113,7 +113,7 @@ IdP details in hand: **1.5–2 engineer-days** (0.5 CDK, 0.5–1 frontend, 0.5 t
 
 ## 3. Security assessment scope
 
-A checklist for Darren's specialist engineer. Findings marked **[F#]** are the ones that need a decision before a 117-user rollout; they are ordered by risk.
+A checklist for Darren's specialist engineer. Findings marked **[F#]** are the ones that need a decision before a 112-user rollout; they are ordered by risk.
 
 ### Identity and access
 
@@ -166,59 +166,114 @@ ZAP/Burp against CloudFront + HTTP API with a low-priv token (F1–F3), `prowler
 
 ## 4. Cost model
 
-Cost Explorer was not readable from the DxHub profile used for this inspection (only S3 appeared, $9 for Sept 1–13), so the numbers below are list prices × measured usage. Ask DOR's account manager for the real August invoice as a cross-check.
+**Rewritten 2026-10-08 from measured data.** The previous version (2026-09-19) could not read
+Cost Explorer and priced Neptune at $3.20/h; the real rate is $0.96/h, so its totals
+($2,850–4,900/month) were roughly 2–3× too high. Every number below is either read from the
+bill or measured from production logs and chat history; the assumptions are labeled.
 
-**Measured usage, last 30 days (CloudWatch Logs Insights on the retrieval Lambda):** 209 queries, avg 3.9 agentic turns, avg 25 s Phase A + ~11 s Phase B. Sonnet 4.6 tokens across those 209 queries: Phase A — 22.2 M cache-read, 7.9 M cache-write, 0.2 M output, ~0 uncached input (prompt caching is working); Phase B — 2.4 M cache-write, 0.2 M cache-read, 0.18 M output. Per query ≈ 106k cache-read + 38k cache-write + 1k output (A) plus 12k cache-write + 1k output (B).
+**Sources**
 
-### Per-query variable cost (Bedrock, Sonnet 4.6 at $3 / $15 per MTok; cache write 1.25×, read 0.1×)
+| What | Where it comes from |
+|---|---|
+| Rates and monthly spend | AWS Cost Explorer, usage charges only (credits excluded), Jul 1 – Oct 8 2026 |
+| Per-question model cost | Retrieval Lambda logs (`agent_turn_model_response`, `answer_stream_usage`), last 60 days: 373 questions |
+| Usage habits | ChatHistory + Sessions tables, last 60 days: 441 questions, 28 users |
+| Managed OpenSearch prices | AWS Pricing API, us-east-1 on-demand |
 
-| Component | Tokens / query | $ / query |
+### What it costs today
+
+Actual usage charges: **Jul $1,243 · Aug $1,119 · Sep $1,209** (Sep includes a 128 m-NCU full
+load). All of it is currently offset by DxHub AWS credits; in DOR's account it is billed.
+
+| Line | Real rate | $ / month |
 |---|---|---|
-| Phase A cache read | 106k × $0.30/M | 0.032 |
-| Phase A cache write | 38k × $3.75/M | 0.141 |
-| Phase A + B output | 1.9k × $15/M | 0.028 |
-| Phase B cache write | 12k × $3.75/M | 0.046 |
-| Haiku 4.5 adequacy judge (question + plan + all retrieved chunks in, small JSON out) | | 0.01–0.02 |
-| Sonnet auto-refine rewrite, Titan query embeddings | | ~0.01 |
-| **Total** | | **≈ $0.26** (use $0.25–0.35; long follow-up threads push cache-write up) |
+| **Neptune Analytics, 32 m-NCU** | $0.96 / h | **~$701** |
+| **OpenSearch Serverless (FAQ KB)** | 1 indexing + 1 search OCU × $0.24 / h | **~$350** |
+| Claude Sonnet 4.6 + Haiku 4.5 (Bedrock) | per question, below | $45–120 at pilot volume (includes dev harness runs) |
+| S3, Lambda, API Gateway, EventBridge, DynamoDB, CloudFront, logs | | ~$15 today; budget $15–40 |
 
-The harness's LLM *grader* (`run_graph_regression.py`) and any staging graphs are dev-only and not in this run rate. The **adequacy judge** is a different thing and IS in production traffic — it is the Haiku line in the table above.
+Bedrock bills the `us.` cross-region inference profiles about 10% over list: Sonnet 4.6 at
+$3.30 / M input, $16.50 / M output, $4.125 / M cache write, $0.33 / M cache read.
 
-### Fixed monthly
+### Per-question cost (measured)
 
-| Driver | Basis | $ / month |
+373 production questions, 3.7 research turns each on average, prompt caching working:
+
+| Phase | Tokens per question | $ per question |
 |---|---|---|
-| **Neptune Analytics, 32 m-NCU** (the floor — 16 rejected again on a fresh graph 2026-09-18) | $3.20/hr × 730 h | **~$2,340** |
-| **OpenSearch Serverless for the FAQ KB** | standby replicas ENABLED → 4 OCU minimum × $0.24/OCU-hr × 730 h (2 OCU ≈ $350 if standby is disabled) | **~$700** |
-| Lambda, API Gateway, EventBridge, DynamoDB on-demand, CloudFront, X-Ray | pilot volume | ~$20–40 |
-| S3 (2.5 GB + requests, incl. Next.js assets) | Sept run-rate | ~$20 |
-| CloudWatch logs (15 MB stored, INFO traces on) | | <$10 at pilot; scale with volume unless retention is cut |
-| WAF (if added) | 1 ACL + managed rules | ~$10 |
+| Research loop (Phase A) | 97k cache read, 36.6k cache write, 0.9k output | $0.198 |
+| Answer (Phase B) | 12.0k cache write, 1.2k cache read, 0.9k output | $0.064 |
+| Haiku adequacy judge, query rewrite, Titan embeddings | | ~$0.01 |
+| **Total** | | **≈ $0.27** |
 
-### Refresh (per annual/major corpus refresh, not monthly)
+Cross-check: Aug + Sep cache-write on the bill (17.2 M tokens) matches the logs (17.8 M).
+The cache write in the research loop is the largest model cost.
 
-Neptune at 128 m-NCU for ~1 h ≈ $13; Nova 2 Lite alias generation ≈ $10; Fargate 2 vCPU/8 GB for a few hours ≈ $2; Titan re-embed of ~10k chunks ≈ $0.10; Sonnet doc classification cached unless `--reclassify` (then ~$20–40); Textract fallback pages a few dollars. **≈ $50–100 per full refresh**, negligible amortized.
+### Usage (measured, then assumed for 112 staff)
 
-### Monthly scenarios (117 users)
+Measured over the last 60 days: about **220 questions a month** from 20–28 active testers; an
+active user asks **3.2 questions a day** on the days they use it (median 2, 90th percentile 7)
+and used it about 2.5 days a month. Busiest day: 37 questions.
 
-| Scenario | Queries / month | Bedrock | Fixed | **Total** |
-|---|---|---|---|---|
-| Low — pilot rate (259 q / 25 d ≈ 310/mo), aoss standby off | 310 | $80 | $2,340 + $350 + $60 | **≈ $2,850** |
-| Expected — 5× pilot | 1,550 | $400 | $2,340 + $700 + $80 | **≈ $3,500** |
-| High — 20× pilot | 6,200 | $1,700 (at $0.27) | $2,340 + $700 + $120 | **≈ $4,900** |
+**Assumed:** 112 DOR staff, 21 workdays a month, and the measured 3.2 questions per active
+user-day. Adoption and frequency vary by scenario. Testers asked mostly complex questions, so
+FAQ-style use (and FAQ index traffic) will likely rise in production.
 
-Sanity check on "high": 6,200 queries/month over 117 people is ~2.5 queries per person per working day — plausible for a reference tool, so budget for it.
+### Monthly scenarios (112 staff)
 
-**Levers if DOR wants the number down:**
+| Scenario | Who uses it | Questions / month | Bedrock | Fixed + other | **Total** | Per staff |
+|---|---|---|---|---|---|---|
+| Light (≈ today's pilot rate) | 30% of staff, 2 days / month | ~215 | $58 | $1,066 | **$1,124** | $10 |
+| **Expected** | 50% of staff, 4 days / month | ~720 | $194 | $1,071 | **$1,265** | $11 |
+| Heavy | 75% of staff, 8 days / month | ~2,150 | $581 | $1,076 | **$1,657** | $15 |
+| Ceiling | every staff member, every workday | ~7,500 | $2,032 | $1,091 | **$3,123** | $28 |
 
-1. The FAQ KB's OpenSearch Serverless is ~$700 for 1,244 small FAQ files — the FAQs are already in the Neptune graph at authority level 6, so `faq_search` could be re-pointed at a Neptune vector query and the KB + collection deleted (1–2 days; saves $350–700/mo — the largest optional saving).
-2. **Shrink the corpus to fit 16 m-NCU**, which halves the dominant line. This is the one to test first and the one with a concrete plan: the graph is **8.0 GB on a fresh load, 42% of a 32 m-NCU graph**, and the 15 **non-current WPAM editions** are the obvious removable mass. Note the constraint is real, not a fluke — 16 was rejected on a *fresh* graph on 2026-09-18, so shrinking the data is the only route. Dropping old editions also costs nothing in answer quality: retrieval already filters to the current edition (`wpam_dedup.py`), so the old editions serve only explicit "what did the 2019 manual say" questions. Confirm with DOR before deleting.
-3. Trim Phase A cache-write by shortening tool results — the 38k cache-write per query is the largest LLM line.
+About 85% of the expected bill is fixed (Neptune and the FAQ index run 24/7), so adoption moves
+the total much less than proportionally. Annual: about **$15k expected, $20k heavy**. The
+per-user rate limit (8 questions a minute, 60 an hour) caps runaway use.
 
-One line that is already gone: the retired CDK-owned graph `g-ndvl4j73v4` was deleted on
-2026-09-19, so only one 32 m-NCU graph is billing today. Keep it that way — a blue/green
-promotion leaves two graphs running until you delete the old one (about a week later, per
-`infra/README.md`), which is ~$2.3k/month of overlap.
+### With the FAQ index on a managed OpenSearch node (the direction the team is leaning)
+
+Replace OpenSearch Serverless ($350) with one managed `m7g.medium.search` node + 10 GB gp3
+(**~$51 / month**): saves **~$300 / month (~$3.6k a year)**.
+
+| Scenario | Total / month |
+|---|---|
+| Light | **$825** |
+| **Expected** | **$965** (~$11.6k a year) |
+| Heavy | **$1,357** |
+| Ceiling | **$2,824** |
+
+Other managed sizes (us-east-1): `t3.small` $26, `t3.medium` $53 (burstable, not recommended
+for production), `r7g.medium` $65, `m6g.large` $93, `r6g.large` $122 per month. Trade-offs:
+one node has no redundancy (FAQ search is unavailable during maintenance or a failure; two
+nodes add ~$50/month), the domain needs version upgrades and patching that Serverless handles,
+and the Bedrock Knowledge Base must be rebuilt once against the new store (a KB's vector store
+cannot be changed in place), then the FAQs re-synced with `sync_faq_bucket.sh` and the
+Lambda's `FAQ_KNOWLEDGE_BASE_ID` repointed. About a day, after hours.
+
+For reference, over the last 60 days answers cited a Knowledge Base FAQ in 4 of 441 cases and
+a graph FAQ page in 115, and no real question cleared the KB's 0.70 confidence bar (40 sampled).
+That reflects a tester mix of complex questions; re-check after launch before considering
+retiring the KB entirely (saves the full $350, with a code change and a harness run).
+
+### Corpus refresh (per refresh, not monthly)
+
+September's full load ran 14.5 h at 128 m-NCU ($3.84 / h) = **$56**; plus Nova 2 Lite aliases
+(~$3 with the enrich policy), Fargate (~$2), Titan re-embed (<$1), and Sonnet reclassification
+only with `--reclassify` (~$20–40). **≈ $60–100 per full refresh**, about once a year.
+
+### Neptune is the floor
+
+32 m-NCU is the smallest size this graph fits: 16 was rejected ("storage memory constraints")
+on 2026-09-13 and again on a **fresh** graph on 2026-09-18, so it is corpus size, not reload
+bloat. The graph is about 8.0 GB on a fresh load (42% of 32 m-NCU). The one route to 16
+(~$350 / month saving) is a smaller corpus: the 15 non-current WPAM editions are the obvious
+removable mass and cost nothing in answer quality (retrieval already filters to the current
+edition), but it is untested and needs DOR's agreement. Keep it off cost sheets until tested.
+
+A blue/green graph promotion runs two graphs until the old one is deleted (about a week later,
+per `infra/README.md`): ~$23 / day of overlap at 32 m-NCU.
 
 ---
 
