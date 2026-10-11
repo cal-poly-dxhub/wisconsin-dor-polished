@@ -52,7 +52,7 @@ document's pre-embedding chunks), `/admin/canvas` (visualize one retrieval run),
 in `auth-context` plus `<ProtectedRoute requireAdmin>` in the admin layout; non-members get
 an "Admin access required" panel. Every `/admin/*` HTTP API route is independently gated
 server-side by `require_admin()` in `backend/lambdas/chat_api/main.py`. The group is
-console-managed today, not defined in CDK.
+ensured by CDK (`infra/stacks/admins-group.ts`); membership is added by hand.
 
 ## The WebSocket contract
 
@@ -61,7 +61,7 @@ the Zod union does not know **drops the whole frame** and surfaces an error to t
 a backend message shape and its Zod schema must change together. Both halves and the
 handler switch:
 
-1. `backend/layers/websocket_utils/models.py` (Pydantic) + the `send_json` router in `utils.py`
+1. `backend/layers/websocket_utils/models.py` (Pydantic) + the sender in `utils.py`
 2. `frontend/types/message-types.ts` (Zod discriminated union)
 3. the `messageHandler` switch in `src/hooks/use-websocket-chat.ts`
 
@@ -73,7 +73,7 @@ and the "WebSocket Contract" section of the repo-root `CLAUDE.md`.
 
 ```bash
 bun test src         # (or `bun run test`) co-located tests under src/**/test/
-bunx eslint .        # run from this directory — the repo-root eslint config does not load under ESLint 8
+bun run lint         # next lint (there is no repo-root eslint config)
 ```
 
 Tests live in `test/` directories next to the code they cover. See
