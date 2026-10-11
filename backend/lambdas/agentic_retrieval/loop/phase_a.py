@@ -42,7 +42,9 @@ from tracing.summaries import discovery_summary
 
 from config import AGENTIC_MODEL_ID, FAQ_SCORE_THRESHOLD, MAX_TURNS, bedrock, neptune
 
+from .grounding import ground_plan_statutes
 from .heartbeat import start_heartbeat
+from .phase_b import _list_sections_cached
 
 logger = logging.getLogger(__name__)
 
@@ -1039,6 +1041,18 @@ def run_agentic_loop(
             if tool_name == "prepare_answer":
                 cited = list(result.get("cited_doc_ids", []))
                 answer_plan = result.get("answer_plan", "")
+                # Enforce statute grounding: sections the plan cites but never
+                # retrieved are fetched now, so their conditions and exceptions
+                # reach the judge and the writer (see loop/grounding.py).
+                cited, all_chunks, grounding = ground_plan_statutes(
+                    answer_plan, cited, all_chunks, neptune, _list_sections_cached
+                )
+                for doc_id in cited:
+                    if doc_id not in discovery:
+                        discovery[doc_id] = "fetched"
+                        all_doc_ids.add(doc_id)
+                if grounding["fetched"] or grounding["skipped"]:
+                    _log("plan_statute_grounding", **trace_context, **grounding)
                 # Per-source breakdown of the CITED docs (not all discovered).
                 # Lets us query "what fraction of cited docs came from each
                 # discovery path" directly from logs — the forward-measurement

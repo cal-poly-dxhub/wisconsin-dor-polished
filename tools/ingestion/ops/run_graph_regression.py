@@ -701,7 +701,14 @@ def grade(
     answer = run["answer"] or ""
 
     must_cite = entry.get("must_cite", []) or []
-    cite_hits = {doc_id: (doc_id in cited) for doc_id in must_cite}
+    # An entry may be a list: any ONE of those docs satisfies it (for cases whose
+    # rubric accepts several equivalent sources). Keyed "a | b" in cite_hits.
+    cite_hits = {
+        (" | ".join(d) if isinstance(d, list) else d): (
+            any(x in cited for x in d) if isinstance(d, list) else d in cited
+        )
+        for d in must_cite
+    }
     cite_pass = all(cite_hits.values())
 
     # --- Legacy prose regexes: retained as advisory/provenance only (non-gating).
