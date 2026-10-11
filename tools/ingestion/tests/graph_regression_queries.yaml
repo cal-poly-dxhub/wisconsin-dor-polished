@@ -341,7 +341,7 @@ queries:
       PASS if the mill-rate / tax-determination mechanics are attributed to the
       DOR guidance sources (Guide for Property Owners, Assessment and Tax Roll
       Instructions for Clerks / PA-502) rather than to case law.
-    must_cite: [gov_publications-pa502]
+    must_cite: [[gov_publications-pa502, gov_publications-pb060]]  # either DOR guide; rubric accepts both
     must_contain: ["mill rate"]
     notes: >
       The mill-rate step can wrongly cite Milewski v. Town of Dover
@@ -1339,23 +1339,26 @@ queries:
 # ── Task 70 content guard (not a scope case) ─────────────────────────────────
   - queryId: gq-boa-increase-named-body
     stratum: B
-    tags: [guard, synthesis-guardrail]
-    expected_verdict: ANSWER
+    tags: [guard, synthesis-guardrail, clarify]
+    expected_verdict: CLARIFY
     query: "Can the BOA increase an assessment even if an owner appeals to have it reduced?"
     rubric: >
-      "BOA" here means the State Board of Assessors (manufacturing property,
-      §70.995), NOT the local Board of Review. PASS ONLY if the State Board of
-      Assessors / §70.995 path comes FIRST and is the answer's primary subject —
-      i.e. it resolves whether the State Board of Assessors may increase an
-      assessment on an owner's objection — with the local Board of Review
-      appearing at most as a brief contrast at the end, if at all. FAIL if the
-      answer leads with the Board of Review, treats "BOA" as the Board of Review,
-      gives the two bodies equal billing, or never names which body it is
-      answering about.
+      "BOA" most often means the State Board of Assessors (manufacturing property,
+      §70.995), and the sources also describe other assessing boards, so asking
+      which body is meant is acceptable. PASS if the answer leads with the State
+      Board of Assessors / §70.995 path as its primary subject (whether that board
+      may increase an assessment on an owner's objection), with citations, and then
+      asks which body or property type applies, offering concrete alternatives. Any
+      other body (the local Board of Review, a first-class city board of assessors)
+      may appear only after that, briefly. FAIL if the answer leads with the Board
+      of Review, treats "BOA" as the Board of Review, gives the bodies equal billing
+      before resolving the State Board of Assessors question, or asks a bare
+      clarifying question with no substance.
     must_cite: [statutes-70]
     must_contain: ["70\\.995"]
     notes: >
-      Task 70. The acronym collides with "Board of Review" in the corpus, and the
-      failure mode is answering about the wrong body. Ordering is the graded
-      property, which only the rubric judge can see — must_contain just pins
+      Task 70; expectation changed to CLARIFY 2026-10-08 (Task 81, Isaac): the
+      sources genuinely contain more than one assessing board, and the judge asks
+      which one in most runs, which is acceptable. Ordering stays the graded
+      property: the State Board of Assessors comes first. must_contain pins
       §70.995 as present.
