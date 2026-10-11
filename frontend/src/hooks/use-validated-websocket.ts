@@ -11,6 +11,7 @@ import { useSendMessage, useCreateSession } from './api/chat';
 import { WebSocket } from 'partysocket';
 import { getIdToken } from '@/lib/auth';
 import { sendErrorMessage } from '@/lib/send-error-message';
+import { wsDebug } from '@/lib/ws-debug';
 
 /** How long a dropped socket may take to reconnect before the session is given up. */
 const RECONNECT_GRACE_MS = 30_000;
@@ -33,7 +34,7 @@ export interface UseValidatedWebSocketReturn {
   connectionState: 'connecting' | 'open' | 'closing' | 'closed';
   isConnected: boolean;
   lastMessage: MessageUnion | null;
-  sendMessage: (message: string, suppressTopicShift?: boolean) => Promise<void>;
+  sendMessage: (message: string) => Promise<void>;
   close: () => void;
   reconnect: () => void;
   sessionId: string | null;
@@ -157,7 +158,7 @@ export const useValidatedWebSocket = (
           return;
         }
         const responseType = (rawData as { body?: { responseType?: string } }).body?.responseType ?? '?';
-        console.log(`[WS] Received (${responseType}):`, rawData);
+        wsDebug(`[WS] Received (${responseType}):`, rawData);
         const t1 = performance.now();
         const validatedMessage: WebSocketMessage =
           WebSocketMessageSchema.parse(rawData);
@@ -168,7 +169,7 @@ export const useValidatedWebSocket = (
         setLastMessage(messageBody);
         messageHandlerRef.current(messageBody);
         const t3 = performance.now();
-        console.log(
+        wsDebug(
           `[WS Timing] ${responseType} | parse=${(t1 - t0).toFixed(1)}ms | validate=${(t2 - t1).toFixed(1)}ms | handler=${(t3 - t2).toFixed(1)}ms | total=${(t3 - t0).toFixed(1)}ms`
         );
       } catch (err) {
@@ -278,7 +279,7 @@ export const useValidatedWebSocket = (
 
   // Ensure a session exists, then send a message via mutation
   const sendMessage = useCallback(
-    async (message: string, suppressTopicShift?: boolean) => {
+    async (message: string) => {
       const sessionId = await ensureSession();
       if (!sessionId) {
         // No-op. Session creation failed and error was handled by
@@ -287,19 +288,10 @@ export const useValidatedWebSocket = (
         return;
       }
 
-      // Fold in the one-shot store flag (set when a suggestion was dismissed)
-      // and consume it, so the next send after a dismiss suppresses the nudge
-      // exactly once.
-      const store = useChatStore.getState();
-      const suppress = suppressTopicShift || store.suppressTopicShiftOnNextSend;
-      if (store.suppressTopicShiftOnNextSend) {
-        store.setSuppressTopicShiftOnNextSend(false);
-      }
-
       const persona = useSettingsStore.getState().persona;
       sendMessageMutation.mutate({
         sessionId,
-        payload: { message, persona, suppressTopicShift: suppress },
+        payload: { message, persona },
       });
     },
     [sendMessageMutation, ensureSession]

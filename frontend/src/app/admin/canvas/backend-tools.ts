@@ -11,9 +11,8 @@
 // rendering a placeholder.
 //
 // NOT in this list, deliberately:
-//   - `clarify`   — executable in executor.py but absent from TOOL_DEFINITIONS,
-//                   so the model can never call it. Its replacement is the
-//                   post-retrieval adequacy judge.
+//   - `clarify`   — removed; its replacement is the post-retrieval adequacy
+//                   judge.
 //   - `refine_query` — removed; refinement is now the `auto_refine` pipeline
 //                   stage, which emits a tool_result under that name.
 //   - `get_authority_chain` / `list_framework_docs` — retired from

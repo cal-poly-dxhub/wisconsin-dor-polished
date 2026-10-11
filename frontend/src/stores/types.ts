@@ -1,22 +1,10 @@
 import type { FAQ, FlowchartContent } from '@messages/websocket-interface';
 
-// Core message types used throughout the application
-export interface MessageUnion {
-  type: string;
-  [key: string]: unknown;
-}
-
-export type SuggestionKind = 'topic-shift';
-
-export type ClarificationKind = 'clarification' | 'disambiguation';
-
 /** Framing that arrives alongside a turn's choice chips: the one question to
- *  put to the user, the axis it asks about, and which path produced it. The
- *  question is absent on the legacy pre-loop disambiguation path. */
+ *  put to the user and the axis (the fact) it asks about. */
 export interface QueryClarification {
   question?: string;
   axis?: string;
-  kind?: ClarificationKind;
 }
 
 export interface AgentTraceEvent {
@@ -49,20 +37,15 @@ export interface Query {
   };
   resources?: ResourceItem[];
   choices?: string[];
-  // Question/axis/kind that came with `choices`, rendered with the chips as
-  // one clarification block under the answer.
+  // Question/axis that came with `choices`, rendered with the chips as one
+  // clarification block under the answer.
   clarification?: QueryClarification;
-  // Soft, dismissible suggestion attached to this turn. 'topic-shift' offers
-  // start-new-chat / continue-here controls when the classifier thinks the
-  // question opens an unrelated subject. Cleared once the user picks or dismisses.
-  suggestion?: SuggestionKind;
   // Interactive decision flowchart seeded for this turn (router SEED). Drives
   // the "Walk the flowchart" affordance under the answer.
   flowchart?: FlowchartContent;
 
   error?: QueryError;
 
-  retryCount?: number;
   thinkingDuration?: number;
   agentTrace?: AgentTraceEvent[];
 }
@@ -72,10 +55,6 @@ export interface QueryError {
   userMessage: string;
   details?: Record<string, unknown>;
   retryable: boolean;
-}
-
-export interface QueryResources {
-  items: ResourceItem[];
 }
 
 export interface Document {
@@ -92,41 +71,24 @@ export interface Document {
   editionYear?: number;
 }
 
-export interface DocumentsContent {
-  documents: Array<Document>;
-}
-
 export type { FAQ };
-
-export interface FAQContent {
-  faqs: Array<FAQ>;
-}
 
 export interface ResourceItem {
   type: 'document' | 'faq';
   data: Document | FAQ;
 }
 
-export interface ChatError {
-  id: string;
-  type: 'session' | 'websocket' | 'api' | 'validation';
-  message: string;
-  details?: Record<string, unknown>;
-  retryable: boolean;
-  timestamp: Date;
-}
-
 // State enums
-export type SessionStatus = 'idle' | 'creating' | 'ready' | 'error';
 export type ConnectionState = 'connecting' | 'open' | 'closing' | 'closed';
 export type ChatState =
   | 'idle'
   | 'sending'
   | 'waiting_for_response'
   | 'streaming';
+// pending: optimistic, POST not yet answered. sent: the server accepted it and
+// retrieval is running. streaming: the answer is arriving.
 export type QueryStatus =
   | 'pending'
-  | 'sending'
   | 'sent'
   | 'streaming'
   | 'completed'
@@ -141,8 +103,6 @@ export interface SessionSnapshot {
 
 // Main store interface
 export interface ChatStore {
-  sessionStatus: SessionStatus;
-
   connectionState: ConnectionState;
 
   chatState: ChatState;
@@ -151,19 +111,10 @@ export interface ChatStore {
   queries: Record<string, Query>; // queryId -> Query
   queryOrder: string[]; // Ordered list of queryIds for display
 
-  errors: ChatError[];
-  draftMessage: string;
-
   sessionId: string | null;
   sessionCache: Record<string, SessionSnapshot>;
   switchingSession: boolean;
-  // One-shot: when true, the next message send suppresses the TOPIC_SHIFT
-  // verdict (OUT_OF_SCOPE / DISAMBIGUATE still apply) and then resets to false.
-  // Set when the user dismisses a topic-shift suggestion, so the nudge that was
-  // just declined can't immediately re-fire on their next question.
-  suppressTopicShiftOnNextSend: boolean;
 
-  setSessionStatus: (status: SessionStatus) => void;
   setSwitchingSession: (switching: boolean) => void;
   setConnectionState: (state: ConnectionState) => void;
   setChatState: (state: ChatState) => void;
@@ -183,20 +134,10 @@ export interface ChatStore {
     clarification?: QueryClarification
   ) => void;
   setQueryFlowchart: (queryId: string, flowchart: FlowchartContent) => void;
-  setQuerySuggestion: (queryId: string, suggestion: SuggestionKind) => void;
-  clearQuerySuggestion: (queryId: string) => void;
   setQueryError: (queryId: string, error: QueryError) => void;
-  clearQueryError: (queryId: string) => void;
-  incrementQueryRetry: (queryId: string) => void;
   setThinkingDuration: (queryId: string, duration: number) => void;
   appendAgentTraceEvent: (queryId: string, event: AgentTraceEvent) => void;
-  getQuery: (queryId: string) => Query | undefined;
 
-  addError: (error: ChatError) => void;
-  removeError: (errorId: string) => void;
-  clearErrors: () => void;
-  setDraftMessage: (draft: string) => void;
-  setSuppressTopicShiftOnNextSend: (value: boolean) => void;
   clearHistory: () => void;
   stashSession: (sessionId: string) => void;
   restoreSession: (sessionId: string) => boolean;

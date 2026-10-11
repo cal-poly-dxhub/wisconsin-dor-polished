@@ -137,7 +137,6 @@ function CanvasShell() {
     answerComplete,
     resourceItems,
     choices,
-    suggestion,
     error: liveError,
     sendQuery,
     isRunning,
@@ -205,7 +204,6 @@ function CanvasShell() {
             resources: resourceItems,
             choices,
             error: liveError,
-            suggestion,
           }
         : {
             text: fixtureAnswer,
@@ -264,8 +262,8 @@ function CanvasShell() {
       </div>
 
       {/* Persisted-replay banner — shows which stored query is being inspected
-          and calls out that live-only panes (reasoning, token usage,
-          disambiguation) are blank because that data isn't persisted. */}
+          and calls out that live-only panes (reasoning, token usage, the
+          adequacy judge) are blank because that data isn't persisted. */}
       {mode === 'persisted' && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
           <span className="font-semibold uppercase tracking-wide">Replay</span>

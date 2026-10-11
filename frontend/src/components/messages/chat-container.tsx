@@ -8,7 +8,7 @@ import { ChevronDown } from 'lucide-react';
 
 interface ChatContainerProps {
   variant?: 'default' | 'borderless' | 'narrow' | 'wide';
-  onSendMessage?: (message: string, suppressTopicShift?: boolean) => void;
+  onSendMessage?: (message: string) => void;
 }
 
 export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
@@ -120,7 +120,11 @@ export const ChatContainer = forwardRef<HTMLDivElement, ChatContainerProps>(
     const streamContent = currentQuery?.response?.content;
     const queryStatus = currentQuery?.status;
     const agentTrace = currentQuery?.agentTrace;
-    const isActive = queryStatus === 'streaming' || queryStatus === 'pending' || queryStatus === 'completed';
+    const isActive =
+      queryStatus === 'streaming' ||
+      queryStatus === 'pending' ||
+      queryStatus === 'sent' ||
+      queryStatus === 'completed';
 
     useEffect(() => {
       if (!autoScroll) return;

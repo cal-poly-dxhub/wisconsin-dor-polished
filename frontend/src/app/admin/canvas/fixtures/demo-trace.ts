@@ -7,7 +7,6 @@
  *
  *   request_received / history_loaded → header strip
  *   auto_refine (turn-0 stage, no tool_call)
- *   generality_classified             → pre-loop classifier
  *   faq_search + faq_transition       → collapsible FAQ row
  *   get_flowchart (seeded, router)    → flowchart pane
  *   vector_search (seeded, dual-arm)  → wide initial-search pane
@@ -85,13 +84,7 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
     },
   },
 
-  // --- Pre-loop: disambiguation check ---
-  {
-    kind: 'phase', turn: null, seq: ++seq, timestamp: t(26),
-    payload: { phase: 'generality_classified', label: 'Query is specific enough to proceed', result: 'proceed' },
-  },
-
-  { kind: 'loop_start', turn: null, seq: ++seq, timestamp: t(30), payload: { maxTurns: 8 } },
+  { kind: 'loop_start', turn: null, seq: ++seq, timestamp: t(30), payload: { maxTurns: 10 } },
 
   // --- Turn 0: faq_search ---
   {

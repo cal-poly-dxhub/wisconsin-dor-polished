@@ -141,9 +141,10 @@ export function SessionsSidebar() {
         useChatStore.getState().setCurrentQueryId(lastId);
       }
       // If there's a pending query, check if the answer arrived while away
-      const pendingId = store.queryOrder.find(
-        id => store.queries[id]?.status === 'pending' || store.queries[id]?.status === 'streaming'
-      );
+      const pendingId = store.queryOrder.find(id => {
+        const status = store.queries[id]?.status;
+        return status === 'pending' || status === 'sent' || status === 'streaming';
+      });
       if (pendingId) {
         getSessionHistory(sessionId).then(history => {
           const msg = history.messages?.find(m => m.queryId === pendingId);

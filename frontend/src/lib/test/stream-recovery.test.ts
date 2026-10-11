@@ -18,7 +18,9 @@ describe('stream recovery', () => {
       a: q('a', 'streaming'),
       b: q('b', 'sent'),
       c: q('c', 'completed'),
-      d: q('pending-1', 'sent'),
+      // Optimistic: the POST has not been answered, so the server may not
+      // have the query at all.
+      d: q('pending-1', 'pending'),
       e: q('e', 'failed'),
     });
     expect(ids.sort()).toEqual(['a', 'b']);

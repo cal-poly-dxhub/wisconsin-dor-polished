@@ -14,6 +14,7 @@ import { ChatError } from '@/components/errors/chat-error';
 import { useChatError } from '@/components/errors/use-chat-error';
 import { getSessionHistory } from '@/api/chat-api';
 import { inFlightQueryIds, isInFlight, recoverAnswer } from '@/lib/stream-recovery';
+import { wsDebug } from '@/lib/ws-debug';
 
 export interface UseWebSocketChatOptions {
   websocketUrl: string;
@@ -27,7 +28,7 @@ export interface UseWebSocketChatReturn {
   isConnected: boolean;
   disconnect: () => void;
   reconnect: () => void;
-  sendMessage: (message: string, suppressTopicShift?: boolean) => Promise<void>;
+  sendMessage: (message: string) => Promise<void>;
 }
 
 export function useWebSocketChat(
@@ -55,6 +56,18 @@ export function useWebSocketChat(
 
   // Track the pending optimistic ID so handleSuccessfulSend can replace it
   const pendingQueryIdRef = useRef<string | null>(null);
+
+  // Once the server holds the real query id, retrieval is running: mark the
+  // query `sent` so stream recovery covers a drop during retrieval, not only
+  // one mid-stream. Later events (`streaming`, `failed`) supersede it.
+  const markSent = useCallback(
+    (queryId: string) => {
+      if (useChatStore.getState().queries[queryId]?.status === 'pending') {
+        updateQueryStatus(queryId, 'sent');
+      }
+    },
+    [updateQueryStatus]
+  );
 
   // Track streaming state for timing logs
   const streamStartRef = useRef(0);
@@ -88,6 +101,7 @@ export function useWebSocketChat(
             if (pendingId && useChatStore.getState().queries[pendingId]) {
               replaceQueryId(pendingId, queryId);
               pendingQueryIdRef.current = null;
+              markSent(queryId);
             } else {
               return;
             }
@@ -95,7 +109,7 @@ export function useWebSocketChat(
 
           switch (message.responseType) {
             case 'documents':
-              console.log(`[WS Timing] documents received | count=${message.content.documents.length}`);
+              wsDebug(`[WS Timing] documents received | count=${message.content.documents.length}`);
               updateQueryResources(
                 message.queryId,
                 message.content.documents.map(document => ({
@@ -106,7 +120,7 @@ export function useWebSocketChat(
               break;
 
             case 'faq':
-              console.log(`[WS Timing] faqs received | count=${message.content.faqs.length}`);
+              wsDebug(`[WS Timing] faqs received | count=${message.content.faqs.length}`);
               updateQueryResources(
                 message.queryId,
                 message.content.faqs.map(faq => ({
@@ -117,7 +131,7 @@ export function useWebSocketChat(
               break;
 
             case 'flowchart':
-              console.log(
+              wsDebug(
                 `[WS Timing] flowchart received | id=${message.content.flowchartId}`
               );
               setQueryFlowchart(message.queryId, message.content);
@@ -151,7 +165,7 @@ export function useWebSocketChat(
                   fragmentBufferRef.current = { queryId: '', text: '' };
                 }
                 const streamDuration = performance.now() - streamStartRef.current;
-                console.log(
+                wsDebug(
                   `[WS Timing] STREAM STOP | duration=${streamDuration.toFixed(1)}ms | fragments=${fragmentCountRef.current} | queryId=${message.queryId}`
                 );
                 // The stop event carries the complete persisted answer. If the
@@ -173,17 +187,23 @@ export function useWebSocketChat(
               }
               break;
 
-            case 'error':
-              // Error messages sent back from the server are already user-facing.
-              setQueryError(message.queryId || '', {
-                message: message.content.error,
-                userMessage: message.content.error,
-                retryable: true,
-              });
-              if (message.queryId) {
-                updateQueryStatus(message.queryId, 'failed');
+            case 'error': {
+              // Error messages sent back from the server are already
+              // user-facing. They name the failed query; fall back to the
+              // current one so the spinner never outlives the failure.
+              const failedId =
+                message.queryId ?? useChatStore.getState().currentQueryId;
+              if (failedId) {
+                setQueryError(failedId, {
+                  message: message.content.error,
+                  userMessage: message.content.error,
+                  retryable: true,
+                });
+                updateQueryStatus(failedId, 'failed');
               }
+              setChatState('idle');
               break;
+            }
 
             case 'agent-event':
               appendAgentTraceEvent(message.queryId, {
@@ -203,15 +223,7 @@ export function useWebSocketChat(
                 {
                   question: message.content.question,
                   axis: message.content.axis,
-                  kind: message.content.kind,
                 }
-              );
-              break;
-
-            case 'suggestion':
-              useChatStore.getState().setQuerySuggestion(
-                message.queryId,
-                message.content.kind
               );
               break;
           }
@@ -242,6 +254,7 @@ export function useWebSocketChat(
       replaceQueryId,
       flushFragments,
       updateQueryResponse,
+      markSent,
     ]
   );
 
@@ -253,8 +266,9 @@ export function useWebSocketChat(
         replaceQueryId(pendingId, queryId);
         pendingQueryIdRef.current = null;
       }
+      markSent(queryId);
     },
-    [replaceQueryId]
+    [replaceQueryId, markSent]
   );
 
   // Create memoized WebSocket options
@@ -320,14 +334,10 @@ export function useWebSocketChat(
     }
   }, [connectionState, updateQueryResponse, updateQueryStatus, setQueryError, setChatState, queryClient]);
 
-  // Track send time for roundtrip measurement
-  const sendTimestampRef = useRef(0);
-
   // Wrap sendMessage to optimistically add the query to the store immediately
   const optimisticSendMessage = useCallback(
-    async (message: string, suppressTopicShift?: boolean) => {
-      sendTimestampRef.current = performance.now();
-      console.log(`[WS Timing] SEND | message="${message.slice(0, 60)}${message.length > 60 ? '...' : ''}"`);
+    async (message: string) => {
+      wsDebug(`[WS Timing] SEND | message="${message.slice(0, 60)}${message.length > 60 ? '...' : ''}"`);
       const optimisticId = `pending-${Date.now()}`;
       pendingQueryIdRef.current = optimisticId;
 
@@ -345,7 +355,7 @@ export function useWebSocketChat(
       addQuery(query);
       setCurrentQueryId(optimisticId);
 
-      await sendMessage(message, suppressTopicShift);
+      await sendMessage(message);
     },
     [sendMessage, addQuery, setCurrentQueryId]
   );
