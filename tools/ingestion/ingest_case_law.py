@@ -8,7 +8,9 @@ This script does everything in one shot, producing correct metadata from the sta
   1. Extract citations from statute PDF hyperlinks (local or S3)
   2. Search CourtListener for each citation (case_name, opinion URL, cluster_id)
   3. Deduplicate parallel reporters (same case cited as wis-2d AND n-w-2d)
-  4. Download full opinion text (CourtListener primary, Scholar fallback)
+  4. Download full opinion text from CourtListener (a Google Scholar scrape is
+     opt-in via --scholar-fallback and discouraged: it is where the mis-assigned
+     opinions that purge_corrupt_case_law.py cleaned up came from)
   5. Upload to S3: raw/case-law/{reporter}/{slug}.txt + .metadata.json
 
 Prerequisites:
@@ -21,10 +23,11 @@ Usage:
     # From S3 statute PDFs:
     python tools/ingestion/ingest_case_law.py --bucket wis-raw-bucket-c8e69250 --from-s3
 
-    # Metadata stubs only (no opinion text download):
+    # Metadata only (no opinion text download; a case that already has its
+    # opinion .txt keeps it, only its .metadata.json is refreshed):
     python tools/ingestion/ingest_case_law.py --bucket wis-raw-bucket-c8e69250 --stubs-only
 
-    # With Google Scholar fallback for CL misses:
+    # With the (discouraged) Google Scholar fallback for CourtListener misses:
     python tools/ingestion/ingest_case_law.py --bucket wis-raw-bucket-c8e69250 --scholar-fallback
 
     # Dry run (extract + enrich, no S3 writes):
@@ -782,9 +785,26 @@ def upload_case(
                 text = result[1]
                 source = "scholar"
 
+    text_key = f"raw/case-law/{reporter}/{slug}.txt"
+    keep_existing_text = False
+    if not text:
+        # Never write a "no text" stub beside an opinion we already hold: extract
+        # would have two content files for one case, and the stub says the
+        # opinion is unavailable when it is not. The metadata is still refreshed.
+        try:
+            s3_client.head_object(Bucket=bucket, Key=text_key)
+            keep_existing_text = True
+            source = "existing-text"
+        except Exception:
+            pass
+
     if text:
         content = text.encode("utf-8")
         content_type = "text/plain"
+        ext = ".txt"
+    elif keep_existing_text:
+        content = b""
+        content_type = ""
         ext = ".txt"
     else:
         stub_case_name = entry.get("case_name") or ""
@@ -807,7 +827,8 @@ def upload_case(
     doc_key = f"raw/case-law/{reporter}/{slug}{ext}"
     meta_key = f"raw/case-law/{reporter}/{slug}.metadata.json"
 
-    s3_client.put_object(Bucket=bucket, Key=doc_key, Body=content, ContentType=content_type)
+    if not keep_existing_text:
+        s3_client.put_object(Bucket=bucket, Key=doc_key, Body=content, ContentType=content_type)
 
     resolved_source_url = entry.get("source_url") or entry["legis_url"]
     resolved_case_name = entry.get("case_name") or ""
@@ -845,7 +866,7 @@ def upload_case(
         "doc_id": doc_id,
         "s3_key": doc_key,
         "source": source,
-        "has_text": text is not None,
+        "has_text": text is not None or keep_existing_text,
     }
 
 
@@ -879,12 +900,16 @@ def main():
     parser.add_argument("--from-s3", action="store_true", help="Read statute PDFs from S3")
     parser.add_argument("--state-laws-dir", type=Path, default=STATE_LAWS_DIR)
     parser.add_argument(
-        "--stubs-only", action="store_true", help="Upload metadata stubs only, skip text download"
+        "--stubs-only",
+        action="store_true",
+        help="Skip the opinion text download; refresh metadata, and write a stub only "
+        "for cases with no opinion .txt already in S3",
     )
     parser.add_argument(
         "--scholar-fallback",
         action="store_true",
-        help="Enable Google Scholar as fallback for CL misses",
+        help="Enable Google Scholar as a fallback for CourtListener misses "
+        "(discouraged: it can attach the wrong opinion to a citation)",
     )
     parser.add_argument(
         "--scholar-delay", type=float, default=30, help="Delay between Scholar requests"

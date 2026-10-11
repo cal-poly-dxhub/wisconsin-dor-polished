@@ -137,3 +137,37 @@ def test_statute_file_to_chapter_helper() -> None:
     assert extract._statute_file_to_chapter("706 Document.pdf") == "706"
     assert extract._statute_file_to_chapter("Document 76.pdf") == "76"
     assert extract._statute_file_to_chapter("random.csv") == ""
+
+
+def test_list_documents_prefers_opinion_text_over_stub() -> None:
+    """A "no text" stub listed before the opinion must not hide the opinion."""
+    from tools.ingestion.tests.fake_s3 import FakeS3
+
+    fake = FakeS3()
+    fake.put_bytes("raw", "raw/case-law/wis-2d/100-wis-2d-256.json", b"{}")
+    fake.put_bytes("raw", "raw/case-law/wis-2d/100-wis-2d-256.metadata.json", b"{}")
+    fake.put_bytes("raw", "raw/case-law/wis-2d/100-wis-2d-256.txt", b"opinion")
+    fake.put_bytes("raw", "raw/case-law/n-w-2d/1-n-w-2d-2.json", b"{}")
+    fake.put_bytes("raw", "raw/statutes-70/statutes-70.pdf", b"%PDF")
+    with patch.object(extract, "s3", fake):
+        docs = {d["doc_id"]: d["key"] for d in extract.list_documents("raw", "raw/")}
+    assert docs == {
+        "case-law-100-wis-2d-256": "raw/case-law/wis-2d/100-wis-2d-256.txt",
+        "case-law-1-n-w-2d-2": "raw/case-law/n-w-2d/1-n-w-2d-2.json",
+        "statutes-70": "raw/statutes-70/statutes-70.pdf",
+    }
+
+
+def test_fetch_opinion_text_uses_the_slugs_reporter_folder() -> None:
+    """Every reporter is reachable, F. Supp. included, even from a stub key."""
+    from tools.ingestion.tests.fake_s3 import FakeS3
+
+    fake = FakeS3()
+    fake.put_bytes("raw", "raw/case-law/f-supp/372-f-supp-881.txt", b"the opinion")
+    with patch.object(extract, "s3", fake):
+        text = extract._fetch_opinion_text(
+            "raw", "case-law-372-f-supp-881", "raw/case-law/f-supp/372-f-supp-881.json"
+        )
+        missing = extract._fetch_opinion_text("raw", "case-law-1-wis-2d-1", "")
+    assert text == "the opinion"
+    assert missing is None
