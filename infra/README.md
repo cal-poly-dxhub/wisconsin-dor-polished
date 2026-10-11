@@ -5,13 +5,12 @@ One CloudFormation stack (`WisconsinBotGraphRAG`) built from nested stacks in
 
 | Nested stack | File | What it owns |
 | --- | --- | --- |
-| `LambdaLayersStack` | `stacks/lambda-layers-stack.ts` | Shared Lambda layers (`websocket_utils`, step-function types) |
+| `LambdaLayersStack` | `stacks/lambda-layers-stack.ts` | Shared Lambda layers (`websocket_utils`, `chat_contracts`) |
 | `WisconsinGraphRAGStack` | `stacks/graphrag-stack.ts` | Raw/work/FAQ S3 buckets, FAQ Bedrock knowledge base + data source, the FAQ-URL and model-config DynamoDB tables |
-| `WisconsinSessionsStack` | `stacks/sessions-stack.ts` | Cognito, HTTP API, WebSocket API, sessions + chat-history tables |
+| `WisconsinSessionsStack` | `stacks/sessions-stack.ts` | Cognito, HTTP API (one `dev` stage), WebSocket API (`$connect` / `$disconnect`), sessions + chat-history tables |
 | `WisconsinGraphRAGMessagesStack` | `stacks/graphrag-messages-stack.ts` | Agentic retrieval Lambda + its EventBridge trigger |
 | `WisconsinIngestionStack` | `stacks/ingestion-stack.ts` | Ingestion VPC, ECS cluster, ECR repo, Fargate task definition + task role |
 | `WisconsinWebAppStack` | `stacks/webapp-stack.ts` | Next.js frontend on CloudFront (`cdk-nextjs-standalone`) |
-| `WisconsinCloudWatchIam` | `stacks/cloudwatch-iam.ts` | API Gateway CloudWatch logging role |
 
 ## The Neptune graph is pinned, not managed
 
@@ -66,7 +65,7 @@ cdk deploy -c stackName=WisconsinBotGraphRAG --require-approval never
 bunx tsc --noEmit && bunx jest
 ```
 
-Context flags: `stackName`, plus `domainName` / `hostedZoneName` /
+Context flags: `stackName` (defaults to `WisconsinBotGraphRAG`), plus `domainName` / `hostedZoneName` /
 `hostedZoneId` for a custom domain. Override the pin for a one-off synth with
 `-c neptuneGraphId=g-xxxxxxxx`.
 
