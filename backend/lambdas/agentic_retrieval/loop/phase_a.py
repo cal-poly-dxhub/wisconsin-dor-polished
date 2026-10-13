@@ -17,7 +17,8 @@ from agent_tools import TOOL_DEFINITIONS, execute_tool
 from case_law import citation_to_doc_id
 from faq import build_faq_resource, faq_search_direct
 from prompt import SYSTEM_PROMPT
-from step_function_types.models import FAQResource
+from rag_documents import NON_DOCUMENT_LABELS
+from chat_contracts.models import FAQResource
 from streaming.bedrock import converse_with_cache
 from tracing.emitter import filter_metadata
 from tracing.runtime import (
@@ -49,13 +50,12 @@ from .phase_b import _list_sections_cached
 logger = logging.getLogger(__name__)
 
 # Neptune node labels that aren't user-citable documents.
-_NON_DOCUMENT_LABELS = frozenset({"Chunk", "Topic", "Framework"})
 
 
 def _is_document_neighbor(neighbor: dict) -> bool:
     """True when this neighbor node represents a citable document."""
     labels = neighbor.get("labels") or []
-    return not any(label in _NON_DOCUMENT_LABELS for label in labels)
+    return not any(label in NON_DOCUMENT_LABELS for label in labels)
 
 
 # A reply this short is a chip selection ("Not certain — general information")

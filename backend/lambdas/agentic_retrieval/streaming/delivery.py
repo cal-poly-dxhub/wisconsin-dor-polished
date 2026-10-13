@@ -2,7 +2,7 @@
 
 import json
 
-from step_function_types.models import FAQResource, RAGDocument
+from chat_contracts.models import FAQResource, RAGDocument
 from websocket_utils.batching import batch_documents_for_ws
 from websocket_utils.models import (
     FAQ,

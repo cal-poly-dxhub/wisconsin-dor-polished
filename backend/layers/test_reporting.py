@@ -1,21 +1,21 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from step_function_types.errors import (
-    ValidationError,
-    report_error,
-)
 from websocket_utils.errors import (
     MessageDeliveryError,
     SessionNotFoundError,
 )
 from websocket_utils.models import ErrorMessage
+from websocket_utils.reporting import (
+    ValidationError,
+    report_error,
+)
 from websocket_utils.utils import WebSocketServer
 
 
 class TestReportError:
     @pytest.mark.asyncio
-    @patch("step_function_types.errors.get_ws_connection_from_session")
+    @patch("websocket_utils.reporting.get_ws_connection_from_session")
     async def test_report_error_with_generic_exception(self, mock_get_ws_connection):
         session_id = "test-session-123"
         generic_error = RuntimeError("Database connection failed")
@@ -35,10 +35,21 @@ class TestReportError:
         )
 
     @pytest.mark.asyncio
-    @patch("step_function_types.errors.get_ws_connection_from_session")
+    @patch("websocket_utils.reporting.get_ws_connection_from_session")
+    async def test_report_error_carries_query_id(self, mock_get_ws_connection):
+        mock_ws = AsyncMock(spec=WebSocketServer)
+        mock_get_ws_connection.return_value = mock_ws
+
+        await report_error(RuntimeError("x"), session_id="s-1", query_id="q-1")
+
+        sent_message = mock_ws.send_json.call_args[0][0]
+        assert sent_message.query_id == "q-1"
+
+    @pytest.mark.asyncio
+    @patch("websocket_utils.reporting.get_ws_connection_from_session")
     async def test_report_error_with_messages_error(self, mock_get_ws_connection):
         session_id = "test-session-456"
-        validation_error = ValidationError(details={"field": "invalid"})
+        validation_error = ValidationError()
 
         mock_ws = AsyncMock(spec=WebSocketServer)
         mock_get_ws_connection.return_value = mock_ws
@@ -53,7 +64,7 @@ class TestReportError:
         assert sent_message.content.error == "A server error occurred while processing the message."
 
     @pytest.mark.asyncio
-    @patch("step_function_types.errors.get_ws_connection_from_session")
+    @patch("websocket_utils.reporting.get_ws_connection_from_session")
     async def test_report_error_with_websocket_error(self, mock_get_ws_connection):
         session_id = "test-session-789"
         websocket_error = MessageDeliveryError(details={"connection_id": "conn-123"})
@@ -73,8 +84,8 @@ class TestReportError:
         )
 
     @pytest.mark.asyncio
-    @patch("step_function_types.errors.logger")
-    @patch("step_function_types.errors.get_ws_connection_from_session")
+    @patch("websocket_utils.reporting.logger")
+    @patch("websocket_utils.reporting.get_ws_connection_from_session")
     async def test_report_error_connection_lookup_fails(self, mock_get_ws_connection, mock_logger):
         session_id = "invalid-session"
         error = RuntimeError("Test error")
@@ -93,8 +104,8 @@ class TestReportError:
         assert session_id in log_call[0][0]
 
     @pytest.mark.asyncio
-    @patch("step_function_types.errors.logger")
-    @patch("step_function_types.errors.get_ws_connection_from_session")
+    @patch("websocket_utils.reporting.logger")
+    @patch("websocket_utils.reporting.get_ws_connection_from_session")
     async def test_report_error_send_message_fails(self, mock_get_ws_connection, mock_logger):
         session_id = "test-session-send-fail"
         error = RuntimeError("Test error")
@@ -115,8 +126,8 @@ class TestReportError:
         assert "Error streaming error message to client" in log_call[0][0]
 
     @pytest.mark.asyncio
-    @patch("step_function_types.errors.logger")
-    @patch("step_function_types.errors.get_ws_connection_from_session")
+    @patch("websocket_utils.reporting.logger")
+    @patch("websocket_utils.reporting.get_ws_connection_from_session")
     async def test_report_error_with_different_exception_types(
         self, mock_get_ws_connection, mock_logger
     ):

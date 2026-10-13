@@ -21,21 +21,6 @@ LOG_AGENT_TRACE = os.environ.get("LOG_AGENT_TRACE", "true").lower() == "true"
 LOG_QUERY_TEXT = os.environ.get("LOG_QUERY_TEXT", "true").lower() == "true"
 LOG_MAX_TEXT_CHARS = int(os.environ.get("LOG_MAX_TEXT_CHARS", "500"))
 EMIT_AGENT_TRACE = os.environ.get("EMIT_AGENT_TRACE", "true").lower() == "true"
-ENABLE_DISAMBIGUATION = os.environ.get("ENABLE_DISAMBIGUATION", "false").lower() == "true"
-# Soft "start a new chat?" suggestion when a follow-up opens an unrelated topic.
-# Gated separately from disambiguation so it can be rolled out independently.
-ENABLE_TOPIC_SHIFT = os.environ.get("ENABLE_TOPIC_SHIFT", "false").lower() == "true"
-
-# Post-retrieval adequacy judge (see adequacy_judge.py). When enabled, every
-# query runs the Phase A research loop and the judge checks the answer plan
-# against the cited chunks before Phase B streams.
-ADEQUACY_JUDGE_ENABLED = os.environ.get("ADEQUACY_JUDGE_ENABLED", "false").lower() == "true"
-# The pre-loop scope gate (the OUT_OF_SCOPE / DISAMBIGUATE short-circuits in
-# disambiguation.classify_query). Turning it off is only meaningful with the
-# judge on: retrieval then always runs and the judge decides after the fact.
-# TOPIC_SHIFT is NOT part of this gate — it is about conversation continuity
-# and stays under ENABLE_TOPIC_SHIFT.
-SCOPE_GATE_ENABLED = os.environ.get("SCOPE_GATE_ENABLED", "true").lower() == "true"
 
 MAX_TURNS = 10
 WS_HEARTBEAT_INTERVAL = 15  # seconds between keepalive pings

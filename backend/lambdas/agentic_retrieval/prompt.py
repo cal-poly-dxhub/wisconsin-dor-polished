@@ -4,8 +4,10 @@ Loads prompts from the ModelConfig DynamoDB table at cold-start and caches
 them for the lifetime of the Lambda execution environment. This allows prompt
 iteration without rebundling or redeploying the Lambda — just update DynamoDB.
 
-Fallback: if MODEL_CONFIG_TABLE_NAME is not set (e.g. in tests), prompts
-are loaded from config/model_configs.toml at the repo root (or a bundled copy).
+Fallback: if the DynamoDB read fails for any reason (including
+MODEL_CONFIG_TABLE_NAME being unset, as in tests), the prompt comes from
+_prompt_fallback.py, a byte-identical copy of config/model_configs.toml.
+The persona suffixes are not mirrored there: without DynamoDB they are empty.
 """
 
 import logging
@@ -50,16 +52,10 @@ def _load_prompt(config_id: str, fallback_attr: str) -> str:
 
 SYSTEM_PROMPT: str = _load_prompt("agenticRetrieval", "SYSTEM_PROMPT_FALLBACK")
 ANSWER_STREAM_SYSTEM_PROMPT: str = _load_prompt("answerStream", "ANSWER_STREAM_PROMPT_FALLBACK")
-DISAMBIGUATION_CLASSIFIER_PROMPT: str = _load_prompt(
-    "disambiguationClassifier", "DISAMBIGUATION_CLASSIFIER_FALLBACK"
-)
 ADEQUACY_JUDGE_PROMPT: str = _load_prompt("adequacyJudge", "ADEQUACY_JUDGE_FALLBACK")
 
 PERSONA_PROMPTS: dict[str, str] = {}
-for _persona_id, _fallback_attr in [
-    ("personaGovernment", "PERSONA_GOVERNMENT_FALLBACK"),
-    ("personaCitizen", "PERSONA_CITIZEN_FALLBACK"),
-]:
+for _persona_id in ("personaGovernment", "personaCitizen"):
     try:
         PERSONA_PROMPTS[_persona_id] = _load_prompt_from_dynamo(_persona_id)
     except Exception:

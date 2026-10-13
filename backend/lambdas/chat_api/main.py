@@ -29,7 +29,7 @@ from chat_api_errors import (
     ValidationError,
     create_error_body,
 )
-from step_function_types.models import FeedbackRequest, MessageEvent, MessageRequest
+from chat_contracts.models import FeedbackRequest, MessageEvent, MessageRequest
 
 router = Router()
 dynamodb = boto3.client("dynamodb")

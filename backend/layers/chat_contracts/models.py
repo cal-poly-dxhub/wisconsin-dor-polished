@@ -19,11 +19,10 @@ Persona = Literal["citizen", "government"]
 class MessageRequest(CamelCaseModel):
     message: str
     persona: Persona | None = None
-    # Suppresses ONLY the TOPIC_SHIFT verdict for this turn (OUT_OF_SCOPE and
-    # DISAMBIGUATE still apply). Set when the user picked "Continue here" on a
-    # topic-shift suggestion, or on the send right after dismissing one — so the
-    # nudge fires at most once and can't loop. Serialized as `suppressTopicShift`.
-    suppress_topic_shift: bool = False
+
+    # Unknown fields are ignored, so a client still running a cached bundle
+    # that sends a retired field (e.g. `suppressTopicShift`) is not rejected.
+    model_config = ConfigDict(alias_generator=to_camel_case, populate_by_name=True, extra="ignore")
 
 
 # Structured "rich" feedback captured by the feedback modal. Mirrors the
@@ -72,38 +71,13 @@ class FeedbackRequest(CamelCaseModel):
     rich_feedback: RichFeedback | None = None
 
 
-# Event emitted over EventBridge to trigger the agentic retrieval Lambda
-class MessageEvent(BaseModel):
-    query: str
-    query_id: str
-    session_id: str
-    persona: Persona | None = None
-    # Carries the frontend's topic-shift suppression through to the Lambda's
-    # UserQuery so TOPIC_SHIFT is gated for that turn.
-    suppress_topic_shift: bool = False
-
-
-class ErrorBody(BaseModel):
-    message: str
-
-
-class MessageProcessingErrorResponse(BaseModel):
-    error: ErrorBody
-
-
-# Input to the agentic retrieval Lambda via EventBridge
+# The EventBridge event detail: published by chat_api, parsed by the retrieval
+# Lambda. One model for both ends.
 class UserQuery(BaseModel):
     query: str
     query_id: str
     session_id: str
     persona: Persona | None = None
-    # Suppresses ONLY the TOPIC_SHIFT verdict for this turn. Pre-loop
-    # classification still runs, so OUT_OF_SCOPE refusal and DISAMBIGUATE
-    # clarification still apply — a "Continue here" question that is itself
-    # generic will still get property-type chips. Set by the frontend on the
-    # "Continue here" send and on the first send after a dismiss, so the nudge
-    # fires at most once and can't loop on itself.
-    suppress_topic_shift: bool = False
 
 
 class FAQ(BaseModel):
@@ -135,15 +109,16 @@ class RAGDocument(BaseModel):
     # Optional: 1=Constitution, 2=Statute, 3=CaseLaw, 4=AdminRule, 5=WPAM,
     # 6=FAQ, 7=GovPub, 8=IAAO, 9=USPAP. Drives the AuthorityBadge color in
     # the frontend. Stored on every Document node in Neptune; populated by
-    # _build_rag_documents / _build_opinion_card so non-FAQ cards render
-    # with their authority pill (FAQs hard-code level 6 client-side).
+    # rag_documents.build_rag_documents / case_law.build_opinion_card so
+    # non-FAQ cards render with their authority pill (FAQs hard-code level 6
+    # client-side).
     authority_level: int | None = Field(default=None)
     # Stable S3 reference for the raw document. Citation links use the
     # public source_url; s3_key is kept for provenance/debugging only.
     s3_key: str | None = Field(default=None)
     start_page: int | None = Field(default=None)
     end_page: int | None = Field(default=None)
-    # WPAM edition year (e.g., 2025). Set on chunks from the Wisconsin
+    # WPAM edition year (e.g., 2026). Set on chunks from the Wisconsin
     # Property Assessment Manual; null on all other doc types.
     edition_year: int | None = Field(default=None)
     # Per-page chunk snippets for citation link previews.

@@ -1,9 +1,10 @@
-"""Case-law support: stub detection, dedup, opinion fetch/cards, link resolution.
+"""Case-law support: id detection, dedup, opinion fetch/cards, link resolution.
 
-Merges the former case_law_handling.py and case_opinion.py modules.
-Case-law opinions are stored in s3://{RAW_BUCKET}/raw/case-law/{reporter}/{slug}.txt.
-Stubs (1-chunk metadata nodes) stay in the Neptune graph; the agent fetches
-full opinion text only when a question needs the court's actual analysis.
+Case-law documents carry a holding-summary chunk plus selected majority-opinion
+chunks (issue/holding synopsis, analysis, disposition; see
+tools/ingestion/chunking/case_law.py). The full opinion stays in
+s3://{RAW_BUCKET}/raw/case-law/{reporter}/{slug}.txt; fetch_case_opinion
+returns it when the question needs text the chunks left out.
 """
 
 import hashlib
@@ -15,7 +16,7 @@ from collections.abc import Callable
 
 import boto3
 from botocore.exceptions import ClientError
-from step_function_types.models import RAGDocument
+from chat_contracts.models import RAGDocument
 
 logger = logging.getLogger(__name__)
 
@@ -150,15 +151,13 @@ def fetch_case_opinion(
     }
 
 
-CASE_LAW_STUB_PREFIX = "case-law-"
+CASE_LAW_PREFIX = "case-law-"
 
 DISCOVERY_TAG_PRIORITY = [
     "opinion-fetched",
     "fetched",
     "vector-search",
     "graph-neighbor",
-    "auto-enrichment",
-    "framework-list",
     "unknown",
 ]
 
@@ -167,9 +166,9 @@ _CASE_NAME_SUFFIX_RE = re.compile(r"\s*(?:[–—:]|-\s)|,\s*(?=\d+\b)")
 _YEAR_RE = re.compile(r"\b(\d{4})\b")
 
 
-def is_case_law_stub(doc_id: str) -> bool:
-    """True when a doc_id is a case-law citation stub."""
-    return doc_id.startswith(CASE_LAW_STUB_PREFIX)
+def is_case_law_doc(doc_id: str) -> bool:
+    """True for any case-law document id."""
+    return doc_id.startswith(CASE_LAW_PREFIX)
 
 
 def extract_case_name(title: str) -> str:
@@ -197,7 +196,7 @@ def collapse_case_law_by_title(
     passthrough: dict[str, RAGDocument] = {}
 
     for doc_id, rag_doc in docs_by_id.items():
-        if not is_case_law_stub(doc_id):
+        if not is_case_law_doc(doc_id):
             passthrough[doc_id] = rag_doc
             continue
         name_key = extract_case_name(rag_doc.title)
@@ -270,21 +269,21 @@ def collapse_case_law_by_title(
     return merged
 
 
-def build_opinion_card(stub_doc_id: str, payload: dict, neptune_client) -> RAGDocument:
+def build_opinion_card(case_doc_id: str, payload: dict, neptune_client) -> RAGDocument:
     """Build a RAGDocument for a fetched full court opinion."""
     citation = payload.get("citation", "")
     opinion_text = payload.get("text", "")
     payload_scholar_url = payload.get("scholar_url", "")
 
-    doc_info = neptune_client.get_document(stub_doc_id) or {}
-    title = doc_info.get("title") or citation or stub_doc_id
-    content_hash = hashlib.sha256(stub_doc_id.encode()).hexdigest()[:7]
+    doc_info = neptune_client.get_document(case_doc_id) or {}
+    title = doc_info.get("title") or citation or case_doc_id
+    content_hash = hashlib.sha256(case_doc_id.encode()).hexdigest()[:7]
 
     node_url = doc_info.get("source_url")
     public_url = node_url or payload_scholar_url or (scholar_url(citation) if citation else None)
 
     return RAGDocument(
-        document_id=f"{stub_doc_id}-{content_hash}",
+        document_id=f"{case_doc_id}-{content_hash}",
         title=title,
         content=opinion_text,
         source=citation or title,
@@ -477,9 +476,9 @@ def reset_case_law_index_cache() -> None:
 def apply_case_law_links(
     docs_by_id: dict[str, RAGDocument], doc_infos: dict[str, dict]
 ) -> dict[str, RAGDocument]:
-    """Ensure case-law stub cards link to a public URL and drop S3 refs."""
+    """Ensure case-law cards link to a public URL and drop S3 refs."""
     for doc_id, card in docs_by_id.items():
-        if not is_case_law_stub(doc_id):
+        if not is_case_law_doc(doc_id):
             continue
         doc_info = doc_infos.get(doc_id) or {}
         node_url = doc_info.get("source_url")

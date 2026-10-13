@@ -7,14 +7,15 @@ from case_law import (
     apply_case_law_links,
     build_opinion_card,
     collapse_case_law_by_title,
-    is_case_law_stub,
+    is_case_law_doc,
 )
 from flowcharts import FLOWCHART_DOC_PREFIX, flowchart_citation_fields
-from step_function_types.models import ChunkSnippet, RAGDocument
+from chat_contracts.models import ChunkSnippet, RAGDocument
 
 logger = logging.getLogger(__name__)
 
-_NON_DOCUMENT_LABELS = frozenset({"Chunk", "Topic", "Framework"})
+# Graph labels that are not documents (no card, no citation).
+NON_DOCUMENT_LABELS = frozenset({"Chunk", "Framework"})
 _SNIPPET_MAX_CHARS = 200
 # The WPAM is authority level 5; a flowchart card IS a WPAM page.
 _WPAM_AUTHORITY_LEVEL = 5
@@ -77,8 +78,8 @@ def build_rag_documents(
     """Build RAGDocument list from collected chunks, tagged by how discovered.
 
     When the agent called fetch_case_opinion, the fetched opinion supersedes
-    the one-chunk case-law stub for that citation, and other case-law stubs
-    that came in as graph/framework noise are suppressed.
+    that case's chunk-built card, and other case-law cards that came in as
+    graph-neighbor noise are suppressed.
     """
     discovery = discovery or {}
     fetched_opinions = fetched_opinions or {}
@@ -228,7 +229,7 @@ def build_rag_documents(
         if not doc_info:
             continue
         labels = doc_info.get("labels") or []
-        if any(label in _NON_DOCUMENT_LABELS for label in labels):
+        if any(label in NON_DOCUMENT_LABELS for label in labels):
             continue
 
         if not doc_info.get("summary"):
@@ -259,16 +260,16 @@ def build_rag_documents(
     docs_by_id = apply_case_law_links(docs_by_id, doc_infos)
 
     if fetched_opinions:
-        for stub_doc_id, payload in fetched_opinions.items():
-            docs_by_id[stub_doc_id] = build_opinion_card(stub_doc_id, payload, neptune_client)
+        for case_doc_id, payload in fetched_opinions.items():
+            docs_by_id[case_doc_id] = build_opinion_card(case_doc_id, payload, neptune_client)
 
         fetched_ids = set(fetched_opinions.keys())
-        noise_tags = {"graph-neighbor", "auto-enrichment", "framework-list"}
+        noise_tags = {"graph-neighbor"}
         docs_by_id = {
             doc_id: rag_doc
             for doc_id, rag_doc in docs_by_id.items()
             if doc_id in fetched_ids
-            or not (is_case_law_stub(doc_id) and rag_doc.discovery_tag in noise_tags)
+            or not (is_case_law_doc(doc_id) and rag_doc.discovery_tag in noise_tags)
         }
 
     docs_by_id = collapse_case_law_by_title(docs_by_id)
