@@ -356,7 +356,6 @@ class TestHandler:
             all_doc_ids=set(),
             discovery={},
             fetched_opinions={},
-            faq_resource=None,
             answer_plan="",
             trace_log=[],
             connection_alive=True,
@@ -366,10 +365,16 @@ class TestHandler:
         )
 
     def _setup_handler(self, fresh_modules, monkeypatch):
-        handler, phase_a = fresh_modules("handler", "loop.phase_a")
+        handler, phase_a, adequacy = fresh_modules("handler", "loop.phase_a", "adequacy_judge")
         monkeypatch.setattr(
             handler, "run_agentic_loop", MagicMock(return_value=self._make_fallback_result(phase_a))
         )
+        monkeypatch.setattr(
+            handler,
+            "judge_answer_plan",
+            lambda *a, **kw: adequacy.Finding(verdict="ANSWER", supported="", unsupported=""),
+        )
+        monkeypatch.setattr(handler, "statute_section_pages", lambda *a, **kw: {})
         monkeypatch.setattr(handler, "get_chat_history", lambda sid: [])
         monkeypatch.setattr(handler, "save_chat_history", lambda *a, **kw: None)
         monkeypatch.setattr(handler, "build_rag_documents", lambda *a, **kw: [])
@@ -411,180 +416,8 @@ class TestHandler:
         assert kwargs["ws_server"] is None
 
 
-class TestPreLoopClassification:
-    """Handler short-circuit behavior for the pre-loop query classifier."""
-
-    def _setup(self, fresh_modules, monkeypatch, verdict):
-        handler, disambiguation = fresh_modules(
-            "handler", "disambiguation", env={"ENABLE_DISAMBIGUATION": "true"}
-        )
-        # Sanity: the env flag must have been read at import time.
-        assert handler.ENABLE_DISAMBIGUATION is True
-        monkeypatch.setattr(
-            disambiguation, "classify_query", lambda q, h, allow_topic_shift=False: verdict
-        )
-
-        mock_ws = MagicMock()
-        monkeypatch.setattr(
-            handler, "get_ws_connection_from_session", MagicMock(return_value=mock_ws)
-        )
-        monkeypatch.setattr(handler, "get_chat_history", lambda sid: [])
-        saved = {}
-        monkeypatch.setattr(
-            handler, "save_chat_history", lambda *a, **kw: saved.update({"args": a})
-        )
-        finalize = MagicMock()
-        monkeypatch.setattr(handler, "send_resources_and_finalize", finalize)
-        monkeypatch.setattr(handler.asyncio, "run", lambda coro: coro.close())
-        run_loop = MagicMock()
-        monkeypatch.setattr(handler, "run_agentic_loop", run_loop)
-        return handler, disambiguation, mock_ws, finalize, run_loop, saved
-
-    def test_out_of_scope_refuses_without_sources_or_choices(self, fresh_modules, monkeypatch):
-        handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(
-            fresh_modules, monkeypatch, "OUT_OF_SCOPE"
-        )
-        ctx = SimpleNamespace(aws_request_id="r-1")
-        result = handler.handler(
-            {"query": "What color is the sky?", "query_id": "q-1", "session_id": "s-1"}, ctx
-        )
-
-        assert result == {"successful": True}
-        # The agentic loop never ran — refusal short-circuited before it.
-        run_loop.assert_not_called()
-        # Finalized with the canned refusal and NO documents.
-        finalize.assert_called_once()
-        args, kwargs = finalize.call_args
-        assert kwargs.get("rag_documents", args[3] if len(args) > 3 else None) == []
-        assert disambiguation.OUT_OF_SCOPE_MESSAGE in (args[2], kwargs.get("answer", ""))
-        # No property-type choices for an out-of-scope refusal.
-        assert mock_ws.client.post_to_connection.call_count == 0
-        # Refusal answer persisted to chat history.
-        assert disambiguation.OUT_OF_SCOPE_MESSAGE in saved["args"]
-
-    def test_disambiguate_sends_choices_without_sources(self, fresh_modules, monkeypatch):
-        handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(
-            fresh_modules, monkeypatch, "DISAMBIGUATE"
-        )
-        ctx = SimpleNamespace(aws_request_id="r-1")
-        result = handler.handler(
-            {"query": "How is my property assessed?", "query_id": "q-1", "session_id": "s-1"},
-            ctx,
-        )
-
-        assert result == {"successful": True}
-        run_loop.assert_not_called()
-        finalize.assert_called_once()
-        args, kwargs = finalize.call_args
-        assert kwargs.get("rag_documents", args[3] if len(args) > 3 else None) == []
-        # Disambiguation offers property-type choices over the WebSocket,
-        # tagged as the legacy pre-loop path. No question travels with them —
-        # the canned answer text already asks it.
-        assert mock_ws.client.post_to_connection.call_count == 1
-        body = json.loads(mock_ws.client.post_to_connection.call_args.kwargs["Data"])["body"]
-        assert body["responseType"] == "choices"
-        assert body["content"]["choices"] == disambiguation.PROPERTY_TYPE_CHOICES
-        assert body["content"]["kind"] == "disambiguation"
-        assert body["content"]["question"] is None
-        assert body["content"]["axis"] is None
-
-    def test_topic_shift_suggests_without_sources(self, fresh_modules, monkeypatch):
-        handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(
-            fresh_modules, monkeypatch, "TOPIC_SHIFT"
-        )
-        ctx = SimpleNamespace(aws_request_id="r-1")
-        result = handler.handler(
-            {"query": "What about TID base values?", "query_id": "q-1", "session_id": "s-1"},
-            ctx,
-        )
-
-        assert result == {"successful": True}
-        # No retrieval — the topic-shift suggestion short-circuits the loop.
-        run_loop.assert_not_called()
-        finalize.assert_called_once()
-        args, kwargs = finalize.call_args
-        assert kwargs.get("rag_documents", args[3] if len(args) > 3 else None) == []
-        assert disambiguation.TOPIC_SHIFT_SUGGESTION in (args[2], kwargs.get("answer", ""))
-        # A suggestion control message is pushed over the WebSocket.
-        assert mock_ws.client.post_to_connection.call_count == 1
-        # The suggestion answer is persisted to chat history.
-        assert disambiguation.TOPIC_SHIFT_SUGGESTION in saved["args"]
-
-    def test_suppress_topic_shift_still_classifies_and_can_disambiguate(
-        self, fresh_modules, monkeypatch
-    ):
-        """suppress_topic_shift gates ONLY TOPIC_SHIFT: the classifier still runs
-        (allow_topic_shift=False is passed through) and DISAMBIGUATE still fires."""
-        handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(
-            fresh_modules, monkeypatch, "DISAMBIGUATE"
-        )
-        # Also enable the topic-shift feature so only the per-request suppression
-        # can turn allow_topic_shift off.
-        handler.ENABLE_TOPIC_SHIFT = True
-        captured = {}
-        monkeypatch.setattr(
-            disambiguation,
-            "classify_query",
-            lambda q, h, allow_topic_shift=False: captured.update(
-                {"allow_topic_shift": allow_topic_shift}
-            )
-            or "DISAMBIGUATE",
-        )
-
-        ctx = SimpleNamespace(aws_request_id="r-1")
-        result = handler.handler(
-            {
-                "query": "How is my property assessed?",
-                "query_id": "q-1",
-                "session_id": "s-1",
-                "suppress_topic_shift": True,
-            },
-            ctx,
-        )
-
-        assert result == {"successful": True}
-        # Classification still ran, but TOPIC_SHIFT was gated off for this turn.
-        assert captured["allow_topic_shift"] is False
-        # DISAMBIGUATE still short-circuits and offers property-type choices.
-        run_loop.assert_not_called()
-        assert mock_ws.client.post_to_connection.call_count == 1
-
-    def test_proceed_runs_the_loop(self, fresh_modules, monkeypatch):
-        handler, disambiguation, mock_ws, finalize, run_loop, saved = self._setup(
-            fresh_modules, monkeypatch, "PROCEED"
-        )
-        # run_agentic_loop must return a usable result for the normal path.
-        run_loop.return_value = SimpleNamespace(
-            fallback_answer="ans",
-            cited_doc_ids=[],
-            all_chunks=[],
-            all_doc_ids=set(),
-            discovery={},
-            fetched_opinions={},
-            high_confidence_faq=None,
-            faq_entries=[],
-            trace_log=[],
-            connection_alive=True,
-            answer_plan="",
-        )
-        monkeypatch.setattr(handler, "build_rag_documents", lambda *a, **kw: [])
-        monkeypatch.setattr(handler, "build_cited_faq_resource", lambda *a, **kw: None)
-
-        ctx = SimpleNamespace(aws_request_id="r-1")
-        handler.handler(
-            {
-                "query": "When does the Board of Review meet?",
-                "query_id": "q-1",
-                "session_id": "s-1",
-            },
-            ctx,
-        )
-        # PROCEED does not short-circuit — the agentic loop runs.
-        run_loop.assert_called_once()
-
-
 class TestProsePlanSources:
-    """With the judge on, a prose fallback (no prepare_answer) is written by Phase B.
+    """A prose fallback (no prepare_answer) is written by Phase B.
 
     ANSWER / CLARIFY must be grounded in the chunks the agent saw and get source
     cards for exactly the retrieved docs the answer links; DECLINE stays bare.
@@ -597,7 +430,7 @@ class TestProsePlanSources:
 
     def _run(self, fresh_modules, monkeypatch, verdict):
         handler, phase_a, adequacy = fresh_modules(
-            "handler", "loop.phase_a", "adequacy_judge", env={"ADEQUACY_JUDGE_ENABLED": "true"}
+            "handler", "loop.phase_a", "adequacy_judge"
         )
         result = phase_a.AgentLoopResult(
             cited_doc_ids=[],
@@ -605,7 +438,6 @@ class TestProsePlanSources:
             all_doc_ids={"statutes-70", "gov_publications-unrelated"},
             discovery={},
             fetched_opinions={},
-            faq_resource=None,
             answer_plan="",
             trace_log=[],
             connection_alive=True,

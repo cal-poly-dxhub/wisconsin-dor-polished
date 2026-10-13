@@ -42,7 +42,7 @@ from prompt import ANSWER_STREAM_SYSTEM_PROMPT
 from rag_documents import build_rag_documents
 from websocket_utils.reporting import ValidationError, report_error
 from chat_contracts.models import UserQuery
-from streaming.delivery import send_resources, send_resources_and_finalize
+from streaming.delivery import send_resources
 from tracing.emitter import filter_metadata as _filter_metadata
 from tracing.runtime import emit as _emit
 from tracing.runtime import log_event as _log

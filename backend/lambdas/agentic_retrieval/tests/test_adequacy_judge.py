@@ -586,139 +586,33 @@ def _loop_result(**overrides):
     return SimpleNamespace(**base)
 
 
-class TestHandlerFlagMatrix:
-    """Judge off ⇒ the old path. Judge on + gate off ⇒ no scope short-circuit."""
-
-    def _setup(self, fresh_modules, monkeypatch, env, verdict="PROCEED"):
-        handler, disambiguation = fresh_modules(
-            "handler", "disambiguation", env={"ENABLE_DISAMBIGUATION": "true", **env}
-        )
+class TestHandlerJudgeInput:
+    def test_judge_receives_the_fallback_answer_as_the_plan(self, fresh_modules, monkeypatch):
+        (handler,) = fresh_modules("handler")
         monkeypatch.setattr(
-            disambiguation, "classify_query", lambda q, h, allow_topic_shift=False: verdict
-        )
-        mock_ws = MagicMock()
-        monkeypatch.setattr(
-            handler, "get_ws_connection_from_session", MagicMock(return_value=mock_ws)
+            handler, "get_ws_connection_from_session", MagicMock(return_value=MagicMock())
         )
         monkeypatch.setattr(handler, "get_chat_history", lambda sid: [])
-        saved: dict = {}
-        monkeypatch.setattr(
-            handler,
-            "save_chat_history",
-            lambda *a, **kw: saved.update({"args": a, "kwargs": kw}),
-        )
-        monkeypatch.setattr(handler, "send_resources_and_finalize", MagicMock())
+        monkeypatch.setattr(handler, "save_chat_history", lambda *a, **kw: None)
         monkeypatch.setattr(handler, "build_rag_documents", lambda *a, **kw: [])
         monkeypatch.setattr(handler, "build_cited_faq_resource", lambda *a, **kw: None)
+        monkeypatch.setattr(handler, "statute_section_pages", lambda *a, **kw: {})
+        monkeypatch.setattr(handler, "build_answer_context", lambda *a, **kw: "ctx")
+        monkeypatch.setattr(handler, "send_resources", MagicMock())
+        monkeypatch.setattr(handler, "stream_answer", MagicMock(return_value="answer"))
+        monkeypatch.setattr(handler, "finalize_answer_links", lambda answer, *a, **kw: answer)
         monkeypatch.setattr(handler.asyncio, "run", lambda coro: coro.close())
-        run_loop = MagicMock(return_value=_loop_result())
-        monkeypatch.setattr(handler, "run_agentic_loop", run_loop)
-        judge = MagicMock()
+        monkeypatch.setattr(
+            handler,
+            "run_agentic_loop",
+            MagicMock(return_value=_loop_result(fallback_answer="I could not finish.")),
+        )
+        judge = MagicMock(
+            return_value=SimpleNamespace(
+                verdict="ANSWER", clarification=None, latency_ms=1, model_id="m", rationale="ok"
+            )
+        )
         monkeypatch.setattr(handler, "judge_answer_plan", judge)
-        return handler, mock_ws, run_loop, judge, saved
-
-    def test_judge_off_keeps_the_out_of_scope_short_circuit(self, fresh_modules, monkeypatch):
-        handler, mock_ws, run_loop, judge, _ = self._setup(
-            fresh_modules, monkeypatch, {}, verdict="OUT_OF_SCOPE"
-        )
-        assert handler.ADEQUACY_JUDGE_ENABLED is False
-        assert handler.SCOPE_GATE_ENABLED is True
-        handler.handler(
-            {"query": "what color is the sky?", "query_id": "q-1", "session_id": "s-1"},
-            SimpleNamespace(aws_request_id="r-1"),
-        )
-        run_loop.assert_not_called()
-        judge.assert_not_called()
-
-    def test_judge_off_keeps_the_disambiguate_short_circuit(self, fresh_modules, monkeypatch):
-        handler, mock_ws, run_loop, judge, _ = self._setup(
-            fresh_modules, monkeypatch, {}, verdict="DISAMBIGUATE"
-        )
-        handler.handler(
-            {"query": "how is my property assessed?", "query_id": "q-1", "session_id": "s-1"},
-            SimpleNamespace(aws_request_id="r-1"),
-        )
-        run_loop.assert_not_called()
-        judge.assert_not_called()
-
-    def test_judge_on_gate_off_skips_out_of_scope_and_retrieves(self, fresh_modules, monkeypatch):
-        handler, mock_ws, run_loop, judge, _ = self._setup(
-            fresh_modules,
-            monkeypatch,
-            {"ADEQUACY_JUDGE_ENABLED": "true", "SCOPE_GATE_ENABLED": "false"},
-            verdict="OUT_OF_SCOPE",
-        )
-        judge.return_value = SimpleNamespace(
-            verdict="DECLINE",
-            clarification=None,
-            latency_ms=12,
-            model_id="m",
-            rationale="nothing relevant",
-        )
-        handler.handler(
-            {"query": "what is the Markarian case?", "query_id": "q-1", "session_id": "s-1"},
-            SimpleNamespace(aws_request_id="r-1"),
-        )
-        run_loop.assert_called_once()
-        judge.assert_called_once()
-
-    def test_judge_on_gate_off_skips_disambiguate_and_retrieves(self, fresh_modules, monkeypatch):
-        handler, mock_ws, run_loop, judge, _ = self._setup(
-            fresh_modules,
-            monkeypatch,
-            {"ADEQUACY_JUDGE_ENABLED": "true", "SCOPE_GATE_ENABLED": "false"},
-            verdict="DISAMBIGUATE",
-        )
-        judge.return_value = SimpleNamespace(
-            verdict="ANSWER", clarification=None, latency_ms=1, model_id="m", rationale="ok"
-        )
-        handler.handler(
-            {"query": "how is my property assessed?", "query_id": "q-1", "session_id": "s-1"},
-            SimpleNamespace(aws_request_id="r-1"),
-        )
-        run_loop.assert_called_once()
-
-    def test_judge_on_gate_off_still_honors_topic_shift(self, fresh_modules, monkeypatch):
-        handler, mock_ws, run_loop, judge, _ = self._setup(
-            fresh_modules,
-            monkeypatch,
-            {
-                "ADEQUACY_JUDGE_ENABLED": "true",
-                "SCOPE_GATE_ENABLED": "false",
-                "ENABLE_TOPIC_SHIFT": "true",
-            },
-            verdict="TOPIC_SHIFT",
-        )
-        handler.handler(
-            {"query": "what about TID base values?", "query_id": "q-1", "session_id": "s-1"},
-            SimpleNamespace(aws_request_id="r-1"),
-        )
-        # TOPIC_SHIFT is about conversation continuity, not scope — unchanged.
-        run_loop.assert_not_called()
-        judge.assert_not_called()
-
-    def test_judge_on_gate_on_keeps_the_short_circuit(self, fresh_modules, monkeypatch):
-        handler, mock_ws, run_loop, judge, _ = self._setup(
-            fresh_modules,
-            monkeypatch,
-            {"ADEQUACY_JUDGE_ENABLED": "true"},
-            verdict="OUT_OF_SCOPE",
-        )
-        handler.handler(
-            {"query": "what color is the sky?", "query_id": "q-1", "session_id": "s-1"},
-            SimpleNamespace(aws_request_id="r-1"),
-        )
-        run_loop.assert_not_called()
-        judge.assert_not_called()
-
-    def test_judge_receives_the_fallback_answer_as_the_plan(self, fresh_modules, monkeypatch):
-        handler, mock_ws, run_loop, judge, _ = self._setup(
-            fresh_modules, monkeypatch, {"ADEQUACY_JUDGE_ENABLED": "true"}
-        )
-        run_loop.return_value = _loop_result(fallback_answer="I could not finish.")
-        judge.return_value = SimpleNamespace(
-            verdict="ANSWER", clarification=None, latency_ms=1, model_id="m", rationale="ok"
-        )
         handler.handler(
             {"query": "q", "query_id": "q-1", "session_id": "s-1"},
             SimpleNamespace(aws_request_id="r-1"),
@@ -728,11 +622,7 @@ class TestHandlerFlagMatrix:
 
 class TestHandlerClarificationDelivery:
     def _setup(self, fresh_modules, monkeypatch, finding, history=None):
-        handler, disambiguation = fresh_modules(
-            "handler",
-            "disambiguation",
-            env={"ENABLE_DISAMBIGUATION": "false", "ADEQUACY_JUDGE_ENABLED": "true"},
-        )
+        (handler,) = fresh_modules("handler")
         mock_ws = MagicMock()
         monkeypatch.setattr(
             handler, "get_ws_connection_from_session", MagicMock(return_value=mock_ws)
@@ -744,7 +634,6 @@ class TestHandlerClarificationDelivery:
             "save_chat_history",
             lambda *a, **kw: saved.update({"args": a, "kwargs": kw}),
         )
-        monkeypatch.setattr(handler, "send_resources_and_finalize", MagicMock())
         monkeypatch.setattr(handler, "build_rag_documents", lambda *a, **kw: [])
         monkeypatch.setattr(handler, "build_cited_faq_resource", lambda *a, **kw: None)
         monkeypatch.setattr(handler.asyncio, "run", lambda coro: coro.close())
@@ -755,6 +644,7 @@ class TestHandlerClarificationDelivery:
         monkeypatch.setattr(handler, "send_resources", MagicMock())
         monkeypatch.setattr(handler, "stream_answer", MagicMock(return_value="answer"))
         monkeypatch.setattr(handler, "finalize_answer_links", lambda answer, *a, **kw: answer)
+        monkeypatch.setattr(handler, "statute_section_pages", lambda *a, **kw: {})
         run_loop = MagicMock(return_value=_loop_result())
         monkeypatch.setattr(handler, "run_agentic_loop", run_loop)
         monkeypatch.setattr(handler, "judge_answer_plan", MagicMock(return_value=finding))

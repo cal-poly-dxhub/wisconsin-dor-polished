@@ -4,7 +4,6 @@ Builds the answer context from Phase A's cited docs/chunks, then calls
 converse_stream() with NO tools — pure text output streamed over WebSocket.
 """
 
-import json
 import logging
 import re
 import time
@@ -16,7 +15,7 @@ from streaming.bedrock import converse_stream_with_cache
 from tracing.runtime import emit as _emit
 from tracing.runtime import log_event as _log
 from websocket_utils.models import AnswerEventType, FragmentContent, FragmentMessage
-from websocket_utils.utils import WebSocketServer
+from websocket_utils.utils import WebSocketServer, post_message
 
 from config import AGENTIC_MODEL_ID, bedrock
 
@@ -369,9 +368,8 @@ def send_answer_stop(
     if not ws_connection_alive[0]:
         return
     stop_msg = AnswerEventType(event="stop", query_id=query_id, answer=answer_text)
-    data = json.dumps({"streamId": "answer-event", "body": stop_msg.model_dump(by_alias=True)})
     try:
-        ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
+        post_message(ws_server, stop_msg)
     except Exception:
         ws_connection_alive[0] = False
 
@@ -428,8 +426,7 @@ def stream_answer(
 
     # Send answer-event: start
     start_msg = AnswerEventType(event="start", query_id=query_id)
-    data = json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)})
-    ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
+    post_message(ws_server, start_msg)
 
     # Start heartbeat for the streaming phase
     heartbeat_stop = start_heartbeat(
@@ -488,15 +485,7 @@ def stream_answer(
                                 content=FragmentContent(fragment=fragment_buffer),
                             )
                             try:
-                                ws_server.client.post_to_connection(
-                                    ConnectionId=ws_server.connection_id,
-                                    Data=json.dumps(
-                                        {
-                                            "streamId": "answer",
-                                            "body": frag_msg.model_dump(by_alias=True),
-                                        }
-                                    ),
-                                )
+                                post_message(ws_server, frag_msg)
                             except Exception:
                                 ws_connection_alive[0] = False
                         fragment_buffer = ""
@@ -521,10 +510,7 @@ def stream_answer(
             content=FragmentContent(fragment=fragment_buffer),
         )
         try:
-            ws_server.client.post_to_connection(
-                ConnectionId=ws_server.connection_id,
-                Data=json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)}),
-            )
+            post_message(ws_server, frag_msg)
         except Exception:
             ws_connection_alive[0] = False
 
