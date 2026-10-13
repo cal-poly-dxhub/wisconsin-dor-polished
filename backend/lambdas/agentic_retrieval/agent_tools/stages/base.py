@@ -41,7 +41,7 @@ class StageContext:
     # diversity_cap
     max_per_doc: int = 5
 
-    # authority_tiebreak / statute_backfill source snapshot
+    # authority_quota (statute_backfill source snapshot)
     backfill_source_chunks: list[dict] = field(default_factory=list)
 
     # citation_extraction

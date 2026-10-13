@@ -411,7 +411,6 @@ def run_one_query(
             query=query,
             cited_chunks=result.all_chunks,
             cited_doc_ids=context_docs,
-            discovery=result.discovery,
             fetched_opinions=result.fetched_opinions,
             answer_plan=result.answer_plan,
             chat_history=chat_history,

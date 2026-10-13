@@ -4,7 +4,7 @@ Chunks are bucketed by relevance score — within the same bucket, higher
 authority (lower authority_level int) wins; between buckets, relevance wins.
 Emits the ``vector_search_neptune_complete`` trace event, matching the point
 in the original monolith where this log line was recorded (immediately after
-the tiebreak sort, before auto-enrichment).
+the tiebreak sort, before citation_extraction).
 """
 
 import time

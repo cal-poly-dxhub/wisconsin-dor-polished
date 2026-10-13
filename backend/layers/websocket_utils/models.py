@@ -16,20 +16,15 @@ class WebSocketMessage(CamelCaseModel):
     pass
 
 
-class PlainWebSocketMessage(WebSocketMessage):
-    """
-    A plain text message.
-    """
-
-    message: str = Field(description="The message to be sent over the websocket.")
-
-
 class ErrorContent(WebSocketMessage):
     error: str = Field(description="The error message to be sent over the websocket.")
 
 
 class ErrorMessage(WebSocketMessage):
     response_type: Literal["error"] = "error"
+    # The query the error belongs to, so the client can mark that query failed
+    # (serialized as `queryId`). None when the failure precedes parsing it.
+    query_id: str | None = None
     content: ErrorContent
 
 
@@ -52,7 +47,7 @@ class SourceDocument(WebSocketMessage):
     s3_key: str | None = None
     start_page: int | None = None
     end_page: int | None = None
-    # WPAM edition year (e.g. 2025); None for all other doc types. Mirrors
+    # WPAM edition year (e.g. 2026); None for all other doc types. Mirrors
     # RAGDocument.edition_year so the value survives the wire boundary instead
     # of being silently dropped here. Serialized as `editionYear`.
     edition_year: int | None = None
@@ -140,21 +135,15 @@ class ChoicesContent(WebSocketMessage):
     # together as one clarification block, so the question travels HERE rather
     # than being restated as the last line of the streamed answer.
     #
-    # - `question` — the single question to put to the user. Absent on the
-    #   legacy pre-loop disambiguation path, whose canned answer text already
-    #   carries the question.
+    # - `question` — the single question to put to the user.
     # - `axis` — short noun phrase naming the fact being asked about
     #   ("property classification", "assessment year"); used as the block's
     #   label when present.
-    # - `kind` — which path produced these options: the post-retrieval
-    #   adequacy judge ("clarification") or the pre-loop property-type
-    #   classifier ("disambiguation").
     #
-    # All three are single words, so the camelCase alias generator leaves the
-    # wire names unchanged (`question` / `axis` / `kind`).
+    # Both are single words, so the camelCase alias generator leaves the wire
+    # names unchanged.
     question: str | None = None
     axis: str | None = None
-    kind: Literal["clarification", "disambiguation"] | None = None
 
 
 class ChoicesMessage(WebSocketMessage):
@@ -218,17 +207,3 @@ class FlowchartMessage(WebSocketMessage):
     response_type: Literal["flowchart"] = "flowchart"
     query_id: str
     content: FlowchartContent
-
-
-class SuggestionContent(WebSocketMessage):
-    # `kind` discriminates the suggestion variant so the frontend can render
-    # the right controls. Currently only topic-shift (offers new-chat /
-    # continue-here actions); kept as a Literal so adding a variant forces a
-    # matching frontend update.
-    kind: Literal["topic-shift"]
-
-
-class SuggestionMessage(WebSocketMessage):
-    response_type: Literal["suggestion"] = "suggestion"
-    query_id: str
-    content: SuggestionContent

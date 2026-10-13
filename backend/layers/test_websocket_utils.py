@@ -7,7 +7,19 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from websocket_utils.models import AgentEventMessage, ChoicesContent, ChoicesMessage
+from websocket_utils.errors import InvalidMessageError
+from websocket_utils.models import (
+    AgentEventMessage,
+    AnswerEventType,
+    ChoicesContent,
+    ChoicesMessage,
+    ErrorContent,
+    ErrorMessage,
+    FragmentContent,
+    FragmentMessage,
+    WebSocketMessage,
+)
+from websocket_utils.utils import frame, post_message
 
 
 def test_agent_event_message_camelcase_serialization():
@@ -54,7 +66,6 @@ def test_choices_message_carries_clarification_framing():
             choices=["Agricultural", "Undeveloped", "Answer in general terms"],
             question="Is the parcel classified agricultural or undeveloped?",
             axis="property classification",
-            kind="clarification",
         ),
     )
     dumped = msg.model_dump(by_alias=True)
@@ -65,20 +76,54 @@ def test_choices_message_carries_clarification_framing():
     # Single-word field names, so the camelCase alias generator is a no-op.
     assert content["question"] == "Is the parcel classified agricultural or undeveloped?"
     assert content["axis"] == "property classification"
-    assert content["kind"] == "clarification"
 
 
 def test_choices_message_framing_is_optional():
-    """The legacy pre-loop disambiguation path sends options with no question:
-    the fields must still be present (and null) so the schema is stable."""
+    """Options with no question or axis still serialize both fields (as null)
+    so the schema is stable."""
     msg = ChoicesMessage(
         query_id="q-2",
-        content=ChoicesContent(choices=["Residential", "Commercial"], kind="disambiguation"),
+        content=ChoicesContent(choices=["Residential", "Commercial"]),
     )
     content = msg.model_dump(by_alias=True)["content"]
     assert content["question"] is None
     assert content["axis"] is None
-    assert content["kind"] == "disambiguation"
+    assert "kind" not in content
+
+
+def test_error_message_carries_query_id():
+    msg = ErrorMessage(query_id="q-9", content=ErrorContent(error="boom"))
+    dumped = msg.model_dump(by_alias=True)
+    assert dumped == {"responseType": "error", "queryId": "q-9", "content": {"error": "boom"}}
+
+
+@pytest.mark.parametrize(
+    ("message", "stream_id"),
+    [
+        (ErrorMessage(content=ErrorContent(error="x")), "error"),
+        (
+            ChoicesMessage(query_id="q", content=ChoicesContent(choices=["a"])),
+            "choices",
+        ),
+        (AnswerEventType(event="start", query_id="q"), "answer-event"),
+        (FragmentMessage(query_id="q", content=FragmentContent(fragment="hi")), "answer"),
+    ],
+)
+def test_post_message_frames_with_stream_id(message, stream_id):
+    """post_message writes the exact {streamId, body} frame the client parses."""
+    ws = MagicMock()
+    ws.connection_id = "conn-7"
+    post_message(ws, message)
+    kwargs = ws.client.post_to_connection.call_args.kwargs
+    assert kwargs["ConnectionId"] == "conn-7"
+    assert kwargs["Data"] == json.dumps(
+        {"streamId": stream_id, "body": message.model_dump(by_alias=True)}
+    )
+
+
+def test_frame_rejects_unknown_message_type():
+    with pytest.raises(InvalidMessageError):
+        frame(WebSocketMessage())
 
 
 class TestWebSocketServer:
@@ -111,35 +156,6 @@ class TestWebSocketServer:
 
         # Verify the client is stored
         assert server.client == mock_client
-
-    @patch.dict(os.environ, {"WEBSOCKET_CALLBACK_URL": "wss://example.com/dev"})
-    @patch("websocket_utils.utils.boto3")
-    @pytest.mark.asyncio
-    async def test_send_json_plain_message(self, mock_boto3):
-        """Test send_json successfully sends a PlainWebSocketMessage"""
-        from websocket_utils.models import PlainWebSocketMessage
-        from websocket_utils.utils import WebSocketServer
-
-        # Setup mock client
-        mock_client = MagicMock()
-        mock_boto3.client.return_value = mock_client
-        mock_client.post_to_connection.return_value = {"ResponseMetadata": {"HTTPStatusCode": 200}}
-
-        # Create server and message
-        connection_id = "test-connection-123"
-        server = WebSocketServer(connection_id)
-        message = PlainWebSocketMessage(message="Hello, WebSocket!")
-
-        # Send the message
-        result = await server.send_json(message)
-
-        # Verify post_to_connection was called with correct parameters
-        mock_client.post_to_connection.assert_called_once_with(
-            ConnectionId=connection_id, Data=json.dumps("Hello, WebSocket!")
-        )
-
-        # Verify the result is returned
-        assert result == {"ResponseMetadata": {"HTTPStatusCode": 200}}
 
     @patch.dict(os.environ, {"WEBSOCKET_CALLBACK_URL": "wss://example/stage"})
     @patch("websocket_utils.utils.boto3")

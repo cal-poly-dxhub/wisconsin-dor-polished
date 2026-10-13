@@ -1,8 +1,16 @@
 """Agentic Retrieval Lambda entry point: two-phase GraphRAG retrieval.
 
+Clarification resolve (adequacy_judge.resolve_pending_clarification):
+    A reply to the previous turn's clarification is folded back into the
+    question that prompted it.
+
 Phase A (Research Loop, loop/phase_a.py):
     Claude decides which tools to call against Neptune Analytics until it
     calls prepare_answer (cited docs + answer plan, no answer text).
+
+Adequacy judge (adequacy_judge.judge_answer_plan):
+    Reads the plan against every retrieved chunk and records a Finding
+    (ANSWER / CLARIFY / DECLINE) that Phase B must honor.
 
 Phase B (Answer Stream, loop/phase_b.py):
     Build resource cards from cited_doc_ids, send them over WebSocket, then
@@ -11,13 +19,13 @@ Phase B (Answer Stream, loop/phase_b.py):
 
 import asyncio
 import itertools
-import json
 import logging
 from typing import Any
 
 import pydantic
 from adequacy_judge import judge_answer_plan, resolve_pending_clarification
-from case_law import fetch_case_opinion, is_case_law_stub
+from case_law import fetch_case_opinion, is_case_law_doc
+from chat_contracts.models import UserQuery
 from chat_history import get_chat_history, save_chat_history
 from config_validator import validate_env_and_log
 from faq import build_cited_faq_resource
@@ -33,31 +41,16 @@ from loop.phase_b import (
 )
 from prompt import ANSWER_STREAM_SYSTEM_PROMPT
 from rag_documents import build_rag_documents
-from step_function_types.errors import ValidationError, report_error
-from step_function_types.models import UserQuery
-from streaming.delivery import send_resources, send_resources_and_finalize
+from streaming.delivery import send_resources
 from tracing.emitter import filter_metadata as _filter_metadata
 from tracing.runtime import emit as _emit
 from tracing.runtime import log_event as _log
 from tracing.runtime import query_fields as _query_fields
-from websocket_utils.models import (
-    ChoicesContent,
-    ChoicesMessage,
-    SuggestionContent,
-    SuggestionMessage,
-)
-from websocket_utils.utils import get_ws_connection_from_session
+from websocket_utils.models import ChoicesContent, ChoicesMessage
+from websocket_utils.reporting import ValidationError, report_error
+from websocket_utils.utils import get_ws_connection_from_session, post_message
 
-from config import (
-    ADEQUACY_JUDGE_ENABLED,
-    AGENTIC_MODEL_ID,
-    ENABLE_DISAMBIGUATION,
-    ENABLE_TOPIC_SHIFT,
-    RAW_BUCKET,
-    SCOPE_GATE_ENABLED,
-    bedrock,
-    neptune,
-)
+from config import AGENTIC_MODEL_ID, RAW_BUCKET, bedrock, neptune
 
 logger = logging.getLogger(__name__)
 
@@ -79,16 +72,18 @@ def process_event(event: dict) -> UserQuery:
 
 def handler(event: dict, context) -> dict[str, Any]:
     """
-    Lambda handler. Processes a UserQuery via two-phase agentic retrieval:
-    Phase A: Research loop (non-streaming converse calls with tools)
-    Phase B: Answer streaming (converse_stream with no tools)
+    Lambda handler. Processes a UserQuery: clarification resolve, Phase A
+    research loop (converse with tools), adequacy judge, then Phase B answer
+    streaming (converse_stream with no tools).
     """
     session_id: str | None = None
+    query_id: str | None = None
     request_id = getattr(context, "aws_request_id", "") if context else ""
 
     try:
         user_query = process_event(event)
         session_id = user_query.session_id
+        query_id = user_query.query_id
         _log(
             "agentic_retrieval_request_received",
             request_id=request_id,
@@ -102,10 +97,10 @@ def handler(event: dict, context) -> dict[str, Any]:
         # If the previous turn ended with a clarification from the adequacy
         # judge and this message answers it (a chip label, or a short typed
         # value), fold the answer back into the question that prompted it so
-        # classification, retrieval, and the flowchart router all see the real
-        # question. Deterministic and keyed on stored state — a no-op (and
-        # therefore byte-for-byte the old behaviour) when no clarification is
-        # pending. The raw user message is still what gets persisted.
+        # retrieval and the flowchart router see the real question.
+        # Deterministic and keyed on stored state — a no-op when no
+        # clarification is pending. The raw user message is still what gets
+        # persisted.
         effective_query, clarification_reply = resolve_pending_clarification(
             user_query.query, chat_history
         )
@@ -151,125 +146,6 @@ def handler(event: dict, context) -> dict[str, Any]:
                 },
             )
 
-        # Pre-loop query classification: if enabled, check whether the query
-        # is out of scope (refuse), a generic property assessment question that
-        # needs a property type (clarify), or an unrelated new topic (suggest a
-        # fresh chat). Each such verdict short-circuits before the agentic loop,
-        # so no retrieval runs and no sources attach.
-        #
-        # suppress_topic_shift is set when the user picked "Continue here" on a
-        # topic-shift suggestion, or on the first send after dismissing one. It
-        # gates ONLY the TOPIC_SHIFT verdict — OUT_OF_SCOPE and DISAMBIGUATE
-        # still apply, so a generic "continue here" question still gets clarified
-        # — while ensuring the nudge fires at most once and can't loop.
-        #
-        # With the adequacy judge on and the scope gate off, the OUT_OF_SCOPE
-        # and DISAMBIGUATE short-circuits are skipped entirely: every query
-        # runs the research loop and the judge decides afterwards, with the
-        # corpus in front of it. TOPIC_SHIFT is unaffected — it is about
-        # conversation continuity, not scope, and keeps its own flag.
-        _skip_scope_short_circuit = ADEQUACY_JUDGE_ENABLED and not SCOPE_GATE_ENABLED
-        if ENABLE_DISAMBIGUATION:
-            from disambiguation import (
-                CLARIFICATION_QUESTION,
-                OUT_OF_SCOPE_MESSAGE,
-                PROPERTY_TYPE_CHOICES,
-                TOPIC_SHIFT_SUGGESTION,
-                VERDICT_DISAMBIGUATE,
-                VERDICT_OUT_OF_SCOPE,
-                VERDICT_TOPIC_SHIFT,
-                classify_query,
-            )
-
-            allow_topic_shift = ENABLE_TOPIC_SHIFT and not user_query.suppress_topic_shift
-            verdict = classify_query(
-                effective_query, chat_history, allow_topic_shift=allow_topic_shift
-            )
-            _phase_label = {
-                VERDICT_OUT_OF_SCOPE: "Query is outside property tax scope",
-                VERDICT_DISAMBIGUATE: "Query needs clarification on property type",
-                VERDICT_TOPIC_SHIFT: "Query looks like a new topic",
-            }.get(verdict, "Query is specific enough to proceed")
-            _emit(
-                ws_server,
-                trace_seq,
-                query_id=user_query.query_id,
-                kind="phase",
-                payload={
-                    "phase": "generality_classified",
-                    "label": _phase_label,
-                    "result": verdict.lower(),
-                },
-            )
-
-            _short_circuit_verdicts = (
-                (VERDICT_TOPIC_SHIFT,)
-                if _skip_scope_short_circuit
-                else (VERDICT_OUT_OF_SCOPE, VERDICT_DISAMBIGUATE, VERDICT_TOPIC_SHIFT)
-            )
-            if verdict in _short_circuit_verdicts:
-                _log(
-                    "disambiguation_short_circuit",
-                    request_id=request_id,
-                    query_id=user_query.query_id,
-                    session_id=user_query.session_id,
-                    verdict=verdict,
-                    **_query_fields(user_query.query),
-                )
-                answer = {
-                    VERDICT_DISAMBIGUATE: CLARIFICATION_QUESTION,
-                    VERDICT_OUT_OF_SCOPE: OUT_OF_SCOPE_MESSAGE,
-                    VERDICT_TOPIC_SHIFT: TOPIC_SHIFT_SUGGESTION,
-                }[verdict]
-                if ws_server:
-                    send_resources_and_finalize(
-                        ws_server,
-                        user_query.query_id,
-                        answer,
-                        rag_documents=[],
-                        faq_resource=None,
-                    )
-                    # The disambiguation verdict offers property-type choices;
-                    # the topic-shift verdict offers new-chat / continue actions.
-                    # An out-of-scope refusal has no follow-up controls.
-                    if verdict == VERDICT_DISAMBIGUATE:
-                        choices_msg = ChoicesMessage(
-                            query_id=user_query.query_id,
-                            content=ChoicesContent(
-                                choices=PROPERTY_TYPE_CHOICES,
-                                # The canned answer text already asks the
-                                # question, so none travels with the chips.
-                                kind="disambiguation",
-                            ),
-                        )
-                        data = json.dumps(
-                            {"streamId": "choices", "body": choices_msg.model_dump(by_alias=True)}
-                        )
-                        ws_server.client.post_to_connection(
-                            ConnectionId=ws_server.connection_id, Data=data
-                        )
-                    elif verdict == VERDICT_TOPIC_SHIFT:
-                        suggestion_msg = SuggestionMessage(
-                            query_id=user_query.query_id,
-                            content=SuggestionContent(kind="topic-shift"),
-                        )
-                        data = json.dumps(
-                            {
-                                "streamId": "suggestion",
-                                "body": suggestion_msg.model_dump(by_alias=True),
-                            }
-                        )
-                        ws_server.client.post_to_connection(
-                            ConnectionId=ws_server.connection_id, Data=data
-                        )
-                save_chat_history(
-                    session_id,
-                    user_query.query_id,
-                    user_query.query,
-                    answer,
-                )
-                return {"successful": True}
-
         # === Phase A: Research Loop ===
         persona = user_query.persona
         result = run_agentic_loop(
@@ -283,372 +159,318 @@ def handler(event: dict, context) -> dict[str, Any]:
         )
 
         # === Adequacy judge (between Phase A and Phase B) ===
-        # Reads the question, the conversation, the answer plan, and the TEXT
-        # of the cited chunks, and records a short structured finding. Phase B
+        # Reads the question, the conversation, the answer plan, and the text
+        # of every retrieved chunk, and records a short structured finding. Phase B
         # always streams; the finding is injected into its context and the
         # answerStream prompt makes the finding win where the two conflict.
         # Fail-open by construction — judge_answer_plan never raises.
-        finding = None
-        if ADEQUACY_JUDGE_ENABLED:
-            _judge_cited = set(result.cited_doc_ids)
-            finding = judge_answer_plan(
-                effective_query,
-                chat_history,
-                # The fallback paths (turn budget exhausted, model answered in
-                # prose) produce no plan — judge the text they did produce.
-                result.fallback_answer
-                if result.fallback_answer is not None
-                else result.answer_plan,
-                # Everything retrieved, not only what was cited: the judge must
-                # see the branches the plan did NOT pick to detect divergence.
-                # It labels and orders cited-vs-retrieved itself.
-                result.all_chunks,
-                result.discovery,
-                cited_doc_ids=_judge_cited,
-            )
-            _log(
-                "adequacy_judged",
-                request_id=request_id,
-                query_id=user_query.query_id,
-                session_id=user_query.session_id,
-                verdict=finding.verdict,
-                clarification_offered=finding.clarification is not None,
-                latency_ms=finding.latency_ms,
-                model_id=finding.model_id,
-                rationale=finding.rationale,
-            )
-            _emit(
-                ws_server,
-                trace_seq,
-                query_id=user_query.query_id,
-                kind="phase",
-                payload={
-                    "phase": "adequacy_judged",
-                    "label": {
-                        "ANSWER": "Cited material supports the answer",
-                        "CLARIFY": "Sources diverge on a fact the user did not give",
-                        "DECLINE": "Nothing retrieved bears on the question",
-                    }.get(finding.verdict, "Adequacy checked"),
-                    "result": finding.verdict.lower(),
-                    "metadata": _filter_metadata(
-                        {
-                            "latencyMs": finding.latency_ms,
-                            "clarificationOffered": finding.clarification is not None,
-                            "judgeModelId": finding.model_id,
-                        }
-                    ),
-                },
-            )
+        _judge_cited = set(result.cited_doc_ids)
+        finding = judge_answer_plan(
+            effective_query,
+            chat_history,
+            # The fallback paths (turn budget exhausted, model answered in
+            # prose) produce no plan — judge the text they did produce.
+            result.fallback_answer
+            if result.fallback_answer is not None
+            else result.answer_plan,
+            # Everything retrieved, not only what was cited: the judge must
+            # see the branches the plan did NOT pick to detect divergence.
+            # It labels and orders cited-vs-retrieved itself.
+            result.all_chunks,
+            result.discovery,
+            cited_doc_ids=_judge_cited,
+        )
+        _log(
+            "adequacy_judged",
+            request_id=request_id,
+            query_id=user_query.query_id,
+            session_id=user_query.session_id,
+            verdict=finding.verdict,
+            clarification_offered=finding.clarification is not None,
+            latency_ms=finding.latency_ms,
+            model_id=finding.model_id,
+            rationale=finding.rationale,
+        )
+        _emit(
+            ws_server,
+            trace_seq,
+            query_id=user_query.query_id,
+            kind="phase",
+            payload={
+                "phase": "adequacy_judged",
+                "label": {
+                    "ANSWER": "Cited material supports the answer",
+                    "CLARIFY": "Sources diverge on a fact the user did not give",
+                    "DECLINE": "Nothing retrieved bears on the question",
+                }.get(finding.verdict, "Adequacy checked"),
+                "result": finding.verdict.lower(),
+                "metadata": _filter_metadata(
+                    {
+                        "latencyMs": finding.latency_ms,
+                        "clarificationOffered": finding.clarification is not None,
+                        "judgeModelId": finding.model_id,
+                    }
+                ),
+            },
+        )
 
         prose_plan = False
-        if finding is not None and result.fallback_answer is not None:
-            # One prose path: with the judge on, a fallback (the model refused
-            # or clarified in its own words, or ran out of turns) is treated as
-            # the answer PLAN and written by Phase B under the finding, so a
-            # DECLINE is two plain sentences and an honest-no keeps its shape.
+        if result.fallback_answer is not None:
+            # One prose path: a fallback (the model refused or clarified in its
+            # own words, or ran out of turns) is treated as the answer PLAN and
+            # written by Phase B under the finding, so a DECLINE is two plain
+            # sentences and an honest-no keeps its shape.
             result.answer_plan = result.fallback_answer
             result.fallback_answer = None
             # An ANSWER / CLARIFY from prose still deserves grounding and source
             # cards; a DECLINE stays two plain sentences with none.
             prose_plan = finding.verdict != "DECLINE"
 
-        if result.fallback_answer is not None:
-            # Edge case: turn budget exhausted, or the model responded with text
-            # instead of calling prepare_answer. No Phase B needed. Attach only
-            # the docs the loop actually cited: the text-fallback path returns
-            # an empty cited set (no cards), while turn_budget_exhausted returns
-            # all discovered docs (show what it found). Building from
-            # cited_doc_ids honors both without dumping the pre-loop seed onto
-            # a refusal or clarifying question.
-            answer = result.fallback_answer
-            fallback_cited = set(result.cited_doc_ids)
-            fallback_chunks = [c for c in result.all_chunks if c.get("doc_id") in fallback_cited]
-            fallback_discovery = {k: v for k, v in result.discovery.items() if k in fallback_cited}
-            fallback_opinions = {
-                k: v for k, v in result.fetched_opinions.items() if k in fallback_cited
-            }
-            rag_documents = build_rag_documents(
-                fallback_chunks,
-                fallback_cited,
-                fallback_discovery,
-                fallback_opinions,
-                neptune_client=neptune,
-            )
-            faq_resource = result.high_confidence_faq or build_cited_faq_resource(
-                result.faq_entries, fallback_cited
-            )
+        # === Phase B: answer streaming ===
+        # 1. Build resources from cited_doc_ids
+        cited = set(result.cited_doc_ids)
+        # The model answered in prose without selecting sources (it never
+        # called prepare_answer). Rather than write from the plan alone,
+        # give Phase B the chunks the agent saw (the pre-loop seeds and any
+        # tool results); only the ones the answer links become cards, after
+        # the stream (see below), so the seed is never dumped as cards.
+        uncurated = prose_plan and not cited
+        context_docs = (
+            {c.get("doc_id") for c in result.all_chunks if c.get("doc_id")}
+            if uncurated
+            else cited
+        )
+        cited_chunks = [c for c in result.all_chunks if c.get("doc_id") in context_docs]
+        # Everything Phase A touched (cited + discovered + any chunk's doc):
+        # the citation-link repair may repoint a conflated statute/admin-rule
+        # link to any of these, but never to a doc outside this set.
+        retrieved_doc_ids = (
+            cited | set(result.discovery) | {c.get("doc_id") for c in result.all_chunks}
+        )
+        cited_discovery = {k: v for k, v in result.discovery.items() if k in cited}
+        for cid in cited:
+            cited_discovery.setdefault(cid, "fetched")
 
-            _log(
-                "agentic_retrieval_response_ready",
-                request_id=request_id,
-                query_id=user_query.query_id,
-                session_id=user_query.session_id,
-                answer_chars=len(answer),
-                cited_doc_count=len(result.cited_doc_ids),
-                rag_document_count=len(rag_documents),
-                faq_count=len(faq_resource.faqs) if faq_resource else 0,
-                phase="fallback",
-            )
-
-            if ws_server and result.connection_alive:
-                try:
-                    send_resources_and_finalize(
-                        ws_server,
-                        user_query.query_id,
-                        answer,
-                        rag_documents,
-                        faq_resource,
-                        seeded_flowchart=result.seeded_flowchart,
-                        seeded_flowchart_score=result.seeded_flowchart_score,
+        # Opinion backfill: for up to 3 cited cases whose full opinion was not
+        # already fetched, add the S3 opinion text on top of the holding-summary
+        # and analysis chunks in context (it replaces that case's card). Cases
+        # ingested without opinion text have nothing in S3 and are skipped.
+        cited_opinions = {k: v for k, v in result.fetched_opinions.items() if k in cited}
+        _OPINION_BACKFILL_CAP = 3
+        unfetched_cases = [
+            cid for cid in cited if is_case_law_doc(cid) and cid not in cited_opinions
+        ]
+        for case_id in unfetched_cases[:_OPINION_BACKFILL_CAP]:
+            try:
+                doc_info = neptune.get_document(case_id)
+                citation = (doc_info or {}).get("citation", "")
+                if not citation:
+                    continue
+                opinion = fetch_case_opinion(citation, raw_bucket=RAW_BUCKET)
+                if opinion.get("found"):
+                    cited_opinions[case_id] = {
+                        "citation": citation,
+                        "raw_key": opinion.get("raw_key", ""),
+                        "text": opinion.get("text", ""),
+                        "scholar_url": opinion.get("scholar_url", ""),
+                    }
+                    cited_discovery[case_id] = "opinion-fetched"
+                    logger.info(
+                        f"Opinion backfill: fetched {citation} "
+                        f"({len(opinion.get('text', ''))} chars)"
                     )
-                except Exception:
-                    logger.info("WebSocket connection lost during finalize; answer saved to DB")
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    f"Opinion backfill failed for {case_id}",
+                    exc_info=True,
+                )
 
-        else:
-            # === Normal path: Phase B streaming ===
-            # 1. Build resources from cited_doc_ids
-            cited = set(result.cited_doc_ids)
-            # The model answered in prose without selecting sources (it never
-            # called prepare_answer). Rather than write from the plan alone,
-            # give Phase B the chunks the agent saw (the pre-loop seeds and any
-            # tool results); only the ones the answer links become cards, after
-            # the stream (see below), so the seed is never dumped as cards.
-            uncurated = prose_plan and not cited
-            context_docs = (
-                {c.get("doc_id") for c in result.all_chunks if c.get("doc_id")}
-                if uncurated
-                else cited
-            )
-            cited_chunks = [c for c in result.all_chunks if c.get("doc_id") in context_docs]
-            # Everything Phase A touched (cited + discovered + any chunk's doc):
-            # the citation-link repair may repoint a conflated statute/admin-rule
-            # link to any of these, but never to a doc outside this set.
-            retrieved_doc_ids = (
-                cited | set(result.discovery) | {c.get("doc_id") for c in result.all_chunks}
-            )
-            cited_discovery = {k: v for k, v in result.discovery.items() if k in cited}
-            for cid in cited:
-                cited_discovery.setdefault(cid, "fetched")
+        rag_documents = build_rag_documents(
+            cited_chunks,
+            cited,
+            cited_discovery,
+            cited_opinions,
+            neptune_client=neptune,
+        )
+        faq_resource = result.high_confidence_faq or build_cited_faq_resource(
+            result.faq_entries, cited
+        )
 
-            # Opinion backfill for case law stubs not already fetched
-            cited_opinions = {k: v for k, v in result.fetched_opinions.items() if k in cited}
-            _OPINION_BACKFILL_CAP = 3
-            unfetched_stubs = [
-                cid for cid in cited if is_case_law_stub(cid) and cid not in cited_opinions
-            ]
-            for stub_id in unfetched_stubs[:_OPINION_BACKFILL_CAP]:
-                try:
-                    doc_info = neptune.get_document(stub_id)
-                    citation = (doc_info or {}).get("citation", "")
-                    if not citation:
-                        continue
-                    opinion = fetch_case_opinion(citation, raw_bucket=RAW_BUCKET)
-                    if opinion.get("found"):
-                        cited_opinions[stub_id] = {
-                            "citation": citation,
-                            "raw_key": opinion.get("raw_key", ""),
-                            "text": opinion.get("text", ""),
-                            "scholar_url": opinion.get("scholar_url", ""),
-                        }
-                        cited_discovery[stub_id] = "opinion-backfill"
-                        logger.info(
-                            f"Opinion backfill: fetched {citation} "
-                            f"({len(opinion.get('text', ''))} chars)"
-                        )
-                except Exception:  # noqa: BLE001
-                    logger.warning(
-                        f"Opinion backfill failed for {stub_id}",
-                        exc_info=True,
-                    )
+        _log(
+            "agentic_retrieval_response_ready",
+            request_id=request_id,
+            query_id=user_query.query_id,
+            session_id=user_query.session_id,
+            cited_doc_count=len(cited),
+            rag_document_count=len(rag_documents),
+            faq_count=len(faq_resource.faqs) if faq_resource else 0,
+            phase="streaming",
+        )
 
-            rag_documents = build_rag_documents(
+        answer = ""  # Will be populated by streaming or fallback
+        stream_interrupted = False
+        ws_connection_alive = [False]  # replaced below when a socket is live
+        answer_context = ""  # set in both branches below; grounds the URL guard
+        # chapter -> {section -> page} for the writer's index AND the
+        # deterministic page fill in the link repair (cached per container).
+        section_pages = statute_section_pages(
+            cited_chunks, context_docs, neptune, result.answer_plan
+        )
+        if ws_server and result.connection_alive:
+            ws_connection_alive = [result.connection_alive]
+
+            # 2. Send resource cards (non-fatal if connection is already gone)
+            try:
+                send_resources(
+                    ws_server,
+                    user_query.query_id,
+                    rag_documents,
+                    faq_resource,
+                    seeded_flowchart=result.seeded_flowchart,
+                    seeded_flowchart_score=result.seeded_flowchart_score,
+                )
+            except Exception as res_exc:
+                logger.warning(
+                    "send_resources failed (connection likely gone) | exc=%s",
+                    res_exc,
+                )
+                ws_connection_alive[0] = False
+
+            # 3. Stream answer (Phase B) — handles dead connections internally
+            answer_context = build_answer_context(
+                user_query.query,
                 cited_chunks,
+                context_docs,
+                cited_opinions,
+                result.answer_plan,
+                chat_history=chat_history,
+                neptune_client=neptune,
+                finding=finding,
+                uncurated=uncurated,
+            )
+            try:
+                answer = stream_answer(
+                    ws_server,
+                    user_query.query_id,
+                    answer_context,
+                    trace_seq,
+                    ws_connection_alive,
+                    persona=persona,
+                    retrieved_doc_ids=retrieved_doc_ids,
+                    cited_chunks=result.all_chunks,
+                    section_pages=section_pages,
+                    grounding_text=answer_context,
+                )
+            except Exception as phase_b_exc:
+                logger.error(
+                    "Phase B failed | exc_type=%s exc=%s",
+                    type(phase_b_exc).__name__,
+                    phase_b_exc,
+                    exc_info=True,
+                )
+                if not answer:
+                    try:
+                        response = bedrock.converse(
+                            modelId=AGENTIC_MODEL_ID,
+                            messages=[{"role": "user", "content": [{"text": answer_context}]}],
+                            system=[
+                                {"text": apply_persona(ANSWER_STREAM_SYSTEM_PROMPT, persona)}
+                            ],
+                            inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+                        )
+                        text_blocks = [
+                            block["text"]
+                            for block in response["output"]["message"]["content"]
+                            if "text" in block
+                        ]
+                        answer = "\n".join(text_blocks)
+                        logger.info(
+                            "Phase B fallback: generated answer via non-streaming converse()"
+                        )
+                    except Exception as fallback_exc:
+                        logger.error(f"Phase B non-streaming fallback failed: {fallback_exc}")
+                        answer = "(Answer generation failed — please retry)"
+                    # The stream died mid-answer: the client holds partial
+                    # fragments and never saw "stop". Finish it below, after
+                    # the link pass, with the text that is persisted.
+                    stream_interrupted = True
+        else:
+            # No WebSocket — generate answer without streaming for DB save
+            answer_context = build_answer_context(
+                user_query.query,
+                cited_chunks,
+                context_docs,
+                cited_opinions,
+                result.answer_plan,
+                chat_history=chat_history,
+                neptune_client=neptune,
+                finding=finding,
+                uncurated=uncurated,
+            )
+            try:
+                response = bedrock.converse(
+                    modelId=AGENTIC_MODEL_ID,
+                    messages=[{"role": "user", "content": [{"text": answer_context}]}],
+                    system=[{"text": apply_persona(ANSWER_STREAM_SYSTEM_PROMPT, persona)}],
+                    inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
+                )
+                text_blocks = [
+                    block["text"]
+                    for block in response["output"]["message"]["content"]
+                    if "text" in block
+                ]
+                answer = "\n".join(text_blocks)
+            except Exception as exc:
+                logger.error(f"Phase B non-streaming fallback failed: {exc}")
+                answer = "(Answer generation failed — please retry)"
+
+        # Single pre-persist repair pass (idempotent after the in-stream
+        # repair; covers the non-streaming converse() fallbacks).
+        answer = finalize_answer_links(
+            answer,
+            user_query.query_id,
+            retrieved_doc_ids,
+            result.all_chunks,
+            section_pages=section_pages,
+            grounding_text=answer_context,
+        )
+        if stream_interrupted:
+            send_answer_stop(ws_server, user_query.query_id, answer, ws_connection_alive)
+
+        if uncurated:
+            # Cards for exactly the retrieved documents the answer links,
+            # sent after the stream (the answer decides which were used).
+            pre_stream_faq = faq_resource
+            cited = linked_doc_ids(answer) & context_docs
+            cited_discovery = {cid: result.discovery.get(cid, "seed") for cid in cited}
+            rag_documents = build_rag_documents(
+                [c for c in result.all_chunks if c.get("doc_id") in cited],
                 cited,
                 cited_discovery,
-                cited_opinions,
+                {},
                 neptune_client=neptune,
             )
-            faq_resource = result.high_confidence_faq or build_cited_faq_resource(
+            faq_resource = pre_stream_faq or build_cited_faq_resource(
                 result.faq_entries, cited
             )
-
             _log(
-                "agentic_retrieval_response_ready",
-                request_id=request_id,
+                "prose_plan_sources",
                 query_id=user_query.query_id,
-                session_id=user_query.session_id,
-                cited_doc_count=len(cited),
+                context_doc_count=len(context_docs),
+                linked_doc_count=len(cited),
                 rag_document_count=len(rag_documents),
-                faq_count=len(faq_resource.faqs) if faq_resource else 0,
-                phase="streaming",
             )
-
-            answer = ""  # Will be populated by streaming or fallback
-            stream_interrupted = False
-            ws_connection_alive = [False]  # replaced below when a socket is live
-            answer_context = ""  # set in both branches below; grounds the URL guard
-            # chapter -> {section -> page} for the writer's index AND the
-            # deterministic page fill in the link repair (cached per container).
-            section_pages = statute_section_pages(
-                cited_chunks, context_docs, neptune, result.answer_plan
-            )
-            if ws_server and result.connection_alive:
-                ws_connection_alive = [result.connection_alive]
-
-                # 2. Send resource cards (non-fatal if connection is already gone)
+            if ws_server and ws_connection_alive and ws_connection_alive[0]:
                 try:
                     send_resources(
                         ws_server,
                         user_query.query_id,
                         rag_documents,
-                        faq_resource,
-                        seeded_flowchart=result.seeded_flowchart,
-                        seeded_flowchart_score=result.seeded_flowchart_score,
+                        # A high-confidence FAQ already went out before the stream.
+                        None if pre_stream_faq else faq_resource,
                     )
-                except Exception as res_exc:
-                    logger.warning(
-                        "send_resources failed (connection likely gone) | exc=%s",
-                        res_exc,
-                    )
-                    ws_connection_alive[0] = False
-
-                # 3. Stream answer (Phase B) — handles dead connections internally
-                answer_context = build_answer_context(
-                    user_query.query,
-                    cited_chunks,
-                    context_docs,
-                    cited_discovery,
-                    cited_opinions,
-                    result.answer_plan,
-                    chat_history=chat_history,
-                    neptune_client=neptune,
-                    finding=finding,
-                    uncurated=uncurated,
-                )
-                try:
-                    answer = stream_answer(
-                        ws_server,
-                        user_query.query_id,
-                        answer_context,
-                        trace_seq,
-                        ws_connection_alive,
-                        persona=persona,
-                        retrieved_doc_ids=retrieved_doc_ids,
-                        cited_chunks=result.all_chunks,
-                        section_pages=section_pages,
-                        grounding_text=answer_context,
-                    )
-                except Exception as phase_b_exc:
-                    logger.error(
-                        "Phase B failed | exc_type=%s exc=%s",
-                        type(phase_b_exc).__name__,
-                        phase_b_exc,
-                        exc_info=True,
-                    )
-                    if not answer:
-                        try:
-                            response = bedrock.converse(
-                                modelId=AGENTIC_MODEL_ID,
-                                messages=[{"role": "user", "content": [{"text": answer_context}]}],
-                                system=[
-                                    {"text": apply_persona(ANSWER_STREAM_SYSTEM_PROMPT, persona)}
-                                ],
-                                inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
-                            )
-                            text_blocks = [
-                                block["text"]
-                                for block in response["output"]["message"]["content"]
-                                if "text" in block
-                            ]
-                            answer = "\n".join(text_blocks)
-                            logger.info(
-                                "Phase B fallback: generated answer via non-streaming converse()"
-                            )
-                        except Exception as fallback_exc:
-                            logger.error(f"Phase B non-streaming fallback failed: {fallback_exc}")
-                            answer = "(Answer generation failed — please retry)"
-                        # The stream died mid-answer: the client holds partial
-                        # fragments and never saw "stop". Finish it below, after
-                        # the link pass, with the text that is persisted.
-                        stream_interrupted = True
-            else:
-                # No WebSocket — generate answer without streaming for DB save
-                answer_context = build_answer_context(
-                    user_query.query,
-                    cited_chunks,
-                    context_docs,
-                    cited_discovery,
-                    cited_opinions,
-                    result.answer_plan,
-                    chat_history=chat_history,
-                    neptune_client=neptune,
-                    finding=finding,
-                    uncurated=uncurated,
-                )
-                try:
-                    response = bedrock.converse(
-                        modelId=AGENTIC_MODEL_ID,
-                        messages=[{"role": "user", "content": [{"text": answer_context}]}],
-                        system=[{"text": apply_persona(ANSWER_STREAM_SYSTEM_PROMPT, persona)}],
-                        inferenceConfig={"maxTokens": 4096, "temperature": 0.0},
-                    )
-                    text_blocks = [
-                        block["text"]
-                        for block in response["output"]["message"]["content"]
-                        if "text" in block
-                    ]
-                    answer = "\n".join(text_blocks)
-                except Exception as exc:
-                    logger.error(f"Phase B non-streaming fallback failed: {exc}")
-                    answer = "(Answer generation failed — please retry)"
-
-            # Single pre-persist repair pass (idempotent after the in-stream
-            # repair; covers the non-streaming converse() fallbacks).
-            answer = finalize_answer_links(
-                answer,
-                user_query.query_id,
-                retrieved_doc_ids,
-                result.all_chunks,
-                section_pages=section_pages,
-                grounding_text=answer_context,
-            )
-            if stream_interrupted:
-                send_answer_stop(ws_server, user_query.query_id, answer, ws_connection_alive)
-
-            if uncurated:
-                # Cards for exactly the retrieved documents the answer links,
-                # sent after the stream (the answer decides which were used).
-                pre_stream_faq = faq_resource
-                cited = linked_doc_ids(answer) & context_docs
-                cited_discovery = {cid: result.discovery.get(cid, "seed") for cid in cited}
-                rag_documents = build_rag_documents(
-                    [c for c in result.all_chunks if c.get("doc_id") in cited],
-                    cited,
-                    cited_discovery,
-                    {},
-                    neptune_client=neptune,
-                )
-                faq_resource = pre_stream_faq or build_cited_faq_resource(
-                    result.faq_entries, cited
-                )
-                _log(
-                    "prose_plan_sources",
-                    query_id=user_query.query_id,
-                    context_doc_count=len(context_docs),
-                    linked_doc_count=len(cited),
-                    rag_document_count=len(rag_documents),
-                )
-                if ws_server and ws_connection_alive and ws_connection_alive[0]:
-                    try:
-                        send_resources(
-                            ws_server,
-                            user_query.query_id,
-                            rag_documents,
-                            # A high-confidence FAQ already went out before the stream.
-                            None if pre_stream_faq else faq_resource,
-                        )
-                    except Exception:  # noqa: BLE001
-                        logger.warning("Failed to send prose-plan source cards", exc_info=True)
+                except Exception:  # noqa: BLE001
+                    logger.warning("Failed to send prose-plan source cards", exc_info=True)
 
         # Streaming is done. If the judge asked for a clarification, offer its
         # question and options using the existing generic `choices` wire type
@@ -656,7 +478,7 @@ def handler(event: dict, context) -> dict[str, Any]:
         # clarification block above the source cards). The question travels
         # here rather than in the prose — Phase B is told NOT to restate it.
         pending_clarification = None
-        if finding is not None and finding.clarification and finding.clarification.options:
+        if finding.clarification and finding.clarification.options:
             pending_clarification = {
                 **finding.clarification.to_dict(),
                 # Store the RESOLVED query so a chain of clarifications keeps
@@ -671,18 +493,9 @@ def handler(event: dict, context) -> dict[str, Any]:
                             choices=finding.clarification.options,
                             question=finding.clarification.question or None,
                             axis=finding.clarification.axis or None,
-                            kind="clarification",
                         ),
                     )
-                    ws_server.client.post_to_connection(
-                        ConnectionId=ws_server.connection_id,
-                        Data=json.dumps(
-                            {
-                                "streamId": "choices",
-                                "body": choices_msg.model_dump(by_alias=True),
-                            }
-                        ),
-                    )
+                    post_message(ws_server, choices_msg)
                 except Exception:  # noqa: BLE001
                     logger.warning(
                         "Failed to send adequacy-judge clarification choices", exc_info=True
@@ -723,6 +536,6 @@ def handler(event: dict, context) -> dict[str, Any]:
         )
         logger.error(f"Agentic retrieval failed: {e}", exc_info=True)
         if session_id:
-            asyncio.run(report_error(e, session_id=session_id))
+            asyncio.run(report_error(e, session_id=session_id, query_id=query_id))
 
         return {"successful": False}

@@ -88,7 +88,7 @@ def test_get_neighbors_with_edge_types_no_extracted_from_clause():
         from graph.neptune_client import NeptuneClient
 
         client = NeptuneClient(graph_id="test-graph")
-        client.get_neighbors("doc-1", edge_types=["CITES", "IMPLEMENTS"])
+        client.get_neighbors("doc-1", edge_types=["CITES", "PART_OF"])
 
         query_arg = mock_neptune.execute_query.call_args.kwargs.get(
             "queryString"
@@ -100,7 +100,7 @@ def test_get_neighbors_with_edge_types_no_extracted_from_clause():
                 else ""
             )
         # type filter should include the specified types
-        assert "CITES|IMPLEMENTS" in query_arg
+        assert "CITES|PART_OF" in query_arg
         # No WHERE exclusion needed — type filter handles it
         assert "WHERE type(r) <> 'EXTRACTED_FROM'" not in query_arg
         # LIMIT should still be present
@@ -217,32 +217,6 @@ def test_find_case_law_with_statute_scope():
         assert len(scope_calls) == 1
         assert scope_calls[0].kwargs["parameters"] == {"ids": ["WIS-STAT-70.32"]}
     case_law.reset_case_law_index_cache()
-
-
-def test_get_neighbors_title_filter():
-    """title_filter adds a WHERE clause to scope neighbors by title."""
-    with patch("graph.neptune_client.boto3") as mock_boto3:
-        mock_neptune = MagicMock()
-        mock_boto3.client.return_value = mock_neptune
-        mock_neptune.execute_query.return_value = {"results": []}
-
-        from graph.neptune_client import NeptuneClient
-
-        client = NeptuneClient(graph_id="test-graph")
-        client.get_neighbors("WIS-STAT-70.11", edge_types=["CITES"], title_filter="hospital")
-
-        query_arg = mock_neptune.execute_query.call_args.kwargs.get(
-            "queryString"
-        ) or mock_neptune.execute_query.call_args[1].get("queryString")
-        if query_arg is None:
-            query_arg = (
-                mock_neptune.execute_query.call_args[0][0]
-                if mock_neptune.execute_query.call_args[0]
-                else ""
-            )
-        assert "toLower($title_filter)" in query_arg
-        params = mock_neptune.execute_query.call_args.kwargs.get("parameters", {})
-        assert params.get("title_filter") == "hospital"
 
 
 def test_case_chunks_for_statutes_uses_one_incoming_cites_batch():

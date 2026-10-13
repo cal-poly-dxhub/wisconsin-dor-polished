@@ -33,7 +33,7 @@ def run(ctx: StageContext) -> StageResult:
     if backfill_source_gate > 0 and backfill_cap > 0:
         try:
             # Source chunks are the top-N by TRUE relevance (the pre-resort
-            # snapshot taken in diversity_cap). Remember each source chunk's
+            # snapshot taken in authority_quota). Remember each source chunk's
             # rank (for ranking below), and skip chunks that ARE statutes —
             # no point backfilling a statute from a statute; the model has
             # it already.

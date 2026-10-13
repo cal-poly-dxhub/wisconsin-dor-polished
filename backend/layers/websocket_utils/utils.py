@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator
+from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
@@ -22,21 +22,50 @@ from websocket_utils.models import (
     ErrorMessage,
     FAQMessage,
     FlowchartMessage,
-    FragmentContent,
     FragmentMessage,
-    PlainWebSocketMessage,
-    SuggestionMessage,
     WebSocketMessage,
 )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
 
+# The frame's `streamId` for each message type. The frontend validates it
+# against its own enum, then routes on the body's `responseType`. Adding a
+# message type means adding it here (and to the frontend Zod union).
+STREAM_IDS: dict[type[WebSocketMessage], str] = {
+    ErrorMessage: "error",
+    DocumentsMessage: "resources",
+    FAQMessage: "resources",
+    FlowchartMessage: "resources",
+    AnswerEventType: "answer-event",
+    FragmentMessage: "answer",
+    AgentEventMessage: "agent-trace",
+    ChoicesMessage: "choices",
+}
+
+
+def frame(body: WebSocketMessage) -> str:
+    """Serialize a message as the `{streamId, body}` frame the client expects."""
+    stream_id = STREAM_IDS.get(type(body))
+    if stream_id is None:
+        logger.error("Unknown WebSocket message type: %s", type(body).__name__)
+        raise InvalidMessageError(details={"message_type": type(body).__name__})
+    return json.dumps({"streamId": stream_id, "body": body.model_dump(by_alias=True)})
+
+
+def post_message(ws_server: Any, body: WebSocketMessage) -> Any:
+    """Post one typed message to the server's connection (synchronous).
+
+    Delivery errors propagate unchanged; callers decide whether a dead
+    connection matters.
+    """
+    return ws_server.client.post_to_connection(
+        ConnectionId=ws_server.connection_id, Data=frame(body)
+    )
+
 
 class WebSocketServer:
-    """
-    For sending either JSON messages or streaming fragments over a WebSocket connection.
-    """
+    """Sends typed messages to one API Gateway WebSocket connection."""
 
     def __init__(self, connection_id: str):
         self.connection_id = connection_id
@@ -51,65 +80,10 @@ class WebSocketServer:
             raise WebSocketConnectionError(details={"original_error": str(e)}) from e
 
     async def send_json(self, body: WebSocketMessage) -> None:
-        logger.info(f"Sending message to connection {self.connection_id}")
-
-        match body:
-            case ErrorMessage():
-                message = {
-                    "streamId": "error",
-                    "body": body.model_dump(by_alias=True),
-                }
-            case DocumentsMessage():
-                message = {
-                    "streamId": "resources",
-                    "body": body.model_dump(by_alias=True),
-                }
-            case FAQMessage():
-                message = {
-                    "streamId": "resources",
-                    "body": body.model_dump(by_alias=True),
-                }
-            case FlowchartMessage():
-                message = {
-                    "streamId": "resources",
-                    "body": body.model_dump(by_alias=True),
-                }
-            case AnswerEventType(event="start"):
-                message = {
-                    "streamId": "answer-event",
-                    "body": body.model_dump(by_alias=True),
-                }
-            case AnswerEventType(event="stop"):
-                message = {
-                    "streamId": "answer-event",
-                    "body": body.model_dump(by_alias=True),
-                }
-            case PlainWebSocketMessage(message=message):
-                # For echoing during testing
-                pass
-            case AgentEventMessage():
-                message = {
-                    "streamId": "agent-trace",
-                    "body": body.model_dump(by_alias=True),
-                }
-            case ChoicesMessage():
-                message = {
-                    "streamId": "choices",
-                    "body": body.model_dump(by_alias=True),
-                }
-            case SuggestionMessage():
-                message = {
-                    "streamId": "suggestion",
-                    "body": body.model_dump(by_alias=True),
-                }
-            case _:
-                logger.error("WebSocket client received an unknown message type")
-                raise InvalidMessageError(details={"message_type": type(body).__name__})
-
+        """Post a message, wrapping a delivery failure in MessageDeliveryError."""
+        data = frame(body)
         try:
-            response = self.client.post_to_connection(
-                ConnectionId=self.connection_id, Data=json.dumps(message)
-            )
+            response = self.client.post_to_connection(ConnectionId=self.connection_id, Data=data)
             logger.info(f"Message sent successfully to connection {self.connection_id}")
             return response
         except Exception as e:
@@ -117,37 +91,6 @@ class WebSocketServer:
             raise MessageDeliveryError(
                 details={"connection_id": self.connection_id, "original_error": str(e)}
             ) from e
-
-    async def stream_fragments(self, event_stream: AsyncGenerator[str], query_id: str) -> None:
-        logger.info(f"Streaming fragments to connection {self.connection_id}")
-
-        async for fragment in event_stream:
-            fragment_content = FragmentContent(fragment=fragment)
-            fragment_message = FragmentMessage(query_id=query_id, content=fragment_content)
-            message = {
-                "streamId": "answer",
-                "body": fragment_message.model_dump(by_alias=True),
-            }
-
-            # Send fragment
-            try:
-                response = self.client.post_to_connection(
-                    ConnectionId=self.connection_id, Data=json.dumps(message)
-                )
-            except Exception as e:
-                logger.error(f"Failed to send fragment to connection {self.connection_id}: {e}")
-                raise MessageDeliveryError(
-                    details={"connection_id": self.connection_id, "original_error": str(e)}
-                ) from e
-
-            # Handle non-successful error codes
-            if response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 200:
-                logger.error(
-                    f"Failed to send fragment to connection {self.connection_id}: {response}"
-                )
-                raise MessageDeliveryError(
-                    details={"connection_id": self.connection_id, "response": response}
-                )
 
 
 def get_ws_connection_from_session(session_id: str) -> WebSocketServer:

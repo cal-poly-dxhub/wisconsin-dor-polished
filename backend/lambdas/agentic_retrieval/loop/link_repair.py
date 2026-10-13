@@ -162,9 +162,7 @@ def _section_numbers_in_text(text: str, chapter: str) -> list[str]:
     return re.findall(rf"\b({re.escape(chapter)}\.\d+)", text)
 
 
-def resolve_section_page(
-    chapter: str, sections: list[str], chunks: list[dict] | None
-) -> int | None:
+def resolve_section_page(sections: list[str], chunks: list[dict] | None) -> int | None:
     """Best-effort page for one of `sections` from the retrieved statute chunks.
 
     Prefers a chunk whose canonical heading IS the section; falls back to a
@@ -271,7 +269,7 @@ def repair_citation_links(
             # Right chapter, no page: fill it from the retrieved chunks or the
             # chapter's section index (the writer was shown the same index).
             sections = _section_numbers_in_text(text, chapter)
-            page = resolve_section_page(chapter, sections, chunks_by_doc.get(doc_id))
+            page = resolve_section_page(sections, chunks_by_doc.get(doc_id))
             if page is None:
                 page = _index_page(chapter, sections)
             if page is None:
@@ -284,7 +282,7 @@ def repair_citation_links(
         want = f"statutes-{chapter}"
         if want in retrieved_doc_ids or chapter in known_statute_chapters:
             sections = _section_numbers_in_text(text, chapter)
-            resolved = resolve_section_page(chapter, sections, chunks_by_doc.get(want))
+            resolved = resolve_section_page(sections, chunks_by_doc.get(want))
             if resolved is None:
                 resolved = _index_page(chapter, sections)
             if classify_link_label(text, chapter) == "claim" and doc_id in retrieved_doc_ids:

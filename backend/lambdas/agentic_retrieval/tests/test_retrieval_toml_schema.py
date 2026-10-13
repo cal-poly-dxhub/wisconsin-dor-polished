@@ -125,14 +125,8 @@ def test_vector_search_top_k_documented(config):
         "CASELAW_CHUNK_HARD_CAP",
         "CASELAW_CHUNK_MAX_PER_CASE",
         "DIVERSITY_CAP_PER_DOC",
-        "ENABLE_DISAMBIGUATION",
-        "ENABLE_TOPIC_SHIFT",
         "FAQ_KNOWLEDGE_BASE_ID",
-        "FAQ_SCORE_THRESHOLD",
-        "MAX_TURNS",
         "AGENTIC_MODEL_ID",
-        "REFINEMENT_MODEL_ID",
-        "CASE_LAW_SUMMARY_MODEL",
         "RAW_BUCKET",
         "LOG_TOOL_TRACE",
         "LOG_QUERY_TEXT",
@@ -143,27 +137,44 @@ def test_vector_search_top_k_documented(config):
         "NEPTUNE_GRAPH_ID",
     ],
 )
-def test_spec_documented_env_vars_present(config, expected_var):
-    """Every env var listed in the spec's table must exist in the TOML."""
+def test_core_env_vars_present(config, expected_var):
+    """The env vars the Lambda depends on must stay declared in the TOML."""
     assert expected_var in config["env"], f"{expected_var} missing from config/retrieval.toml"
-
-
-@pytest.mark.parametrize("flag", ["ENABLE_DISAMBIGUATION", "ENABLE_TOPIC_SHIFT"])
-def test_legacy_classifier_flags_default_off(config, flag):
-    """The pre-loop classifier is superseded by the adequacy judge (Task 71).
-    Both of its flags stay declared (config.py reads them, and SCOPE_GATE_ENABLED
-    is a two-way door back to the old gate) but must default to false."""
-    entry = config["env"][flag]
-    assert entry["type"] == "bool"
-    assert str(entry["default"]).lower() == "false"
-    assert "legacy" in entry["description"].lower()
 
 
 @pytest.mark.parametrize(
     "removed_var",
-    ["BROAD_DISCOVERY_CAP", "ENRICH_CAP_PER_DOC", "ENRICH_CAP_PER_TYPE"],
+    [
+        "BROAD_DISCOVERY_CAP",
+        "ENRICH_CAP_PER_DOC",
+        "ENRICH_CAP_PER_TYPE",
+        "ENABLE_DISAMBIGUATION",
+        "ENABLE_TOPIC_SHIFT",
+        "SCOPE_GATE_ENABLED",
+        "ADEQUACY_JUDGE_ENABLED",
+    ],
 )
 def test_removed_env_vars_stay_removed(config, removed_var):
     """BROAD_DISCOVERY_CAP was never read by any stage; the ENRICH_CAP_* pair
-    configured the auto_enrichment stage, which was deleted."""
+    configured the deleted auto_enrichment stage; the classifier / scope-gate /
+    judge flags went with the pre-loop classifier (the judge always runs)."""
     assert removed_var not in config["env"]
+
+
+_CODE_ROOTS = [
+    _REPO_ROOT / "backend" / "lambdas" / "agentic_retrieval",
+    _REPO_ROOT / "backend" / "layers",
+]
+
+
+def test_every_env_entry_is_read_by_code(config):
+    """CDK writes every [env.*] entry into the Lambda environment, so an entry
+    no code reads looks configurable but changes nothing."""
+    source = "\n".join(
+        path.read_text()
+        for root in _CODE_ROOTS
+        for path in root.rglob("*.py")
+        if "tests" not in path.parts
+    )
+    unread = [key for key in config["env"] if f'"{key}"' not in source]
+    assert not unread, f"declared in retrieval.toml but never read: {unread}"

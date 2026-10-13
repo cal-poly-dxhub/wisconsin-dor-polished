@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -71,20 +71,6 @@ class TestWebSocketHandlers:
         }
 
     @pytest.fixture
-    def message_event(self):
-        """Sample WebSocket message event"""
-        return {
-            "requestContext": {
-                "connectionId": "test-connection-123",
-                "domainName": "example.com",
-                "stage": "dev",
-                "eventType": "MESSAGE",
-            },
-            "body": json.dumps("Hello World"),
-            "queryStringParameters": {"sessionId": "test-session-456"},
-        }
-
-    @pytest.fixture
     def mock_context(self):
         """Mock Lambda context"""
         context = MagicMock()
@@ -147,35 +133,6 @@ class TestWebSocketHandlers:
         body = json.loads(result["body"])
         assert body["message"] == "Disconnected"
 
-    @patch("websocket_utils.utils.WebSocketServer")
-    @patch.dict("default.os.environ", {"WEBSOCKET_CALLBACK_URL": "wss://example.com/dev"})
-    def test_default_handler_happy_path(
-        self, mock_websocket_server_class, message_event, mock_context
-    ):
-        """Test successful message echo"""
-        from default import handler
-
-        # Mock WebSocketServer instance
-        mock_server = MagicMock()
-        mock_websocket_server_class.return_value = mock_server
-        # Make send_json an async mock
-        mock_server.send_json = AsyncMock(return_value=None)
-
-        result = handler(message_event, mock_context)
-
-        # Verify WebSocketServer was created with correct connection ID
-        mock_websocket_server_class.assert_called_once_with("test-connection-123")
-
-        # Verify send_json was called with echo message
-        mock_server.send_json.assert_called_once()
-        sent_message = mock_server.send_json.call_args[0][0]
-        assert json.loads(sent_message.message) == "Hello World"
-
-        # Verify successful response
-        assert result["statusCode"] == 200
-        body = json.loads(result["body"])
-        assert body["message"] == "Message echoed successfully"
-
     @patch("disconnect.dynamodb")
     def test_disconnect_handler_no_session_found(
         self, mock_dynamodb, disconnect_event, mock_context
@@ -199,15 +156,14 @@ class TestWebSocketHandlers:
         body = json.loads(result["body"])
         assert body["message"] == "Disconnected"
 
-    def test_message_event_validation(self, message_event):
-        """Test that message events are properly validated"""
-        from validators import validate_message_event
+    def test_connect_event_rejects_empty_session_id(self, connect_event):
+        """An empty sessionId is a validation error (a 500 body), not a TypeError."""
+        from validators import validate_connect_event
+        from websocket_errors import ValidationError
 
-        validated_event = validate_message_event(message_event)
-
-        assert validated_event.requestContext.connectionId == "test-connection-123"
-        assert validated_event.requestContext.eventType == "MESSAGE"
-        assert json.loads(validated_event.body) == "Hello World"
+        connect_event["queryStringParameters"]["sessionId"] = ""
+        with pytest.raises(ValidationError):
+            validate_connect_event(connect_event)
 
     def test_connect_event_validation(self, connect_event):
         """Test that connect events are properly validated"""

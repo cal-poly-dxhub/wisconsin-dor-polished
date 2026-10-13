@@ -5,16 +5,9 @@ from typing import Any
 class WebSocketError(Exception):
     """Base exception class for errors that occur during message processing."""
 
-    def __init__(
-        self,
-        log_message: str | None = None,
-        status_code: int = 500,
-        details: dict[str, Any] | None = None,
-    ):
+    def __init__(self, log_message: str | None = None, status_code: int = 500):
         super().__init__(log_message)
-        self.log_message = log_message
         self.status_code = status_code
-        self.error_code = self.__class__.__name__
 
     @abstractmethod
     def to_response(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -24,15 +17,13 @@ class WebSocketError(Exception):
 
 class ValidationError(WebSocketError):
     """
-    Raised when the websocket request body (into connect, disconnect, default) is invalid.
+    Raised when the websocket event (into connect or disconnect) is invalid.
     """
 
-    def __init__(self, details: dict[str, Any] | None = None):
-        super().__init__(status_code=500, details=details)
+    def __init__(self):
+        super().__init__(status_code=500)
 
-    def to_response(
-        self, extra: dict[str, Any] | None = None, reason: str | None = None
-    ) -> dict[str, Any]:
+    def to_response(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         """Convert error to response body."""
         response = {
             "error": {
@@ -49,8 +40,8 @@ class SessionNotFound(WebSocketError):
     Raised when a session ID is not found in the database.
     """
 
-    def __init__(self, session_id: str, details: dict[str, Any] | None = None):
-        super().__init__(status_code=404, details=details)
+    def __init__(self, session_id: str):
+        super().__init__(status_code=404)
         self.session_id = session_id
 
     def to_response(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -70,7 +61,7 @@ class Unauthorized(WebSocketError):
     """Raised when $connect carries no valid Cognito ID token."""
 
     def __init__(self, reason: str):
-        super().__init__(status_code=401, details={"reason": reason})
+        super().__init__(log_message=reason, status_code=401)
         self.reason = reason
 
     def to_response(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -85,8 +76,8 @@ class UnexpectedError(WebSocketError):
     Raised when an unexpected error occurs while processing a WebSocket request.
     """
 
-    def __init__(self, details: dict[str, Any] | None = None):
-        super().__init__(status_code=500, details=details)
+    def __init__(self):
+        super().__init__(status_code=500)
 
     def to_response(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         """Convert error to response body."""
@@ -107,8 +98,4 @@ def create_error_body(error: Exception) -> dict[str, Any]:
     if isinstance(error, WebSocketError):
         return error.to_response()
 
-    unexpected_error = UnexpectedError(
-        details={"original_error": str(error)},
-    )
-
-    return unexpected_error.to_response()
+    return UnexpectedError().to_response()

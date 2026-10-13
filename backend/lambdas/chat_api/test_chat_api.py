@@ -19,7 +19,6 @@ with patch.dict(os.environ, {"SESSIONS_TABLE_NAME": "test-sessions-table", "LOG_
     import main as chat_api_main
     from main import (
         activity_handler,
-        chunks_detail_handler,
         chunks_documents_handler,
         chunks_index_handler,
         chunks_text_handler,
@@ -69,8 +68,8 @@ def _set_current_event(json_body=None, claims=None, query_params=None):
     whatever the last resolve left behind, so each test that exercises a handler
     directly must seed it.
 
-    We assign to ``BaseRouter.current_event`` — the *class* attribute that both
-    ``app`` and ``router`` read through and that ``app.resolve()`` overwrites on
+    We assign to ``BaseRouter.current_event`` — the *class* attribute that
+    ``app`` reads through and that ``app.resolve()`` overwrites on
     every request. Setting an instance attribute on ``app`` instead would shadow
     the class attribute and leak a stale mock into the route-level test (which
     goes through ``app.resolve``).
@@ -464,7 +463,7 @@ def test_activity_list_returns_lean_projected_summaries(mock_dynamodb):
     ]
 
     query_kwargs = mock_dynamodb.query.call_args.kwargs
-    assert query_kwargs["IndexName"] == "activityIndexV2"
+    assert query_kwargs["IndexName"] == "activityIndexV3"
     assert query_kwargs["Limit"] == 25
     assert query_kwargs["ProjectionExpression"] == (
         "queryId, sessionId, #q, #ts, thumbUp, feedback, #rating"
@@ -501,23 +500,6 @@ def test_activity_feedback_filter_fills_sparse_page(mock_dynamodb):
         "S": "down"
     }
     assert mock_dynamodb.query.call_args_list[1].kwargs["ExclusiveStartKey"] == first_cursor
-
-
-@patch_dynamodb()
-def test_activity_list_falls_back_during_index_rollout(mock_dynamodb):
-    missing_index = ClientError(
-        {"Error": {"Code": "ResourceNotFoundException", "Message": "Index not active"}},
-        "Query",
-    )
-    mock_dynamodb.query.side_effect = [missing_index, {"Items": [], "ScannedCount": 0}]
-    _set_current_event(claims={"cognito:groups": ["Admins"]})
-
-    response = activity_handler()
-
-    assert response["statusCode"] == 200
-    assert mock_dynamodb.query.call_count == 2
-    assert mock_dynamodb.query.call_args_list[0].kwargs["IndexName"] == "activityIndexV2"
-    assert mock_dynamodb.query.call_args_list[1].kwargs["IndexName"] == "timestampIndex"
 
 
 @patch_dynamodb()
@@ -808,19 +790,6 @@ def test_chunks_text_missing_document_is_404():
         response = chunks_text_handler("does-not-exist")
 
     assert response.status_code == 404
-
-
-def test_chunks_detail_legacy_route_still_returns_every_chunk():
-    payload = _extracted_doc(["alpha", "beta"])
-    _set_current_event(claims=ADMIN_CLAIMS)
-
-    with _with_work_bucket(), patch_s3(_fake_s3_for_doc(payload)):
-        response = chunks_detail_handler("wpam-2026")
-
-    assert response.status_code == 200
-    body = json.loads(response.body)
-    assert [c["text"] for c in body["chunks"]] == ["alpha", "beta"]
-    assert body["document"]["chunk_count"] == 2
 
 
 def test_chunks_index_requires_work_bucket_config():

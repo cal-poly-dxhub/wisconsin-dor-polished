@@ -20,6 +20,8 @@ from worksheets import get_worksheet as load_worksheet
 from worksheets import list_worksheets as list_worksheet_registry
 from wpam_dedup import dedupe_wpam_chunks
 
+from config import AGENTIC_MODEL_ID
+
 # Regex patterns for Wisconsin case citations.
 # Matches: "45 Wis. 2d 683", "45 Wis.2d 683", "985 N.W.2d 69", "2025 WI App 43", "2019 WI 23"
 _CITATION_PATTERNS = [
@@ -55,7 +57,6 @@ bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=REGION
 
 FAQ_KNOWLEDGE_BASE_ID = os.environ.get("FAQ_KNOWLEDGE_BASE_ID", "")
 RAW_BUCKET = os.environ.get("RAW_BUCKET", "")
-REFINEMENT_MODEL_ID = os.environ.get("AGENTIC_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 
 
 def _truncate_text(value: str, max_chars: int = LOG_MAX_TEXT_CHARS) -> str:
@@ -166,13 +167,13 @@ def _normalize_subsection(raw: str) -> str:
 def _find_subsection_chunks(chunks: list[dict], subsection: str) -> list[dict]:
     """Return the chunk(s) whose text introduces the given statute subsection.
 
-    Dense statute sections (e.g. § 70.11, with ~50 subsections) are packed
-    multiple-subsections-per-chunk by the ingestion chunker, so a subsection
-    lives as a text marker inside a chunk rather than as its own node or a
-    metadata field. This scans chunk text for the top-level marker "(N)" at a
-    line start and returns the matching chunk(s) in document order — bypassing
-    semantic ranking, which otherwise drops a low-scoring but specifically
-    requested subsection.
+    The ingestion chunker splits a statute section with numbered subsections
+    one subsection per chunk, merging small neighbours (so one chunk may hold
+    e.g. 70.11(45)-(48)); a subsection therefore lives as a text marker inside
+    a chunk, not as its own node. This scans chunk text for the top-level
+    marker "(N)" at a line start and returns the matching chunk(s) in document
+    order — bypassing semantic ranking, which otherwise drops a low-scoring but
+    specifically requested subsection.
     """
     target = _normalize_subsection(subsection)
     if not target:
@@ -344,9 +345,9 @@ def _auto_refine(query: str, chat_history: list[dict[str, str]] | None) -> tuple
         from streaming.bedrock import converse_inference_kwargs
 
         response = bedrock.converse(
-            modelId=REFINEMENT_MODEL_ID,
+            modelId=AGENTIC_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": prompt}]}],
-            **converse_inference_kwargs(REFINEMENT_MODEL_ID, 256),
+            **converse_inference_kwargs(AGENTIC_MODEL_ID, 256),
         )
         message = response["output"]["message"]
         raw = " ".join(
@@ -722,7 +723,6 @@ def execute_tool(
             node_id,
             edge_types=edge_types,
             direction=direction,
-            title_filter=tool_input.get("title_filter"),
         )
         target_year = tool_input.get("target_wpam_year")
         neighbors = dedupe_wpam_chunks(
