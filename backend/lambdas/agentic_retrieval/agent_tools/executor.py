@@ -20,6 +20,8 @@ from worksheets import get_worksheet as load_worksheet
 from worksheets import list_worksheets as list_worksheet_registry
 from wpam_dedup import dedupe_wpam_chunks
 
+from config import AGENTIC_MODEL_ID
+
 # Regex patterns for Wisconsin case citations.
 # Matches: "45 Wis. 2d 683", "45 Wis.2d 683", "985 N.W.2d 69", "2025 WI App 43", "2019 WI 23"
 _CITATION_PATTERNS = [
@@ -55,7 +57,6 @@ bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=REGION
 
 FAQ_KNOWLEDGE_BASE_ID = os.environ.get("FAQ_KNOWLEDGE_BASE_ID", "")
 RAW_BUCKET = os.environ.get("RAW_BUCKET", "")
-REFINEMENT_MODEL_ID = os.environ.get("AGENTIC_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 
 
 def _truncate_text(value: str, max_chars: int = LOG_MAX_TEXT_CHARS) -> str:
@@ -344,9 +345,9 @@ def _auto_refine(query: str, chat_history: list[dict[str, str]] | None) -> tuple
         from streaming.bedrock import converse_inference_kwargs
 
         response = bedrock.converse(
-            modelId=REFINEMENT_MODEL_ID,
+            modelId=AGENTIC_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": prompt}]}],
-            **converse_inference_kwargs(REFINEMENT_MODEL_ID, 256),
+            **converse_inference_kwargs(AGENTIC_MODEL_ID, 256),
         )
         message = response["output"]["message"]
         raw = " ".join(
