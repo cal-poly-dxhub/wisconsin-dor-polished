@@ -5,20 +5,12 @@
 # NOTE: chunk_size and chunk_overlap apply ONLY to the non-PDF fallback path
 # in extract.py (sliding-window over raw text — used for HTML scrapes etc).
 # PDF documents (statutes, WPAM, advisories, etc.) are routed through
-# tools/ingestion/chunking/pdfChunker.py which uses CHUNK_MAX_CHARS=7500 (kept
-# just under Titan v2's 8000-char silent-truncation threshold). Changing
-# chunk_size below does NOT affect PDF chunking — edit pdfChunker.py instead.
+# tools/ingestion/chunking/pdfChunker.py, which caps chunks at CHUNK_MAX_CHARS
+# (2500; 3500 for statutes and admin rules), well under Titan v2's 8000-char
+# silent-truncation threshold. Changing chunk_size below does NOT affect PDF
+# chunking — edit pdfChunker.py instead.
 chunk_size: 2000
 chunk_overlap: 200
-large_doc_threshold: 10000
-max_split_sections: 15
-
-# --- Concurrency ---
-concurrency:
-  file_extraction: 5
-  chunk_embedding: 10
-  vector_upserts: 20
-  doc_embedding: 10
 
 # --- Document Types -> Graph Node Labels ---
 doc_types:
@@ -30,7 +22,6 @@ doc_types:
   faq_page:           FAQ
   guide:              Guide
   advisory:           Advisory
-  template:           Template
   form_instruction:   FormInstruction
   iaao_standard:      IAOStandard
   uspap_standard:     USPAPStandard
@@ -81,20 +72,6 @@ frameworks:
     authority_level: 9
     parent: FW-GOV-PUBS
 
-# --- Source-to-Framework Mapping ---
-source_to_framework:
-  "raw/constitution-":           FW-CONSTITUTION
-  "raw/statutes-":               FW-STATUTES
-  "raw/case-law/":               FW-CASE-LAW
-  "raw/admin_rules-":            FW-ADMIN-RULES
-  "raw/wpam-":                   FW-WPAM
-  "raw/faq_pages-":              FW-FAQ
-  "raw/gov_publications-":       FW-GOV-PUBS
-  "raw/complex_inquiry_pages-":  FW-GOV-PUBS
-  "raw/form_instructions-":       FW-GOV-PUBS
-  "raw/iaao-":                   FW-IAAO
-  "raw/uspap-":                  FW-USPAP
-
 # --- Statute Section Families ---
 statute_families:
   - code: "CH-17"
@@ -120,7 +97,7 @@ embed_dimension: 1024
 # --- Document expansion (chunk aliases) ---
 # Prepends, at EMBED time only, a short block of gold queries + generated
 # plain-language questions + everyday synonyms to each chunk's text before it
-# is sent to Titan. Stored chunk text never changes. Both switches default off;
+# is sent to Titan. Stored chunk text never changes. Both switches are on;
 # extract.py --aliases / --aliases-only and embed.py --embed-input override them.
 # See tools/ingestion/lib/aliases.py.
 alias_enrichment:

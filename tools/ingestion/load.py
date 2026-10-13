@@ -1,5 +1,6 @@
 """
-Phase 5: Load embedded documents into Neptune Analytics graph.
+Load: write embedded documents into the Neptune Analytics graph (pipeline
+step 3 of 3: extract → embed → load).
 
 Implements 10 sequential sub-phases:
 1. Scaffold (frameworks + hierarchy)

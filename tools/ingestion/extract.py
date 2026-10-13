@@ -1,5 +1,6 @@
 """
-Phase 2: Document Extraction + LLM Classification
+Extract: document extraction + LLM classification (pipeline step 1 of 3:
+extract → embed → load).
 
 Pulls files from S3 raw bucket, routes each to appropriate parser,
 classifies via LLM, normalizes IDs, deduplicates.
@@ -887,7 +888,7 @@ def process_document(
                 logger.info(f"  Reusing cached classification for {doc_id}")
 
         if classification is None:
-            llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-20250514")
+            llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-6")
             classification = classify_document(full_text, llm_model)
             _save_classification(work_bucket, doc_id, classification, cache_prefix)
 

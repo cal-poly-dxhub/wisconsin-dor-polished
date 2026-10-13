@@ -35,7 +35,8 @@ MAX_ALIASES = 6
 MAX_QUESTION_CHARS = 160
 MIN_CHUNK_CHARS = 200
 TITAN_MAX_CHARS = 8000
-# Passage length sent to the alias model. Chunks are ≤7500 chars already.
+# Passage length sent to the alias model. Chunks are capped at 3500 chars
+# (pdfChunker), so this only trims the rare oversized non-PDF chunk.
 MAX_PASSAGE_CHARS = 6000
 
 # Generic terms whose "everyday words" add no retrieval signal (they appear in

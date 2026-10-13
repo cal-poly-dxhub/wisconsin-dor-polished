@@ -203,9 +203,10 @@ _TOC_ENTRY_LINE = re.compile(
 # Titan Embed Text v2 silently truncates inputs past 8000 characters in
 # embed.py. Any chunk larger than this was partially vector-invisible:
 # stored in Neptune, shown at retrieval, but the tail bytes were not part of
-# the match decision. 7500 leaves a margin for character-counting imprecision
-# between the chunker (which measures the buffer) and the final joined text
-# (which includes heading prefixes added at flush time).
+# the match decision. The caps below sit well under that limit, which also
+# leaves room for heading prefixes added at flush time and for enriched embed
+# input (embed.py prepends a title/alias header to statute and admin-rule
+# chunks).
 CHUNK_MAX_CHARS = 2500
 
 _CHUNK_CAP_BY_STRATEGY = {

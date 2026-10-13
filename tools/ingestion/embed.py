@@ -1,5 +1,6 @@
 """
-Phase 4: Embed chunks and documents using Amazon Titan Embed v2.
+Embed: embed every chunk with Amazon Titan Embed v2 (pipeline step 2 of 3:
+extract → embed → load).
 
 Usage:
     python -m tools.ingestion.embed \
