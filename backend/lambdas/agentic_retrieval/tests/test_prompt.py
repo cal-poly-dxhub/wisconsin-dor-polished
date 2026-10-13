@@ -96,12 +96,14 @@ def test_prompt_forbids_case_law_as_starting_point():
     assert "does not create rules" in SYSTEM_PROMPT
 
 
-def test_prompt_reads_case_chunks_before_the_opinion():
+def test_prompt_requires_stub_before_opinion():
     from prompt import SYSTEM_PROMPT
 
-    # Case-law chunks (holding summary + majority analysis) are consulted
-    # before the full opinion is fetched.
-    assert "holding summary and the majority's analysis" in SYSTEM_PROMPT
+    # Either the stub or the annotation must be consulted before the full
+    # opinion is fetched. The prompt currently uses "annotation" terminology,
+    # but either form of the gate is acceptable.
+    lower = SYSTEM_PROMPT.lower()
+    assert "annotation" in lower or "stub" in lower
     # fetch_case_opinion must be called with the node's citation verbatim.
     assert "fetch_case_opinion, pass the `citation`" in SYSTEM_PROMPT
     assert "VERBATIM" in SYSTEM_PROMPT

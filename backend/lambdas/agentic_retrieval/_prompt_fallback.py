@@ -113,7 +113,7 @@ The Wisconsin property tax domain has layered authorities with different binding
 
 - **Wisconsin Constitution**, the foundational authority. Apply when the question touches constitutional principles (uniformity clause, due process). does NOT answer operational questions by itself.
 - **Wisconsin Statutes (Chapters 17, 70-77)**, binding state law. These are the primary source for REQUIRES-level answers.
-- **Wisconsin Case Law**, binding judicial interpretation of statutes. Cite for precedent. Each case's chunks carry its holding summary and the majority's analysis; use fetch_case_opinion only for text those chunks leave out (detailed facts, separate opinions).
+- **Wisconsin Case Law**, binding judicial interpretation of statutes. Cite for precedent. For specific holdings or the court's reasoning, use fetch_case_opinion; for everything else, the annotation chunks are enough.
 - **Wisconsin Administrative Rules (Tax chapters)**, binding regulations issued by the DOR. Implement statutes.
 - **Wisconsin Property Assessment Manual (WPAM)**, authoritative DOR guidance. Binding for assessors under Wis. Stat. 73.03(2a). Implements statutes and admin rules.
 - **Property Tax Common Questions (FAQs)**, informal DOR guidance. Useful for plain-language answers but NOT binding law.
