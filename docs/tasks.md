@@ -258,13 +258,12 @@ From 18 lines to ~6 lines.
 
 ### Task 51: Disambiguation follow-up logic + classifier accuracy — SUPERSEDED (2026-09-18)
 
-> **Read this as a record, not a plan.** The pre-loop classifier this task tunes is legacy
-> and OFF in production: `ENABLE_DISAMBIGUATION` and `ENABLE_TOPIC_SHIFT` default false and
-> `SCOPE_GATE_ENABLED=false`. Scope and clarification are owned by the post-retrieval
-> adequacy judge (Task 71), which sees the corpus before it decides. Everything below
-> describes the gate as it behaved when it was on, and is the spec to restore if the flags
-> are ever flipped back. The DOR-validated clarify list, if it ever arrives, is now input
-> to the judge prompt's step 3, not to `disambiguationClassifier`.
+> **Read this as a record, not a plan.** The pre-loop classifier this task tunes was
+> removed on 2026-10-10 (code, prompt and flags; recoverable from git history). Scope and
+> clarification are owned by the post-retrieval adequacy judge (Task 71), which sees the
+> corpus before it decides. Everything below describes the gate as it behaved when it was
+> on. The DOR-validated clarify list, if it ever arrives, is input to the judge prompt's
+> step 3.
 
 **Status (historical):** Core follow-up/topic-shift logic SHIPPED and deployed (us-east-1). Classifier accuracy tuning was paused pending a validated list of clarify-worthy questions back from Wisconsin DOR.
 
@@ -356,7 +355,7 @@ Remaining, in priority order:
 
 **Status update 2026-09-18 evening — ON in prod.** Added a required `question_omits_the_fact` schema field with a CLARIFY→ANSWER code guard (mirrors the DECLINE guard; never fired in the gate run — the judge reads any unstated sub-fact as omitted, which Isaac decided is fine: asking beats over-confidence). Step 3 split into 3a (does the question state the fact) / 3b (do the sources fork). The 'do not clarify when a flowchart is in play' rule was replaced with the opposite: the chart lays out the facts, the clarification collects them. Gate run `logs-2026-09-14/full63_judgeon_guard_2026-09-18.json`: classic 41/45 (baseline 40/45), scope 14/17 (10/17), ig-line8 pass, verdicts ANSWER 40 / CLARIFY 18 / DECLINE 5. Deployed 22:16 PT with `ADEQUACY_JUDGE_ENABLED=true`, `SCOPE_GATE_ENABLED=false`.
 
-**Status:** DEPLOYED 2026-09-18 (flags `ADEQUACY_JUDGE_ENABLED=true`, `SCOPE_GATE_ENABLED=false` in `graphrag-messages-stack.ts`). Two-way door: flip both and redeploy to restore the classifier gate byte-for-byte.
+**Status:** DEPLOYED 2026-09-18 (flags `ADEQUACY_JUDGE_ENABLED=true`, `SCOPE_GATE_ENABLED=false` in `graphrag-messages-stack.ts`). (The rollback flags and the classifier itself were removed on 2026-10-10.)
 
 **Why:** the pre-loop classifier refused questions that name a court case ("What is the Markarian case?", "Summarize Sausen v Town of Black Creek" — 6 refusals on 2026-09-16) because a case name carries no topic words and the classifier never sees the corpus. Decision with Scott/Darren: every query runs the research loop; a judge decides afterwards with the evidence in front of it. Time is lost only on genuinely out-of-scope questions.
 
@@ -366,7 +365,7 @@ Remaining, in priority order:
 
 **Evidence:** scope set (`--tags scope,guard`, 17 cases): judge-off 10/17 → judge-on 13/17, verdict match 15/17. Classic 42: 34 baseline → ~36 with the judge (flowchart questions back to ANSWER after the flowchart rule). Cost of the tuning loop ≈ $25 of Bedrock. Known flaky: `gq-scope-prime-leather-absent` (judge says DECLINE; the answer is still the correct honest-no), `gq-clarify-how-assessed` (borderline CLARIFY/ANSWER), `gq-boa-increase-named-body`.
 
-**Follow-ups:** watch the CLARIFY rate in prod traces (`adequacy_judged` event) — 9/45 in the harness before the flowchart rule, ~5/45 after; if testers find chips intrusive, raise the bar in the judge prompt's step 3. The old `disambiguationClassifier` prompt and `PROPERTY_TYPE_CHOICES` remain for the gate-on path; delete once the judge has a week of prod traffic.
+**Follow-ups:** watch the CLARIFY rate in prod traces (`adequacy_judged` event) — 9/45 in the harness before the flowchart rule, ~5/45 after; if testers find chips intrusive, raise the bar in the judge prompt's step 3. The old `disambiguationClassifier` prompt and the classifier path were deleted on 2026-10-10.
 
 ### Task 72: WPAM Volume 1 was 89% un-indexed — chunker TOC heuristic fix + full re-index (2026-09-18)
 
