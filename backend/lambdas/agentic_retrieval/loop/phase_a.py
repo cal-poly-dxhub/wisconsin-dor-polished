@@ -1,7 +1,8 @@
 """Phase A: Claude's agentic research loop against Neptune.
 
-1. Turn 0 is hardcoded: faq_search with the verbatim user query (plus an
-   optional refine_query rewrite when chat history exists).
+1. Turn 0 is seeded deterministically: an auto_refine rewrite when history
+   exists, faq_search and vector_search on the refined query, and a
+   get_flowchart seed when the flowchart router clears its gate.
 2. Claude decides which tools to call (vector_search, get_neighbors, etc.)
 3. Tools execute against Neptune Analytics.
 4. The loop exits when Claude calls prepare_answer (declaring cited docs and
@@ -49,18 +50,15 @@ from .phase_b import _list_sections_cached
 
 logger = logging.getLogger(__name__)
 
-# Neptune node labels that aren't user-citable documents.
-
-
 def _is_document_neighbor(neighbor: dict) -> bool:
     """True when this neighbor node represents a citable document."""
     labels = neighbor.get("labels") or []
     return not any(label in NON_DOCUMENT_LABELS for label in labels)
 
 
-# A reply this short is a chip selection ("Not certain — general information")
-# or a one-liner follow-up, not a question in its own right: the flowchart
-# router should also consider the question it answers, one turn back.
+# A reply this short is a one-line typed follow-up, not a question in its own
+# right: the flowchart router should also consider the question it answers,
+# one turn back.
 _FOLLOWUP_MAX_WORDS = 6
 
 
@@ -68,9 +66,9 @@ def _prior_user_question(query: str, chat_history: list[dict] | None) -> str | N
     """The question underneath a chip reply / short follow-up, if there is one.
 
     Returns the previous turn's user query when the current message is too short
-    to carry the topic on its own (the disambiguation chip flow is the common
-    case: the user's real question is one turn back, and the current message is
-    a property-type choice). None otherwise.
+    to carry the topic on its own (a short typed follow-up whose real question is
+    the previous turn). None otherwise. A clarification-chip reply never gets
+    here: resolve_pending_clarification has already folded it into the query.
     """
     if not chat_history:
         return None
@@ -138,7 +136,6 @@ class AgentLoopResult:
     all_doc_ids: set[str]
     discovery: dict[str, str]
     fetched_opinions: dict[str, dict]
-    faq_resource: FAQResource | None
     answer_plan: str
     trace_log: list[dict]
     connection_alive: bool
@@ -171,9 +168,9 @@ def run_agentic_loop(
 ) -> AgentLoopResult:
     """Run Claude's agentic research loop (Phase A) against Neptune.
 
-    Turn 0 is hardcoded: run `faq_search` with the verbatim user query. The
-    result is always seeded into the conversation and Claude is handed off to
-    graph work.
+    Turn 0 is seeded deterministically (auto_refine when history exists,
+    then faq_search, vector_search and an optional get_flowchart seed); the
+    results go into the conversation and Claude is handed off to graph work.
 
     The loop exits when the model calls `prepare_answer` (declaring cited docs
     and an answer plan). The actual answer text is NOT generated here — that
@@ -665,7 +662,6 @@ def run_agentic_loop(
         )
 
     tool_config = {"tools": TOOL_DEFINITIONS}
-    broad_fired = [True]  # broad discovery already fired in the pre-loop vector_search
     cumulative_usage = {
         "inputTokens": 0,
         "outputTokens": 0,
@@ -837,7 +833,6 @@ def run_agentic_loop(
                 all_doc_ids=all_doc_ids,
                 discovery=discovery,
                 fetched_opinions=fetched_opinions,
-                faq_resource=None,
                 answer_plan="",
                 trace_log=trace_log,
                 connection_alive=ws_connection_alive[0],
@@ -881,19 +876,10 @@ def run_agentic_loop(
             )
 
             tool_started = time.perf_counter()
-            # Only pass original_user_query on the first vector_search call
-            # so broad discovery fires once, not on every subsequent search.
-            _pass_original = (
-                query if (tool_name == "vector_search" and not broad_fired[0]) else None
-            )
+            # Broad discovery (original_user_query) already ran in the
+            # pre-loop vector_search seed; in-loop searches never repeat it.
             try:
-                result = execute_tool(
-                    tool_name,
-                    tool_input,
-                    neptune,
-                    chat_history=chat_history,
-                    original_user_query=_pass_original,
-                )
+                result = execute_tool(tool_name, tool_input, neptune, chat_history=chat_history)
             except Exception as exc:
                 _log(
                     "agent_tool_error",
@@ -910,7 +896,6 @@ def run_agentic_loop(
             tool_latency_ms = round((time.perf_counter() - tool_started) * 1000)
 
             if tool_name == "vector_search" and "chunks" in result:
-                broad_fired[0] = True
                 for chunk in result["chunks"]:
                     doc_id = chunk.get("doc_id", "")
                     if doc_id:
@@ -1055,8 +1040,8 @@ def run_agentic_loop(
                     _log("plan_statute_grounding", **trace_context, **grounding)
                 # Per-source breakdown of the CITED docs (not all discovered).
                 # Lets us query "what fraction of cited docs came from each
-                # discovery path" directly from logs — the forward-measurement
-                # signal for the Direction 1 enrichment retarget.
+                # discovery path" directly from logs (per-discovery-path
+                # citation share).
                 cited_discovery = discovery_summary(
                     {doc_id: discovery.get(doc_id, "unknown") for doc_id in cited}
                 )
@@ -1109,7 +1094,6 @@ def run_agentic_loop(
                     all_doc_ids=all_doc_ids,
                     discovery=discovery,
                     fetched_opinions=fetched_opinions,
-                    faq_resource=None,  # resolved in handler
                     answer_plan=answer_plan,
                     trace_log=trace_log,
                     connection_alive=ws_connection_alive[0],
@@ -1192,7 +1176,6 @@ def run_agentic_loop(
             all_doc_ids=all_doc_ids,
             discovery=discovery,
             fetched_opinions=fetched_opinions,
-            faq_resource=None,
             answer_plan="",
             trace_log=trace_log,
             connection_alive=ws_connection_alive[0],
