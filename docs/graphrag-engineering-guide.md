@@ -4,7 +4,7 @@ The single architecture reference for the GraphRAG system powering the Wisconsin
 property-tax chatbot: runtime architecture, data model, ingestion pipeline, and
 operational procedures. Audience: developers inheriting or extending this codebase.
 
-Everything below describes the system **as of 2026-09-19**. Companion docs cover
+Everything below describes the system **as of 2026-10-10**. Companion docs cover
 subsystems in depth and are linked from the relevant section; this file is the map.
 
 ---
@@ -66,7 +66,7 @@ Key facts:
   Logic lives in `loop/`, `agent_tools/` (+ `agent_tools/stages/`), `graph/`, `streaming/`
   and `tracing/`, plus flat helpers (`config.py`, `prompt.py`, `faq.py`, `case_law.py`,
   `wpam_dedup.py`, `rag_documents.py`, `chat_history.py`, `adequacy_judge.py`,
-  `flowchart_router.py`, `flowcharts.py`, `worksheets.py`, `disambiguation.py`).
+  `flowchart_router.py`, `flowcharts.py`, `worksheets.py`).
 - **There is no `useGraphRAG` context flag.** The old Step Function path (separate
   classifier / retrieval / streaming Lambdas) was removed along with the flag that
   selected it; deploy commands pass only `-c stackName=WisconsinBotGraphRAG`.
@@ -84,13 +84,15 @@ Key facts:
 3. **Clarification resolution.** `resolve_pending_clarification` (`adequacy_judge.py`)
    checks whether the previous turn ended with a judge clarification and whether this
    message answers it (a chip label or a short typed value). If so it folds the answer
-   back into the original question deterministically, so classification, retrieval and
-   the flowchart router all see the real question. The raw user message is still what
+   back into the original question deterministically, so retrieval and the flowchart
+   router see the real question. The raw user message is still what
    gets persisted.
 4. **Phase A (research loop).** Claude calls tools against Neptune until it calls
    `prepare_answer(cited_doc_ids, answer_plan)`. Returns cited documents, chunks and an
-   answer plan — no answer text yet.
-5. **Adequacy judge.** With `ADEQUACY_JUDGE_ENABLED=true`, Haiku reads the question,
+   answer plan — no answer text yet. At `prepare_answer`, any statute section the plan
+   cites but never retrieved is fetched (`loop/grounding.py`) so its conditions and
+   exceptions reach the judge and Phase B.
+5. **Adequacy judge.** Always on: Haiku reads the question,
    history, the answer plan and all retrieved chunks and returns a `Finding`
    (ANSWER / CLARIFY / DECLINE). See §4.
 6. **Phase B (answer stream).** `converse_stream_with_cache()` with NO tools generates
@@ -139,12 +141,12 @@ Key facts:
   user message tells Claude to treat the FAQ as the primary source of truth and use
   graph results only to supplement. This steers; it never short-circuits the loop.
 
-> **The pre-loop query classifier is legacy and OFF.** `disambiguation.py` still contains
-> the Haiku scope / property-type / topic-shift classifier, but `ENABLE_DISAMBIGUATION`
-> and `ENABLE_TOPIC_SHIFT` both default to `false`, and `SCOPE_GATE_ENABLED=false` in
-> production. Scope and clarification are owned by the post-retrieval adequacy judge
-> (§4). Keep the module until the judge has a longer run of production traffic; flipping
-> the flags back restores the old gate byte for byte.
+> **There is no pre-loop query classifier.** The Haiku scope / property-type /
+> topic-shift classifier (`disambiguation.py`) was turned off on 2026-09-19 and deleted
+> on 2026-10-10, together with its `disambiguationClassifier` prompt, the topic-shift
+> `suggestion` message and the `ENABLE_DISAMBIGUATION` / `ENABLE_TOPIC_SHIFT` /
+> `SCOPE_GATE_ENABLED` flags. Scope and clarification are owned by the post-retrieval
+> adequacy judge (§4).
 
 ### The tool loop
 
@@ -160,8 +162,8 @@ via `output_config` instead).
 
 **Turn budget:** at `turn == 7` (the 8th turn) a "running low on turns — call
 prepare_answer NOW" warning is injected. If the loop exhausts without `prepare_answer`,
-a degraded fallback returns the last assistant text; with the judge on, that fallback
-becomes the plan the judge rules on.
+a degraded fallback returns the last assistant text, and that fallback becomes the plan
+the judge rules on.
 
 ### Tool set — 14 tools
 
@@ -177,7 +179,7 @@ becomes the plan the judge rules on.
 | `get_document` | Node lookup by ID; falls back to vector search on miss. |
 | `get_neighbors` | Graph traversal from a node; accepts an `edge_types` filter; optionally semantically ranked. |
 | `find_case_law` | Search CaseLaw nodes by name/citation, optionally scoped to a statute. |
-| `fetch_case_opinion` | Fetch full opinion `.txt` from S3 for a case-law stub. |
+| `fetch_case_opinion` | Fetch the full opinion `.txt` from S3 (capped at 40,000 chars, `MAX_OPINION_CHARS`) when the ingested chunks lack the needed analysis; returns a Scholar search URL on a miss. |
 | `list_worksheets` | Registry of the TID base-value worksheet sidecars. |
 | `get_worksheet` | One worksheet's structured JSON (labels / formulas described, never evaluated). |
 | `list_flowcharts` | Registry of the hand-transcribed WPAM decision flowcharts. |
@@ -187,8 +189,7 @@ becomes the plan the judge rules on.
 > **Retired tools.** `refine_query`, `clarify`, `cite_documents`, `get_authority_chain`
 > and `list_framework_docs` no longer exist anywhere in the codebase. Query refinement is
 > the deterministic pre-loop `_auto_refine`; clarification is the judge's CLARIFY verdict;
-> citation is `prepare_answer`'s `cited_doc_ids`. Older notes and the frontend trace
-> metadata mirror still carry vestiges of these names — see §15.
+> citation is `prepare_answer`'s `cited_doc_ids`. Only older notes still mention them.
 
 ### Key behaviors
 
@@ -224,8 +225,9 @@ a context field nothing read). Full mechanics: [auto-backfill](auto-backfill.md)
 
 ## 4. The Adequacy Judge
 
-`backend/lambdas/agentic_retrieval/adequacy_judge.py`. Flag: `ADEQUACY_JUDGE_ENABLED`
-(true in production since 2026-09-18); `SCOPE_GATE_ENABLED=false` alongside it.
+`backend/lambdas/agentic_retrieval/adequacy_judge.py`. On in production since
+2026-09-18 and unconditional since 2026-10-10 (the `ADEQUACY_JUDGE_ENABLED` flag and the
+judge-off fallback path were removed).
 
 **Why it exists.** The pre-loop classifier refused questions that name a court case
 ("What is the Markarian case?") because a case name carries no topic words and the
@@ -257,14 +259,13 @@ ANSWER. The whole path is **fail-open**: `judge_answer_plan` never raises, and a
 yields `Finding(verdict="ANSWER", ...)`.
 
 **Clarification round trip.** CLARIFY options travel on the existing `choices` WebSocket
-message, which carries `question`, `axis` and `kind` (`clarification` | `disambiguation`)
-so the frontend can render one lifted clarification block between the answer and the
+message, which carries `question` and `axis` so the frontend can render one lifted clarification block between the answer and the
 sources. The pending clarification is stored on the chat-history item;
 `resolve_pending_clarification` folds a chip click or a short reply back into the original
 question on the next turn — deterministic, and a no-op when nothing is pending.
 
-**Rollback.** Flip `ADEQUACY_JUDGE_ENABLED=false` / `SCOPE_GATE_ENABLED=true` in
-`graphrag-messages-stack.ts` and redeploy; the classifier gate returns byte for byte.
+**No rollback switch.** The old classifier gate is deleted, not dormant; recovering it
+means reverting the 2026-10-10 cleanup from git history.
 
 ---
 
@@ -274,7 +275,8 @@ Orchestrated by `handler.py`, implemented in `loop/phase_b.py`. After `prepare_a
 returns (and the judge has ruled):
 
 1. **Opinion backfill** (`handler.py`): for up to `_OPINION_BACKFILL_CAP` (3) cited
-   case-law stubs not already fetched, pull the full opinion `.txt` from S3 — **before**
+   case-law documents (any `case-law-*` id) whose opinion was not already fetched, pull
+   the full opinion `.txt` from S3 — **before**
    building RAG documents so the stream has substantive content. See
    [auto-backfill](auto-backfill.md).
 2. **Builds resource cards** from `cited_doc_ids` (`build_rag_documents` in
@@ -322,14 +324,18 @@ connectivity (no VPC — IAM is the only protection).
 
 - **Framework** — authority-level grouping (`FW-STATUTES`, `FW-WPAM`, …).
 - **Document, under a doc-type label** — `Constitution`, `Statute`, `CaseLaw`,
-  `AdminRule`, `AssessmentManual`, `FAQ`, `Guide`, `Advisory`, `Template`,
+  `AdminRule`, `AssessmentManual`, `FAQ`, `Guide`, `Advisory`,
   `FormInstruction`, `IAOStandard`, `USPAPStandard` (the `doc_types` map in
-  `ingest_config.yaml`). Properties: `title, source_key, summary, source_url, doc_type,
-  authority_level, citation, effective_date, edition_year`.
+  `ingest_config.yaml`; its `Template` entry has no documents, so no node carries it).
+  Properties: `title, source_key, summary, source_url, doc_type, authority_level,
+  citation, effective_date, edition_year`.
 - **Chunk** — `text, doc_id, source_url, chunk_index, s3_key, start_page, end_page,
-  heading, subheading, edition_year` + a 1024-dim vector in the index.
-- **Stub** — identity-only `Statute` / `AdminRule` / `CaseLaw` nodes created from
-  citation regex matches. "Stub" is a node **property** (`n.stub = true`), not a label.
+  heading, subheading, edition_year, content_role` + a 1024-dim vector in the index.
+  Case-law chunks carry no page fields and use `content_role` (`summary_holding`,
+  `opening_holding`, `analysis_holding`, `fallback_majority`); `edition_year` is set only
+  on WPAM chunks.
+- **Stub** — identity-only `Statute` / `AdminRule` nodes created from citation regex
+  matches (CaseLaw nodes are never stubs). "Stub" is a node **property** (`n.stub = true`), not a label.
 
 > **There are no `Topic` nodes.** No load phase has created one for a long time; the
 > orphan-Topic garbage collection in Phase 9 was removed on 2026-09-19 because it only
@@ -358,7 +364,7 @@ default of `6` mislabeled 607 nodes as FAQs).
 
 | Edge | Direction | Written by | Meaning |
 | --- | --- | --- | --- |
-| `DERIVED_FROM` | Framework → Framework | Phase 1 | Authority precedence chain (e.g. IAAO → WPAM) |
+| `DERIVED_FROM` | Framework → Framework | Phase 1 | Authority precedence chain (e.g. IAAO → Gov Pubs) |
 | `BELONGS_TO` | Doc/stub → Framework | Phases 1, 2, 4 | Framework membership |
 | `PART_OF` | Section → Chapter, Subsection → Section | Phase 3 | Statute hierarchy |
 | `EXTRACTED_FROM` | Chunk → Doc | Phase 5 | Chunk provenance |
@@ -490,9 +496,10 @@ authority.
 
 ### FAQ URL resolution
 
-Each FAQ's public source page is resolved via `_lookup_faq_url(question)` — a DynamoDB
-`get_item` against `FaqUrlTable`. The normalizer in the Lambda and the seed script must
-stay byte-identical (tested by `test_faq_question_normalizer_matches_seed_script`).
+Each FAQ's public source page is resolved via `lookup_faq_url(question)` (`faq.py`) — a
+DynamoDB `get_item` against `FaqUrlTable`. The normalizer in the Lambda and
+`tools/ingestion/lib/faq_url_map.py` must stay byte-identical (tested by
+`tests/test_faq.py::test_matches_seed_script`).
 
 ### Refreshing FAQs
 
@@ -544,9 +551,18 @@ every Chunk so dedup needs no Neptune join.
 
 ## 11. Case Law
 
-Case law is **thin citation stubs** in the vector space — the opinion text lives in S3,
-not in embedded chunks, so cases rarely surface from `vector_search` directly. They are
-reached by traversal, by text-based citation extraction, or by the explicit tools.
+Case law is ingested as **selective opinion chunks**, not stubs. `ingest_case_law.py`
+finds citations in statute-PDF hyperlinks and pulls metadata and full opinion text from
+CourtListener into `raw/case-law/{reporter}/{slug}.txt`. Extract (preferring that `.txt`
+over any JSON stub beside it) writes a Nova 2 Lite holding-summary chunk
+(`content_role=summary_holding`), then the majority opinion's issue/holding synopsis,
+legal analysis and disposition via `chunking/case_law.py`; captions, facts, separate
+opinions and notes are dropped. About 1,117 of 1,146 cases are chunked (~9k chunks, no
+page numbers), with chunk-level `CITES` to the statutes each chunk names, and they
+surface from `vector_search` like any other chunk. Cases without opinion text stay
+chunkless metadata nodes. The full opinion stays in S3 for `fetch_case_opinion` and the
+Phase B opinion backfill. Beyond plain vector search, cases are reached by traversal, by
+text-based citation extraction, or by the explicit tools.
 
 ### Discovery paths
 
@@ -574,19 +590,22 @@ formats: `\d+ Wis. 2d \d+`, `\d+ N.W.2d/3d \d+`, `\d{4} WI [App] \d+`. Resolutio
 
 ### Opinion access
 
-Full opinion text lives in S3 (`raw/case-law-{slug}/...txt`). `fetch_case_opinion`
-fetches on demand. Cards link to CourtListener / Google Scholar (not S3 — `.txt` has no
-page anchors).
+Full opinion text lives in S3 (`raw/case-law/{reporter}/{slug}.txt`). `fetch_case_opinion`
+fetches on demand. Cards link to the node's `source_url` — CourtListener, or
+docs.legis.wisconsin.gov for about 60 cases — never S3 (`.txt` has no page anchors); a
+Google Scholar search link is only a fallback when a node has no `source_url`.
 
 ### Post-answer opinion backfill
 
-After `prepare_answer`, up to 3 cited-but-unfetched case-law stubs have their opinions
-fetched from S3, so the streamed answer has substantive case-law content.
+After `prepare_answer`, up to 3 cited case-law documents whose full opinion was not
+already fetched have it pulled from S3, adding the full opinion on top of the chunks
+already in context.
 
 ### Dedup and integrity
 
-Case law is ingested from statute-PDF hyperlinks plus a Google Scholar fallback, which
-historically produced parallel-citation duplicates and two citation→text mis-assignments.
+Case law is discovered from statute-PDF hyperlinks and fetched from CourtListener (Google
+Scholar only via the opt-in `--scholar-fallback`, which historically produced
+parallel-citation duplicates and two citation→text mis-assignments).
 Load Phase 2 has a doubled-title guard, Phase 10 asserts integrity, and
 `ops/purge_dedup_losers.py` + `dedup/losers.json` keep a full load from resurrecting
 nodes a dedup pass deleted.
@@ -622,8 +641,8 @@ sidecar degrades gracefully: that chart's seed is simply disabled.
 ## 13. Citations and Source Cards
 
 Citation cards link to each document's **public `source_url`** (docs.legis.wisconsin.gov,
-revenue.wi.gov, iaao.org, Google Scholar, …) with a `#page=N` fragment from the chunk's
-`start_page`. The `s3_key`/page-range fields still flow through the pipeline for
+revenue.wi.gov, iaao.org, courtlistener.com, …) with a `#page=N` fragment from the
+chunk's `start_page` where it has one (case law has none). The `s3_key`/page-range fields still flow through the pipeline for
 provenance/debugging, but no presigned URLs are generated — the old `citation_resolver`
 Lambda and its `/citation` route were removed after the graph was cleaned of URL-less
 legacy documents.
@@ -658,8 +677,9 @@ dev-trace mode. Files: `frontend/src/components/documents/document-card/source-t
 
 ### Message types
 
-Every shape is defined in `backend/layers/websocket_utils/models.py` and routed by
-`send_json` in `backend/layers/websocket_utils/utils.py`:
+Every shape is defined in `backend/layers/websocket_utils/models.py` and posted by the
+sender in `backend/layers/websocket_utils/utils.py`, which derives each frame's `streamId`
+from the model class:
 
 | streamId | Body type (responseType) | Purpose |
 | --- | --- | --- |
@@ -667,22 +687,19 @@ Every shape is defined in `backend/layers/websocket_utils/models.py` and routed 
 | `answer-event` | `AnswerEventType` (`answer-event`) | `start` / `stop` bookends |
 | `answer` | `FragmentMessage` (`fragment`) | Answer text fragments (30-char min buffer) |
 | `agent-trace` | `AgentEventMessage` (`agent-event`) | Live agent trace events |
-| `error` | `ErrorMessage` (`error`) | Error surfaced to the user |
-| `choices` | `ChoicesMessage` (`choices`) | Clarification / disambiguation chips |
-| `suggestion` | `SuggestionMessage` (`suggestion`) | Soft nudge; currently only `kind: "topic-shift"` |
+| `error` | `ErrorMessage` (`error`) | Error surfaced to the user; carries the failed `queryId` |
+| `choices` | `ChoicesMessage` (`choices`) | Adequacy-judge clarification chips |
 
 `streamId` and `responseType` differ for `agent-trace`→`agent-event`,
-`resources`→`documents`/`faq`/`flowchart`. The frontend enum keys off `streamId`; the Zod
-discriminated union keys off `responseType`.
+`resources`→`documents`/`faq`/`flowchart`. The frontend only validates `streamId` against
+its enum (and skips `heartbeat`); routing is by `responseType`.
 
-**`ChoicesContent` fields.** Beyond `choices: list[str]` it carries three optional
-fields, all single words so the camelCase alias generator leaves the wire names unchanged:
+**`ChoicesContent` fields.** Beyond `choices: list[str]` it carries two optional
+fields, both single words so the camelCase alias generator leaves the wire names unchanged:
 
-- `question` — the single question to put to the user. Absent on the legacy pre-loop
-  disambiguation path, whose canned answer text already carries the question.
+- `question` — the single question to put to the user.
 - `axis` — a short noun phrase naming the fact being asked about ("property
   classification", "assessment year"); used as the block's label.
-- `kind` — `"clarification"` (adequacy judge) or `"disambiguation"` (legacy classifier).
 
 The frontend renders question + chips as one lifted clarification block between the
 answer and the source cards.
@@ -693,7 +710,7 @@ so it travels here rather than in a citation card.
 
 **Heartbeat is out-of-band.** Keepalive pings are posted as a raw
 `{"streamId": "heartbeat", "body": {}}` frame from the heartbeat thread — not a
-`WebSocketMessage` subclass, not through the `send_json` router, and dropped by the
+`WebSocketMessage` subclass, not through the typed sender, and dropped by the
 frontend *before* Zod validation.
 
 ### The shared-contract discipline
@@ -702,12 +719,12 @@ Every WebSocket message is validated by `WebSocketMessageSchema.parse()` (Zod
 discriminated union). A shape the union doesn't know **drops the entire frame** and shows
 an error. Any wire change touches three places together:
 
-1. `backend/layers/websocket_utils/models.py` (+ the `send_json` router in `utils.py`)
+1. `backend/layers/websocket_utils/models.py` (+ the sender in `utils.py`)
 2. `frontend/types/message-types.ts` (the `MessageUnionSchema` / `WebSocketMessageSchema`)
 3. the `messageHandler` switch in `frontend/src/hooks/use-websocket-chat.ts`
 
 **Adding a `SourceDocument`/`RAGDocument` field** additionally requires:
-`RAGDocument` in `backend/layers/step_function_types/models.py`, population in
+`RAGDocument` in `backend/layers/chat_contracts/models.py`, population in
 `agentic_retrieval/rag_documents.py`, wire mapping in `streaming/delivery.py`,
 persistence in `chat_history.py`, and `SourceDocumentSchema` in `message-types.ts`.
 
@@ -774,12 +791,11 @@ at Lambda cold-start. The TOML is the source of truth; DynamoDB is the runtime s
   and how to honor the `## RETRIEVAL FINDING` block).
 - `adequacyJudge` — the judge's rubric and output schema.
 - `personaGovernment` / `personaCitizen` — persona suffixes appended to the Phase B prompt.
-- `disambiguationClassifier` — the legacy pre-loop classifier; retained for the
-  gate-on rollback path only.
 
-`backend/lambdas/agentic_retrieval/_prompt_fallback.py` mirrors these byte-identically as
-a cold-start fallback; regenerate it from the TOML whenever a prompt changes
-(`test_prompt.py` pins load-bearing phrases).
+`backend/lambdas/agentic_retrieval/_prompt_fallback.py` mirrors `agenticRetrieval`,
+`answerStream` and `adequacyJudge` byte-identically as the fallback used when the
+DynamoDB read fails (the persona suffixes have no fallback); regenerate it from the TOML
+whenever a prompt changes (`test_prompt.py` pins load-bearing phrases).
 
 ### Iteration workflow
 
@@ -800,10 +816,13 @@ Available as Fargate tasks or local execution.
 
 ```
 scrape/upload → raw/{doc_id}/{doc_id}.{pdf|txt} + .metadata.json
+ingest_case_law.py → raw/case-law/{reporter}/{slug}.txt + .metadata.json
        ▼
-extract.py → work: extracted/{doc_id}.json (PDF→chunks, classify, statute_refs, aliases)
+extract.py → work: extracted/{doc_id}.json (PDF→chunks, classify, statute_refs, aliases;
+             case law: holding summary + selective opinion chunks via chunking/case_law.py)
        ▼
-embed.py → work: embedded/{doc_id}.json (Titan v2 1024-dim; empty case_law stubs SKIPPED)
+embed.py → work: embedded/{doc_id}.json (Titan v2 1024-dim, chunk vectors only;
+           chunkless case-law docs SKIPPED)
        ▼
 load.py → Neptune graph (10 sub-phases of batched Cypher)
 ```
@@ -825,7 +844,7 @@ load.py → Neptune graph (10 sub-phases of batched Cypher)
 | 7 | Stub Resolution | `DEFINED_BY` edges from Statute/AdminRule stubs to matching chunks (restricted to the loaded docs under `--source-filter`) |
 | 8 | Vector Upserts | `neptune.algo.vectors.upsert`, one per query, 8 threads |
 | 9 | Orphan Cleanup | GC orphan Statute stubs and stale CaseLaw nodes |
-| 10 | Integrity Checks | Assert the load is sane (0 doubled case-law titles, 0 orphan chunks, …); exits 1 on failure |
+| 10 | Integrity Checks | Exits 1 on any doubled case-law title; logs bare-citation titles and orphan chunks as informational |
 
 > **Phase 4 no longer writes `HAS_SUBSECTION`** — the edge came from a `_parent_id` key
 > nothing in the pipeline ever set, so the edge list was always empty (removed
@@ -869,9 +888,8 @@ the pinned graph — **a routine load needs no `--graph-id`**.
 
 - **Edge logic changes (phases 3/4/6/7):** full re-ingest required. MERGE doesn't
   retroactively remove stale edges.
-- **Chunking or embedding changes:** full re-ingest. Run `ops/purge_orphan_chunks.py`
-  after (MERGE never deletes high-index orphans; Phase 5 also purges stale chunks per-doc
-  on each load).
+- **Chunking or embedding changes:** full re-ingest. Phase 5 purges each loaded
+  document's stale chunks, and Phase 10 reports any orphan chunks left over.
 - **Property-only mutation (e.g. `edition_year`):** a scoped `--source-filter` run is
   sufficient.
 
@@ -890,22 +908,18 @@ detail: [fargate-ingestion](fargate-ingestion.md). Step-by-step annual procedure
 
 ### Ops scripts (`tools/ingestion/ops/`)
 
-Everything currently in the directory:
+Everything committed in the directory:
 
 | Script | Purpose |
 | --- | --- |
-| `run_graph_regression.py` | The 63-case end-to-end accuracy harness (see [testing](testing.md)) |
+| `run_graph_regression.py` | The 65-case end-to-end accuracy harness (see [testing](testing.md)) |
 | `run_recall_probe.py` | Raw vector-recall probe (recall@10/30, MRR) against any graph id, baseline vs after |
 | `build_recall_eval.py` | Mine rated chat-history rows into `tests/recall_eval_queries.yaml` |
 | `attach_gold_queries.py` | Attach up-rated tester queries to the chunk they cited, so those phrasings retrieve well |
-| `run_classifier_regression.py` | Legacy — prod-parity harness for the pre-loop classifier, which is off |
-| `purge_orphan_chunks.py` | Delete Chunk nodes whose index ≥ the current chunk count |
 | `purge_dedup_losers.py` | Purge doc_ids recorded in `dedup/losers.json` from S3 and the graph |
-| `purge_corrupt_case_law.py` | One-time purge of citation→text mis-assigned case-law nodes |
-| `dedup_case_law.py` | One-time dedup keyed on shared CourtListener `source_url` |
-| `dedup_case_law_docket.py` | One-time dedup keyed on docket number (catches the Google Scholar cohort) |
-| `clean_stale_extracts.py` | Delete `extracted/`+`embedded/` artifacts for missing/drifted raw docs |
-| `seed_faq_url_table.py` | Seed `FaqUrlTable` from `documents/faqs.json` |
+| `purge_corrupt_case_law.py` | One-time purge of citation→text mis-assigned case-law nodes; imported by `purge_dedup_losers.py` |
+| `dedup_case_law_docket.py` | One-time dedup keyed on docket number (catches the Google Scholar cohort); imported by `purge_dedup_losers.py` |
+| `seed_faq_url_table.py` | Seed `FaqUrlTable` from a FAQ list JSON passed with `--faqs` (the old default `documents/faqs.json` is no longer in the repo) |
 | `extract_faq_qa_pairs.py` | Scrape FAQ pages into single Q&A files for the Bedrock FAQ KB |
 | `test_diversity.py` | Live-AWS diversity probe; defines no `test_*` functions, so pytest collects nothing |
 
@@ -921,8 +935,8 @@ Cognito-authenticated users get a sidebar of past chats. Two DynamoDB tables:
 - **SessionTable** — PK `sessionId`; GSIs `userIdIndex` (PK `userId`, SK `lastMessageAt`)
   and `connectionId` for WebSocket.
 - **ChatHistoryTable** — PK `queryId`; GSIs `sessionIdKey` (PK `sessionId`, SK
-  `timestamp`), `timestampIndex`, and **`activityIndexV3`** (the lean projection backing
-  the admin activity list). The table's env var is `MESSAGES_TABLE_NAME` in chat_api,
+  `timestamp`) and **`activityIndexV3`** (PK `gsi1pk`, SK `timestamp`; the lean
+  projection backing the admin activity list). The table's env var is `MESSAGES_TABLE_NAME` in chat_api,
   `CHAT_HISTORY_TABLE_NAME` in agentic_retrieval.
 
 All routes live in one Powertools Lambda (`backend/lambdas/chat_api/main.py`).
@@ -935,12 +949,11 @@ All routes live in one Powertools Lambda (`backend/lambdas/chat_api/main.py`).
 
 | Route | Purpose |
 | --- | --- |
-| `GET /admin/activity` | Activity list (GSI-projected) |
+| `GET /admin/activity` | Activity list (GSI-projected, paginated; the page caches it for 5 minutes) |
 | `GET /admin/activity/{queryId}` | One row incl. `richFeedback` |
 | `GET /admin/chunks/documents` | Documents that have an `extracted/` artifact |
 | `GET /admin/chunks/{docId}/index?offset&limit` | Chunk metadata only (paginated) |
 | `GET /admin/chunks/{docId}/text?offset&limit` | Chunk text on demand |
-| `GET /admin/chunks/{docId}` | Legacy whole-document read |
 | `POST /admin/ingest` | Ingest a document by URL (downloads to raw, launches a Fargate task) |
 
 The frontend `/admin/*` layout also requires the `Admins` group from the ID token
@@ -956,12 +969,14 @@ is a pre-embedding artifact and never Neptune.
 - `save_chat_history` rebuilds fields explicitly — adding a `RAGDocument` field requires
   adding it here or resumed cards lose it.
 - JWT accessor: `request_context.authorizer.jwt_claim` (not `.jwt.claims`).
-- `$connect` uses `update_item` with `ConditionExpression attribute_exists(sessionId)` —
-  `put_item` would clobber `userId`/`title`.
+- `$connect` verifies the Cognito ID token passed as `token` in the query string, then
+  binds with `update_item` and `ConditionExpression attribute_exists(sessionId) AND
+  userId = :uid` — `put_item` would clobber `userId`/`title`.
 - DynamoDB numbers deserialize as `Decimal`; all responses run through `_json_default`
   (whole→int, fractional→float).
-- **Open security item:** the WebSocket API has **no `$connect` authorizer**, and several
-  session routes do not check ownership. See [handoff-plan](handoff-plan.md) §3.
+- Session routes (`history`, `message`, `feedback`) check ownership via
+  `require_session_owner` and return 404 for another user's session. The WebSocket API
+  has only `$connect` / `$disconnect`; the client never sends frames over it.
 
 ---
 

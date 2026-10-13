@@ -6,7 +6,7 @@ automatically pull in related authority the query is "about" — the statute tex
 behind a WPAM passage, the case law that cites a controlling statute, docs a
 keyword-heavy refined query would miss — without the agent having to spend a turn
 asking for any of it. A final backfill runs *after* the agent commits to an
-answer, fetching full opinion text for cited case-law stubs.
+answer, fetching the full opinion text (up to 3 cases) for cited case-law documents.
 
 This doc describes those automatic enrichment steps: where they run, what they
 fetch, and how they're gated.
@@ -155,19 +155,22 @@ keeps only chunks from docs *not* already in the narrow results.
 
 ## Post-answer: opinion backfill
 
-The four `vector_search` arms surface case law as **metadata stubs** (title,
-citation, source_url) — no opinion text. The agent can reason with a stub, but
-Phase B regenerates the streamed answer from the `RAGDocument` list, and a stub
-with empty `content` can't contribute its holding to the streamed prose.
+Case-law documents reach the agent as chunks — an LLM holding summary plus the
+majority opinion's selected synopsis, analysis and disposition — not as full
+opinions. Neptune search and `caselaw_backfill` return that chunk text; only the
+direct-citation arm (`resolve_case_citations` → `related_case_law`) returns metadata alone, and the
+~29 cases ingested without opinion text have no chunks at all.
 
-Opinion backfill closes that gap. After the agent calls `prepare_answer`, a
-deterministic step in `handler.py` scans `cited_doc_ids` for case-law stubs that
-weren't already fetched via `fetch_case_opinion`. For up to
-`_OPINION_BACKFILL_CAP` (**3**) such stubs, it resolves the citation, derives the
+Opinion backfill adds the full opinion (truncated at 40,000 chars) for the cases
+the answer actually relies on. After the agent calls `prepare_answer`, a
+deterministic step in `handler.py` scans `cited_doc_ids` for case-law documents
+(any `case-law-*` id) that weren't already fetched via `fetch_case_opinion`. For up to
+`_OPINION_BACKFILL_CAP` (**3**) such cases, it resolves the citation, derives the
 S3 key, and fetches the full opinion `.txt`. This runs **before**
 `build_rag_documents`, so Phase B receives substantive content.
 
-- Only cited stubs are backfilled — uncited graph/neighbor noise is never fetched.
+- Only cited case-law docs not already fetched are backfilled — uncited graph/neighbor
+  noise is never fetched.
 - Discovery tag: `opinion-backfill`.
 - Best-effort and capped at 3 to bound latency.
 
@@ -189,7 +192,7 @@ the four arms above, not this path.
 | Statute backfill | 1 (`get_statute_backfill`) | up to 3 statute chunks |
 | Case-law backfill | 1 (`get_case_chunks_for_statutes_with_embeddings`) + 1 embed | up to 5 case chunks |
 | Broad discovery | 1 vector search + 1 embed | up to `top_k` additive chunks |
-| Opinion backfill | per-stub resolve + S3 fetch (cap 3) | full opinion text for cited cases |
+| Opinion backfill | per-case resolve + S3 fetch (cap 3) | full opinion text for cited cases |
 
 All arms are additive and best-effort; a failure in any one logs a warning and
 leaves the rest of the result intact.

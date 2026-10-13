@@ -35,7 +35,10 @@ Python module invocation:
 sequential commands in one task. The container hard-codes
 `CONFIG=/app/tools/ingestion/config/ingest_config.yaml`. Env vars map to CLI
 flags via `${VAR:+--flag}` expansion: `SOURCE_FILTER`, `FORCE`, `SMART`,
-`RECLASSIFY`, `START_PHASE`, `STOP_AFTER_PHASE`, `MAX_WORKERS`.
+`RECLASSIFY`, `START_PHASE`, `STOP_AFTER_PHASE`, `MAX_WORKERS`, `CACHE_PREFIX`
+(`--cache-prefix`, staging runs), `GRAPH_ID` (`--graph-id`, blue/green override only),
+`ALIASES` / `ALIASES_ONLY` (extract alias generation / alias-only backfill) and
+`EMBED_INPUT` (`--embed-input plain|enriched`).
 
 > `run_fargate.sh` only launches `extract | embed | load`. `full` exists in the
 > container but has no wrapper script — to use it you'd craft the `run-task`
@@ -202,9 +205,11 @@ Defined in `infra/stacks/ingestion-stack.ts` (`FargateTaskDefinition`):
 
 ### Cost
 
-~$0.12/hour when running. A full ingestion run (roughly 3–4 hours across all
-three sequential phase-tasks) costs on the order of $0.35–0.47. The VPC and
-cluster cost nothing when no tasks are running.
+~$0.12/hour when running; Fargate is about $2 per full refresh. The September 2026 load
+alone took about 14.5 h, and Neptune at 128 m-NCU for that window ($3.84/h, ≈ $56)
+dominates the refresh bill — see [handoff-plan](handoff-plan.md) §4 for the full
+≈ $60–100 per-refresh breakdown. The VPC and cluster cost nothing when no tasks are
+running.
 
 ## Infrastructure (CDK)
 
@@ -230,7 +235,7 @@ from the nested stack's own outputs. The run scripts discover all of these via
 |--------|-------|---------|
 | Auth | `AWS_PROFILE=<your-profile>` | IAM task role (automatic) |
 | SSL certs | `AWS_CA_BUNDLE=$CERT` | Not needed (base image has certs) |
-| `state_laws_dir` | Local statute PDFs used for section-level refs | Degrades gracefully to chapter-only refs |
+| `state_laws_dir` | Read only for case law: page-header section refs from local statute PDFs under `docs/state-laws/`, which is not in the repo | Absent on Fargate too, so those refs fall back to chapter level; the main source of case-law statute refs is the opinion-text regex (`_extract_statute_refs_from_text`) |
 | Textract staging | `TEXTRACT_STAGING_BUCKET`, unset by default | Not set on the task def — so the Textract fallback is **skipped** and the PyMuPDF result is kept |
 | Logs | Terminal stdout | CloudWatch `/ecs/wis-dor-ingestion` |
 | Failure recovery | Restart manually | Re-run the same command; caching skips completed work |
@@ -251,8 +256,10 @@ to change them, edit `load.py` and rebuild the image. If the corpus grows substa
 also consider raising `memoryLimitMiB` in `ingestion-stack.ts`.
 
 **Neptune throttling (slow load phase):**
-`load.py`'s `execute_query` retries up to **8 times** with exponential backoff capped at
-**60 s**, catching both `ThrottlingException` and `UnprocessableException`. (The
+`load.py`'s `execute_query` makes up to **8 attempts** (7 retries) with backoff of
+`min(60, 2**attempt)` seconds. It retries only on a `ThrottlingException` or on the
+"resubmit the query" / "retry is suppressed" message Neptune puts on some
+`UnprocessableException`s — not on `UnprocessableException` as a class. (The
 retrieval Lambda's client is deliberately more impatient — 3 attempts, 30 s cap.) Scale
 the graph to 128 m-NCU for a full re-ingestion, then back down to 32 afterward; 16 m-NCU
 is rejected by the service even on a fresh graph.
