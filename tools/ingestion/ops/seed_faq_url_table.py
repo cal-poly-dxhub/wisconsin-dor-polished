@@ -1,4 +1,9 @@
-"""Seed the FaqUrlTable from documents/faqs.json.
+"""Seed the FaqUrlTable from a faqs.json export.
+
+faqs.json is a list of {"Q", "A", "source_url"} records. It is no longer
+tracked in the repo (it left with the old packages/ layout in 26ea5f4);
+recover the last committed copy with
+    git show 26ea5f4^:documents/faqs.json > /tmp/faqs.json
 
 Builds the normalized-question -> source_url map (with fuzzy recovery) and
 upserts one item per normalized question into the DynamoDB table. Idempotent:
@@ -7,13 +12,14 @@ re-running overwrites items in place.
 Usage:
     AWS_REGION=us-east-1 AWS_PROFILE=<your-profile> \
         python tools/ingestion/ops/seed_faq_url_table.py \
-        --table <FaqUrlTableName> --faqs documents/faqs.json
+        --table <FaqUrlTableName> --faqs /tmp/faqs.json
     # --dry-run prints counts without writing.
 
-Find the table name from stack outputs:
-    aws cloudformation describe-stacks --stack-name WisconsinBotGraphRAG \
-        --profile <your-profile> --region us-east-1 \
-        --query "Stacks[0].Outputs[?contains(OutputKey,'FaqUrlTable')].OutputValue" --output text
+The table name is the retrieval Lambda's FAQ_URL_TABLE_NAME env var (the
+FaqUrlTableName output lives on a nested stack, not the root stack):
+    aws lambda get-function-configuration --profile <your-profile> --region us-east-1 \
+        --function-name <AgenticRetrievalFunction> \
+        --query Environment.Variables.FAQ_URL_TABLE_NAME --output text
 """
 
 from __future__ import annotations
@@ -39,7 +45,7 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--table", required=True, help="FaqUrlTable name")
-    parser.add_argument("--faqs", default="documents/faqs.json")
+    parser.add_argument("--faqs", required=True, help="faqs.json export (see module docstring)")
     parser.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
     parser.add_argument("--profile", default=os.environ.get("AWS_PROFILE"))
     parser.add_argument("--dry-run", action="store_true")

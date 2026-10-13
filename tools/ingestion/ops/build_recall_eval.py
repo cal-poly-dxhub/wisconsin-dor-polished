@@ -75,8 +75,9 @@ EXCLUDED_ANSWER_PREFIXES = (
     "That question is outside the scope",
 )
 
-# Property-type chip labels from the disambiguation pane (frontend
-# disambiguation-pane.tsx PROPERTY_TYPE_CHOICES).
+# Property-type chip labels from the retired pre-loop disambiguation chips.
+# Older ChatHistory rows still hold them as one-word "queries", so they stay
+# excluded here.
 CHIP_LABELS = {
     "residential",
     "commercial",

@@ -24,9 +24,8 @@
 #                        report a single case). Not a production identifier.
 #
 # ── ADEQUACY-JUDGE (SCOPE) FIELDS ────────────────────────────────────────────
-# With ADEQUACY_JUDGE_ENABLED=true the harness runs the post-retrieval adequacy
-# judge after Phase A and feeds its Finding into Phase B. Two extra per-case
-# fields then gate:
+# The harness runs the post-retrieval adequacy judge after Phase A and feeds its
+# Finding into Phase B. Two extra per-case fields then gate:
 #   - expected_verdict:            ANSWER | CLARIFY | DECLINE. Must equal
 #                                  finding.verdict. CLARIFY additionally requires
 #                                  finding.clarification.options to hold >= 2
@@ -52,15 +51,9 @@
 #                        build_answer_context — the production shape.
 #
 # ── WHAT THIS HARNESS CANNOT TEST (deliberately excluded) ─────────────────────
-# run_graph_regression.run_one_query() calls run_agentic_loop() DIRECTLY, so it
-# never invokes the legacy PRE-loop query classifier (classify_query in
-# handler.py). Scope behavior is now graded through its replacement — the
-# POST-retrieval adequacy judge (expected_verdict above), which this harness DOES
-# exercise. What remains out of reach here:
-#   * Any residual pre-loop classifier decision (PROCEED / DISAMBIGUATE /
-#     OUT_OF_SCOPE) belongs in the sibling classifier harness
-#     (classifier_regression_queries.yaml + run_classifier_regression.py), which
-#     exercises classify_query directly.
+# Scope behavior is graded through the post-retrieval adequacy judge
+# (expected_verdict above), which this harness runs on every case. (The pre-loop
+# query classifier it replaced has been removed.)
 #   * Rows tagged oos-content-half predate the adequacy judge and appear here only
 #     as their CONTENT half — "IF we proceed, does retrieval find the right
 #     material?".
@@ -567,8 +560,7 @@ queries:
       straddling two municipalities (the intended sense). The right concepts
       (§70.12, §70.08, WPAM Ch.7) may be found but framed around subdivision.
       Guard asserts the straddle-sense content (§70.12 "assessed where it lies")
-      is present. Lever = prompt guidance to state the interpretation used. Also
-      a DISAMBIGUATE candidate for the classifier harness (domain-term ambiguity).
+      is present. Lever = prompt guidance to state the interpretation used.
 
   # ── THEME: source-currency — model faithful to source; possible stale corpus
   #    (no code fix — a corpus-currency question, not a grading failure).
@@ -863,26 +855,6 @@ queries:
       the answer would not be coerced.
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CLASSIFIER-HARNESS BACKLOG  (NOT runnable by this graph harness)
-#  These are pre-loop query-classifier decisions (classify_query in handler.py),
-#  which run_agentic_loop() never invokes — so they CANNOT be graded here. They
-#  belong in the sibling live-classifier harness (classifier_regression_queries.yaml
-#  + run_classifier_regression.py), which pulls the live disambiguationClassifier
-#  prompt from the ModelConfig DynamoDB table and classifies each labelled query
-#  with Haiku temp 0.0. Guards to maintain there:
-#
-#    * mid-session generic "my assessment" with history that never named a
-#      property classification  → DISAMBIGUATE
-#    * "how do you measure depreciation" (in-scope valuation process) → PROCEED
-#    * "actual view … new developments" (in-scope property view)      → PROCEED
-#    * Trustee's Deed transfer-fee exemption (ch.77)                   → PROCEED
-#    * "cape cod … grades" (residential grade, in-scope)              → PROCEED
-#    * "value in two counties" — coherence deferred to retrieval      → PROCEED
-#    * "split between 2 municipalities" (domain-term ambiguity)       → PROCEED
-#      (candidate for an extended DISAMBIGUATE-on-domain-term path)
-#    * true-OOS anchors (weather / coding help) → OUT_OF_SCOPE, and the rewritten
-#      out-of-scope message ("…please revise and clarify your question.") fires.
-#
 #  DEFERRED (no guard): the chargeback publishing page (dynamic portal,
 #  per-report URLs change) is not ingestible now; revisit if a curated
 #  resource-link map is built.
@@ -957,10 +929,10 @@ queries:
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  SCOPE / ADEQUACY SET  (tag: scope)  — added with the post-retrieval adequacy
-#  judge that replaces the pre-loop scope/disambiguation classifier.
+#  judge that replaced the (since removed) pre-loop scope classifier.
 #
 #  Run just this slice:
-#    ADEQUACY_JUDGE_ENABLED=true AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 \
+#    AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 \
 #      python tools/ingestion/ops/run_graph_regression.py --mode after --tags scope
 #
 #  Each row carries expected_verdict (ANSWER | CLARIFY | DECLINE). The rubric
