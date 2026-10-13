@@ -6,11 +6,8 @@ import { LambdaLayersStack } from './lambda-layers-stack';
 import { GraphRAGStack } from './graphrag-stack';
 import { GraphRAGMessagesStack } from './graphrag-messages-stack';
 import { IngestionStack } from './ingestion-stack';
-import { CloudWatchIam } from './cloudwatch-iam';
 import { WebAppStack } from './webapp-stack';
 import { parseSsoConfig } from './sso';
-
-const RESET_ClOUDWATCH_IAM_ROLE = false;
 
 export class WisconsinBotStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -48,7 +45,7 @@ export class WisconsinBotStack extends cdk.Stack {
     const sessionsStack = new SessionsStack(this, 'WisconsinSessionsStack', {
       description:
         'Stack providing API and WebSocket session services for the Wisconsin bot.',
-      stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
+      chatContractsLayer: lambdaLayersStack.chatContractsLayer,
       websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
       rawBucketName: graphRAGStack.rawBucketName,
       workBucketName: graphRAGStack.workBucketName,
@@ -63,7 +60,7 @@ export class WisconsinBotStack extends cdk.Stack {
       {
         description:
           'GraphRAG messaging services (agentic retrieval via EventBridge).',
-        stepFunctionTypesLayer: lambdaLayersStack.stepFunctionTypesLayer,
+        chatContractsLayer: lambdaLayersStack.chatContractsLayer,
         websocketUtilsLayer: lambdaLayersStack.websocketUtilsLayer,
         sessionsTable: sessionsStack.sessionsTable,
         chatHistoryTable: sessionsStack.chatHistoryTable,
@@ -119,12 +116,6 @@ export class WisconsinBotStack extends cdk.Stack {
       })
     );
 
-    const cloudWatchIam = new CloudWatchIam(this, 'WisconsinCloudWatchIam', {
-      resetCloudWatchIamRole: RESET_ClOUDWATCH_IAM_ROLE,
-      description:
-        'IAM roles and policies for CloudWatch logging for API Gateway.',
-    });
-
     const domainName = this.node.tryGetContext('domainName');
     const hostedZoneName = this.node.tryGetContext('hostedZoneName');
     const hostedZoneId = this.node.tryGetContext('hostedZoneId');
@@ -136,7 +127,6 @@ export class WisconsinBotStack extends cdk.Stack {
       userPoolClient: sessionsStack.userPoolClient,
       httpApiUrl: sessionsStack.httpApiUrl,
       websocketApiUrl: sessionsStack.websocketApiUrl,
-      workBucketName: graphRAGStack.workBucketName,
       domainName,
       hostedZoneName,
       hostedZoneId,
@@ -146,25 +136,21 @@ export class WisconsinBotStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ApiBaseUrl', {
       value: sessionsStack.httpApiUrl,
       description: 'Base URL of the HTTP API',
-      exportName: 'WisconsinBot-ApiBaseUrl',
     });
 
     new cdk.CfnOutput(this, 'WebSocketUrl', {
       value: sessionsStack.websocketApiUrl,
       description: 'URL of the WebSocket API',
-      exportName: 'WisconsinBot-WebSocketUrl',
     });
 
     new cdk.CfnOutput(this, 'CognitoUserPoolId', {
       value: sessionsStack.userPool.userPoolId,
       description: 'Cognito User Pool ID',
-      exportName: 'WisconsinBot-CognitoUserPoolId',
     });
 
     new cdk.CfnOutput(this, 'CognitoUserPoolClientId', {
       value: sessionsStack.userPoolClient.userPoolClientId,
       description: 'Cognito User Pool Client ID',
-      exportName: 'WisconsinBot-CognitoUserPoolClientId',
     });
 
     new cdk.CfnOutput(this, 'WebAppUrl', {
@@ -175,19 +161,16 @@ export class WisconsinBotStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ModelConfigTableName', {
       value: graphRAGStack.modelConfigTable.tableName,
       description: 'Name of the Model Configuration DynamoDB table',
-      exportName: 'WisconsinBot-ModelConfigTableName',
     });
 
     new cdk.CfnOutput(this, 'GraphRAGRawBucketName', {
       value: graphRAGStack.rawBucketName,
       description: 'S3 bucket for GraphRAG raw documents',
-      exportName: 'WisconsinBot-GraphRAGRawBucketName',
     });
 
     new cdk.CfnOutput(this, 'GraphRAGWorkBucketName', {
       value: graphRAGStack.workBucketName,
       description: 'S3 bucket for GraphRAG work data',
-      exportName: 'WisconsinBot-GraphRAGWorkBucketName',
     });
 
     new cdk.CfnOutput(this, 'GraphRAGNeptuneGraphId', {
@@ -195,37 +178,37 @@ export class WisconsinBotStack extends cdk.Stack {
       description:
         'Neptune Analytics Graph ID this deployment targets (pinned via the ' +
         '"neptuneGraphId" CDK context; not a resource of this stack)',
-      exportName: 'WisconsinBot-NeptuneGraphId',
     });
 
     new cdk.CfnOutput(this, 'GraphRAGFaqKnowledgeBaseId', {
       value: graphRAGStack.faqKnowledgeBaseId,
       description: 'FAQ Bedrock Knowledge Base ID (GraphRAG)',
-      exportName: 'WisconsinBot-GraphRAGFaqKnowledgeBaseId',
     });
 
     new cdk.CfnOutput(this, 'GraphRAGFaqBucketName', {
       value: graphRAGStack.faqBucketName,
       description: 'S3 bucket for FAQ documents (GraphRAG)',
-      exportName: 'WisconsinBot-GraphRAGFaqBucketName',
     });
 
     new cdk.CfnOutput(this, 'GraphRAGFaqDataSourceId', {
       value: graphRAGStack.faqDataSourceId,
       description: 'FAQ Bedrock KB Data Source ID (GraphRAG)',
-      exportName: 'WisconsinBot-GraphRAGFaqDataSourceId',
+    });
+
+    // Read by tools/ingestion/ops/seed_faq_url_table.py.
+    new cdk.CfnOutput(this, 'GraphRAGFaqUrlTableName', {
+      value: graphRAGStack.faqUrlTable.tableName,
+      description: 'DynamoDB table mapping normalized FAQ question to its URL',
     });
 
     new cdk.CfnOutput(this, 'IngestionClusterArn', {
       value: ingestionStack.cluster.clusterArn,
       description: 'Ingestion ECS Cluster ARN',
-      exportName: 'WisconsinBot-IngestionClusterArn',
     });
 
     new cdk.CfnOutput(this, 'IngestionTaskDefinitionArn', {
       value: ingestionStack.taskDefinition.taskDefinitionArn,
       description: 'Ingestion Fargate Task Definition ARN',
-      exportName: 'WisconsinBot-IngestionTaskDefinitionArn',
     });
   }
 }

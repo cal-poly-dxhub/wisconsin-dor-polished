@@ -49,7 +49,9 @@ export class GraphRAGStack extends cdk.NestedStack {
     });
 
     // Maps a normalized FAQ question to its public revenue.wi.gov URL.
-    // Seeded from documents/faqs.json and refreshed by extract_faq_qa_pairs.py.
+    // Written by tools/ingestion/ops/extract_faq_qa_pairs.py --faq-url-table
+    // (and seed_faq_url_table.py from an FAQ export); read by the retrieval
+    // Lambda to link each FAQ to its page.
     const faqUrlTable = new dynamodb.Table(this, 'FaqUrlTable', {
       partitionKey: {
         name: 'normalized_question',
@@ -89,34 +91,5 @@ export class GraphRAGStack extends cdk.NestedStack {
     this.faqKnowledgeBaseId = faqKb.knowledgeBaseId;
     this.faqBucketName = faqBucket.bucketName;
     this.faqDataSourceId = faqDataSource.dataSourceId;
-
-    new cdk.CfnOutput(this, 'RawBucketName', {
-      value: rawBucket.bucketName,
-      description: 'S3 bucket for raw source documents',
-    });
-    new cdk.CfnOutput(this, 'WorkBucketName', {
-      value: workBucket.bucketName,
-      description: 'S3 bucket for intermediate processing cache',
-    });
-    new cdk.CfnOutput(this, 'FaqKnowledgeBaseId', {
-      value: faqKb.knowledgeBaseId,
-      description: 'FAQ Bedrock Knowledge Base ID (GraphRAG)',
-    });
-    new cdk.CfnOutput(this, 'FaqBucketNameGraphRAG', {
-      value: faqBucket.bucketName,
-      description: 'S3 bucket for FAQ documents (GraphRAG)',
-    });
-    new cdk.CfnOutput(this, 'FaqDataSourceId', {
-      value: faqDataSource.dataSourceId,
-      description: 'FAQ Bedrock KB Data Source ID (GraphRAG)',
-    });
-    new cdk.CfnOutput(this, 'FaqUrlTableName', {
-      value: faqUrlTable.tableName,
-      description: 'DynamoDB table mapping normalized FAQ question -> source URL',
-    });
-    new cdk.CfnOutput(this, 'ModelConfigTableName', {
-      value: this.modelConfigTable.tableName,
-      description: 'DynamoDB table for externalized LLM prompt configs',
-    });
   }
 }

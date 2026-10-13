@@ -13,11 +13,11 @@ import { setLogRetention } from './log-retention';
 import { SsoConfig, SsoResources } from './sso';
 
 export interface SessionsStackProps extends cdk.StackProps {
-  stepFunctionTypesLayer: lambda.LayerVersion;
+  chatContractsLayer: lambda.LayerVersion;
   websocketUtilsLayer: lambda.LayerVersion;
-  // The raw GraphRAG bucket. chat_api reads document PDFs under raw/
-  // for the admin chunk-inspection endpoints.
+  // chat_api writes documents under raw/ for /admin/ingest.
   rawBucketName: string;
+  // chat_api reads extracted/ chunk artifacts for the /admin/chunks pages.
   workBucketName: string;
   /** DOR single sign-on (see ./sso.ts). Undefined leaves the pool as it was. */
   sso?: SsoConfig;
@@ -136,25 +136,10 @@ export class SessionsStack extends cdk.NestedStack {
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
     });
 
-    // // TODO: use separate conversation IDs instead of session IDs
-    // // for chat history retrieval.
     this.chatHistoryTable.addGlobalSecondaryIndex({
       indexName: 'sessionIdKey',
       partitionKey: {
         name: 'sessionId',
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: 'timestamp',
-        type: dynamodb.AttributeType.STRING,
-      },
-      projectionType: dynamodb.ProjectionType.ALL,
-    });
-
-    this.chatHistoryTable.addGlobalSecondaryIndex({
-      indexName: 'timestampIndex',
-      partitionKey: {
-        name: 'gsi1pk',
         type: dynamodb.AttributeType.STRING,
       },
       sortKey: {
@@ -170,8 +155,7 @@ export class SessionsStack extends cdk.NestedStack {
     // name — activityIndexV2 (superseded, removed) → activityIndexV3, which adds
     // the `rating` scalar. The list projects/filters on `rating` to surface the
     // middle ("mixed") rating; `thumbUp` alone can't distinguish mid from down.
-    // The handler reads ACTIVITY_INDEX_NAME and falls back to timestampIndex
-    // (ProjectionType.ALL) during index rollout.
+    // The handler reads the index name from ACTIVITY_INDEX_NAME.
     this.chatHistoryTable.addGlobalSecondaryIndex({
       indexName: 'activityIndexV3',
       partitionKey: {
@@ -202,7 +186,7 @@ export class SessionsStack extends cdk.NestedStack {
           ],
         },
       }),
-      layers: [props.stepFunctionTypesLayer, props.websocketUtilsLayer],
+      layers: [props.chatContractsLayer, props.websocketUtilsLayer],
       description: 'Lambda function that handles API requests',
       timeout: cdk.Duration.seconds(60),
       memorySize: 256,
@@ -312,46 +296,12 @@ export class SessionsStack extends cdk.NestedStack {
       memorySize: 256,
     });
 
-    const defaultHandler = new lambda.Function(this, 'DefaultHandler', {
-      runtime: lambda.Runtime.PYTHON_3_12,
-      handler: 'default.handler',
-      code: lambda.Code.fromAsset('bundle/default', {
-        bundling: {
-          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
-          command: [
-            'bash',
-            '-c',
-            [
-              'pip install --platform manylinux2014_x86_64 --only-binary=:all: -r requirements.txt -t /asset-output',
-              'cp -r . /asset-output',
-            ].join(' && '),
-          ],
-        },
-      }),
-      layers: [props.websocketUtilsLayer],
-      environment: {
-        SESSIONS_TABLE_NAME: this.sessionsTable.tableName,
-      },
-      timeout: cdk.Duration.seconds(30),
-      memorySize: 256,
-    });
-
     // Grant permissions to WebSocket handlers
     this.sessionsTable.grantReadWriteData(connectHandler);
     this.sessionsTable.grantReadWriteData(disconnectHandler);
-    disconnectHandler.addToRolePolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: ['dynamodb:Query'],
-        resources: [
-          this.sessionsTable.tableArn,
-          `${this.sessionsTable.tableArn}/index/connectionId`,
-        ],
-      })
-    );
 
     // Logs carry request details; keep 90 days rather than the 731-day default.
-    for (const fn of [apiHandler, connectHandler, disconnectHandler, defaultHandler]) {
+    for (const fn of [apiHandler, connectHandler, disconnectHandler]) {
       setLogRetention(fn, logs.RetentionDays.THREE_MONTHS);
     }
 
@@ -366,17 +316,6 @@ export class SessionsStack extends cdk.NestedStack {
 
     this.websocketApiId = websocketApi.apiId;
 
-    // API Gateway Management API (post_to_connection) on this socket API only.
-    defaultHandler.addToRolePolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: ['execute-api:ManageConnections'],
-        resources: [
-          `arn:aws:execute-api:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:${websocketApi.apiId}/*/*/@connections/*`,
-        ],
-      })
-    );
-
     const connectIntegration =
       new apigatewayv2Integrations.WebSocketLambdaIntegration(
         'ConnectIntegration',
@@ -389,32 +328,12 @@ export class SessionsStack extends cdk.NestedStack {
         disconnectHandler
       );
 
-    const defaultIntegration =
-      new apigatewayv2Integrations.WebSocketLambdaIntegration(
-        'DefaultIntegration',
-        defaultHandler
-      );
-
     websocketApi.addRoute('$connect', {
       integration: connectIntegration,
     });
     websocketApi.addRoute('$disconnect', {
       integration: disconnectIntegration,
     });
-    websocketApi.addRoute('$default', {
-      integration: defaultIntegration,
-    });
-
-    // Create CloudWatch log groups for WebSocket API logging
-    const executionLogGroup = new logs.LogGroup(
-      this,
-      'WebSocketExecutionLogs',
-      {
-        logGroupName: `/aws/apigateway/websocket-execution-logs`,
-        retention: logs.RetentionDays.ONE_WEEK,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      }
-    );
 
     const websocketStage = new apigatewayv2.WebSocketStage(
       this,
@@ -428,13 +347,11 @@ export class SessionsStack extends cdk.NestedStack {
 
     this.websocketApiUrl = websocketStage.url;
 
-    // Use L1 construct to enable execution logging (not supported in L2 WebSocket constructs)
+    // Route settings are not exposed on the L2 WebSocket stage. No execution
+    // logging: it needs an account-level API Gateway CloudWatch role, which
+    // this stack does not manage.
     const cfnStage = websocketStage.node.defaultChild as apigatewayv2.CfnStage;
-
-    // Enable execution logging and detailed metrics
     cfnStage.defaultRouteSettings = {
-      loggingLevel: 'INFO', // 'ERROR' | 'INFO' | 'OFF'
-      dataTraceEnabled: false, // true => full req/resp (verbose)
       detailedMetricsEnabled: true,
       // Whole-API ceiling (all users together). Answers stream server-side
       // via post_to_connection, which these limits do not count.
@@ -442,23 +359,15 @@ export class SessionsStack extends cdk.NestedStack {
       throttlingBurstLimit: 40,
     };
 
-    // Grant API Gateway permission to write to CloudWatch Logs
-    executionLogGroup.grantWrite(
-      new iam.ServicePrincipal('apigateway.amazonaws.com')
-    );
-
-    // Add WebSocket callback URL to default handler environment
-    defaultHandler.addEnvironment(
-      'WEBSOCKET_CALLBACK_URL',
-      websocketStage.callbackUrl
-    );
-
-    // Store the callback URL for use by other stacks
+    // The retrieval Lambda posts answers back to clients through this URL.
     this.websocketCallbackUrl = websocketStage.callbackUrl;
 
     const httpApi = new apigatewayv2.HttpApi(this, 'SessionsHttpApi', {
       apiName: 'Wisconsin Sessions API',
       description: 'HTTP API for managing chat sessions',
+      // Only the throttled `dev` stage below is served; an auto-created
+      // $default stage would expose every route without those limits.
+      createDefaultStage: false,
       corsPreflight: {
         // The web app's own origin(s) from the `allowedOrigins` context
         // (infra/cdk.json). A fresh account has no CloudFront URL until its
@@ -610,74 +519,6 @@ export class SessionsStack extends cdk.NestedStack {
       methods: [apigatewayv2.HttpMethod.GET],
       integration: lambdaIntegration,
       authorizer: authorizer,
-    });
-
-    httpApi.addRoutes({
-      path: '/admin/chunks/{docId}',
-      methods: [apigatewayv2.HttpMethod.GET],
-      integration: lambdaIntegration,
-      authorizer: authorizer,
-    });
-
-    new cdk.CfnOutput(this, 'ApiHandlerFunctionArn', {
-      value: apiHandler.functionArn,
-      description: 'ARN of the API handler Lambda function',
-    });
-
-    new cdk.CfnOutput(this, 'ApiHandlerFunctionName', {
-      value: apiHandler.functionName,
-      description: 'Name of the API handler Lambda function',
-    });
-
-    new cdk.CfnOutput(this, 'HttpApiUrl', {
-      value: httpApi.url ?? '',
-      description: 'URL of the HTTP API (API Gateway v2)',
-      exportName: 'WisconsinBot-SessionsHttpApiUrl',
-    });
-
-    new cdk.CfnOutput(this, 'HttpApiId', {
-      value: httpApi.httpApiId,
-      description: 'ID of the HTTP API (API Gateway v2)',
-    });
-
-    new cdk.CfnOutput(this, 'DevStageUrl', {
-      value: devStage.url,
-      description: 'URL of the dev stage',
-      exportName: 'WisconsinBot-SessionsDevStageUrl',
-    });
-
-    new cdk.CfnOutput(this, 'WebSocketApiUrl', {
-      value: websocketStage.url,
-      description: 'URL of the WebSocket API',
-      exportName: 'WisconsinBot-WebSocketApiUrl',
-    });
-
-    new cdk.CfnOutput(this, 'WebSocketApiId', {
-      value: websocketApi.apiId,
-      description: 'ID of the WebSocket API',
-    });
-
-    new cdk.CfnOutput(this, 'WebSocketExecutionLogGroup', {
-      value: executionLogGroup.logGroupName,
-      description: 'CloudWatch Log Group for WebSocket execution logs',
-    });
-
-    new cdk.CfnOutput(this, 'UserPoolId', {
-      value: this.userPool.userPoolId,
-      description: 'Cognito User Pool ID',
-      exportName: 'WisconsinBot-UserPoolId',
-    });
-
-    new cdk.CfnOutput(this, 'UserPoolClientId', {
-      value: this.userPoolClient.userPoolClientId,
-      description: 'Cognito User Pool Client ID',
-      exportName: 'WisconsinBot-UserPoolClientId',
-    });
-
-    new cdk.CfnOutput(this, 'CognitoRegion', {
-      value: cdk.Stack.of(this).region,
-      description: 'AWS Region for Cognito',
-      exportName: 'WisconsinBot-CognitoRegion',
     });
   }
 }
