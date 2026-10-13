@@ -50,7 +50,7 @@ function statChunks(count: number, start = 0): string[] {
   return Array.from({ length: count }, (_, i) => `statutes-70_chunk_${String(start + i).padStart(4, '0')}`);
 }
 function govChunks(count: number): string[] {
-  return Array.from({ length: count }, (_, i) => `gov_publications-2026-property-owners-guide_chunk_${String(i).padStart(4, '0')}`);
+  return Array.from({ length: count }, (_, i) => `gov_publications-pb060_chunk_${String(i).padStart(4, '0')}`);
 }
 
 export const CORPUS_TOTAL_CHUNKS = 16234;
@@ -139,7 +139,7 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
         'wpam-wisconsin-property-assessment-manual-2026',
         'admin_rules-tax-12',
         'statutes-70',
-        'gov_publications-2026-property-owners-guide',
+        'gov_publications-pb060',
       ],
       metadata: {
         seeded: true,
@@ -165,23 +165,23 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
         broadScoreBuckets: { '0.8-0.9': 4, '0.7-0.8': 8, '<0.7': 3 },
         broadFullDocChunks: {
           'wpam-wisconsin-property-assessment-manual-2026': 5,
-          'gov_publications-2026-property-owners-guide': 4,
+          'gov_publications-pb060': 4,
           'news-2025-assessment-deadline-reminder': 4,
-          'gov_publications-2026-agricultural-assessment-guide': 2,
+          'gov_publications-pb061': 2,
         },
         broadDiscovery: [
           { docId: 'news-2025-assessment-deadline-reminder', score: 0.74 },
-          { docId: 'gov_publications-2026-property-owners-guide', score: 0.71 },
+          { docId: 'gov_publications-pb060', score: 0.71 },
         ],
         broadDocChunks: {
           'news-2025-assessment-deadline-reminder': 4,
-          'gov_publications-2026-agricultural-assessment-guide': 3,
+          'gov_publications-pb061': 3,
         },
         docChunks: {
           'wpam-wisconsin-property-assessment-manual-2026': 5,
           'admin_rules-tax-12': 3,
           'statutes-70': 3,
-          'gov_publications-2026-property-owners-guide': 4,
+          'gov_publications-pb060': 4,
         },
         chunkIds: [
           ...wpamChunks(5),
@@ -293,7 +293,7 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
           'statutes-70',
           'admin_rules-tax-12',
           'admin_rules-tax-18',
-          'gov_publications-2026-property-owners-guide',
+          'gov_publications-pb060',
           'wpam-wisconsin-property-assessment-manual-2025',
           'iaao-standard-mass-appraisal',
         ],
@@ -471,7 +471,7 @@ export const DEMO_TRACE: FixtureTraceEvent[] = [
         'wpam-wisconsin-property-assessment-manual-2026': 'WPAM 2026 — Wisconsin Property Assessment Manual',
         'statutes-70': 'Chapter 70 — Property Assessment',
         'admin_rules-tax-12': 'Tax 12 — Assessor Certification',
-        'gov_publications-2026-property-owners-guide': '2026 Property Owner\'s Guide',
+        'gov_publications-pb060': '2026 Property Owner\'s Guide',
         'admin_rules-tax-18': 'Tax 18 — Agricultural Land',
       },
     },
