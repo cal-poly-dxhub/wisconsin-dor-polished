@@ -20,20 +20,11 @@ import argparse
 import os
 import sys
 import tomllib
-from decimal import Decimal
 from pathlib import Path
 
 import boto3
 
-script_dir = Path(__file__).parent
-repo_root = script_dir.parent
-bedrock_utils_dir = repo_root / "tools"
-sys.path.insert(0, str(bedrock_utils_dir))
-
-step_function_types_dir = repo_root / "backend" / "layers"
-sys.path.insert(0, str(step_function_types_dir))
-
-from bedrock_utils import BedrockConfig, InferenceConfig, ModelConfig, SystemPrompt  # noqa: E402
+repo_root = Path(__file__).parent.parent
 
 
 def get_aws_region() -> str:
@@ -55,7 +46,8 @@ def get_default_table_name(region: str | None = None) -> str:
     raise RuntimeError("ModelConfigTableName output not found in WisconsinBotGraphRAG stack")
 
 
-def parse_toml_config(config_file: str) -> dict[str, ModelConfig]:
+def parse_toml_config(config_file: str) -> dict[str, str]:
+    """Return {config id: prompt}. The Lambda reads only the prompt text."""
     if not os.path.exists(config_file):
         raise FileNotFoundError(f"Configuration file not found: {config_file}")
 
@@ -64,54 +56,17 @@ def parse_toml_config(config_file: str) -> dict[str, ModelConfig]:
 
     configs = {}
     for config_id, config_data in toml_data.items():
-        model_config_data = {
-            "id": config_data.get("id", config_id),
-            "prompt": config_data.get("prompt"),
-        }
-
-        if "config" in config_data:
-            bedrock_config_data = config_data["config"]
-            system_prompts = None
-            if "system" in bedrock_config_data:
-                system_prompts = [
-                    SystemPrompt(**prompt_data) for prompt_data in bedrock_config_data["system"]
-                ]
-
-            inference_config = None
-            if "inferenceConfig" in bedrock_config_data:
-                inference_config = InferenceConfig(**bedrock_config_data["inferenceConfig"])
-
-            additional_fields = {}
-            excluded_keys = {"modelId", "system", "inferenceConfig"}
-            for key, value in bedrock_config_data.items():
-                if key not in excluded_keys:
-                    additional_fields[key] = value
-
-            bedrock_config = BedrockConfig(
-                modelId=bedrock_config_data["modelId"],
-                system=system_prompts,
-                inferenceConfig=inference_config,
-                additionalModelRequestFields=additional_fields if additional_fields else None,
-            )
-            model_config_data["config"] = bedrock_config
-
-        model_config = ModelConfig(**model_config_data)
-        configs[config_id] = model_config
-
+        entry_id = config_data.get("id", config_id)
+        prompt = config_data.get("prompt") or ""
+        if entry_id != config_id:
+            raise ValueError(f"[{config_id}] has id = {entry_id!r}; they must match")
+        if not prompt.strip():
+            raise ValueError(f"[{config_id}] has an empty prompt")
+        configs[config_id] = prompt
     return configs
 
 
-def convert_floats_to_decimal(obj):
-    if isinstance(obj, float):
-        return Decimal(str(obj))
-    elif isinstance(obj, dict):
-        return {key: convert_floats_to_decimal(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_floats_to_decimal(item) for item in obj]
-    return obj
-
-
-def upload_to_dynamodb(configs: dict[str, ModelConfig], table_name: str, region: str | None = None):
+def upload_to_dynamodb(configs: dict[str, str], table_name: str, region: str | None = None):
     if not region:
         region = get_aws_region()
 
@@ -120,10 +75,8 @@ def upload_to_dynamodb(configs: dict[str, ModelConfig], table_name: str, region:
 
     print(f"Uploading {len(configs)} configuration(s) to table: {table_name}")
 
-    for config_id, model_config in configs.items():
-        item = model_config.model_dump(by_alias=True, exclude_none=True)
-        item = convert_floats_to_decimal(item)
-        table.put_item(Item=item)
+    for config_id, prompt in configs.items():
+        table.put_item(Item={"id": config_id, "prompt": prompt})
         print(f"  ✓ {config_id}")
 
 
@@ -148,8 +101,8 @@ def main():
         print(f"Parsing: {args.config_file}")
         configs = parse_toml_config(args.config_file)
         print(f"Found {len(configs)} configuration(s):")
-        for config_id, config in configs.items():
-            print(f"  - {config_id} (model: {config.config.modelId if config.config else 'none'})")
+        for config_id, prompt in configs.items():
+            print(f"  - {config_id} ({len(prompt):,} chars)")
 
         if args.only:
             if args.only not in configs:

@@ -7,8 +7,8 @@ converse_stream() with NO tools — pure text output streamed over WebSocket.
 import logging
 import re
 import time
-from typing import TYPE_CHECKING
 
+from adequacy_judge import Finding, render_finding_block
 from graph.neptune_client import NeptuneClient
 from prompt import ANSWER_STREAM_SYSTEM_PROMPT, PERSONA_PROMPTS
 from streaming.bedrock import converse_stream_with_cache
@@ -23,8 +23,6 @@ from .heartbeat import start_heartbeat
 from .link_repair import KNOWN_STATUTE_CHAPTERS, has_open_link, repair_citation_links
 from .url_guard import guard_external_urls, has_open_url, ungrounded_contacts
 
-if TYPE_CHECKING:  # pragma: no cover — import only for the type annotation
-    from adequacy_judge import Finding
 
 logger = logging.getLogger(__name__)
 
@@ -203,12 +201,11 @@ def build_answer_context(
     query: str,
     cited_chunks: list[dict],
     cited_doc_ids: set[str],
-    discovery: dict[str, str],
     fetched_opinions: dict[str, dict],
     answer_plan: str,
     chat_history: list[dict] | None = None,
     neptune_client: NeptuneClient | None = None,
-    finding: "Finding | None" = None,
+    finding: Finding | None = None,
     uncurated: bool = False,
 ) -> str:
     """Build the context message for Phase B answer generation.
@@ -240,10 +237,6 @@ def build_answer_context(
         parts.append(f"## Answer Plan\n{answer_plan}\n")
 
     if finding is not None:
-        # Imported lazily so nothing in the judge's import chain loads when the
-        # feature is off (ADEQUACY_JUDGE_ENABLED=false leaves finding None).
-        from adequacy_judge import render_finding_block
-
         parts.append(render_finding_block(finding))
 
     parts.append("## Retrieved Documents and Chunks\n")

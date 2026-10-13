@@ -76,7 +76,7 @@ class TestBuildToolResultSummary:
         result = {
             "neighbors": [
                 {"id": "d1", "relationship": "CITES"},
-                {"id": "d2", "relationship": "IMPLEMENTS"},
+                {"id": "d2", "relationship": "PART_OF"},
             ]
         }
         s = build_tool_result_summary("get_neighbors", result, self._mock_neptune())

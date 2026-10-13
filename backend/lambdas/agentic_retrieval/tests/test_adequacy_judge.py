@@ -488,14 +488,13 @@ class TestFindingBlock:
 
     def test_phase_b_context_includes_the_block_only_when_given(self, fresh_modules):
         aj, phase_b = fresh_modules("adequacy_judge", "loop.phase_b")
-        without = phase_b.build_answer_context("q", [], set(), {}, {}, "the plan")
+        without = phase_b.build_answer_context("q", [], set(), {}, "the plan")
         assert "RETRIEVAL FINDING" not in without
 
         with_finding = phase_b.build_answer_context(
             "q",
             [],
             set(),
-            {},
             {},
             "the plan",
             finding=aj.Finding(verdict="DECLINE", supported="property tax only", unsupported=""),

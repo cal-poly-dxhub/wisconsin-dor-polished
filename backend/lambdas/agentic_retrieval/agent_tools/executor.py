@@ -167,13 +167,13 @@ def _normalize_subsection(raw: str) -> str:
 def _find_subsection_chunks(chunks: list[dict], subsection: str) -> list[dict]:
     """Return the chunk(s) whose text introduces the given statute subsection.
 
-    Dense statute sections (e.g. § 70.11, with ~50 subsections) are packed
-    multiple-subsections-per-chunk by the ingestion chunker, so a subsection
-    lives as a text marker inside a chunk rather than as its own node or a
-    metadata field. This scans chunk text for the top-level marker "(N)" at a
-    line start and returns the matching chunk(s) in document order — bypassing
-    semantic ranking, which otherwise drops a low-scoring but specifically
-    requested subsection.
+    The ingestion chunker splits a statute section with numbered subsections
+    one subsection per chunk, merging small neighbours (so one chunk may hold
+    e.g. 70.11(45)-(48)); a subsection therefore lives as a text marker inside
+    a chunk, not as its own node. This scans chunk text for the top-level
+    marker "(N)" at a line start and returns the matching chunk(s) in document
+    order — bypassing semantic ranking, which otherwise drops a low-scoring but
+    specifically requested subsection.
     """
     target = _normalize_subsection(subsection)
     if not target:
@@ -723,7 +723,6 @@ def execute_tool(
             node_id,
             edge_types=edge_types,
             direction=direction,
-            title_filter=tool_input.get("title_filter"),
         )
         target_year = tool_input.get("target_wpam_year")
         neighbors = dedupe_wpam_chunks(

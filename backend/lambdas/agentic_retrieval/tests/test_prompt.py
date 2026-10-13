@@ -1,9 +1,37 @@
 """Regression tests for the system prompt.
 
-These tests pin down specific phrases that docs/graphrag.md calls out as
-load-bearing. They fail if someone deletes the anti-hallucination framing
-or the applicability matrix.
+These tests pin down load-bearing phrases. They fail if someone deletes the
+anti-hallucination framing or the applicability matrix, and they keep the
+bundled fallback byte-identical to config/model_configs.toml.
 """
+
+import tomllib
+from pathlib import Path
+
+import pytest
+
+_TOML_PATH = Path(__file__).resolve().parents[4] / "config" / "model_configs.toml"
+
+# config id -> the _prompt_fallback constant that mirrors it. The persona
+# suffixes are deliberately not mirrored (prompt.py falls back to "").
+_MIRRORED = {
+    "agenticRetrieval": "SYSTEM_PROMPT_FALLBACK",
+    "answerStream": "ANSWER_STREAM_PROMPT_FALLBACK",
+    "adequacyJudge": "ADEQUACY_JUDGE_FALLBACK",
+}
+
+
+@pytest.mark.parametrize("config_id", sorted(_MIRRORED))
+def test_fallback_is_byte_identical_to_the_toml(config_id):
+    import _prompt_fallback
+
+    toml_prompt = tomllib.loads(_TOML_PATH.read_text())[config_id]["prompt"]
+    assert getattr(_prompt_fallback, _MIRRORED[config_id]) == toml_prompt
+
+
+def test_every_toml_prompt_is_loaded_or_a_persona():
+    toml_ids = set(tomllib.loads(_TOML_PATH.read_text()))
+    assert toml_ids == set(_MIRRORED) | {"personaGovernment", "personaCitizen"}
 
 
 def test_prompt_exists_and_is_nonempty():
@@ -16,7 +44,6 @@ def test_prompt_exists_and_is_nonempty():
 def test_prompt_requires_tool_sourced_citations():
     from prompt import SYSTEM_PROMPT
 
-    # docs/graphrag.md §3: "ONLY cite documents retrieved via tools"
     assert "ONLY cite documents" in SYSTEM_PROMPT
 
 
@@ -33,7 +60,7 @@ def test_prompt_requires_graph_traversal():
 def test_prompt_includes_framework_applicability():
     from prompt import SYSTEM_PROMPT
 
-    # docs/graphrag.md §2: applicability matrix for each framework
+    # Applicability matrix for each framework
     assert "IAAO" in SYSTEM_PROMPT
     assert "USPAP" in SYSTEM_PROMPT
     # Each authority framework needs a "does NOT" clause or equivalent
@@ -43,7 +70,6 @@ def test_prompt_includes_framework_applicability():
 def test_prompt_distinguishes_requires_vs_recommends():
     from prompt import SYSTEM_PROMPT
 
-    # docs/graphrag.md §3: distinguish REQUIRES vs RECOMMENDS
     assert "REQUIRES" in SYSTEM_PROMPT
     assert "RECOMMENDS" in SYSTEM_PROMPT
 
@@ -51,7 +77,6 @@ def test_prompt_distinguishes_requires_vs_recommends():
 def test_prompt_lists_out_of_scope_topics():
     from prompt import SYSTEM_PROMPT
 
-    # docs/graphrag.md §3: out-of-scope awareness
     # Wisconsin DOR is property-tax-focused; federal income tax is out of scope
     assert "federal income tax" in SYSTEM_PROMPT.lower() or "NOT in the graph" in SYSTEM_PROMPT
 

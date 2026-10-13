@@ -24,7 +24,7 @@ def _faq_url_table():
 
 
 def normalize_faq_question(text: str) -> str:
-    """Canonical FAQ question key — must match scripts/graphrag/faq_url_map.py."""
+    """Canonical FAQ question key — must match tools/ingestion/lib/faq_url_map.py."""
     if not text:
         return ""
     cleaned = text.replace("​", "").replace("\xa0", " ").replace("﻿", "")

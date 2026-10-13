@@ -1,15 +1,15 @@
 """Post-retrieval adequacy judge for the property assessment chatbot.
 
-The pre-loop classifier (``disambiguation.classify_query``) decides whether to
-retrieve at all, from the question text alone. That is the wrong place to make
-the call: a question like "what is the Markarian case" carries no topic words,
-so the classifier refuses it OUT_OF_SCOPE even though the corpus holds the
-case. The classifier cannot see the corpus.
+The retired pre-loop classifier decided whether to retrieve at all, from the
+question text alone. That was the wrong place to make the call: a question like
+"what is the Markarian case" carries no topic words, so the classifier refused
+it OUT_OF_SCOPE even though the corpus holds the case. It could not see the
+corpus.
 
 The adequacy judge runs in the opposite order. Every query runs the Phase A
 research loop first. Then — before Phase B streams a word — the judge reads the
-question, the conversation, the agent's answer plan, and the *text of the cited
-chunks*, and records one short structured ``Finding``:
+question, the conversation, the agent's answer plan, and the *text of every
+retrieved chunk* (cited first), and records one short structured ``Finding``:
 
 - ``ANSWER``   — the plan rests on the retrieved material (possibly with gaps
                  named in ``unsupported``). An honest "this is not in my
@@ -451,14 +451,15 @@ def judge_answer_plan(
         chat_history: prior ``{query, answer, clarification?}`` turns.
         answer_plan: Phase A's plan, or the fallback answer text when the loop
             short-circuited without one.
-        cited_chunks: the chunks belonging to the cited documents. The judge
-            reads their TEXT — it must see evidence, not just doc ids.
+        cited_chunks: every chunk retrieved in Phase A; those in
+            ``cited_doc_ids`` are ordered first. The judge reads their TEXT —
+            it must see evidence, not just doc ids.
         discovery: doc_id → how it was found, used only to label the evidence.
         model_id: override the judge model (defaults to ``JUDGE_MODEL_ID``).
 
     Returns:
         A ``Finding``. Never raises — any failure returns the fail-open ANSWER
-        finding so Phase B streams exactly as it does without the judge.
+        finding so Phase B still streams an answer.
     """
     started = time.perf_counter()
     resolved_model = model_id or JUDGE_MODEL_ID

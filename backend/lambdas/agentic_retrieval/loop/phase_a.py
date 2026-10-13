@@ -63,7 +63,7 @@ _FOLLOWUP_MAX_WORDS = 6
 
 
 def _prior_user_question(query: str, chat_history: list[dict] | None) -> str | None:
-    """The question underneath a chip reply / short follow-up, if there is one.
+    """The question underneath a short typed follow-up, if there is one.
 
     Returns the previous turn's user query when the current message is too short
     to carry the topic on its own (a short typed follow-up whose real question is
@@ -247,8 +247,8 @@ def run_agentic_loop(
     # auto-refined query is a good retrieval string but a poor routing signal
     # (measured: "how do I apply for an exemption from property tax?" seeds at
     # 0.688; its refinement "Wisconsin property tax exemption application" does
-    # not seed at all). When the current message is a chip reply or one-liner
-    # follow-up, the real question is the previous turn's — score that too.
+    # not seed at all). When the current message is a one-line typed follow-up,
+    # the real question is the previous turn's — score that too.
     flowchart_seed: dict | None = None
     flowchart_seed_score: float | None = None
     flowchart_id_seeded: str | None = None
