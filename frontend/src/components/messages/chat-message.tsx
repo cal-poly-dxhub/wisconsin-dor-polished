@@ -31,7 +31,6 @@ import { RetrievalModal } from './retrieval-modal';
 import { ClarificationBlock } from './clarification-block';
 import { AnswerDisclaimer } from './answer-disclaimer';
 import { FlowchartBanner, FlowchartSourceCard } from './flowchart-walkthrough';
-import { TopicShiftSuggestion } from './topic-shift-suggestion';
 
 type TraceStep = {
   label: string;
@@ -233,7 +232,7 @@ export interface ChatMessageProps {
   streamingComplete?: boolean;
   selected?: boolean;
   items?: ResourceItem[];
-  onSendMessage?: (message: string, suppressTopicShift?: boolean) => void;
+  onSendMessage?: (message: string) => void;
 }
 
 interface StreamResponseProps {
@@ -522,7 +521,7 @@ export function ChatMessage({
   const answerBodyRef = useRef<HTMLDivElement>(null);
 
   const isThinking =
-    status === 'pending' || status === 'sending' || status === 'sent';
+    status === 'pending' || status === 'sent';
   const isStreaming = status === 'streaming';
 
   // Thinking timer anchored to the query's original timestamp so replacing
@@ -566,7 +565,6 @@ export function ChatMessage({
   const devTrace = useDevTrace();
   const choices = useChatStore(s => s.queries[queryId]?.choices);
   const clarification = useChatStore(s => s.queries[queryId]?.clarification);
-  const suggestion = useChatStore(s => s.queries[queryId]?.suggestion);
   const flowchart = useChatStore(s => s.queries[queryId]?.flowchart);
   const [retrievalModalOpen, setRetrievalModalOpen] = useState(false);
   const isAnnotatingThis = useFeedbackStore(s => s.annotatingQueryId === queryId);
@@ -687,7 +685,6 @@ export function ChatMessage({
             choices={choices}
             question={clarification?.question}
             axis={clarification?.axis}
-            kind={clarification?.kind}
             onSelect={onSendMessage}
           />
         )}
@@ -832,17 +829,6 @@ export function ChatMessage({
 
           {/* The clarification block (question + chips) renders inside
               memoizedResponse, above the source cards. */}
-
-          {/* Soft, dismissible suggestion for a topic shift */}
-          {suggestion === 'topic-shift' && streamingComplete && (
-            <div className="chat-response-aligned">
-              <TopicShiftSuggestion
-                queryId={queryId}
-                query={query}
-                onSendMessage={onSendMessage}
-              />
-            </div>
-          )}
 
           {/* Info icon with hover card displaying chat information */}
           <MessageOptionsBar

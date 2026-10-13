@@ -269,7 +269,6 @@ class NeptuneClient:
         edge_types: list[str] | None = None,
         direction: str = "both",
         limit: int = 50,
-        title_filter: str | None = None,
     ) -> list[dict]:
         """Get neighboring nodes via specified edge types."""
         if edge_types:
@@ -290,13 +289,7 @@ class NeptuneClient:
                 pattern = "MATCH (d {id: $id})-[r]-(n)"
             where_clause = " WHERE type(r) <> 'EXTRACTED_FROM'"
 
-        if title_filter:
-            conjunction = " AND " if where_clause else " WHERE "
-            where_clause += f"{conjunction}toLower(n.title) CONTAINS toLower($title_filter)"
-
         params: dict[str, Any] = {"id": node_id}
-        if title_filter:
-            params["title_filter"] = title_filter
 
         results = self.query(
             f"{pattern}{where_clause} "

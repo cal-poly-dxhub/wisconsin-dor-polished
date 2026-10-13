@@ -375,9 +375,9 @@ class TestHelpers:
             {"heading": "Intro", "start_page": 2, "text": "see 70.32 below"},
             {"heading": "70.32 Real estate, how valued.", "start_page": 23, "text": ""},
         ]
-        assert resolve_section_page("70", ["70.32"], chunks) == 23
-        assert resolve_section_page("70", ["70.99"], chunks) is None
-        assert resolve_section_page("70", ["70.32"], None) is None
+        assert resolve_section_page(["70.32"], chunks) == 23
+        assert resolve_section_page(["70.99"], chunks) is None
+        assert resolve_section_page(["70.32"], None) is None
 
 
 class TestStreamingHook:

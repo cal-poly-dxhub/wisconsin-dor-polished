@@ -2,8 +2,9 @@
 """Simulate the ingestion chunking pipeline locally for any document(s).
 
 Runs the same code path as Fargate extract (process_pdf_from_s3) and writes
-final chunks to pdf_chunking/chunk_logs/ for inspection in the admin chunk
-visualizer.
+the final chunks under pdf_chunking/chunk_logs/ (or --output-dir) for local
+inspection. Nothing is written to S3; the admin /admin/chunks page reads the
+work bucket's extracted/ artifacts instead.
 
 Usage:
     # Single document (by doc_id prefix in the raw bucket):

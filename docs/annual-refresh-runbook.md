@@ -14,7 +14,7 @@ over 2–3 calendar days (most of the wall-clock time is waiting for jobs to fin
 the manual flowchart re-check (2–4 hours). Mid-year single-document additions take about
 an hour each.
 
-**Money budget:** the yearly refresh costs on the order of **$40–$80** in AWS usage on
+**Money budget:** the yearly refresh costs on the order of **$15–$100** in AWS usage on
 top of the normal monthly bill (see Section 6). The single biggest lever is remembering
 to scale the graph database back down when you are done (Step 3.9).
 
@@ -76,10 +76,10 @@ pipeline that rebuilds the graph from them.
   ┌────────────────────────┐   The chatbot's instructions ("prompts") live in a DynamoDB
   │ PROMPTS (DynamoDB)     │   table. Source of truth is config/model_configs.toml.
   └────────────────────────┘   Only changes when an engineer edits the prompt.
-  ┌────────────────────────┐   Three hand-maintained "sidecar" files in the raw bucket:
+  ┌────────────────────────┐   Two hand-maintained "sidecar" folders in the raw bucket:
   │ SIDECARS (S3)          │   • flowcharts/  — 6 WPAM decision flowcharts, hand-typed JSON
   │                        │   • worksheets/  — 4 TID Excel forms, converted to JSON by a script
-  └────────────────────────┘   • gold tester queries — optional, attached to passages
+  └────────────────────────┘   (Optional gold tester queries live inside the extracted/ caches.)
 ```
 
 **Terms used throughout (defined once here):**
@@ -90,7 +90,7 @@ pipeline that rebuilds the graph from them.
 | **Fargate** | AWS service that runs a job on a temporary cloud computer so your laptop does not have to stay on for hours. Each pipeline stage is one Fargate "task". |
 | **Docker image** | The packaged copy of the pipeline code that Fargate runs. It is a *snapshot*; if the code changes, the image has to be rebuilt (Section 7). |
 | **Neptune Analytics** | The graph database. It is billed by size ("m-NCU", memory units) per hour whether or not anyone is using it. |
-| **m-NCU** | Neptune's size setting. Normal is **32** (≈ $3.20/hour). A full load needs **128** (≈ $12.80/hour). |
+| **m-NCU** | Neptune's size setting. Normal is **32** (≈ $0.96/hour). A full load needs **128** (≈ $3.84/hour). |
 | **Chunk** | One passage of a document (a few paragraphs). The unit the chatbot retrieves. |
 | **Embedding / vector** | A list of 1,024 numbers that represents a chunk's meaning. Similar passages have similar numbers. |
 | **Aliases** | AI-generated plain-language questions and synonyms attached to each chunk so that everyday wording ("camping trailer") finds legal wording ("recreational prefabricated structure"). |
@@ -327,17 +327,17 @@ uv run python tools/ingestion/scrape_documents.py \
 Expected output (abridged):
 
 ```
-Scraping 1003 documents across 11 categories
+Scraping 855 documents across 11 categories
 
 === constitution (authority level 1) ===
-  [1/1003] Would scrape: constitution-wi-unannotated <- https://docs.legis.wisconsin.gov/constitution/wi_unannotated
+  [1/855] Would scrape: constitution-wi-unannotated <- https://docs.legis.wisconsin.gov/constitution/wi_unannotated
 === statutes (authority level 2) ===
-  [2/1003] Would scrape: statutes-17 <- https://docs.legis.wisconsin.gov/document/statutes/ch.%2017.pdf
+  [2/855] Would scrape: statutes-17 <- https://docs.legis.wisconsin.gov/document/statutes/ch.%2017.pdf
 ...
 === wpam (authority level 5) ===
-  [63/1003] Would scrape: wpam-wisconsin-property-assessment-manual-2027 <- https://www.revenue.wi.gov/documents/wpam27.pdf
+  [48/855] Would scrape: wpam-wisconsin-property-assessment-manual-2027 <- https://www.revenue.wi.gov/documents/wpam27.pdf
 ...
-DRY RUN Complete: 1003 processed
+DRY RUN Complete: 855 processed
   New: 0, Changed: 0, Forced: 0, Unchanged: 0, Failed: 0
 ```
 
@@ -371,28 +371,28 @@ Expected output (abridged):
 
 ```
 === statutes (authority level 2) ===
-  [2/1003] statutes-17 — unchanged
-  [12/1003] statutes-70 — CHANGED -> s3://wis-raw-bucket-c8e69250/raw/statutes-70/statutes-70.pdf
+  [2/855] statutes-17 — unchanged
+  [12/855] statutes-70 — CHANGED -> s3://wis-raw-bucket-c8e69250/raw/statutes-70/statutes-70.pdf
 ...
 === wpam (authority level 5) ===
-  [63/1003] wpam-wisconsin-property-assessment-manual-2027 — NEW -> s3://wis-raw-bucket-c8e69250/raw/wpam-wisconsin-property-assessment-manual-2027/wpam-wisconsin-property-assessment-manual-2027.pdf
+  [48/855] wpam-wisconsin-property-assessment-manual-2027 — NEW -> s3://wis-raw-bucket-c8e69250/raw/wpam-wisconsin-property-assessment-manual-2027/wpam-wisconsin-property-assessment-manual-2027.pdf
 ...
-Complete: 1003 processed
-  New: 4, Changed: 37, Forced: 0, Unchanged: 960, Failed: 2
+Complete: 855 processed
+  New: 4, Changed: 37, Forced: 0, Unchanged: 812, Failed: 2
 
 Failed (2):
-  news_pages-2027-03-01: HTTPError 404 ...
+  news_pages-assessor-news-2027-03-01: HTTPError 404 ...
 
-41 documents uploaded — run extract with --force to re-process them.
+41 documents uploaded — run `extract --smart` to re-process only the changed ones (--force re-extracts everything).
 ```
 
 **What "pass" looks like:** `Failed: 0`, and New + Changed matches roughly what you
 expect (the statutes and admin rules usually all show CHANGED after the legislature
 republishes; the WPAM and new guides show NEW).
 
-> **Ignore the last line's advice to use `--force`.** The workflow below uses
-> `extract --smart`, which re-processes exactly the uploaded documents. `--force` would
-> re-process all ~1,000 documents (4+ hours, ~$10 of AI calls) for no benefit.
+> **Follow the last line: use `extract --smart`, not `--force`.** `--smart` re-processes
+> exactly the uploaded documents. `--force` would re-process all ~2,300 documents
+> (including ~1,150 court cases; 4+ hours, ~$10 of AI calls) for no benefit.
 
 **Common problems**
 
@@ -463,16 +463,16 @@ aws logs tail /ecs/wis-dor-ingestion --follow
 Lines to look for (in order):
 
 ```
-Found 1003 documents in raw bucket
-Smart mode: 41/1003 documents have stale extractions        <- should match your scrape count
+Found 2306 documents in raw bucket
+Smart mode: 41/2306 documents have stale extractions        <- should match your scrape count
 Processing statutes-70 (2411893 bytes)
   Reusing cached classification for statutes-70              <- changed doc, same type: no AI call
   Extracted statutes-70: 412 chunks, type=statute
 Processing wpam-wisconsin-property-assessment-manual-2027 (14022311 bytes)
   Extracted wpam-wisconsin-property-assessment-manual-2027: 3180 chunks, type=assessment_manual
   ...
-Extraction complete: 1003 documents after dedup             <- total corpus, not just changed
-Manifest saved to s3://wis-work-bucket-c8e69250/manifest.json
+Extraction complete: 2306 documents after dedup             <- total corpus, not just changed
+Manifest saved to s3://wis-work-bucket-c8e69250/extracted/manifest.json
 ```
 
 Alias generation runs quietly inside each document's processing; you only see lines
@@ -494,8 +494,8 @@ aws ecs describe-tasks --cluster wis-dor-ingestion --tasks <task-arn-from-above>
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Smart mode: 0/1003 documents have stale extractions` | Scrape uploaded nothing, or you ran extract before scrape finished | Check the scrape log's New/Changed counts. |
-| Exit code 1 within a minute, log says `ERROR: PHASE must be one of` | Script invoked wrong | Use exactly `run_fargate.sh extract --smart`. |
+| `Smart mode: 0/2306 documents have stale extractions` | Scrape uploaded nothing, or you ran extract before scrape finished | Check the scrape log's New/Changed counts. |
+| The script prints `Usage: run_fargate.sh <extract\|embed\|load> [options]` and exits 1 immediately | Phase name missing or misspelled | Use exactly `run_fargate.sh extract --smart`. |
 | Exit code 137 | Out of memory (a very large PDF) | Re-run the same command; the finished documents are cached and skipped. If it repeats on the same document, call an engineer (Section 7). |
 | `CannotPullContainerError` | The Docker image is missing from the registry | An engineer must run `build_and_push.sh` (Section 7). |
 | Job runs but a document you expect is not mentioned | Its raw file date is older than its cache (scrape said "unchanged") | That is correct behavior — nothing changed. To force one document: `run_fargate.sh extract --source-filter <doc-id> --force`. |
@@ -518,7 +518,7 @@ embedding into a vector.
 Watch the logs the same way. Lines to look for:
 
 ```
-Smart mode: 41/1003 documents have stale embeddings
+Smart mode: 41/2306 documents have stale embeddings
 Total chunks to embed: 9814
   statutes-70: embedded 100/412 chunks
   ...
@@ -531,7 +531,7 @@ task exits 0.
 
 > If the first line says something like `Smart mode: 1166/2364 documents have stale
 > embeddings` — far more than you changed — it means earlier extract runs were never
-> embedded (this happened in 2026, see "Task 64" in `docs/tasks.md`). It is safe to let
+> embedded (this happened in 2026, see "Task 64" in `docs/archive/tasks-2026-09.md`). It is safe to let
 > it run; it just takes longer (~30 minutes) and costs a few dollars more. Everything it
 > produces is picked up by the full load in Step 3.8.
 
@@ -553,8 +553,8 @@ m-NCU) the vector step (load Phase 8) runs out of memory and fails. So you tempo
 make the database four times bigger.
 
 **Time:** the resize itself takes **10–20 minutes**. The database stays readable during
-the resize, so the chatbot keeps working. **Cost:** 128 m-NCU ≈ **$12.80/hour** versus
-$3.20/hour normally — that is why Step 3.9 (scale back down) is not optional.
+the resize, so the chatbot keeps working. **Cost:** 128 m-NCU ≈ **$3.84/hour** versus
+$0.96/hour normally — that is why Step 3.9 (scale back down) is not optional.
 
 ```bash
 aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-memory 128
@@ -592,7 +592,8 @@ say 30–90 minutes; that was before batch tuning. If it takes more than an hour
 the log — it is probably being throttled, which is slow but not fatal.)
 
 **Cost:** Fargate pennies. Neptune at 128 for the load window + the two resizes ≈ 1–1.5
-hours ≈ **$13–20**.
+hours ≈ **$4–6**. (If the load is heavily throttled it can run much longer — the
+September 2026 load took 14.5 hours ≈ $56 of Neptune; see `docs/handoff-plan.md` §4.)
 
 **Impact on users:** during Phase 5 (chunks) and Phase 8 (vectors) the chatbot may
 briefly find fewer passages than usual. Expect ~15 minutes of slightly weaker answers.
@@ -606,7 +607,7 @@ Watch the log for the ten phases in order. Each starts with a banner line
 
 ```
 Graph: g-svphgiu4k6; cache prefix: ''
-Loaded 1003 documents for graph loading
+Loaded 2306 documents for graph loading
 ============================================================
 Phase 1: Scaffold
 ============================================================
@@ -614,7 +615,7 @@ Phase 1: Creating framework scaffold...
 ...
 Phase 2: Document Nodes
 Phase 2: Creating document nodes...
-  Phase 2 progress: 500/1003 document nodes
+  Phase 2 progress: 500/2306 document nodes
 ...
 Phase 3: Statute Hierarchy
 Phase 4: Hierarchy Links
@@ -647,7 +648,7 @@ Graph loading complete!
 | Phase 8 fails with memory / `UnprocessableException` errors | Graph is not at 128 | Confirm Step 3.7 shows `AVAILABLE` / `128`, then resume: `run_fargate.sh load --start-phase 8` |
 | Repeated `Throttling ... retrying in 30s` | Normal under heavy write; the loader backs off automatically | Wait. Only intervene if no progress for 20+ minutes. |
 | `AccessDeniedException` on a MERGE/DELETE | IAM permission missing from the Fargate role | Engineer (Section 7) — infrastructure change. |
-| `Phase 2: WPAM doc '...' has no extractable edition_year` | New WPAM file name did not match the expected `wpamNN.pdf` pattern | Warning only; the doc loads but may not be treated as "latest". Tell an engineer. |
+| `Phase 2: WPAM doc '...' has no extractable edition_year` | The year is parsed from the doc_id (`lib/wpam_year.py`). It fires on every full load for `wpam-volume-2-residential-apartments-agricultural`, which is year-less by design (Task 69) | Expected for Volume 2. For any other WPAM doc, its doc_id lacks a year — tell an engineer. |
 | Job died mid-way (exit 1 or 137) | See the log for the last `Phase N` banner | Re-run with `--start-phase N` (1–10) for that phase. Phases are safe to repeat. |
 | `Phase 10 FAILED: ...` | The self-check found an inconsistency (e.g. a doubled case-law title) | Do not re-run blindly; call an engineer with the message. |
 
@@ -659,7 +660,7 @@ To resume after a failure in, say, Phase 5:
 
 ### Step 3.9 — Scale the graph database back DOWN to 32
 
-**Do this as soon as the load exits 0.** Every hour you forget costs ~$9.60 extra.
+**Do this as soon as the load exits 0.** Every hour you forget costs ~$2.88 extra.
 
 ```bash
 aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-memory 32
@@ -691,7 +692,7 @@ questions you know the answers to, including one that should cite the new WPAM y
 one FAQ. Check that the citation cards open to the right page.
 
 **(c) Recall probe — "does raw search still find the right document?" (10 minutes,
-< $1).** This runs 118 real tester questions against the graph and reports where the
+< $1).** This runs ~120 real tester questions (the count changes each time the eval set is rebuilt) against the graph and reports where the
 expected document ranked. It is a *before/after* tool, so the honest way to use it is:
 run `--mode baseline` **before** Step 3.7 and `--mode after` now. If you did not run the
 baseline, run `after` alone and compare against the numbers below.
@@ -737,7 +738,7 @@ Results are saved as `tools/ingestion/ops/recall_probe_baseline.json` /
 `recall_probe_after.json` (not committed to git).
 
 **(d) Regression harness — "are the answers still right?" (30–45 minutes, ≈ $5–15
-in AI calls).** This asks the real chatbot pipeline 43 curated questions and grades each
+in AI calls).** This asks the real chatbot pipeline 65 curated questions and grades each
 answer: did it cite the required document, did it satisfy a DOR-written rubric, did it
 invent a case citation. It needs the same settings the live chatbot uses. Get them from
 the deployed function once:
@@ -751,9 +752,7 @@ aws lambda get-function-configuration --function-name "$FN" \
 Export each of the printed values (`export NEPTUNE_GRAPH_ID=g-svphgiu4k6` and so on), then:
 
 ```bash
-# Match production: the adequacy judge is ON in prod, so run the harness with it on.
-export ADEQUACY_JUDGE_ENABLED=true
-
+# The adequacy judge always runs, as in production.
 # BEFORE the load:
 uv run python tools/ingestion/ops/run_graph_regression.py --mode baseline
 # AFTER the load:
@@ -761,7 +760,7 @@ uv run python tools/ingestion/ops/run_graph_regression.py --mode after
 uv run python tools/ingestion/ops/run_graph_regression.py --compare-only
 ```
 
-The golden set is **63 cases**. Three of them are not clean signals and should not be
+The golden set is **65 cases**. Three of them are not clean signals and should not be
 treated as refresh failures: `gq-full-value-annual` and `gq-prior-year-roll` are flaky,
 and `gq-bor-interpreter-waiver` never passes by design (it is a DOR content question, not
 a retrieval bug). See [testing.md](testing.md) for the detail.
@@ -770,11 +769,11 @@ Each run ends with a grade summary:
 
 ```
 === GRADE SUMMARY (after) ===
-  [B] gr-0007: OK  [judge PASS: answer states the 30-day objection window ...]
-  [D] gr-0012: FAIL missing must_cite ['statutes-70']
+  [B] gq-highest-best-use: OK  [judge PASS: answer states the four tests ...]
+  [D] gq-boa-increase-named-body: FAIL missing must_cite ['statutes-70']
   ...
-39/45 passed intra-run gates (flagged cases listed above).
-Gate = must_cite AND judge(rubric) AND no-hallucination.
+60/65 passed intra-run gates (5 flagged; 0 external/blocked excluded).
+Gate = must_cite AND judge(rubric) AND no-hallucination AND verdict.
 ```
 
 And `--compare-only` prints one block per question, marking `⚠️ REGRESSION` where an
@@ -784,7 +783,7 @@ count.
 **What "pass" looks like:** the `after` pass count is **equal to or higher than** the
 baseline's, and `--compare-only` reports **0 regressions** (or only regressions you can
 explain by the content change — e.g. a guide DOR retired). One or two flakes on
-long-tail questions do happen; re-run just those with `--ids gr-0012` before worrying.
+long-tail questions do happen; re-run just those with `--ids gq-boa-increase-named-body` before worrying.
 
 If the harness reports several regressions you cannot explain: roll back (Section 5) and
 call an engineer with the two JSON files
@@ -836,8 +835,9 @@ question→URL lookup table so citation cards link correctly. This needs the
 maintains the FAQ export where the current copy lives, then:
 
 ```bash
-TABLE=$(aws cloudformation describe-stacks --stack-name WisconsinBotGraphRAG \
-  --query "Stacks[0].Outputs[?contains(OutputKey,'FaqUrlTable')].OutputValue" --output text)
+FN=$(aws lambda list-functions --query "Functions[?contains(FunctionName,'AgenticRetrievalFunction')].FunctionName" --output text)
+TABLE=$(aws lambda get-function-configuration --function-name "$FN" \
+  --query 'Environment.Variables.FAQ_URL_TABLE_NAME' --output text)
 uv run python tools/ingestion/ops/seed_faq_url_table.py --table "$TABLE" --faqs /path/to/faqs.json --dry-run
 uv run python tools/ingestion/ops/seed_faq_url_table.py --table "$TABLE" --faqs /path/to/faqs.json
 ```
@@ -847,8 +847,11 @@ uv run python tools/ingestion/ops/seed_faq_url_table.py --table "$TABLE" --faqs 
 Court decisions are discovered automatically from the hyperlinks in the statute PDFs
 and enriched from CourtListener. This step is **optional at the yearly refresh** — the
 existing ~1,150 cases stay in the graph regardless — and it has two known sharp edges
-(duplicate detection and a Google Scholar fallback that can attach the wrong opinion;
-see Tasks 45 and 49 in `docs/tasks.md`). Run it only with an engineer available:
+(duplicate detection, and the opt-in `--scholar-fallback` that can attach the wrong
+opinion — do not pass it; see Tasks 45 and 49 in `docs/archive/tasks-2026-09.md`). New
+cases get their full opinion text from CourtListener; the next `extract --smart` turns each
+into a holding-summary chunk plus selected majority-opinion chunks. Run it only with an
+engineer available:
 
 ```bash
 uv run python tools/ingestion/ingest_case_law.py \
@@ -1036,7 +1039,7 @@ Expected output of the real upload:
 
 ```
 Parsing: config/model_configs.toml
-Found 4 configuration(s):
+Found 5 configuration(s):
   - agenticRetrieval (model: us.anthropic.claude-sonnet-4-6)
   ...
 Uploading 1 configuration(s) to table: WisconsinBotGraphRAG-...-ModelConfigTable...
@@ -1061,7 +1064,7 @@ next chatbot conversation — no deployment needed.
 ## 4. Adding a single new document mid-year
 
 This is the scoped cycle used in September 2026 to add a treaty publication and one FAQ
-page ("Task 61" in `docs/tasks.md`). It loads only the new document(s) and leaves the
+page ("Task 61" in `docs/archive/tasks-2026-09.md`). It loads only the new document(s) and leaves the
 rest of the graph untouched, so **the graph does not need to be scaled up**.
 
 **Time:** ~45–60 minutes, mostly waiting. **Cost:** ~$1–3.
@@ -1101,28 +1104,29 @@ rest of the graph untouched, so **the graph does not need to be scaled up**.
 
 6. **Commit** the manifest change.
 
-A prefix filter also works for a family: `--source-filter news_pages-2027-` loads every
-2027 news item at once.
+A prefix filter also works for a family: `--source-filter news_pages-assessor-news-2027-` loads
+every 2027 Assessor News item at once.
 
 ---
 
 ## 5. Backup and rollback
 
-The graph is rebuilt from the four cache folders in the work bucket. If you have a copy
-of those folders, you can always get back to a known-good graph with one load. The
-convention is a dated `rollback-YYYYMMDD/` folder in the work bucket — an example from
-the 2026 alias promotion exists at `s3://wis-work-bucket-c8e69250/rollback-20260912/`.
+The graph is rebuilt from the cache folders in the work bucket (`classified/`,
+`extracted/`, `aliases/`, `embedded/`, plus `dedup/losers.json`, which the load reads). If
+you have a copy of those folders, you can always get back to a known-good graph with one
+load. The convention is a dated `rollback-YYYYMMDD/` folder in the work bucket; the
+current one is `s3://wis-work-bucket-c8e69250/rollback-20260918/`, taken before the
+2026-09-18 re-index.
 
 ### 5.1 Take a backup (before any refresh) — ~5 minutes, ~$1/month storage
 
 ```bash
 STAMP=$(date +%Y%m%d)
-for d in classified extracted aliases embedded; do
+for d in classified extracted aliases embedded dedup; do
   aws s3 sync s3://wis-work-bucket-c8e69250/$d/ s3://wis-work-bucket-c8e69250/rollback-$STAMP/$d/ --only-show-errors
 done
-aws s3 cp s3://wis-work-bucket-c8e69250/manifest.json s3://wis-work-bucket-c8e69250/rollback-$STAMP/manifest.json
 aws s3 ls s3://wis-work-bucket-c8e69250/rollback-$STAMP/
-# Expected: four PRE lines (classified/ extracted/ aliases/ embedded/) and manifest.json
+# Expected: five PRE lines (aliases/ classified/ dedup/ embedded/ extracted/)
 ```
 
 Also snapshot the raw bucket's sidecars (tiny):
@@ -1141,10 +1145,9 @@ broken.
 STAMP=20270402   # the backup you want to restore
 
 # 1. Put the caches back exactly as they were (--delete removes anything newer):
-for d in classified extracted aliases embedded; do
+for d in classified extracted aliases embedded dedup; do
   aws s3 sync s3://wis-work-bucket-c8e69250/rollback-$STAMP/$d/ s3://wis-work-bucket-c8e69250/$d/ --delete --only-show-errors
 done
-aws s3 cp s3://wis-work-bucket-c8e69250/rollback-$STAMP/manifest.json s3://wis-work-bucket-c8e69250/manifest.json
 
 # 2. Scale up (Step 3.7), wait for AVAILABLE
 aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-memory 128
@@ -1156,8 +1159,10 @@ aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-mem
 aws neptune-graph update-graph --graph-identifier g-svphgiu4k6 --provisioned-memory 32
 ```
 
-The load's Phase 9 removes chunks and documents that are no longer in the caches, so the
-graph ends up matching the backup.
+The load's Phase 9 does **not** make the graph match the backup on its own. It removes
+only orphan statute stubs, case-law nodes absent from `extracted/`, and recorded dedup
+losers. Any document the failed refresh *added* (for example a new WPAM edition) stays in
+the graph and must be deleted by hand — call an engineer (Section 7) with its doc_id.
 
 Sidecars roll back with a plain copy:
 
@@ -1173,10 +1178,11 @@ once the underlying problem is fixed.
 
 ### 5.3 Clean up old backups
 
-Each backup is a few GB. After a refresh has been in production for a few weeks:
+Each backup is a few GB. After a refresh has been in production for a few weeks,
+delete the older ones (`rollback-YYYYMMDD` = the date of the backup you no longer need):
 
 ```bash
-aws s3 rm s3://wis-work-bucket-c8e69250/rollback-20260912/ --recursive
+aws s3 rm s3://wis-work-bucket-c8e69250/rollback-YYYYMMDD/ --recursive
 ```
 
 Keep at least the most recent one.
@@ -1189,10 +1195,10 @@ Keep at least the most recent one.
 
 | Item | Approximate monthly cost | Notes |
 |---|---|---|
-| Neptune Analytics at 32 m-NCU | **≈ $2,300** ($3.20/hr × 730 hr) | The dominant cost. Fixed regardless of usage. It only changes if someone scales it (Step 3.7/3.9) — check it is at 32. |
-| Bedrock (the AI models) | usage-based; typically **$50–300** | Each chatbot answer = one Claude Sonnet conversation (a few cents) plus embeddings/FAQ lookups. Scales with question volume. |
-| Bedrock Knowledge Base (FAQ) | small | Vector store for the FAQs. |
-| Lambda, API Gateway, DynamoDB, CloudFront, S3 | **$10–40** | Web app, chat API, chat history, document storage. |
+| Neptune Analytics at 32 m-NCU | **≈ $700** ($0.96/hr × 730 hr) | The dominant cost. Fixed regardless of usage. It only changes if someone scales it (Step 3.7/3.9) — check it is at 32. |
+| Bedrock (the AI models) | usage-based; **$45–120** measured at pilot volume | Each chatbot answer = one Claude Sonnet conversation (a few cents) plus embeddings/FAQ lookups. Scales with question volume. |
+| Bedrock Knowledge Base (FAQ) | **≈ $350** | The FAQ vector store runs on OpenSearch Serverless (2 OCU minimum) — the second-largest fixed cost. |
+| Lambda, API Gateway, DynamoDB, CloudFront, S3 | **$15–40** (about $15 today) | Web app, chat API, chat history, document storage. |
 | Fargate | $0 when idle | Only bills while a pipeline job runs (~$0.12/hr). |
 
 ### 6.2 Where to look
@@ -1213,7 +1219,7 @@ Keep at least the most recent one.
 Two ways:
 
 **Admin dashboard (easiest).** Open the chatbot site at `/admin/activity` (requires a
-Cognito login). It lists every question, the answer, thumbs up/down and comments, with
+login that is a member of the `Admins` group). It lists every question, the answer, thumbs up/down and comments, with
 filters for date range, feedback status, and text search.
 
 **Direct database query.** Every question and answer is a row in the DynamoDB chat
@@ -1290,7 +1296,7 @@ uv run python tools/ingestion/ops/run_recall_probe.py --mode baseline --graph-id
 
 # ---------- 2. Backup caches ----------
 STAMP=$(date +%Y%m%d)
-for d in classified extracted aliases embedded; do
+for d in classified extracted aliases embedded dedup; do
   aws s3 sync s3://wis-work-bucket-c8e69250/$d/ s3://wis-work-bucket-c8e69250/rollback-$STAMP/$d/ --only-show-errors
 done
 
@@ -1341,7 +1347,7 @@ uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e692
 ./tools/ingestion/scripts/run_fargate.sh load --source-filter <full-doc-id>      # no scale-up needed
 
 # ---------- Rollback ----------
-for d in classified extracted aliases embedded; do
+for d in classified extracted aliases embedded dedup; do
   aws s3 sync s3://wis-work-bucket-c8e69250/rollback-$STAMP/$d/ s3://wis-work-bucket-c8e69250/$d/ --delete --only-show-errors
 done
 #   then: scale up → run_fargate.sh load → scale down
@@ -1355,9 +1361,9 @@ done
 | Scrape | 5 min | 30 min | $0 |
 | Extract `--smart` | 5 min | 1–3 h | $1–5 |
 | Embed `--smart` | 5 min | 10–30 min | $1–2 |
-| Scale up + load + scale down | 15 min | 45–60 min | $13–20 (Neptune at 128) |
+| Scale up + load + scale down | 15 min | 45–60 min | $4–6 (Neptune at 128; ~$56 if throttled for hours) |
 | Validation (counts + probe + harness) | 30 min | 1 h | $5–15 |
 | FAQ sync | 5 min | 15 min | < $1 |
 | TID worksheets | 10 min | 10 min | $0 |
 | Flowchart re-verify | 2–4 h | 2–4 h | $0 |
-| **Total** | **~1 day** | **2–3 days elapsed** | **≈ $40–80** |
+| **Total** | **~1 day** | **2–3 days elapsed** | **≈ $15–100** (see `docs/handoff-plan.md` §4) |

@@ -5,7 +5,7 @@ import os
 import re
 
 import boto3
-from step_function_types.models import FAQResource, RAGDocument
+from chat_contracts.models import FAQResource, RAGDocument
 
 logger = logging.getLogger(__name__)
 

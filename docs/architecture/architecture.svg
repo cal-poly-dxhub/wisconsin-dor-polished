@@ -124,9 +124,9 @@
 <text x="350" y="862" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#111827" text-anchor="start">Offline ingestion pipeline (runs on ECS Fargate at each corpus refresh)</text>
 <rect x="350" y="882" width="225" height="136" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
 <text x="364" y="910" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="700" fill="#111827" text-anchor="start">Document manifest</text>
-<text x="364" y="936" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#4b5563" text-anchor="start">~1,000 public sources:</text>
+<text x="364" y="936" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#4b5563" text-anchor="start">~850 public sources:</text>
 <text x="364" y="957" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#4b5563" text-anchor="start">statutes, Tax rules, WPAM,</text>
-<text x="364" y="978" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#4b5563" text-anchor="start">DOR guides, FAQs, case law</text>
+<text x="364" y="978" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#4b5563" text-anchor="start">DOR guides, FAQs, news</text>
 <rect x="607" y="882" width="225" height="136" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
 <text x="621" y="910" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="700" fill="#111827" text-anchor="start">Scraper</text>
 <text x="621" y="936" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#4b5563" text-anchor="start">Downloads sources</text>

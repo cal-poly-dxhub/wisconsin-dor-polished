@@ -33,17 +33,17 @@ from case_law import (
     collapse_case_law_by_title,
     extract_case_name,
     extract_year,
-    is_case_law_stub,
+    is_case_law_doc,
 )
 
 
 class TestIsCaseLawStub:
     def test_true_for_case_law_prefix(self):
-        assert is_case_law_stub("case-law-123-wis-2d-45") is True
+        assert is_case_law_doc("case-law-123-wis-2d-45") is True
 
     def test_false_for_other(self):
-        assert is_case_law_stub("wpam-ch-1") is False
-        assert is_case_law_stub("WIS-STAT-70.32") is False
+        assert is_case_law_doc("wpam-ch-1") is False
+        assert is_case_law_doc("WIS-STAT-70.32") is False
 
 
 class TestExtractCaseName:

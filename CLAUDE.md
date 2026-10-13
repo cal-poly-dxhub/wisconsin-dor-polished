@@ -12,7 +12,7 @@ Wisconsin DOR Chatbot — a property tax Q&A assistant for the Wisconsin Departm
 ```bash
 bun install                    # install all workspace deps
 bun run bundle                 # copy Python lambdas to infra/bundle/ (uses bundles.toml)
-bun run deploy                 # bundle + cdk deploy (uses --profile and region from env)
+bun run deploy                 # bundle + cdk deploy (stack defaults to WisconsinBotGraphRAG; uses --profile and region from env)
 
 # CDK must be run from infra/:
 cd infra
@@ -24,13 +24,13 @@ AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 cdk deploy -c stackName=Wisconsi
 ```bash
 bun run test                   # run all Jest tests (TypeScript)
 bun run pytest                 # run all pytest tests (Python, via uv)
-uv run pytest tests/ -v        # run Python tests directly
-uv run pytest tests/path -k "test_name"  # single Python test
+uv run pytest -v               # run Python tests directly (testpaths: backend, tools)
+uv run pytest backend/lambdas/agentic_retrieval/tests/test_x.py -k "test_name"  # single Python test
 ```
 
 ### Linting & Formatting
 ```bash
-bunx eslint .                  # TypeScript/JS linting (eslint + prettier)
+cd frontend && bun run lint    # TypeScript/JS linting (next lint; there is no root eslint config)
 uv run ruff check .            # Python linting
 uv run ruff format .           # Python formatting
 ```
@@ -114,8 +114,8 @@ uv run python tools/ingestion/scrape_documents.py --bucket wis-raw-bucket-c8e692
 #     index-TOC chunks cost nothing and are logged as skipped_policy. Full-corpus
 #     pass ≈ $2.70 instead of ≈ $10.30.
 #   - embed prepends title/heading + aliases (+ any gold tester queries) to the
-#     text sent to Titan for STATUTE and ADMIN-RULE chunks only (include_doc_types);
-#     guides, manuals, FAQs, news, case law, IAAO/USPAP embed plain. Stored chunk
+#     text sent to Titan for STATUTE, ADMIN-RULE and ADVISORY (DOR news) chunks only
+#     (include_doc_types); guides, manuals, FAQs, case law, IAAO/USPAP embed plain. Stored chunk
 #     text never changes — only the vector.
 #   - statute/admin-rule sections with ≥2 numbered subsections chunk one
 #     subsection per chunk (pdfChunker STATUTE_SUBSECTION_TARGET_CHARS).
@@ -156,7 +156,7 @@ AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 uv run --with openpyxl python \
 #   (a) branch logic didn't change (statutes get amended), and
 #   (b) the page anchors — pdf_page / wpam_page / source.source_url#page=N — still
 #       point at the right page in the new edition (page numbers shift yearly).
-# Then re-upload. Graph-integrity tests (backend tests/test_flowcharts.py) guard
+# Then re-upload. Graph-integrity tests (backend/lambdas/agentic_retrieval/tests/test_flowcharts.py) guard
 # structure but CANNOT catch a stale page number or an outdated branch — that is
 # the manual verify step. Registry (titles, router descriptions) lives in code:
 # backend/lambdas/agentic_retrieval/flowcharts.py.
@@ -208,37 +208,38 @@ Flat layout: `backend/` (lambdas + layers), `infra/` (CDK stacks), `frontend/` (
 EventBridge rule `wisconsin-dor.chat-api:ChatMessageReceived` → AgenticRetrieval Lambda directly (no Step Function). Single Lambda, single DynamoDB write. In order:
 
 1. **Clarification resolve** — `resolve_pending_clarification` (`adequacy_judge.py`) folds a chip click or short reply into the question that prompted it, deterministically, before anything else runs.
-2. **Pre-loop seeds** — a deterministic `faq_search` and `vector_search` are seeded into turn-0 context, plus a `get_flowchart` result when the semantic flowchart router (`flowchart_router.py`) clears its gate. The old pre-loop query classifier (`disambiguation.py`) is **legacy and OFF** — `ENABLE_DISAMBIGUATION` / `ENABLE_TOPIC_SHIFT` default false and `SCOPE_GATE_ENABLED=false` in prod.
+2. **Pre-loop seeds** — a deterministic `faq_search` and `vector_search` are seeded into turn-0 context, plus a `get_flowchart` result when the semantic flowchart router (`flowchart_router.py`) clears its gate. There is no pre-loop query classifier: the old `disambiguation.py` path (scope gate, DISAMBIGUATE chips, topic-shift suggestion) was removed on 2026-10-10.
 3. **Phase A** — the Claude tool loop over the 14 tools in `agent_tools/definitions.py`, ending at `prepare_answer(cited_doc_ids, answer_plan)`.
-4. **Adequacy judge** (`adequacy_judge.py`, Haiku 4.5, `ADEQUACY_JUDGE_ENABLED=true`) — reads the plan against every retrieved chunk and returns a `Finding` with verdict ANSWER / CLARIFY / DECLINE. It owns scope and clarification; it never writes user-facing text, and it fails open to ANSWER.
+4. **Adequacy judge** (`adequacy_judge.py`, Haiku 4.5, always on — there is no off switch) — reads the plan against every retrieved chunk and returns a `Finding` with verdict ANSWER / CLARIFY / DECLINE. It owns scope and clarification; it never writes user-facing text, and it fails open to ANSWER.
 5. **Phase B** — the Finding is injected as a `## RETRIEVAL FINDING` block and the answer always streams. Statute link pages are filled deterministically (`loop/link_repair.py`) from the section→page index built in `loop/phase_b.py::statute_section_pages`. A CLARIFY also sends chips over the `choices` WebSocket message.
 
-`refine_query`, `clarify`, `cite_documents`, `get_authority_chain`, `list_framework_docs` and the `vocab_swap` / `auto_enrichment` stages no longer exist.
+`refine_query`, `clarify`, `cite_documents`, `get_authority_chain`, `list_framework_docs`, the `vocab_swap` / `auto_enrichment` stages, the pre-loop classifier and the judge-off fallback path no longer exist.
 
 ### Directory Responsibilities
 
-- **infra/** — CDK stacks (root stack `WisconsinBotStack` in `stacks/stack.ts`). Entry point: `infra/bin/wisconsin-app.ts`
+- **infra/** — CDK stacks (root stack class `WisconsinBotStack` in `stacks/stack.ts`, deployed as `WisconsinBotGraphRAG`). Entry point: `infra/bin/wisconsin-app.ts`
   - `stacks/sessions-stack.ts` — Cognito auth, HTTP API, WebSocket API, DynamoDB sessions/chat history
-  - `stacks/graphrag-stack.ts` — Neptune Analytics graph, Bedrock FAQ KB
+  - `stacks/graphrag-stack.ts` — raw/work/FAQ S3 buckets, Bedrock FAQ KB + data source, FAQ-URL and model-config DynamoDB tables (the Neptune graph is not here)
   - `stacks/graphrag-messages-stack.ts` — Agentic retrieval Lambda + EventBridge trigger
   - `stacks/webapp-stack.ts` — Next.js frontend (deployed via CloudFront + `cdk-nextjs-standalone`)
   - `stacks/ingestion-stack.ts` — Fargate compute for ingestion (VPC, ECS cluster, task def, ECR)
   - `stacks/lambda-layers-stack.ts` — Shared Lambda layers
+  - helpers: `admins-group.ts` (ensures the `Admins` Cognito group), `sso.ts` (optional DOR SSO), `log-retention.ts` (90-day log retention)
 - **backend/lambdas/** — three Lambda packages, and only three:
   - `agentic_retrieval/` — the retrieval loop, adequacy judge, and answer stream. Entry point `handler.py` (there is no `main.py`); subpackages `loop/`, `agent_tools/` (+ `stages/`), `graph/`, `streaming/`, `tracing/`
   - `chat_api/` — Powertools REST handler: sessions, history, feedback, `/admin/*`
-  - `websocket/` — `$connect` / `$disconnect` / `$default` route handlers
-- **backend/layers/** — Lambda layers: `websocket_utils` (connection management + message models), `step_function_types` (shared Pydantic contracts)
+  - `websocket/` — `$connect` / `$disconnect` route handlers (the client never sends frames, so there is no `$default` route)
+- **backend/layers/** — Lambda layers: `websocket_utils` (connection management, message models, the WebSocket sender and `report_error`), `chat_contracts` (shared chat request/response Pydantic contracts)
 - **frontend/** — Next.js frontend app
 - **tools/ingestion/** — Ingestion pipeline (renamed from `graphrag/`): scrape, extract, embed, load, case law
   - `extract.py` / `embed.py` / `load.py` — core pipeline phases
   - `scrape_documents.py` — manifest-driven scraper with MD5/ETag change detection
-  - `ingest_case_law.py` — case law discovery from statute hyperlinks + CourtListener enrichment
-  - `chunking/` — PDF extraction and chunking library (`pdfChunker.py`; used by `extract.py`)
+  - `ingest_case_law.py` — case law discovery from statute hyperlinks + CourtListener enrichment + full opinion text download to `raw/case-law/{reporter}/{slug}.txt` (chunked selectively by extract via `chunking/case_law.py`)
+  - `chunking/` — PDF extraction and chunking library (`pdfChunker.py`; used by `extract.py`) and `case_law.py` (selective opinion chunker)
   - `config/` — `ingest_config.yaml` (framework/doc-type/chunking params) + `document_manifest.yaml` (all corpus URLs)
   - `lib/` — shared helpers (`aliases.py` (the shared `EnrichPolicy`), `case_annotations.py`, `faq_url_map.py`, `wpam_year.py`)
   - `worksheets/` / `flowcharts/` — sidecar producers for the `get_worksheet` / `get_flowchart` tools (local steps, not Fargate phases)
-  - `ops/` — harnesses and one-shot maintenance scripts. The harnesses: `run_graph_regression.py` (63-case end-to-end accuracy harness, judge-on via `ADEQUACY_JUDGE_ENABLED=true`), `run_recall_probe.py` (raw vector recall@k / MRR against any graph id), `build_recall_eval.py` + `attach_gold_queries.py` (gold-query mining and attachment), `run_classifier_regression.py` (legacy — the pre-loop classifier it tests is off). One-shots: `purge_orphan_chunks.py`, `purge_dedup_losers.py`, `purge_corrupt_case_law.py`, `dedup_case_law.py`, `dedup_case_law_docket.py`, `clean_stale_extracts.py`, `seed_faq_url_table.py`, `extract_faq_qa_pairs.py`
+  - `ops/` — harnesses and one-shot maintenance scripts. The harnesses: `run_graph_regression.py` (65-case end-to-end accuracy harness; `--no-judge` / `--export-rubrics` / `--import-grades` for grading in Claude Code), `run_recall_probe.py` (raw vector recall@k / MRR against any graph id), `build_recall_eval.py` + `attach_gold_queries.py` (gold-query mining and attachment). One-shots: `purge_dedup_losers.py` (with its helpers `purge_corrupt_case_law.py` and `dedup_case_law_docket.py`), `seed_faq_url_table.py`, `extract_faq_qa_pairs.py`
   - `docker/` — `Dockerfile`, `entrypoint.sh`, `build_and_push.sh`, `requirements.txt`
   - `scripts/` — Fargate shell wrappers (`run_fargate.sh`, `run_full_ingest.sh`, `sync_faq_bucket.sh`)
 - **config/** — Shared configuration (model configs, etc.)
@@ -253,28 +254,28 @@ Neptune Analytics graph with 1024-dim vectors and IAM auth. **Live graph: `g-svp
 
 The graph is **not a CDK resource**: it is created and loaded out of band and selected by the single `neptuneGraphId` context pinned in `infra/cdk.json`. `infra/stacks/stack.ts` reads it and fails synth if it is missing (no fallback), then feeds both consumers — the retrieval Lambda (env + IAM) and the Fargate ingestion task (env `NEPTUNE_GRAPH_ID` + task-role IAM). So a routine `run_fargate.sh load` with no flags lands on the live graph; `--graph-id` remains an explicit override for a staging/blue-green graph (whose ARN must be added to the task role first — see `infra/README.md` for the blue/green and rollback procedure).
 
-**Node types:** Framework → Document → Chunk (with vector embeddings).
+**Node labels:** `Framework`; one label per document type (`Constitution`, `Statute`, `CaseLaw`, `AdminRule`, `AssessmentManual`, `Advisory`, `Guide`, `FormInstruction`, `FAQ`, `IAOStandard`, `USPAPStandard`); `Chunk` (with vector embeddings). Citation stubs are `Statute`/`AdminRule` nodes with `stub = true`; there is no `Document` label.
 
 **Authority hierarchy (9 levels, by legal precedence):**
 Constitution (1) → Statutes (2) → Case Law (3) → Admin Rules (4) → WPAM (5) → FAQs (6) → Gov Pubs (7) → IAAO (8) → USPAP (9)
 
 **Edge types (what the loader actually writes):**
-- Authority: `CITES` (Doc→Statute, Doc→AdminRule, Statute→CaseLaw mirror, Chunk→Statute, Chunk→AdminRule)
-- Hierarchy: `PART_OF` (Section→Chapter, Subsection→Section), `BELONGS_TO` (Doc→Framework), `EXTRACTED_FROM` (Chunk→Doc), `DERIVED_FROM` (Framework→Framework, e.g., IAAO→WPAM)
+- Authority: `CITES` (Chunk→Statute, Chunk→AdminRule, Statute→CaseLaw)
+- Hierarchy: `PART_OF` (Section→Chapter, Subsection→Section), `BELONGS_TO` (Doc→Framework), `EXTRACTED_FROM` (Chunk→Doc), `DERIVED_FROM` (Framework→Framework, e.g., IAAO→Gov Pubs)
 - Resolution: `DEFINED_BY` (Statute/AdminRule stub→Chunk)
 
 `IMPLEMENTS`, `HAS_SUBSECTION`, and `COVERS_TOPIC` appear in older docs but no
 load phase creates them; `get_neighbors` no longer offers them as `edge_types`.
 
-**S3 bucket structure:** `raw/{category}-{clean-name}/{category}-{clean-name}.pdf` + `.metadata.json`
+**S3 bucket structure:** `raw/{category}-{clean-name}/{category}-{clean-name}.pdf` + `.metadata.json`; case law is `raw/case-law/{reporter}/{slug}.txt` + `.metadata.json`
 
-**Ingestion config:** `tools/ingestion/config/ingest_config.yaml` — defines frameworks, doc types, chunking params, source-to-framework mappings.
+**Ingestion config:** `tools/ingestion/config/ingest_config.yaml` — defines frameworks, doc types, chunking params and alias enrichment.
 
-**Document manifest:** `tools/ingestion/config/document_manifest.yaml` — single source of truth for every corpus URL (~1,000 entries; news pages dominate). Most entries are plain URL strings; an entry may instead be a `{url, doc_id, title, effective_date}` dict when the derived id or title is wrong (e.g. WPAM Volume 2, registered with a year-less `doc_id` so it is never edition-deduped against Volume 1 — see docs/tasks.md Task 69). `make_doc_id()` in `scrape_documents.py` derives stable S3 keys from category + URL with special handling for statutes (chapter number), admin rules (Tax chapter), WPAM (year), IAAO (CamelCase splitting + typo fix), and USPAP.
+**Document manifest:** `tools/ingestion/config/document_manifest.yaml` — single source of truth for every corpus URL except case law (~850 entries; news pages dominate). Most entries are plain URL strings; an entry may instead be a `{url, doc_id, title, effective_date}` dict when the derived id or title is wrong (e.g. WPAM Volume 2, registered with a year-less `doc_id` so it is never edition-deduped against Volume 1 — see docs/tasks.md Task 69). `make_doc_id()` in `scrape_documents.py` derives stable S3 keys from category + URL with special handling for statutes (chapter number), admin rules (Tax chapter), WPAM (year), IAAO (CamelCase splitting + typo fix), and USPAP.
 
 ### PDF Processing Pipeline (`tools/ingestion/chunking/`)
 
-PyMuPDF-first extraction. `pdfChunker.py` routes by source type (`CHUNKER_BY_SOURCE` dict) to strategy-specific chunking (statute, admin_rule, wpam, general). Each chunk gets `start_page`/`end_page` metadata for citation linking. Quality gate in `pymupdf_extractor.py` (`extraction_looks_good()`) decides whether the PyMuPDF result is usable.
+PyMuPDF-first extraction. `pdfChunker.py` routes by source-id prefix to strategy-specific chunking (statute, admin_rule, wpam, general). Each chunk gets `start_page`/`end_page` metadata for citation linking. Quality gate in `pymupdf_extractor.py` (`extraction_looks_good()`) decides whether the PyMuPDF result is usable.
 
 **The Textract fallback is skipped unless `TEXTRACT_STAGING_BUCKET` is set.** The async Textract path needs a staging bucket for its output, and the Fargate task definition deliberately leaves that var unset. When PyMuPDF fails the gate and no staging bucket is configured, `pdfChunker` logs the skip and keeps the PyMuPDF result rather than failing the document. The corpus is digital-native, so this is rare — but treat "Textract fallback" as opt-in infrastructure, not an automatic safety net.
 
@@ -289,7 +290,9 @@ The 4 TID base-value workbooks on the master list (`tidbase`, `tidsub`, `decreme
 
 ### Citation Support
 
-Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeline. Citation cards link to each document's public `source_url` (docs.legis.wisconsin.gov, revenue.wi.gov, iaao.org, ...) with `#page=N` fragments for direct PDF page links; no presigned URLs are generated. Case law is metadata stubs with Google Scholar links (no full opinion text).
+Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeline (case-law chunks carry no page fields). Citation cards link to each document's public `source_url` (docs.legis.wisconsin.gov, revenue.wi.gov, iaao.org, courtlistener.com, ...) with `#page=N` fragments for direct PDF page links; no presigned URLs are generated.
+
+**Case law is ingested as selective opinion chunks, not stubs.** `ingest_case_law.py` finds citations in statute-PDF hyperlinks and pulls metadata and full opinion text from CourtListener into `raw/case-law/{reporter}/{slug}.txt`. Extract (which prefers that `.txt` over any JSON stub beside it) writes a Nova 2 Lite holding-summary chunk, then the majority opinion's issue/holding synopsis, legal analysis and disposition via `chunking/case_law.py`; captions, facts, separate opinions and notes are dropped. About 1,117 of 1,146 cases are chunked (~9k chunks, no page numbers), with chunk-level `CITES` to the statutes each chunk names. Cases without opinion text stay chunkless metadata nodes. Cards link to the node's `source_url` (CourtListener, or docs.legis.wisconsin.gov); a Google Scholar search link is only a fallback. The full opinion stays in S3 for `fetch_case_opinion` and the Phase B opinion backfill.
 
 ## Key Conventions
 
@@ -305,17 +308,16 @@ Chunks carry `s3_key`, `start_page`, `end_page` metadata through the full pipeli
 
 ## WebSocket Contract
 
-**Every message shape lives in exactly two files: `backend/layers/websocket_utils/models.py` (Pydantic, the wire truth) and `frontend/types/message-types.ts` (Zod). Read those before assuming a field exists.** Today the union covers `documents`, `faq`, `flowchart`, `answer-event`, `fragment`, `agent-event`, `error`, `choices` and `suggestion`. Note that `streamId` and `responseType` differ (`agent-trace`→`agent-event`; `resources`→`documents`/`faq`/`flowchart`) — the frontend enum keys off `streamId`, the Zod discriminated union off `responseType`. Keepalive heartbeats are raw `{"streamId": "heartbeat", "body": {}}` frames, deliberately outside the typed contract on both ends.
+**Every message shape lives in exactly two files: `backend/layers/websocket_utils/models.py` (Pydantic, the wire truth) and `frontend/types/message-types.ts` (Zod). Read those before assuming a field exists.** Today the union covers `documents`, `faq`, `flowchart`, `answer-event`, `fragment`, `agent-event`, `error` (which carries the failed `queryId`) and `choices`. Note that `streamId` and `responseType` differ (`agent-trace`→`agent-event`; `resources`→`documents`/`faq`/`flowchart`) — the frontend only validates `streamId` against its enum (and skips `heartbeat`); routing is by `responseType`. Keepalive heartbeats are raw `{"streamId": "heartbeat", "body": {}}` frames, deliberately outside the typed contract on both ends.
 
-`ChoicesContent` carries `choices: list[str]` plus three optional fields the frontend uses to render one lifted clarification block between the answer and the sources:
+`ChoicesContent` (sent only by the adequacy judge's CLARIFY) carries `choices: list[str]` plus two optional fields the frontend uses to render one lifted clarification block between the answer and the sources:
 
-- `question` — the single question to put to the user (absent on the legacy pre-loop disambiguation path, whose canned text already carries the question)
+- `question` — the single question to put to the user
 - `axis` — short noun phrase naming the fact being asked about ("property classification")
-- `kind` — `"clarification"` (adequacy judge) or `"disambiguation"` (legacy classifier)
 
 Any change to messages sent over WebSocket (adding fields, changing `responseType` values, adding new message types, modifying trace/logging payloads) **must** update all three of:
 
-1. **Backend** — Python models in `backend/layers/websocket_utils/models.py` and the `send_json` router in `backend/layers/websocket_utils/utils.py`
+1. **Backend** — Python models in `backend/layers/websocket_utils/models.py` and the sender in `backend/layers/websocket_utils/utils.py`, which derives each frame's `streamId` from the model class
 2. **Frontend** — Zod schemas in `frontend/types/message-types.ts` (the `MessageUnionSchema` discriminated union and `WebSocketMessageSchema`)
 3. **Handler** — The `messageHandler` switch in `frontend/src/hooks/use-websocket-chat.ts`
 
@@ -329,9 +331,9 @@ The **ChatHistoryTable** stores every user query and bot response. When the user
 
 **Schema:**
 - Partition key: `queryId` (String, UUID)
-- GSI `sessionIdKey`: partition `sessionId`, sort `timestamp`
-- Attributes: `queryId`, `sessionId`, `query`, `answer`, `timestamp` (ISO 8601), `resources`, `faqs`, `documents`
-- Feedback attributes (set via `POST /session/{id}/feedback`): `thumbUp` (BOOL), `feedback` (String)
+- GSIs: `sessionIdKey` (partition `sessionId`, sort `timestamp`) and `activityIndexV3` (partition `gsi1pk`, sort `timestamp`)
+- Attributes: `queryId`, `sessionId`, `gsi1pk` (`"ALL"`), `query`, `answer`, `timestamp` (ISO 8601), `resources`, `trace` (JSON), optional `clarification`, `flowchart`; legacy items may carry `faqs`/`documents`
+- Feedback attributes (set via `POST /session/{id}/feedback`): `thumbUp` (BOOL), `feedback` (String), `rating` (`up`/`mid`/`down`), `richFeedback`, `feedbackSubmittedAt`
 
 **CLI examples:**
 ```bash
@@ -356,7 +358,7 @@ AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws dynamodb scan \
   --output json
 ```
 
-**Admin dashboard:** `/admin/activity` in the frontend. **Every `/admin/*` page requires the `Admins` Cognito group** — server-side via `require_admin()` on each `/admin/*` API route, and client-side via `hasAdminGroup` in `auth-context` + `<ProtectedRoute requireAdmin>` in the admin layout (non-members see an "Admin access required" panel). The group itself is ensured by CDK (`infra/stacks/admins-group.ts`, an idempotent CreateGroup, since `cdk import` cannot reach the nested stack); **membership** is still added by hand (`aws cognito-idp admin-add-user-to-group ... --group-name Admins`). The activity page fetches all items via `GET /admin/activity`, caches locally for 1 hour with manual sync override, and filters by time range, feedback status, and text search.
+**Admin dashboard:** `/admin/activity` in the frontend. **Every `/admin/*` page requires the `Admins` Cognito group** — server-side via `require_admin()` on each `/admin/*` API route, and client-side via `hasAdminGroup` in `auth-context` + `<ProtectedRoute requireAdmin>` in the admin layout (non-members see an "Admin access required" panel). The group itself is ensured by CDK (`infra/stacks/admins-group.ts`, an idempotent CreateGroup, since `cdk import` cannot reach the nested stack); **membership** is still added by hand (`aws cognito-idp admin-add-user-to-group ... --group-name Admins`). The activity page fetches a paginated summary via `GET /admin/activity` (detail via `/admin/activity/{queryId}`), caches it locally for 5 minutes with a manual sync override, and filters by time range, feedback status, and text search.
 
 Other admin pages: `/admin/chunks` reads the pre-embedding `extracted/` artifacts from S3 via `GET /admin/chunks/{docId}/index` (metadata only, paginated) + `GET /admin/chunks/{docId}/text` (text on demand) — never Neptune. `/admin/canvas` visualizes a retrieval run and mirrors the current tool registry. `/admin/ingest` ingests a document by URL.
 
@@ -441,9 +443,9 @@ AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 aws logs filter-log-events \
 
 All LLM prompts are externalized to `config/model_configs.toml` and loaded from DynamoDB at Lambda cold-start. The TOML is the source of truth; DynamoDB is the runtime store.
 
-**Entries:** `agenticRetrieval` (Phase A system prompt), `answerStream` (Phase B answer generation, including how to honor the `## RETRIEVAL FINDING` block), `adequacyJudge` (the judge's rubric + output schema), `personaGovernment` / `personaCitizen` (persona suffixes), and `disambiguationClassifier` (legacy — retained only for the scope-gate rollback path).
+**Entries:** `agenticRetrieval` (Phase A system prompt), `answerStream` (Phase B answer generation, including how to honor the `## RETRIEVAL FINDING` block), `adequacyJudge` (the judge's rubric + output schema), and `personaGovernment` / `personaCitizen` (persona suffixes).
 
-`backend/lambdas/agentic_retrieval/_prompt_fallback.py` mirrors these byte-identically as a cold-start fallback. Regenerate it from the TOML whenever a prompt changes — `tests/test_prompt.py` pins load-bearing phrases and will catch drift.
+`backend/lambdas/agentic_retrieval/_prompt_fallback.py` mirrors `agenticRetrieval`, `answerStream` and `adequacyJudge` byte-identically as the fallback used when the DynamoDB read fails (the persona suffixes have no fallback). Regenerate it from the TOML whenever a prompt changes — `backend/lambdas/agentic_retrieval/tests/test_prompt.py` pins load-bearing phrases.
 
 **Iteration workflow:**
 ```bash

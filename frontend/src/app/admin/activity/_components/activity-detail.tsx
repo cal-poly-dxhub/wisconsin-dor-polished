@@ -310,7 +310,6 @@ const TOOL_LABELS: Record<string, string> = {
   list_flowcharts: 'Flowchart Registry',
   get_flowchart: 'Decision Flowchart',
   prepare_answer: 'Answer Synthesis',
-  answer: 'Answer Synthesis',
 };
 
 function toolLabel(toolName?: string): string {
@@ -338,7 +337,6 @@ function getToolIcon(toolName?: string) {
     case 'get_flowchart':
       return <BookText className="h-4 w-4" />;
     case 'prepare_answer':
-    case 'answer':
       return <Sparkles className="h-4 w-4" />;
     default:
       return <Zap className="h-4 w-4" />;

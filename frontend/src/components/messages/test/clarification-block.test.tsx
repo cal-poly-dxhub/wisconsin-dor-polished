@@ -11,7 +11,6 @@ describe('ClarificationBlock', () => {
         choices={['Agricultural', 'Undeveloped', 'Answer in general terms']}
         question="Is the parcel classified agricultural or undeveloped?"
         axis="property classification"
-        kind="clarification"
       />,
     );
 
@@ -23,29 +22,14 @@ describe('ClarificationBlock', () => {
     expect(html).toContain('Answer in general terms');
   });
 
-  test('falls back to a default label and omits the question line when absent', () => {
-    const html = renderToString(
-      <ClarificationBlock
-        queryId="q-2"
-        choices={['Residential', 'Commercial']}
-        kind="disambiguation"
-      />,
-    );
-
-    // Legacy disambiguation: its canned answer already asks the question, so
-    // the block shows only a label and the chips.
-    expect(html).toContain('Property type');
-    expect(html).toContain('Residential');
-    expect(html).toContain('Commercial');
-    expect(html).not.toContain('To narrow this down');
-  });
-
-  test('uses the generic label when no axis and no kind arrive', () => {
+  test('uses the generic label and omits the question line when both are absent', () => {
     const html = renderToString(
       <ClarificationBlock queryId="q-3" choices={['Yes', 'No']} />,
     );
 
     expect(html).toContain('To narrow this down');
+    expect(html).toContain('Yes');
+    expect(html).not.toContain('<p class="mt-1');
   });
 
   test('renders nothing without options', () => {

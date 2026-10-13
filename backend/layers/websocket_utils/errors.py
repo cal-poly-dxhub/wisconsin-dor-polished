@@ -1,7 +1,4 @@
-from abc import abstractmethod
 from typing import Any
-
-from websocket_utils.models import ErrorContent, ErrorMessage
 
 
 class WebSocketError(Exception):
@@ -13,30 +10,14 @@ class WebSocketError(Exception):
         details: dict[str, Any] | None = None,
     ):
         super().__init__(log_message)
-        self.log_message = log_message
-        self.error_code = self.__class__.__name__
         self.details = details
-
-    @abstractmethod
-    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
-        """Define how the error's displayed to the user."""
-        pass
 
 
 class WebSocketConnectionError(WebSocketError):
-    """Raised when WebSocket connection operations fail."""
+    """Raised when the API Gateway management client cannot be created."""
 
     def __init__(self, details: dict[str, Any] | None = None):
         super().__init__(details=details)
-
-    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
-        """Convert error to response body."""
-        return ErrorMessage(
-            response_type="error",
-            content=ErrorContent(
-                error="Failed to establish WebSocket connection. Try signing in again."
-            ),
-        )
 
 
 class MessageDeliveryError(WebSocketError):
@@ -44,15 +25,6 @@ class MessageDeliveryError(WebSocketError):
 
     def __init__(self, details: dict[str, Any] | None = None):
         super().__init__(details=details)
-
-    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
-        """Convert error to response body."""
-        return ErrorMessage(
-            response_type="error",
-            content=ErrorContent(
-                error="Failed to deliver message over WebSocket. Try signing in again."
-            ),
-        )
 
 
 class SessionNotFoundError(WebSocketError):
@@ -62,31 +34,12 @@ class SessionNotFoundError(WebSocketError):
         self.session_id = session_id
         super().__init__(log_message=f"Session not found: {session_id}", details=details)
 
-    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
-        """Convert error to response body."""
-        return ErrorMessage(
-            response_type="error",
-            content=ErrorContent(
-                error="Session not found. Try signing in again.",
-            ),
-        )
-
 
 class InvalidMessageError(WebSocketError):
-    """Raised when an invalid message type is sent over WebSocket."""
+    """Raised when a message type has no stream id (see utils.STREAM_IDS)."""
 
     def __init__(self, details: dict[str, Any] | None = None):
         super().__init__(details=details)
-
-    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
-        """Convert error to response body."""
-        # return ErrorMessage(error="Internal server error.")
-        return ErrorMessage(
-            response_type="error",
-            content=ErrorContent(
-                error="Internal server error.",
-            ),
-        )
 
 
 class SessionLookupError(WebSocketError):
@@ -98,30 +51,10 @@ class SessionLookupError(WebSocketError):
             log_message=f"Failed to lookup session {session_id} in database", details=details
         )
 
-    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
-        """Convert error to response body."""
-
-        return ErrorMessage(
-            response_type="error",
-            content=ErrorContent(
-                error="Unable to retrieve session information. Try signing in again."
-            ),
-        )
-
 
 class ConnectionNotFoundError(WebSocketError):
-    """Raised when the sesssion does not have a WebSocket connection."""
+    """Raised when the session does not have a WebSocket connection."""
 
     def __init__(self, session_id: str, details: dict[str, Any] | None = None):
         self.session_id = session_id
         super().__init__(details=details)
-
-    def to_response(self, extra: dict[str, Any] | None = None) -> ErrorMessage:
-        """Convert error to response body."""
-
-        return ErrorMessage(
-            response_type="error",
-            content=ErrorContent(
-                error="WebSocket connection not found. Try signing in again.",
-            ),
-        )

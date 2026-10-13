@@ -53,14 +53,18 @@ class TestNormalizeFaqQuestion:
         assert normalize_faq_question("") == ""
 
     def test_matches_seed_script(self):
-        """Normalization must match tools/graphrag/faq_url_map.py."""
+        """Normalization must match tools/ingestion/lib/faq_url_map.py."""
         import importlib.util
 
         script_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "..", "tools", "graphrag", "faq_url_map.py"
+            os.path.dirname(__file__),
+            *[".."] * 4,
+            "tools",
+            "ingestion",
+            "lib",
+            "faq_url_map.py",
         )
-        if not os.path.exists(script_path):
-            pytest.skip("faq_url_map.py not found")
+        assert os.path.exists(script_path), script_path
 
         spec = importlib.util.spec_from_file_location("faq_url_map", script_path)
         mod = importlib.util.module_from_spec(spec)

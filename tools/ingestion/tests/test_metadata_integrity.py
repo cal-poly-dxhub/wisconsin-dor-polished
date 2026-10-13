@@ -38,7 +38,6 @@ def _embedded_case(doc_id="case-law-1-wis-2d-1", title="1 Wis. 2d 1, 1 Wis. 2d 1
         "citation": "1 Wis. 2d 1",
         "source_url": "https://www.courtlistener.com/opinion/123/smith-v-city-of-madison/",
         "embed_input_mode": "plain",
-        "doc_embedding": [0.9, 0.9],
         "chunks": [
             {"text": "holding text", "metadata": {}, "embedding": [0.1, 0.2]},
             {"text": "analysis text", "metadata": {}, "embedding": [0.3, 0.4]},
@@ -81,7 +80,6 @@ def test_overlay_applies_doc_metadata_but_never_chunks_or_embeddings():
     # Embedding data is the embedded copy's, untouched.
     assert [c["text"] for c in d["chunks"]] == ["holding text", "analysis text"]
     assert d["chunks"][0]["embedding"] == [0.1, 0.2]
-    assert d["doc_embedding"] == [0.9, 0.9]
     assert d["embed_input_mode"] == "plain"
     assert "_metadata_overlay" not in d
 
@@ -112,16 +110,16 @@ def test_overlay_honors_cache_prefix():
 
 
 def test_overlay_helper_reports_title_change_and_ignores_embedding_keys():
-    emb = {"title": "t1", "chunks": ["keep"], "doc_embedding": [1.0]}
+    emb = {"title": "t1", "chunks": ["keep"], "embed_input_mode": "plain"}
     assert load.overlay_extracted_metadata(emb, None) is False
     assert load.overlay_extracted_metadata(emb, {"summary": "s"}) is False
     assert emb["summary"] == "s"
     changed = load.overlay_extracted_metadata(
-        emb, {"title": "t2", "chunks": ["NO"], "doc_embedding": [0.0]}
+        emb, {"title": "t2", "chunks": ["NO"], "embed_input_mode": "enriched"}
     )
     assert changed is True
     assert emb["title"] == "t2"
-    assert emb["chunks"] == ["keep"] and emb["doc_embedding"] == [1.0]
+    assert emb["chunks"] == ["keep"] and emb["embed_input_mode"] == "plain"
 
 
 # --------------------------------------------------------------------------- #
@@ -181,7 +179,7 @@ def test_phase_9_deletes_recorded_losers_of_any_label():
 # --------------------------------------------------------------------------- #
 def _extracted_from(embedded: dict, **overrides) -> dict:
     """The extracted/ copy: same chunk texts, no embeddings, fresh metadata."""
-    doc = {k: v for k, v in embedded.items() if k not in ("doc_embedding", "embed_input_mode")}
+    doc = {k: v for k, v in embedded.items() if k != "embed_input_mode"}
     doc["chunks"] = [{k: v for k, v in c.items() if k != "embedding"} for c in embedded["chunks"]]
     doc.update(overrides)
     return doc
@@ -206,7 +204,6 @@ def test_metadata_refresh_reuses_vectors_when_chunk_inputs_identical():
     assert written["title"] == "Smith v. City of Madison, 1 Wis. 2d 1"
     assert written["summary"] == "fresh"
     assert [c["embedding"] for c in written["chunks"]] == [[0.1, 0.2], [0.3, 0.4]]
-    assert written["doc_embedding"] == [0.9, 0.9]
     assert written["embed_input_mode"] == "plain"
 
 

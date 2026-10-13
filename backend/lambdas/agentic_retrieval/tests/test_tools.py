@@ -578,7 +578,7 @@ def test_get_neighbors_filters_out_chunk_labels():
             "id": "stat-1",
             "title": "Statute 70.32",
             "labels": ["Document", "Statute"],
-            "relationship": "IMPLEMENTS",
+            "relationship": "PART_OF",
         },
     ]
 

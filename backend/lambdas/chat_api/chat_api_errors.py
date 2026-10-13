@@ -11,10 +11,12 @@ class ChatAPIError(Exception):
         status_code: int = 500,
         details: dict[str, Any] | None = None,
     ):
-        super().__init__(log_message)
-        self.log_message = log_message
+        # The details ride in the exception's message, so a logged error says
+        # what failed (they never reach the client: to_response is fixed text).
+        message = f"{log_message} {details}" if log_message and details else log_message
+        super().__init__(message or (str(details) if details else None))
         self.status_code = status_code
-        self.error_code = self.__class__.__name__
+        self.details = details or {}
 
     @abstractmethod
     def to_response(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -125,27 +127,6 @@ class DynamoDBError(ChatAPIError):
         response = {
             "error": {
                 "message": "Internal server error.",
-            },
-        }
-        if extra:
-            response["error"].update(extra)
-        return response
-
-
-class UnauthorizedError(ChatAPIError):
-    """Raised when authentication/authorization fails."""
-
-    def __init__(self, message: str = "Unauthorized access"):
-        super().__init__(
-            message,
-            status_code=401,
-        )
-
-    def to_response(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Convert error to response body."""
-        response = {
-            "error": {
-                "message": "Unauthorized request. Try signing out and signing in again.",
             },
         }
         if extra:

@@ -174,12 +174,21 @@ def download_file(url: str, max_retries: int = 3) -> tuple[bytes, str]:
 
 
 def scrape_html_page(url: str) -> tuple[bytes, str]:
-    """Scrape an HTML page and return the main content as UTF-8 text."""
+    """Scrape an HTML page and return the main content as UTF-8 text.
+
+    Some extension-less URLs serve a PDF (the Wisconsin Constitution page does).
+    Those come back as the raw PDF bytes, so they are stored and chunked as a
+    PDF rather than as the PDF's bytes run through an HTML parser.
+    """
     from bs4 import BeautifulSoup
 
     headers = {"User-Agent": "Mozilla/5.0 (WI-DOR-Bot/1.0)"}
     response = requests.get(url, headers=headers, timeout=60)
     response.raise_for_status()
+
+    content_type = response.headers.get("Content-Type", "")
+    if "pdf" in content_type.lower() or response.content.startswith(b"%PDF"):
+        return response.content, "application/pdf"
 
     soup = BeautifulSoup(response.text, "html.parser")
 

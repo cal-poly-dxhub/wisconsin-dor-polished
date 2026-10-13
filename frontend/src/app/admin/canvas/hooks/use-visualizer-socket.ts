@@ -4,7 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { WebSocket as PartySocket } from 'partysocket';
 import { createSession, sendMessage } from '@/api/chat-api';
 import type { SourceDocument, FAQ } from '@messages/websocket-interface';
-import type { ResourceItem, SuggestionKind } from '@/stores/types';
+import type { ResourceItem } from '@/stores/types';
 
 export interface TraceEvent {
   kind: 'loop_start' | 'reasoning' | 'tool_call' | 'tool_result' | 'loop_complete' | 'phase' | 'turn_usage';
@@ -20,10 +20,8 @@ interface UseVisualizerSocketReturn {
   answerText: string;
   answerComplete: boolean;
   resourceItems: ResourceItem[];
-  /** Clarification chips from the adequacy judge (or the pre-loop classifier). */
+  /** Clarification chips from the adequacy judge. */
   choices: string[];
-  /** Soft follow-up nudge; only 'topic-shift' exists today. */
-  suggestion: SuggestionKind | null;
   isConnected: boolean;
   isRunning: boolean;
   currentQuery: string | null;
@@ -39,7 +37,6 @@ export function useVisualizerSocket(): UseVisualizerSocketReturn {
   const [answerComplete, setAnswerComplete] = useState(false);
   const [resourceItems, setResourceItems] = useState<ResourceItem[]>([]);
   const [choices, setChoices] = useState<string[]>([]);
-  const [suggestion, setSuggestion] = useState<SuggestionKind | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [currentQuery, setCurrentQuery] = useState<string | null>(null);
@@ -52,7 +49,6 @@ export function useVisualizerSocket(): UseVisualizerSocketReturn {
     setAnswerComplete(false);
     setResourceItems([]);
     setChoices([]);
-    setSuggestion(null);
   }, []);
 
   const resetAnswerStream = useCallback(() => {
@@ -161,19 +157,12 @@ export function useVisualizerSocket(): UseVisualizerSocketReturn {
         }
 
         // Clarification chips: sent after the stream when the adequacy judge
-        // returns CLARIFY, and by the pre-loop DISAMBIGUATE short-circuit.
+        // returns CLARIFY.
         if (body.responseType === 'choices') {
           const items = body.content?.choices;
           if (Array.isArray(items)) {
             setChoices(items.filter((c: unknown): c is string => typeof c === 'string'));
           }
-          return;
-        }
-
-        // Soft nudge attached to the turn ('topic-shift' today).
-        if (body.responseType === 'suggestion') {
-          const kind = body.content?.kind;
-          if (kind === 'topic-shift') setSuggestion('topic-shift');
           return;
         }
 
@@ -256,7 +245,6 @@ export function useVisualizerSocket(): UseVisualizerSocketReturn {
     answerComplete,
     resourceItems,
     choices,
-    suggestion,
     isConnected,
     isRunning,
     currentQuery,

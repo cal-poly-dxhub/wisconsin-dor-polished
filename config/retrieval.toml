@@ -13,9 +13,8 @@
 #     each module's own hardcoded default, exactly as before this file
 #     existed).
 #
-# This file documents infra/pipeline configuration only. Prompts remain in
-# model_configs.toml -> DynamoDB (see docs/spec-retrieval-pipeline-refactor.md,
-# "Out of Scope").
+# This file documents infra/pipeline configuration only. Prompts live in
+# model_configs.toml -> DynamoDB.
 
 # ---------------------------------------------------------------------------
 # [env.*] — Lambda environment variables
@@ -124,41 +123,11 @@ description = "Bedrock Knowledge Base ID backing faq_search"
 stage = "faq_seed"
 model_override = false
 
-[env.FAQ_SCORE_THRESHOLD]
-default = 0.70
-type = "float"
-description = "Minimum FAQ score to trigger high-confidence FAQ steering"
-range = [0.0, 1.0]
-stage = "faq_seed"
-model_override = false
-
-[env.MAX_TURNS]
-default = 8
-type = "int"
-description = "Maximum agentic loop turns before forced prepare_answer"
-range = [3, 15]
-stage = "loop"
-model_override = false
-
 [env.AGENTIC_MODEL_ID]
 default = "us.anthropic.claude-sonnet-4-6"
 type = "string"
 description = "Bedrock model ID for the agentic loop (Phase A)"
 stage = "loop"
-model_override = false
-
-[env.REFINEMENT_MODEL_ID]
-default = "us.anthropic.claude-sonnet-4-6"
-type = "string"
-description = "Model used by auto-refine to rewrite the query before vector_search (defaults to AGENTIC_MODEL_ID if unset)"
-stage = "auto_refine"
-model_override = false
-
-[env.CASE_LAW_SUMMARY_MODEL]
-default = "us.amazon.nova-2-lite-v1:0"
-type = "string"
-description = "Model used by extract.py to generate case-law holding summaries"
-stage = "ingestion"
 model_override = false
 
 [env.RAW_BUCKET]
@@ -226,34 +195,6 @@ description = "Emit the structured frontend/DynamoDB agent trace payload over We
 stage = "observability"
 model_override = false
 
-[env.ENABLE_DISAMBIGUATION]
-default = "false"
-type = "bool"
-description = "Legacy pre-loop classifier; superseded by the adequacy judge (Task 71); off since 2026-09-19, keep for possible revival"
-stage = "loop"
-model_override = false
-
-[env.ENABLE_TOPIC_SHIFT]
-default = "false"
-type = "bool"
-description = "Legacy pre-loop classifier; superseded by the adequacy judge (Task 71); off since 2026-09-19, keep for possible revival"
-stage = "loop"
-model_override = false
-
-[env.ADEQUACY_JUDGE_ENABLED]
-default = "false"
-type = "bool"
-description = "Run the post-retrieval adequacy judge over the answer plan before Phase B streams"
-stage = "loop"
-model_override = false
-
-[env.SCOPE_GATE_ENABLED]
-default = "true"
-type = "bool"
-description = "Keep the pre-loop OUT_OF_SCOPE / DISAMBIGUATE short-circuits; disable only alongside the adequacy judge so every query retrieves first"
-stage = "loop"
-model_override = false
-
 [env.ADEQUACY_JUDGE_MODEL_ID]
 default = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 type = "string"
@@ -300,7 +241,7 @@ model_override = false
 [env.MODEL_CONFIG_TABLE_NAME]
 default = ""
 type = "string"
-description = "DynamoDB table holding the externalized agentic system prompt"
+description = "DynamoDB table holding the externalized prompts (model_configs.toml)"
 stage = "prompt_loading"
 model_override = false
 

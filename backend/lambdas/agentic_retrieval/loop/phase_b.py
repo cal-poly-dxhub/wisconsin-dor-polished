@@ -4,28 +4,24 @@ Builds the answer context from Phase A's cited docs/chunks, then calls
 converse_stream() with NO tools — pure text output streamed over WebSocket.
 """
 
-import json
 import logging
 import re
 import time
-from typing import TYPE_CHECKING
 
+from adequacy_judge import Finding, render_finding_block
 from graph.neptune_client import NeptuneClient
 from prompt import ANSWER_STREAM_SYSTEM_PROMPT, PERSONA_PROMPTS
 from streaming.bedrock import converse_stream_with_cache
 from tracing.runtime import emit as _emit
 from tracing.runtime import log_event as _log
 from websocket_utils.models import AnswerEventType, FragmentContent, FragmentMessage
-from websocket_utils.utils import WebSocketServer
+from websocket_utils.utils import WebSocketServer, post_message
 
 from config import AGENTIC_MODEL_ID, bedrock
 
 from .heartbeat import start_heartbeat
 from .link_repair import KNOWN_STATUTE_CHAPTERS, has_open_link, repair_citation_links
 from .url_guard import guard_external_urls, has_open_url, ungrounded_contacts
-
-if TYPE_CHECKING:  # pragma: no cover — import only for the type annotation
-    from adequacy_judge import Finding
 
 logger = logging.getLogger(__name__)
 
@@ -204,12 +200,11 @@ def build_answer_context(
     query: str,
     cited_chunks: list[dict],
     cited_doc_ids: set[str],
-    discovery: dict[str, str],
     fetched_opinions: dict[str, dict],
     answer_plan: str,
     chat_history: list[dict] | None = None,
     neptune_client: NeptuneClient | None = None,
-    finding: "Finding | None" = None,
+    finding: Finding | None = None,
     uncurated: bool = False,
 ) -> str:
     """Build the context message for Phase B answer generation.
@@ -241,10 +236,6 @@ def build_answer_context(
         parts.append(f"## Answer Plan\n{answer_plan}\n")
 
     if finding is not None:
-        # Imported lazily so nothing in the judge's import chain loads when the
-        # feature is off (ADEQUACY_JUDGE_ENABLED=false leaves finding None).
-        from adequacy_judge import render_finding_block
-
         parts.append(render_finding_block(finding))
 
     parts.append("## Retrieved Documents and Chunks\n")
@@ -369,9 +360,8 @@ def send_answer_stop(
     if not ws_connection_alive[0]:
         return
     stop_msg = AnswerEventType(event="stop", query_id=query_id, answer=answer_text)
-    data = json.dumps({"streamId": "answer-event", "body": stop_msg.model_dump(by_alias=True)})
     try:
-        ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
+        post_message(ws_server, stop_msg)
     except Exception:
         ws_connection_alive[0] = False
 
@@ -428,8 +418,7 @@ def stream_answer(
 
     # Send answer-event: start
     start_msg = AnswerEventType(event="start", query_id=query_id)
-    data = json.dumps({"streamId": "answer-event", "body": start_msg.model_dump(by_alias=True)})
-    ws_server.client.post_to_connection(ConnectionId=ws_server.connection_id, Data=data)
+    post_message(ws_server, start_msg)
 
     # Start heartbeat for the streaming phase
     heartbeat_stop = start_heartbeat(
@@ -488,15 +477,7 @@ def stream_answer(
                                 content=FragmentContent(fragment=fragment_buffer),
                             )
                             try:
-                                ws_server.client.post_to_connection(
-                                    ConnectionId=ws_server.connection_id,
-                                    Data=json.dumps(
-                                        {
-                                            "streamId": "answer",
-                                            "body": frag_msg.model_dump(by_alias=True),
-                                        }
-                                    ),
-                                )
+                                post_message(ws_server, frag_msg)
                             except Exception:
                                 ws_connection_alive[0] = False
                         fragment_buffer = ""
@@ -521,10 +502,7 @@ def stream_answer(
             content=FragmentContent(fragment=fragment_buffer),
         )
         try:
-            ws_server.client.post_to_connection(
-                ConnectionId=ws_server.connection_id,
-                Data=json.dumps({"streamId": "answer", "body": frag_msg.model_dump(by_alias=True)}),
-            )
+            post_message(ws_server, frag_msg)
         except Exception:
             ws_connection_alive[0] = False
 

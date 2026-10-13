@@ -1,5 +1,6 @@
 """
-Phase 2: Document Extraction + LLM Classification
+Extract: document extraction + LLM classification (pipeline step 1 of 3:
+extract → embed → load).
 
 Pulls files from S3 raw bucket, routes each to appropriate parser,
 classifies via LLM, normalizes IDs, deduplicates.
@@ -20,7 +21,6 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
-from pathlib import Path
 
 import boto3
 import yaml
@@ -31,16 +31,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from tools.ingestion.chunking.case_law import select_and_chunk
 from tools.ingestion.chunking.pdfChunker import process_pdf_from_s3
-from tools.ingestion.ingest_case_law import _case_name_from_url
+from tools.ingestion.ingest_case_law import _case_name_from_url, _reporter_for_slug
 from tools.ingestion.lib import aliases as alias_lib
-from tools.ingestion.lib.case_annotations import extract_section_for_page
-
-# Local mirror of the statute PDFs the case-law metadata references.
-# We need these to read the running header that identifies which section
-# owns each page (used to derive section-level statute_refs for case-law
-# nodes — without this every case-law CITES edge points at the chapter,
-# which makes section-anchored agent queries miss the case).
-DEFAULT_STATE_LAWS_DIR = Path(__file__).resolve().parent.parent.parent / "docs" / "state-laws"
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -167,41 +159,18 @@ def _parse_citing_statutes(metadata: dict) -> list[dict]:
     ]
 
 
-def _derive_case_statute_refs(citing_statutes: list[dict], state_laws_dir: Path) -> list[str]:
-    """Build the case-law document's statute_refs list.
+def _derive_case_statute_refs(citing_statutes: list[dict]) -> list[str]:
+    """Chapter-level statute refs from the statute PDFs that cite the case ("70").
 
-    Returns the union of:
-      - chapter-level refs derived from the citing-statute filename ("70")
-      - section-level refs derived by reading each cited page's running
-        header in the local statute PDF ("70.32")
-
-    Section-level refs are the lever that makes case-law reachable from a
-    section node like WIS-STAT-70.32 — without them, the agent must walk
-    PART_OF up to WIS-STAT-70 to discover any cases at all (Markarian was
-    invisible to vector_search ranking on §70.32 chunks even though its
-    annotation lives there).
-
-    When the local PDF mirror is missing or page detection fails, falls back
-    silently to chapter-only refs, matching prior behavior.
+    Section-level refs come from the opinion text itself
+    (``_extract_statute_refs_from_text``) and, per chunk, from each chunk's own
+    text, so a case is reachable from the sections it actually discusses.
     """
     refs: set[str] = set()
     for src in citing_statutes:
-        filename = src.get("file", "")
-        chapter = _statute_file_to_chapter(filename)
-        if not chapter:
-            continue
-        refs.add(chapter)
-
-        pdf_path = state_laws_dir / filename
-        if not pdf_path.exists():
-            continue
-        for page in src.get("pages", []) or []:
-            try:
-                section = extract_section_for_page(pdf_path, int(page), expected_chapter=chapter)
-            except (ValueError, TypeError):
-                continue
-            if section:
-                refs.add(section)
+        chapter = _statute_file_to_chapter(src.get("file", ""))
+        if chapter:
+            refs.add(chapter)
     return sorted(refs)
 
 
@@ -227,20 +196,18 @@ _CASE_STATUTE_RE = re.compile(
 
 
 def _fetch_opinion_text(raw_bucket: str, doc_id: str, s3_key: str) -> str | None:
-    """Fetch the opinion .txt from S3. Tries s3_key path, then reporter-path fallback."""
-    slug = doc_id.replace("case-law-", "")
-    # Try direct key (if stored on the node)
-    if s3_key and ".txt" in s3_key:
+    """Fetch a case's opinion .txt from S3, or None when the case has no text.
+
+    The key is built from the slug's own reporter folder, the same mapping
+    ingest_case_law.py uses when it uploads, so every reporter is covered.
+    """
+    slug = doc_id.removeprefix("case-law-")
+    candidates = []
+    if s3_key and s3_key.endswith(".txt"):
+        candidates.append(s3_key)
+    candidates.append(f"raw/case-law/{_reporter_for_slug(slug)}/{slug}.txt")
+    for key in dict.fromkeys(candidates):
         try:
-            obj = s3.get_object(Bucket=raw_bucket, Key=s3_key)
-            return obj["Body"].read().decode("utf-8", errors="replace")
-        except Exception:
-            pass
-    # Reporter-path fallback
-    for reporter in ["wis-2d", "wi", "wi-app", "n-w-2d", "n-w-3d", "f-2d", "f-3d",
-                     "f-supp-2d", "f-supp-3d", "f-4th", "s-ct", "u-s", "l-ed-2d"]:
-        try:
-            key = f"raw/case-law/{reporter}/{slug}.txt"
             obj = s3.get_object(Bucket=raw_bucket, Key=key)
             return obj["Body"].read().decode("utf-8", errors="replace")
         except Exception:
@@ -326,9 +293,8 @@ def process_case_law_document(
         text_statute_refs = _extract_statute_refs_from_text(opinion_text)
         selection = select_and_chunk(opinion_text)
 
-    state_laws_dir = Path(config.get("state_laws_dir") or DEFAULT_STATE_LAWS_DIR)
-    legacy_refs = _derive_case_statute_refs(citing_statutes, state_laws_dir)
-    statute_refs = sorted(set(text_statute_refs) | set(legacy_refs))
+    chapter_refs = _derive_case_statute_refs(citing_statutes)
+    statute_refs = sorted(set(text_statute_refs) | set(chapter_refs))
 
     source_url = metadata.get("source_url", "")
     chunks: list[dict] = []
@@ -450,6 +416,9 @@ def list_documents(bucket: str, prefix: str) -> list[dict]:
     Layout:
       - Folder-per-doc:  raw/{doc_id}/{doc_id}.ext  (statutes, wpam, etc.)
       - Case law:        raw/case-law/{reporter}/{slug}.ext  → doc_id = "case-law-{slug}"
+
+    One content file per doc_id. For case law the opinion ``.txt`` wins over a
+    ``.json`` "no text" stub for the same slug, whatever order S3 lists them in.
     """
     docs = {}
     paginator = s3.get_paginator("list_objects_v2")
@@ -466,9 +435,16 @@ def list_documents(bucket: str, prefix: str) -> list[dict]:
                 doc_id = parts[0]
             else:
                 continue
-            if doc_id not in docs:
-                docs[doc_id] = {"doc_id": doc_id, "key": key, "size": obj["Size"]}
+            candidate = {"doc_id": doc_id, "key": key, "size": obj["Size"]}
+            current = docs.get(doc_id)
+            if current is None or (_is_stub_key(current["key"]) and not _is_stub_key(key)):
+                docs[doc_id] = candidate
     return list(docs.values())
+
+
+def _is_stub_key(key: str) -> bool:
+    """A case-law ``.json`` is a "no opinion text" stub, never the content."""
+    return "/case-law/" in key and key.endswith(".json")
 
 
 # ---------------------------------------------------------------------------
@@ -851,10 +827,9 @@ def process_document(
     logger.info(f"Processing {doc_id} ({doc['size']} bytes)")
 
     try:
-        # Case-law documents follow a specialized path: annotations from the
-        # citing Wisconsin statute PDFs replace the LLM classifier entirely,
-        # with LLM-summary fallback for cases where annotation extraction
-        # yields thin content.
+        # Case law skips the LLM classifier: process_case_law_document writes a
+        # Nova holding-summary chunk plus the selected majority-opinion chunks
+        # (chunking/case_law.py). A case with no opinion text gets no chunks.
         if metadata.get("doc_type") == "case_law" or doc_id.startswith("case-law-"):
             result = process_case_law_document(doc, raw_bucket, metadata, config)
             if result is None:
@@ -913,7 +888,7 @@ def process_document(
                 logger.info(f"  Reusing cached classification for {doc_id}")
 
         if classification is None:
-            llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-20250514")
+            llm_model = config.get("bedrock_llm_model", "us.anthropic.claude-sonnet-4-6")
             classification = classify_document(full_text, llm_model)
             _save_classification(work_bucket, doc_id, classification, cache_prefix)
 

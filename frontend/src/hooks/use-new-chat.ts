@@ -7,8 +7,7 @@ import { useFeedbackStore } from '@/stores/feedback-store';
 import { useSessionsList } from '@/hooks/api/chat';
 
 /**
- * Shared "start a new chat" action, used by both the sessions sidebar and the
- * topic-shift suggestion. Stashes the current session, clears the in-memory
+ * The "start a new chat" action used by the sessions sidebar. Stashes the current session, clears the in-memory
  * history, resets store state, refetches the sessions list, and marks the
  * next session as an explicit new chat (read by the chat page on mount).
  *

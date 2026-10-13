@@ -1,6 +1,6 @@
 """Tests for the rag_documents module.
 
-Uses the real step_function_types models (available via backend/layers on
+Uses the real chat_contracts models (available via backend/layers on
 sys.path) — do NOT stub them into sys.modules; that mutates shared module
 objects and poisons other test files in the same pytest process.
 """

@@ -11,7 +11,6 @@ import { useWebSocketChat } from '@/hooks/use-websocket-chat';
 import { useSessionResume } from '@/hooks/use-session-resume';
 import { useSessionUrlSync } from '@/hooks/use-session-url-sync';
 import { Toaster } from '@/components/ui/sonner';
-import { GradientBackground } from '@/components/ui/gradient-background';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ChatErrorProvider } from '@/components/errors/use-chat-error';
 import { ProtectedRoute } from '@/components/auth/protected-route';
@@ -47,7 +46,7 @@ function AppShell() {
 
   return (
     <>
-      <GradientBackground />
+      <div className="fixed inset-0 -z-10 bg-background" />
       <div className="flex h-screen w-screen overflow-hidden">
         {!annotating && <SessionsSidebar />}
 

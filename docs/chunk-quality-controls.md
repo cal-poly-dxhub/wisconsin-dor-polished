@@ -142,7 +142,13 @@ State-law PDFs (`statutes-*`), cap **3500**.
   estate, how valued.`); otherwise a generic `\d+.\d+` section pattern.
 - **Multi-page merge:** consecutive fragments of the same section (same heading)
   are merged back together.
-- **Oversized sections** split via `_split_statute_section` at subsection markers
+- **Subsection split** (`_apply_subsection_split` → `_split_section_by_subsections`):
+  any section with 2 or more top-level `(n)` subsections is chunked one subsection
+  per chunk, greedily merging small neighbours up to `STATUTE_SUBSECTION_TARGET_CHARS`
+  (env var, default 1200). Each piece keeps the section heading and gets a
+  `subheading` such as `70.11(49)` or `70.11(45)–(48)`.
+- **Sections that don't qualify for the subsection split and are oversized** split via
+  `_split_statute_section` at subsection markers
   `(1)`, `(a)`, `(4m)`, then sentence boundaries, then line breaks. Tiny tail
   fragments (`min_tail = 200`) are greedily merged back into the predecessor if
   the combined length stays under `merge_cap = 3000`.
@@ -156,7 +162,8 @@ Admin-code PDFs (`admin_rules-*`), cap **3500**.
   `OrderedDict`, so a rule's TOC entry and its body occurrence (which may be pages
   apart) merge into one chunk.
 - **Stub drop:** rules whose body is under `_MIN_BODY_CHARS = 80` are dropped.
-- Oversized rules split via the same `_split_statute_section` logic as statutes.
+- Rules go through the same subsection split (`_split_section_by_subsections`),
+  falling back to `_split_statute_section` for oversized rules that don't qualify.
 
 ## Strategy 3 — wpam (`chunk_document_wpam`)
 
@@ -278,6 +285,17 @@ etc.), and the disposition. It normally drops captions, counsel lists,
 facts/procedure, trailing notes, and separate opinions, falling back to full
 majority text only when the analysis transition can't be located.
 
+- **Chunk 0** is a 2–3 sentence holding summary written by Nova 2 Lite
+  (`content_role=summary_holding`), added by `extract.py::process_case_law_document`
+  ahead of the selected body chunks.
+- Each chunk's own `statute_refs` / `admin_rule_refs` become chunk-level
+  `Chunk-[:CITES]->Statute` / `AdminRule` edges at load.
+- Extract reads the opinion from `raw/case-law/{reporter}/{slug}.txt` (preferring it
+  over any JSON stub beside it). Cases with no opinion text get no chunks and are
+  not embedded.
+- Live counts (2026-10-10): 1,117 summary chunks and 7,859 body chunks —
+  `analysis_holding` 3,887, `fallback_majority` 2,479, `opening_holding+analysis_holding`
+  1,038, `opening_holding` 455.
 - Sizing: `TARGET_SIZE = 3500`, `HARD_CAP = 4200`, `OVERLAP = 160`,
   `MIN_TRAILING_CHUNK = 900`.
 - OCR repair: CourtListener text sometimes OCRs the pilcrow (¶) as "ś"; a narrow
@@ -301,9 +319,9 @@ All filters log counts at runtime, e.g.:
 🧹 Dropped 2 low-quality WPAM chunks for wpam-ch17.pdf
 ```
 
-When `DEBUG = True` in `pdfChunker.py`, three JSONL logs are written per document:
-`chunk_logs/raw_chunks/`, `chunk_logs/removed/` (with removal reasons), and
-`chunk_logs/final_chunks/`.
+With `DEBUG` on in `pdfChunker.py` (off by default), three JSONL logs are written per
+document under `./pdf_chunking/chunk_logs/`: `raw_chunks/`, `removed/` (with removal
+reasons), and `final_chunks/`.
 
 ## Key parameters
 
@@ -311,6 +329,7 @@ When `DEBUG = True` in `pdfChunker.py`, three JSONL logs are written per documen
 |-----------|-------|----------|
 | `CHUNK_MAX_CHARS` (wpam/general) | 2500 | `pdfChunker.py` |
 | `_CHUNK_CAP_BY_STRATEGY` (statute/admin_rule) | 3500 | `pdfChunker.py` |
+| `STATUTE_SUBSECTION_TARGET_CHARS` (env var) | 1200 | `pdfChunker.py` |
 | `max_words` (general & wpam in-loop) | 1200 | `pdfChunker.py` |
 | `min_merge_words` (wpam) | 80 | `pdfChunker.py` |
 | `max_merge_total` (wpam) | 500 | `pdfChunker.py` |

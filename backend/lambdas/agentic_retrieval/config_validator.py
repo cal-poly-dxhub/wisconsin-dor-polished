@@ -27,8 +27,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # retrieval.toml is bundled alongside this file at the Lambda root (see
-# bundles.toml -> [[bundles]] dest = "agentic_retrieval"). Tests / local runs
-# can override the search path via RETRIEVAL_TOML_PATH.
+# bundles.toml -> [[bundles]] dest = "agentic_retrieval").
 _DEFAULT_TOML_PATH = Path(__file__).resolve().parent / "retrieval.toml"
 
 

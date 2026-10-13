@@ -4,7 +4,6 @@ pdf_chunking/
 # Source documents (too large for git, uploaded to S3 separately)
 docs/**/*.pdf
 docs/**/*.docx
-docs/case-law-progress.json
 
 # Dependencies
 node_modules/
@@ -308,21 +307,17 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# superpowers brainstorm server artifacts
-.superpowers/
+# ingest_case_law.py resume state
 tools/ingestion/.ingest-case-law-progress.json
 
-# Graph-regression harness output (reproducible via run_graph_regression.py /
-# measure_case_law_stability.py)
+# Graph-regression harness output (reproducible via run_graph_regression.py)
 tools/ingestion/ops/graph_regression_baseline.json
 tools/ingestion/ops/graph_regression_after.json
-tools/ingestion/ops/case_law_stability.json
 
 # Tooling
 .cursor
 
 # regression harness run artifacts (generated)
-tools/ingestion/ops/classifier_regression_*.json
 tools/ingestion/ops/graph_regression_*.json
 
 # regression harness local helpers (account-specific / throwaway)

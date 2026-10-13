@@ -8,7 +8,6 @@ from tracing.summaries import (
     build_tool_result_summary,
     discovery_summary,
     summarize_assistant_message,
-    summarize_bedrock_response,
 )
 
 
@@ -77,7 +76,7 @@ class TestBuildToolResultSummary:
         result = {
             "neighbors": [
                 {"id": "d1", "relationship": "CITES"},
-                {"id": "d2", "relationship": "IMPLEMENTS"},
+                {"id": "d2", "relationship": "PART_OF"},
             ]
         }
         s = build_tool_result_summary("get_neighbors", result, self._mock_neptune())
@@ -244,19 +243,6 @@ class TestSummarizeAssistantMessage:
         assert s["tool_use_count"] == 1
         assert s["tool_names"] == ["vector_search"]
         assert "thinking" in s["text_preview"]
-
-
-class TestSummarizBedrockResponse:
-    def test_extracts_usage(self):
-        response = {
-            "stopReason": "tool_use",
-            "usage": {"inputTokens": 10, "outputTokens": 20, "totalTokens": 30},
-            "metrics": {"latencyMs": 150},
-        }
-        s = summarize_bedrock_response(response)
-        assert s["stop_reason"] == "tool_use"
-        assert s["input_tokens"] == 10
-        assert s["model_latency_ms"] == 150
 
 
 # ── Tools added after the original summaries (worksheets, flowcharts, sections) ──

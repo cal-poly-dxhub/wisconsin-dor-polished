@@ -16,7 +16,7 @@ to threshold on.
 WHAT IS SCORED (candidates)
 ---------------------------
 The router scores the **user's own words first**, not a machine rewrite of them.
-Turn-0 auto-refinement (and the disambiguation chip flow) can rewrite a question
+Turn-0 auto-refinement can rewrite a question
 into a keyword-ish phrase that is a good *retrieval* query but a bad *routing*
 signal. Measured: "how do I apply for an exemption from property tax?" scores
 0.688 on ``flowcharts-exempt-70-11`` (clean SEED), while its auto-refinement
@@ -28,10 +28,8 @@ the chart exists for.
 the FIRST one that clears the gate, cheapest signal first:
 
     1. ``original`` — the verbatim user message
-    2. ``history``  — the question underneath a chip / one-liner follow-up
-                      (e.g. the user answered "Not certain — general
-                      information" to the property-type chips; their real
-                      question is the prior turn)
+    2. ``history``  — the question underneath a short typed follow-up
+                      (the user's real question is the prior turn)
     3. ``refined``  — the auto-refined retrieval query, scored last as a
                       fallback rather than as the primary signal
 
@@ -130,7 +128,6 @@ class FlowchartMatch:
     # Which candidate text produced top_score/second_score: "original",
     # "history", "refined" (or "" when nothing was scored).
     matched_on: str = ""
-    matched_text: str = ""
     # Per-candidate (label, top, second) for every candidate actually scored.
     candidates: list[tuple[str, float, float]] = field(default_factory=list)
 
@@ -235,7 +232,6 @@ def route(
                     top_chart,
                     scores,
                     matched_on=label,
-                    matched_text=text,
                     candidates=scored,
                 )
             if best is None or top_score > best.top_score:
@@ -247,7 +243,6 @@ def route(
                     top_chart,
                     scores,
                     matched_on=label,
-                    matched_text=text,
                 )
     except Exception:  # noqa: BLE001 — routing is best-effort; never break the loop
         logger.warning("flowchart routing failed; no seed", exc_info=True)

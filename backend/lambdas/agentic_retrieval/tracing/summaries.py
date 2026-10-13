@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from config import FAQ_SCORE_THRESHOLD
+
 from .logger import truncate_text
 
 
@@ -15,18 +17,6 @@ def summarize_assistant_message(message: dict, max_chars: int) -> dict[str, Any]
         "text_preview": truncate_text("\n".join(text_blocks), max_chars) if text_blocks else "",
         "tool_use_count": len(tool_names),
         "tool_names": tool_names,
-    }
-
-
-def summarize_bedrock_response(response: dict) -> dict[str, Any]:
-    usage = response.get("usage") or {}
-    metrics = response.get("metrics") or {}
-    return {
-        "stop_reason": response.get("stopReason", ""),
-        "input_tokens": usage.get("inputTokens"),
-        "output_tokens": usage.get("outputTokens"),
-        "total_tokens": usage.get("totalTokens"),
-        "model_latency_ms": metrics.get("latencyMs"),
     }
 
 
@@ -460,7 +450,7 @@ def build_tool_result_summary(tool_name: str, result: dict, neptune_client) -> d
         metadata = {
             "faqCount": len(faqs),
             "topScore": round(float(top), 4),
-            "faqScoreThreshold": 0.70,
+            "faqScoreThreshold": FAQ_SCORE_THRESHOLD,
             "faqScores": faq_scores,
             "topFaqSnippet": top_faq_text,
         }

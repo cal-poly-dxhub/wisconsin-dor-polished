@@ -10,8 +10,8 @@ dest = "chat_api"
 sources = ["./backend/lambdas/chat_api/"]
 
 [[bundles]]
-dest = "step_function_types/python/step_function_types"
-sources = ["./backend/layers/step_function_types/"]
+dest = "chat_contracts/python/chat_contracts"
+sources = ["./backend/layers/chat_contracts/"]
 
 [[bundles]]
 dest = "websocket_utils/python/websocket_utils"
@@ -24,7 +24,6 @@ sources = [
     "./backend/lambdas/websocket/websocket_errors.py",
     "./backend/lambdas/websocket/response_utils.py",
     "./backend/lambdas/websocket/validators.py",
-    "./backend/lambdas/websocket/__init__.py",
     "./backend/lambdas/websocket/requirements.txt",
 ]
 
@@ -35,21 +34,8 @@ sources = [
     "./backend/lambdas/websocket/websocket_errors.py",
     "./backend/lambdas/websocket/response_utils.py",
     "./backend/lambdas/websocket/validators.py",
-    "./backend/lambdas/websocket/__init__.py",
     "./backend/lambdas/websocket/requirements.txt",
 ]
-
-[[bundles]]
-dest = "default"
-sources = [
-    "./backend/lambdas/websocket/default.py",
-    "./backend/lambdas/websocket/websocket_errors.py",
-    "./backend/lambdas/websocket/response_utils.py",
-    "./backend/lambdas/websocket/validators.py",
-    "./backend/lambdas/websocket/__init__.py",
-    "./backend/lambdas/websocket/requirements.txt",
-]
-
 
 [[bundles]]
 dest = "agentic_retrieval"

@@ -58,8 +58,9 @@ def test_enriched_mode_embeds_composed_string_and_records_provenance():
     assert out["chunks"][0]["text"] == "Chunk zero text"
     assert out["embed_input_mode"] == "enriched"
     assert out["chunks"][0]["embed_input_chars"] == len(expected0)
-    # Doc-level embedding unchanged: title + summary + chunk0 plain text.
-    assert calls[2] == "Guide for Property Owners sum Chunk zero text"
+    # Only chunks are embedded; there is no document-level vector.
+    assert len(calls) == 2
+    assert "doc_embedding" not in out
 
 
 def test_plain_mode_embeds_raw_text():

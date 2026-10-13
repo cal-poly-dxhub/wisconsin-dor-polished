@@ -3,7 +3,8 @@ Adapter for Bedrock invoke_model with Anthropic Messages API format.
 
 Enables prompt caching by converting Converse-format tool definitions and
 messages to the native Anthropic format, injecting cache_control breakpoints,
-and mapping responses back to the Converse-compatible shape that main.py expects.
+and mapping responses back to the Converse-compatible shape that loop/phase_a.py
+and loop/phase_b.py expect.
 """
 
 import json

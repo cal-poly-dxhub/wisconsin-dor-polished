@@ -25,7 +25,6 @@ export interface AnswerStreamData {
   error?: string | null;
   /** Emitted as `phase: answer_streaming` when Phase B opens. */
   started: boolean;
-  suggestion?: 'topic-shift' | null;
 }
 
 function authorityColor(doc: Document): string {
@@ -108,14 +107,6 @@ export function AnswerStreamPane({
               </button>
             ))}
           </div>
-        </div>
-      )}
-
-      {data.suggestion === 'topic-shift' && (
-        <div className="mt-4 rounded-md bg-amber-50 px-3 py-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-amber-700">
-            Topic-shift suggestion sent (new chat / continue here)
-          </p>
         </div>
       )}
 

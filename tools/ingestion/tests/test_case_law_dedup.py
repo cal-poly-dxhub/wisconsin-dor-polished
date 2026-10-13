@@ -10,7 +10,8 @@ nameless citation cards. Two durable fixes prevent recurrence:
   2. extract's title derivation falls back to the CourtListener URL slug when
      metadata has no case_name, so a title never degrades to a bare citation.
 
-The one-time cleanup of already-loaded state lives in ops/dedup_case_law.py.
+(The one-time cleanup script for the already-loaded graph was retired once the
+graph held no duplicates.)
 """
 
 from __future__ import annotations

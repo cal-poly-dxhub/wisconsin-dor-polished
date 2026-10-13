@@ -64,7 +64,8 @@ export const ErrorContentSchema = z.object({
 
 export const ErrorMessageSchema = z.object({
   responseType: z.literal('error'),
-  queryId: z.string().optional(),
+  // The query that failed, when the server knows it.
+  queryId: optStr,
   content: ErrorContentSchema,
 });
 
@@ -110,31 +111,16 @@ export const AgentEventSchema = z.object({
 
 export const ChoicesContentSchema = z.object({
   choices: z.array(z.string()),
-  // Clarification framing that travels with the chips. `question` is absent on
-  // the legacy pre-loop disambiguation path (its canned answer already asks);
-  // `axis` names the fact being asked about and labels the block.
+  // Clarification framing that travels with the chips: the one question to put
+  // to the user, and the axis (the fact being asked about) that labels the block.
   question: optStr,
   axis: optStr,
-  kind: z
-    .enum(['clarification', 'disambiguation'])
-    .nullish()
-    .transform(v => v ?? undefined),
 });
 
 export const ChoicesMessageSchema = z.object({
   responseType: z.literal('choices'),
   queryId: z.string(),
   content: ChoicesContentSchema,
-});
-
-export const SuggestionContentSchema = z.object({
-  kind: z.literal('topic-shift'),
-});
-
-export const SuggestionMessageSchema = z.object({
-  responseType: z.literal('suggestion'),
-  queryId: z.string(),
-  content: SuggestionContentSchema,
 });
 
 // ── Flowchart (interactive "Walk the flowchart") ──────────────────────────────
@@ -195,7 +181,6 @@ export const MessageUnionSchema = z.discriminatedUnion('responseType', [
   AnswerEventTypeSchema,
   AgentEventSchema,
   ChoicesMessageSchema,
-  SuggestionMessageSchema,
   FlowchartMessageSchema,
 ]);
 
@@ -207,7 +192,6 @@ export const WebSocketMessageSchema = z.object({
     'error',
     'agent-trace',
     'choices',
-    'suggestion',
   ]),
   body: MessageUnionSchema,
 });
@@ -227,8 +211,6 @@ export type AgentEventKind = z.infer<typeof AgentEventKindSchema>;
 export type AgentEvent = z.infer<typeof AgentEventSchema>;
 export type ChoicesContent = z.infer<typeof ChoicesContentSchema>;
 export type ChoicesMessage = z.infer<typeof ChoicesMessageSchema>;
-export type SuggestionContent = z.infer<typeof SuggestionContentSchema>;
-export type SuggestionMessage = z.infer<typeof SuggestionMessageSchema>;
 export type FlowchartAuthority = z.infer<typeof FlowchartAuthoritySchema>;
 export type FlowchartNode = z.infer<typeof FlowchartNodeSchema>;
 export type FlowchartEdge = z.infer<typeof FlowchartEdgeSchema>;

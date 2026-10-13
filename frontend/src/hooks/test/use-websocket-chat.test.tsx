@@ -6,6 +6,7 @@ import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useWebSocketChat } from '../use-websocket-chat';
 import { useChatStore } from '../../stores/chat-store';
+import { inFlightQueryIds } from '../../lib/stream-recovery';
 import type {
   MessageHandler,
   MessageUnion,
@@ -54,6 +55,7 @@ mock.module('../../components/errors/use-chat-error', () => ({
 
 describe('useWebSocketChat Hook Tests', () => {
   let mockMessageHandler: ((message: MessageUnion) => void) | null = null;
+  let capturedOptions: { onSuccessfulSend: (queryId: string, message: string) => void } | null = null;
   let queryClient: QueryClient;
 
   beforeEach(() => {
@@ -68,8 +70,9 @@ describe('useWebSocketChat Hook Tests', () => {
     mockWsSendMessage.mockClear();
 
     mockUseValidatedWebSocket.mockImplementation(
-      (messageHandler?: MessageHandler) => {
+      (messageHandler?: MessageHandler, options?: unknown) => {
         if (messageHandler) mockMessageHandler = messageHandler;
+        if (options) capturedOptions = options as typeof capturedOptions;
 
         return {
           connectionState: 'open' as const,
@@ -119,8 +122,7 @@ describe('useWebSocketChat Hook Tests', () => {
       await result.current.sendMessage('What is Wisconsin?');
     });
 
-    // The hook forwards the optional suppressTopicShift flag as a 2nd arg.
-    expect(mockWsSendMessage).toHaveBeenCalledWith('What is Wisconsin?', undefined);
+    expect(mockWsSendMessage).toHaveBeenCalledWith('What is Wisconsin?');
 
     // Optimistic query should be in the store
     store = useChatStore.getState();
@@ -210,6 +212,93 @@ describe('useWebSocketChat Hook Tests', () => {
     const q = useChatStore.getState().queries[queryId];
     expect(q.status).toBe('completed');
     expect(q.response.content).toBe('The levy limit is set by § 66.0602.');
+  });
+
+  // The status stream recovery (Task 62) keys off. Retrieval runs 30-60s before
+  // the first answer frame, so a drop in that window must find the query
+  // in flight too, not only one that is already streaming.
+  test('the server accepting a message marks the query sent and in flight', async () => {
+    const Wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useWebSocketChat({ websocketUrl: 'wss://x' }), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await result.current.sendMessage('Q');
+    });
+    const optimisticId = useChatStore.getState().queryOrder[0];
+    expect(useChatStore.getState().queries[optimisticId].status).toBe('pending');
+    // Optimistic ids never reach the server, so recovery skips them.
+    expect(inFlightQueryIds(useChatStore.getState().queries)).toEqual([]);
+
+    act(() => {
+      capturedOptions!.onSuccessfulSend('server-query-sent', 'Q');
+    });
+
+    const store = useChatStore.getState();
+    expect(store.queries['server-query-sent'].status).toBe('sent');
+    expect(inFlightQueryIds(store.queries)).toEqual(['server-query-sent']);
+  });
+
+  test('a frame that beats the POST response also marks the query sent', async () => {
+    const Wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useWebSocketChat({ websocketUrl: 'wss://x' }), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await result.current.sendMessage('Q');
+    });
+
+    act(() => {
+      mockMessageHandler!({
+        responseType: 'agent-event',
+        queryId: 'server-query-early',
+        kind: 'loop_start',
+        seq: 1,
+        timestamp: 0,
+        payload: {},
+        devPayload: {},
+      });
+    });
+    expect(useChatStore.getState().queries['server-query-early'].status).toBe('sent');
+
+    // The late POST response finds nothing to replace and leaves it alone.
+    act(() => {
+      capturedOptions!.onSuccessfulSend('server-query-early', 'Q');
+    });
+    expect(useChatStore.getState().queries['server-query-early'].status).toBe('sent');
+  });
+
+  test('an error frame fails its query and returns the chat to idle', async () => {
+    const Wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useWebSocketChat({ websocketUrl: 'wss://x' }), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await result.current.sendMessage('Q');
+    });
+    act(() => {
+      capturedOptions!.onSuccessfulSend('server-query-err', 'Q');
+      useChatStore.getState().setChatState('waiting_for_response');
+    });
+
+    act(() => {
+      mockMessageHandler!({
+        responseType: 'error',
+        queryId: 'server-query-err',
+        content: { error: 'Something went wrong.' },
+      });
+    });
+
+    const store = useChatStore.getState();
+    expect(store.queries['server-query-err'].status).toBe('failed');
+    expect(store.queries['server-query-err'].error?.userMessage).toBe('Something went wrong.');
+    expect(store.chatState).toBe('idle');
   });
 
   test('should handle API send error gracefully', async () => {
@@ -387,7 +476,6 @@ describe('useWebSocketChat Hook Tests', () => {
         choices: ['Residential', 'Commercial', 'Agricultural'],
         question: 'What kind of property is it?',
         axis: 'property classification',
-        kind: 'clarification',
       },
     };
 
@@ -397,12 +485,11 @@ describe('useWebSocketChat Hook Tests', () => {
 
     const query = useChatStore.getState().queries[queryId];
     expect(query.choices).toEqual(['Residential', 'Commercial', 'Agricultural']);
-    // The question/axis/kind ride along with the options so the turn renders
+    // The question/axis ride along with the options so the turn renders
     // as one clarification block above the source cards.
     expect(query.clarification).toEqual({
       question: 'What kind of property is it?',
       axis: 'property classification',
-      kind: 'clarification',
     });
   });
 });

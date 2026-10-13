@@ -923,7 +923,6 @@ function DiscoverySquares({ counts }: { counts: Record<string, number> }) {
     'opinion-fetched': 'bg-foreground/30',
     'opinion-backfill': 'bg-foreground/25',
     'fetched': 'bg-foreground/20',
-    'framework-list': 'bg-foreground/15',
   };
   const entries = Object.entries(counts).sort(([, a], [, b]) => b - a);
   if (entries.length === 0) return null;
@@ -974,7 +973,6 @@ function CardVisualization({ card, trace }: { card: PipelineCard; trace: AgentTr
       return <GetSectionViz card={card} />;
     case 'get_neighbors':
       return <GraphNeighborsViz card={card} />;
-    case 'answer':
     case 'prepare_answer':
       return <SynthesisViz trace={trace} />;
     default:
