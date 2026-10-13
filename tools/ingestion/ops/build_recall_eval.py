@@ -183,7 +183,7 @@ MISSING_SOURCE_RULES: tuple[MissingRule, ...] = (
     ),
     MissingRule(
         r"flow ?chart on page 21",
-        ("gov_publications-2026-board-of-review-guide",),
+        ("gov_publications-pb056",),
         None,
         "Expected the BOR process flowchart in the Board of Review Guide",
     ),
@@ -195,7 +195,7 @@ MISSING_SOURCE_RULES: tuple[MissingRule, ...] = (
     ),
     MissingRule(
         r"agricultural, undeveloped, agricultural forest",
-        ("statutes-70", "gov_publications-2026-agricultural-assessment-guide"),
+        ("statutes-70", "gov_publications-pb061"),
         "70.32(2)",
         "Expected the ag / undeveloped / ag-forest classification rules (s. 70.32(2), ag guide)",
     ),

@@ -29,9 +29,8 @@ cases:
   query: Am i required to submit evidence when appealing a manufacturing assessment to the board of assesors?
   expected_doc_ids:
   - form_instructions-mfg-mta-appealfilinginstructions
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026
+  - gov_publications-pb065
   - gov_publications-prop066
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026
   - statutes-70
   expected_chunk_ids:
   - statutes-70_chunk_0212
@@ -128,7 +127,7 @@ cases:
   expected_doc_ids:
   - faq_pages-slf-bor
   - faq_pages-slf-bor3
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - statutes-70
   note_hints:
   - not-in-graph:case-law-2017-wi-79
@@ -163,7 +162,7 @@ cases:
   query: Can I appeal my assessment if I don't go to the Board of Review?
   expected_doc_ids:
   - case-law-215-wis-2d-370
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - gov_publications-pb060
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
@@ -197,21 +196,21 @@ cases:
   tier: gold_cited
   query: can the town clerk be the chairman of board of review
   expected_doc_ids:
-  - gov_publications-2026-board-of-review-guide
   - gov_publications-pa502
+  - gov_publications-pb056
   - statutes-60
   - statutes-70
   expected_chunk_ids:
-  - gov_publications-2026-board-of-review-guide_chunk_0000
-  - gov_publications-2026-board-of-review-guide_chunk_0002
-  - gov_publications-2026-board-of-review-guide_chunk_0005
-  - gov_publications-2026-board-of-review-guide_chunk_0006
-  - gov_publications-2026-board-of-review-guide_chunk_0013
-  - gov_publications-2026-board-of-review-guide_chunk_0017
-  - gov_publications-2026-board-of-review-guide_chunk_0019
-  - gov_publications-2026-board-of-review-guide_chunk_0050
-  - gov_publications-2026-board-of-review-guide_chunk_0061
-  - gov_publications-2026-board-of-review-guide_chunk_0081
+  - gov_publications-pb056_chunk_0000
+  - gov_publications-pb056_chunk_0002
+  - gov_publications-pb056_chunk_0005
+  - gov_publications-pb056_chunk_0006
+  - gov_publications-pb056_chunk_0013
+  - gov_publications-pb056_chunk_0017
+  - gov_publications-pb056_chunk_0019
+  - gov_publications-pb056_chunk_0044
+  - gov_publications-pb056_chunk_0055
+  - gov_publications-pb056_chunk_0075
   - statutes-70_chunk_0159
   - statutes-70_chunk_0160
   - statutes-70_chunk_0162
@@ -255,7 +254,7 @@ cases:
     \ and terrain. The imagery offers ground sample distance (GSD) resolution down to 1-inch per pixel.\
     \ \""
   expected_doc_ids:
-  - gov_publications-2026-agricultural-assessment-guide
+  - gov_publications-pb061
   - iaao-standard-on-mass-appraisal
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
@@ -274,13 +273,13 @@ cases:
   expected_doc_ids:
   - admin_rules-tax-12
   - form_instructions-pa-750r-inst
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026
+  - gov_publications-pb065
   - statutes-70
 - id: re-0020
   tier: gold_cited
   query: does as assessor themself have to be present at open book? Is a hired staff okay?
   expected_doc_ids:
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - gov_publications-pb060
   - gov_publications-pb062
   - statutes-70
@@ -316,8 +315,8 @@ cases:
   - admin_rules-tax-18
   - case-law-401-wis-2d-27
   - faq_pages-slf-useassmt
-  - gov_publications-2026-agricultural-assessment-guide
-  - gov_publications-tax-18-conservation-programs-guide-2026
+  - gov_publications-pb061
+  - gov_publications-tax18
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2024
   - wpam-wisconsin-property-assessment-manual-2025
@@ -381,7 +380,7 @@ cases:
   tier: gold_cited
   query: For manufacturing what is the difference wholesale vs retail sales?
   expected_doc_ids:
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026
+  - gov_publications-pb065
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2025
 - id: re-0026
@@ -421,8 +420,6 @@ cases:
   query: how can the clerk correct an assessment roll error after Board of Review has adjourned for the
     year?
   expected_doc_ids:
-  - form_instructions-chargeback-steps
-  - gov_publications-chargeback-process-summary
   - gov_publications-chargeback-steps
   - gov_publications-pa502
   - statutes-70
@@ -445,9 +442,9 @@ cases:
   - complex_inquiry_pages-assess-recert
   - complex_inquiry_pages-assessor-certification
   - form_instructions-pc-722f
-  - gov_publications-assessor-certification-study-materials
   - gov_publications-pb060
   - gov_publications-pb062
+  - gov_publications-pm-201
   - statutes-73
   expected_chunk_ids:
   - admin_rules-tax-12_chunk_0000
@@ -456,7 +453,7 @@ cases:
   - admin_rules-tax-12_chunk_0003
   - admin_rules-tax-12_chunk_0004
   - admin_rules-tax-12_chunk_0005
-  - gov_publications-assessor-certification-study-materials_chunk_0005
+  - gov_publications-pm-201_chunk_0005
 - id: re-0031
   tier: gold_cited
   query: how do sales tax revenues factor into the calculation for county and municipal aid and supplemental
@@ -493,7 +490,7 @@ cases:
   query: how does a property owner appeal their assessment?
   expected_doc_ids:
   - faq_pages-slf-bor
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2025
   note_hints:
@@ -516,7 +513,7 @@ cases:
   query: How far away does a building have to be to be considered in support of manufacturing and on the
     manufacturing roll?
   expected_doc_ids:
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026
+  - gov_publications-pb065
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
   expected_chunk_ids:
@@ -535,7 +532,7 @@ cases:
   query: how many days must be between open book and board of review?
   expected_doc_ids:
   - faq_pages-slf-bor2
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - statutes-70
 - id: re-0037
   tier: gold_cited
@@ -597,8 +594,8 @@ cases:
   query: If a manufacturing property sells, is the assessment adjusted to the sale price?
   expected_doc_ids:
   - case-law-45-wis-2d-683
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026
+  - gov_publications-pb065
+  - gov_publications-prop066
   - news_pages-assessor-news-2023-10-27
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2025
@@ -610,7 +607,7 @@ cases:
   expected_doc_ids:
   - case-law-232-wis-2d-323
   - faq_pages-slf-nmomittx
-  - form_instructions-omitted-taxes-steps
+  - gov_publications-omitted-taxes-steps
   - gov_publications-pa502
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
@@ -683,7 +680,7 @@ cases:
   - case-law-215-wis-2d-370
   - case-law-399-wis-2d-696
   - case-law-406-wis-2d-663
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - gov_publications-pb060
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
@@ -727,7 +724,7 @@ cases:
   expected_doc_ids:
   - case-law-247-wis-2d-295
   - case-law-284-wis-2d-741
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026
+  - gov_publications-pb065
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
   expected_chunk_ids:
@@ -749,7 +746,6 @@ cases:
   tier: gold_cited
   query: is it against the law for a town board member to also be on the BOR?
   expected_doc_ids:
-  - gov_publications-2026-board-of-review-guide
   - gov_publications-pb056
   - statutes-70
 - id: re-0052
@@ -761,7 +757,7 @@ cases:
   - case-law-385-wis-2d-676
   - case-law-401-wis-2d-27
   - faq_pages-slf-useassmt
-  - gov_publications-2026-agricultural-assessment-guide
+  - gov_publications-pb061
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
   expected_chunk_ids:
@@ -778,7 +774,7 @@ cases:
   - case-law-259-wis-2d-868
   - case-law-381-wis-2d-311
   - faq_pages-slf-useassmt
-  - gov_publications-2026-agricultural-assessment-guide
+  - gov_publications-pb061
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
   expected_chunk_ids:
@@ -819,19 +815,18 @@ cases:
   expected_doc_ids:
   - case-law-53-wis-2d-233
   - faq_pages-slf-bor4
-  - gov_publications-2026-board-of-review-guide
   - gov_publications-pb056
   - gov_publications-pb060
   - statutes-70
   expected_chunk_ids:
-  - gov_publications-2026-board-of-review-guide_chunk_0002
-  - gov_publications-2026-board-of-review-guide_chunk_0013
-  - gov_publications-2026-board-of-review-guide_chunk_0028
-  - gov_publications-2026-board-of-review-guide_chunk_0029
-  - gov_publications-2026-board-of-review-guide_chunk_0030
-  - gov_publications-2026-board-of-review-guide_chunk_0047
-  - gov_publications-2026-board-of-review-guide_chunk_0048
-  - gov_publications-2026-board-of-review-guide_chunk_0049
+  - gov_publications-pb056_chunk_0002
+  - gov_publications-pb056_chunk_0013
+  - gov_publications-pb056_chunk_0028
+  - gov_publications-pb056_chunk_0029
+  - gov_publications-pb056_chunk_0030
+  - gov_publications-pb056_chunk_0041
+  - gov_publications-pb056_chunk_0042
+  - gov_publications-pb056_chunk_0043
   - statutes-70_chunk_0133
   - statutes-70_chunk_0134
   - statutes-70_chunk_0138
@@ -851,7 +846,7 @@ cases:
   - case-law-45-wis-2d-683
   - case-law-60-wis-2d-84
   - form_instructions-padinstr
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026
+  - gov_publications-prop066
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
   expected_chunk_ids:
@@ -879,24 +874,23 @@ cases:
   tier: gold_cited
   query: This pertains to the Sate Board of Assessors
   expected_doc_ids:
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026
+  - gov_publications-pb065
+  - gov_publications-prop066
   - statutes-70
   expected_chunk_ids:
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026_chunk_0000
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026_chunk_0004
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026_chunk_0007
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026_chunk_0008
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026_chunk_0009
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026_chunk_0011
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026_chunk_0012
-  - gov_publications-manufacturing-board-of-assessor-appeals-2026_chunk_0013
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026_chunk_0002
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026_chunk_0003
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026_chunk_0018
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026_chunk_0024
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026_chunk_0026
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026_chunk_0029
+  - gov_publications-pb065_chunk_0002
+  - gov_publications-pb065_chunk_0003
+  - gov_publications-pb065_chunk_0018
+  - gov_publications-pb065_chunk_0024
+  - gov_publications-pb065_chunk_0026
+  - gov_publications-pb065_chunk_0029
+  - gov_publications-prop066_chunk_0003
+  - gov_publications-prop066_chunk_0006
+  - gov_publications-prop066_chunk_0007
+  - gov_publications-prop066_chunk_0008
+  - gov_publications-prop066_chunk_0010
+  - gov_publications-prop066_chunk_0011
+  - gov_publications-prop066_chunk_0012
   - statutes-70_chunk_0213
   - statutes-70_chunk_0214
 - id: re-0058
@@ -1006,20 +1000,20 @@ cases:
   - admin_rules-tax-12
   - complex_inquiry_pages-assessor-certification
   - form_instructions-pc-722f
-  - gov_publications-assessor-certification-study-materials
+  - gov_publications-pm-201
   - news_pages-assessor-news-2024-03-19
   - statutes-73
   expected_chunk_ids:
   - complex_inquiry_pages-assessor-certification_chunk_0000
   - complex_inquiry_pages-assessor-certification_chunk_0001
-  - gov_publications-assessor-certification-study-materials_chunk_0000
-  - gov_publications-assessor-certification-study-materials_chunk_0004
-  - gov_publications-assessor-certification-study-materials_chunk_0005
-  - gov_publications-assessor-certification-study-materials_chunk_0006
-  - gov_publications-assessor-certification-study-materials_chunk_0007
-  - gov_publications-assessor-certification-study-materials_chunk_0037
-  - gov_publications-assessor-certification-study-materials_chunk_0078
-  - gov_publications-assessor-certification-study-materials_chunk_0083
+  - gov_publications-pm-201_chunk_0000
+  - gov_publications-pm-201_chunk_0004
+  - gov_publications-pm-201_chunk_0005
+  - gov_publications-pm-201_chunk_0006
+  - gov_publications-pm-201_chunk_0007
+  - gov_publications-pm-201_chunk_0035
+  - gov_publications-pm-201_chunk_0085
+  - gov_publications-pm-201_chunk_0091
   source_rows: 2
 - id: re-0066
   tier: gold_cited
@@ -1096,7 +1090,7 @@ cases:
   tier: gold_cited
   query: what if the final board of review is held prior to the 7 day minimum requirement
   expected_doc_ids:
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
 - id: re-0072
@@ -1127,13 +1121,12 @@ cases:
   - form_instructions-pa-132m
   - form_instructions-pa-138f
   - gov_publications-pb065
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026
 - id: re-0075
   tier: gold_cited
   query: What is required in a maintenance assessment versus a revaluation?
   expected_doc_ids:
-  - gov_publications-2025-guide-for-reassessments
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
+  - gov_publications-pr115
   - wpam-wisconsin-property-assessment-manual-2025
   note_hints:
   - not-in-graph:gov_publications-2026-property-assessment-guide
@@ -1141,8 +1134,6 @@ cases:
   tier: gold_cited
   query: What is required in a maintenance assessment vs. a revaluation?
   expected_doc_ids:
-  - gov_publications-2025-guide-for-reassessments
-  - gov_publications-2026-board-of-review-guide
   - gov_publications-pb056
   - gov_publications-pb060
   - gov_publications-pb062
@@ -1187,7 +1178,7 @@ cases:
   - case-law-401-wis-2d-27
   - faq_pages-slf-agfores5
   - faq_pages-slf-useassmt
-  - gov_publications-2026-agricultural-assessment-guide
+  - gov_publications-pb061
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
   expected_chunk_ids:
@@ -1382,13 +1373,13 @@ cases:
   query: when is the deadline to apply for manufacturing classification?
   expected_doc_ids:
   - form_instructions-pa-750r-inst
-  - gov_publications-wisconsin-manufacturing-property-assessment-2026
+  - gov_publications-pb065
   - statutes-70
 - id: re-0093
   tier: gold_cited
   query: When must an assessor send notices of changed assessment in a revaluation year?
   expected_doc_ids:
-  - gov_publications-2026-agricultural-assessment-guide
+  - gov_publications-pb061
   - news_pages-assessor-news-2022-03-04
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2025
@@ -1483,9 +1474,9 @@ cases:
   tier: gold_missing
   query: Are we required to have the assessor complete full value assessments each year?
   expected_doc_ids:
-  - gov_publications-2025-guide-for-reassessments
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - gov_publications-pb062
+  - gov_publications-pr115
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2012
   - wpam-wisconsin-property-assessment-manual-2019
@@ -1532,7 +1523,7 @@ cases:
   query: How are my property taxes determined?
   expected_doc_ids:
   - faq_pages-slf-ptrecred
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - statutes-70
   - statutes-74
   - wpam-wisconsin-property-assessment-manual-2023
@@ -1627,21 +1618,20 @@ cases:
   tier: gold_missing
   query: What are the steps of the Board of Review process?
   expected_doc_ids:
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
   also_in:
   - gold_cited
   expected_chunk_ids:
-  - gov_publications-2026-board-of-review-guide_chunk_0005
-  - gov_publications-2026-board-of-review-guide_chunk_0006
-  - gov_publications-2026-board-of-review-guide_chunk_0009
-  - gov_publications-2026-board-of-review-guide_chunk_0012
-  - gov_publications-2026-board-of-review-guide_chunk_0024
-  - gov_publications-2026-board-of-review-guide_chunk_0039
-  - gov_publications-2026-board-of-review-guide_chunk_0040
-  - gov_publications-2026-board-of-review-guide_chunk_0042
-  - gov_publications-2026-board-of-review-guide_chunk_0043
+  - gov_publications-pb056_chunk_0005
+  - gov_publications-pb056_chunk_0006
+  - gov_publications-pb056_chunk_0009
+  - gov_publications-pb056_chunk_0012
+  - gov_publications-pb056_chunk_0024
+  - gov_publications-pb056_chunk_0035
+  - gov_publications-pb056_chunk_0036
+  - gov_publications-pb056_chunk_0037
   - statutes-70_chunk_0135
   - statutes-70_chunk_0136
   - statutes-70_chunk_0139
@@ -1685,7 +1675,7 @@ cases:
   tier: gold_missing
   query: what information is used to determine my assessment?
   expected_doc_ids:
-  - gov_publications-2026-agricultural-assessment-guide
+  - gov_publications-pb061
   - statutes-70
   expected_subsection: 70.32(2)
   notes: Expected the ag / undeveloped / ag-forest classification rules (s. 70.32(2), ag guide)
@@ -1702,7 +1692,7 @@ cases:
   expected_doc_ids:
   - case-law-215-wis-2d-370
   - case-law-395-wis-2d-351
-  - gov_publications-2026-board-of-review-guide
+  - gov_publications-pb056
   - gov_publications-pb060
   - statutes-70
   - wpam-wisconsin-property-assessment-manual-2026
