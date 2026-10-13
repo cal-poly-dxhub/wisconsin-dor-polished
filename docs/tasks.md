@@ -4,7 +4,7 @@ _Finished history (the PR #28-#33 sprint, Tasks 21/45/46/49/50/52/58/61/64/65) m
 [docs/archive/tasks-2026-09.md](archive/tasks-2026-09.md) on 2026-09-19. This file is the
 live roadmap and the open tasks, plus Tasks 69-76 as recent context._
 
-## Roadmap as of 2026-09-19
+## Roadmap as of 2026-09-19 (updated 2026-10-10)
 
 The bot is done as a research problem: every tester-reported retrieval issue has a shipped,
 harness-guarded fix, the Assessment Manual is fully indexed (Task 72), and the repo has been
@@ -48,12 +48,28 @@ through a three-PR cleanup (Task 76). What remains:
 
 **Done and no longer on the list:**
 
-- **Adequacy judge (Task 71) is ON in prod** since 2026-09-18, with `SCOPE_GATE_ENABLED=false`.
-  It owns scope and clarification. Rollback is flipping the two CDK flags.
-- **The pre-loop query classifier is legacy and OFF.** `ENABLE_DISAMBIGUATION` and
-  `ENABLE_TOPIC_SHIFT` default false. `disambiguation.py`, the `disambiguationClassifier`
-  prompt and `PROPERTY_TYPE_CHOICES` are retained only for that rollback path; delete them
-  once the judge has a longer run of production traffic.
+- **Adequacy judge (Task 71) is the only scope/clarification path.** On in prod since
+  2026-09-18; the judge-off rollback and its `ADEQUACY_JUDGE_ENABLED` flag were removed on
+  2026-10-10, so the judge always runs.
+- **The pre-loop query classifier is gone** (removed 2026-10-10): `disambiguation.py`, the
+  `disambiguationClassifier` prompt, the scope gate, DISAMBIGUATE chips, the topic-shift
+  `suggestion` message and their flags (`ENABLE_DISAMBIGUATION`, `ENABLE_TOPIC_SHIFT`,
+  `SCOPE_GATE_ENABLED`), plus `run_classifier_regression.py`.
+- **Stale-content cleanup, 2026-10-10.** A seven-area audit (docs, retrieval Lambda,
+  chat_api/websocket/layers, frontend, ingestion, infra, prompts/config/tests), every claim
+  checked against the code and the live graph/S3, then one branch per area. Highlights:
+  case law documented as what it is (holding-summary + selective majority-opinion chunks,
+  ~9k chunks on 1,117 of 1,146 cases — not stubs); the legacy classifier and judge-off
+  rollback removed; `step_function_types` renamed `chat_contracts`; the WebSocket `$default`
+  echo route, the CloudWatchIam nested stack, the unthrottled HTTP `$default` stage, the
+  `timestampIndex` GSI and dead grants/exports removed; dead env vars (`MAX_TURNS` stays a
+  code constant of 10) and dead modules/scripts deleted. Bugs found along the way and fixed:
+  stream recovery never covered Phase A (no query was ever marked `sent`); a retrieval error
+  never marked its query failed (`ErrorMessage` lacked `queryId`); case-law extract read the
+  7/30 JSON stub instead of the opinion `.txt`, leaving 20 F. Supp. cases chunkless; 10
+  byte-identical twin documents (hand-uploaded 2026-04-16 before the manifest) plus older
+  editions and a third chargeback / omitted-taxes copy duplicated in the graph. Deferred:
+  the Phase A prompt trim (Task 83).
 - **The old CDK-owned graph `g-ndvl4j73v4` was deleted on 2026-09-19.** `g-svphgiu4k6` is
   live, pinned by the `neptuneGraphId` context in `infra/cdk.json`, and is not a CDK
   resource at all (`infra/README.md` has the blue/green procedure).
@@ -83,6 +99,7 @@ being pursued (document expansion already does it at ingest with no DOR maintena
 | 80 | DOR single sign-on | Scaffolding built 2026-09-28, off by default (`cdk diff` with no `sso` context: no Cognito change). `infra/stacks/sso.ts` (optional `sso` context: Cognito domain, code flow, SAML or OIDC provider, outputs for DOR) + `frontend/src/lib/sso.ts` (PKCE redirect, tokens stored for amazon-cognito-identity-js so refresh and API auth are unchanged) + `/auth/callback` + login button + SSO-aware sign-out. Runbook: `infra/README.md` "DOR single sign-on". Needs from DOR: protocol, metadata URL or issuer/client, email claim. Register against the pool in DOR's account after Task 66 |
 | 81 | Five harness failures from 2026-09-28 | Shipped 2026-10-10. General fix: **statute grounding** (`loop/grounding.py`): a section the research plan cites but never retrieved is fetched before the judge and writer, so its conditions and exceptions are in context (appeal-assessed-value states the §70.365 exception 3/3, was 0/3). `must_cite` accepts any-of lists (property-taxes-determined: pa502 or pb060, as its rubric). gq-boa-increase-named-body expects CLARIFY (Isaac: the sources contain more than one assessing board). The answer prompt's actor rule no longer names specific bodies. Full 65-case gate 2026-10-08 (graded in Claude Code): **59/64** (was 57). Still red: bor-interpreter-waiver (DOR content), prior-year-roll, appeal-assessed-value (now states the exception; grader read it as attached to the claim rather than the BOR precondition), boa-increase (1 run), town-clerk-bor-chair (borderline, untouched by grounding; passed as a close call 09-28) |
 | 82 | Statute sections missing from the graph (chunking) | Found 2026-10-08: `statutes-70` has no §70.05 section; headings jump from 70.04 to 70.055, so its text (assessors' duties, incl. 70.05(5) annual full value) was probably merged into a neighbouring chunk by the statute chunker. Likely cause of the long-standing `gq-full-value-annual` failure. Next: scan every chapter for section numbers cited in statute text but absent as headings, fix the chunker, re-extract the affected chapters |
+| 83 | Trim the Phase A prompt's pre-judge sections | Deferred by Isaac 2026-10-10. **Problem:** `agenticRetrieval` still carries two sections written before the adequacy judge existed. `## OUT OF SCOPE` tells the agent to *decline* topics including "legal advice specific to an individual's situation" — contradicting the judge, which owns scope, says personal phrasing ("my land", "can I") is never grounds to decline, and requires zero relevant evidence for DECLINE. `## ANSWER FORMAT` gives answer-writing rules ("When composing your final answer…") to a phase that never writes the answer (the next section says "Do NOT write the answer text yourself"); the rules already live in `answerStream`. **Fix:** replace OUT OF SCOPE with a short instruction to note coverage gaps in `answer_plan` and leave the scope decision to the judge, keeping the list of topics that are NOT in the graph (federal tax, other states, real-estate closings) as retrieval guidance so the agent does not burn turns searching for them; delete ANSWER FORMAT after confirming each rule is in `answerStream`; update the `test_prompt` pins and `_prompt_fallback.py`. **Gate:** a harness run graded in Claude Code — watch DECLINE / over-refusal cases (especially personal-phrasing questions) and turn counts |
 | — | Phase 3 hierarchy evaluation | Not started (roadmap item 5) |
 
 ## Done
