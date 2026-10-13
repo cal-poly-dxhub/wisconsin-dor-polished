@@ -3,7 +3,8 @@ import * as cdk from 'aws-cdk-lib';
 import { WisconsinBotStack } from '../stacks/stack';
 
 const app = new cdk.App();
-const stackName = app.node.tryGetContext('stackName') || 'WisconsinBotStack';
+// The production stack; `-c stackName=...` deploys a separate copy.
+const stackName = app.node.tryGetContext('stackName') || 'WisconsinBotGraphRAG';
 
 new WisconsinBotStack(app, stackName, {
   /* If you don't specify 'env', this stack will be environment-agnostic.

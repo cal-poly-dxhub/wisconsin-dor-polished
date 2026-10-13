@@ -9,7 +9,7 @@ import { Construct } from 'constructs';
 import { getRetrievalEnv } from '../lib/retrieval-config';
 
 export interface GraphRAGMessagesStackProps extends cdk.StackProps {
-  stepFunctionTypesLayer: lambda.LayerVersion;
+  chatContractsLayer: lambda.LayerVersion;
   websocketUtilsLayer: lambda.LayerVersion;
   sessionsTable: cdk.aws_dynamodb.ITable;
   chatHistoryTable: cdk.aws_dynamodb.ITable;
@@ -32,7 +32,8 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
   constructor(scope: Construct, id: string, props: GraphRAGMessagesStackProps) {
     super(scope, id, props);
 
-    // Agentic Retrieval Lambda (replaces classifier + retrieval for GraphRAG path)
+    // The single retrieval + answer Lambda: Phase A tool loop, adequacy judge,
+    // and the Phase B answer stream over the chat WebSocket.
     const agenticRetrievalHandler = new lambda.Function(
       this,
       'AgenticRetrievalFunction',
@@ -52,9 +53,9 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
             ],
           },
         }),
-        layers: [props.stepFunctionTypesLayer, props.websocketUtilsLayer],
+        layers: [props.chatContractsLayer, props.websocketUtilsLayer],
         description:
-          'Agentic retrieval: Neptune graph + vector search with Claude tool loop, paced replay',
+          'Agentic retrieval: Neptune graph + vector search with a Claude tool loop, adequacy judge, streamed answer',
         timeout: cdk.Duration.seconds(120),
         memorySize: 512,
         tracing: lambda.Tracing.ACTIVE,
@@ -68,25 +69,6 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
           FAQ_URL_TABLE_NAME: props.faqUrlTable.tableName,
           MODEL_CONFIG_TABLE_NAME: props.modelConfigTable.tableName,
           LOG_LEVEL: 'INFO',
-          // Legacy pre-loop classifier, superseded by the adequacy judge
-          // (Task 71). Off since 2026-09-19. Flip either back to 'true' to
-          // revive it — the topic-shift nudge ("start a new chat?") comes
-          // from the same Haiku call, so it returns with these.
-          ENABLE_DISAMBIGUATION: 'false',
-          ENABLE_TOPIC_SHIFT: 'false',
-          // Post-retrieval adequacy judge (2026-09-18): every query runs the
-          // research loop; a Haiku judge then grades the answer plan against
-          // the retrieved evidence (ANSWER / CLARIFY / DECLINE) and Phase B
-          // writes under that finding. With the judge on, the pre-loop
-          // OUT_OF_SCOPE / DISAMBIGUATE short-circuits are skipped
-          // (SCOPE_GATE_ENABLED=false); TOPIC_SHIFT is unaffected. Two-way
-          // door: flip both and redeploy. ON as of 2026-09-18 (evening) after
-          // one clean 63-case run: classic 41/45 vs 40/45 judge-off, scope
-          // 14/17 vs 10/17, CLARIFY on 18/63 (accepted: asking on a real
-          // source-derived fork is the intended behavior). Rollback = 'false'
-          // / 'true'.
-          ADEQUACY_JUDGE_ENABLED: 'true',
-          SCOPE_GATE_ENABLED: 'false',
         }),
       }
     );
@@ -100,11 +82,11 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
     // Lambda failures to the UI instead of the frontend spinning forever.
     props.sessionsTable.grantReadData(agenticRetrievalHandler);
 
-    // Read access to the FAQ-URL table so _build_faq_resource can attach the
+    // Read access to the FAQ-URL table so faq.lookup_faq_url can attach the
     // public revenue.wi.gov link to each FAQ at query time.
     props.faqUrlTable.grantReadData(agenticRetrievalHandler);
 
-    // Read access to the model config table for externalized system prompt.
+    // Read access to the model config table for the externalized prompts.
     props.modelConfigTable.grantReadData(agenticRetrievalHandler);
 
     // Logs carry query text previews; keep 90 days rather than 731.
@@ -127,7 +109,6 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
         actions: [
           'neptune-graph:ExecuteQuery',
           'neptune-graph:ReadDataViaQuery',
-          'neptune-graph:GetQueryStatus',
         ],
         resources: [
           `arn:aws:neptune-graph:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:graph/${props.neptuneGraphId}`,
@@ -135,9 +116,11 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
       })
     );
 
-    // S3 read permissions: fetch_case_opinion GETs case-law .txt files
-    // to feed full opinion text into the agent prompt. Citation links use
-    // each document's public source_url; no presigned URLs are minted.
+    // S3 read permissions on the raw bucket: fetch_case_opinion and the
+    // opinion backfill read case-law .txt files, and the get_worksheet /
+    // get_flowchart tools read the worksheets/ and flowcharts/ sidecars.
+    // Citation links use each document's public source_url; no presigned URLs
+    // are minted.
     // ListBucket is required so that GetObject on a missing key returns
     // NoSuchKey (404) instead of AccessDenied (403).
     agenticRetrievalHandler.addToRolePolicy(
@@ -170,8 +153,6 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
     //                                               answer stream (Phase B),
     //                                               auto-refine
     //   us.anthropic.claude-haiku-4-5-20251001-v1:0 adequacy judge
-    //                                               (and the disabled pre-loop
-    //                                               disambiguation classifier)
     //   amazon.titan-embed-text-v2:0                vector_search query
     //                                               embedding
     // Nova 2 Lite is ingestion-only (Fargate), not invoked here.
@@ -224,10 +205,5 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
         retryAttempts: 0,
       })
     );
-
-    new cdk.CfnOutput(this, 'AgenticRetrievalFunctionArn', {
-      value: agenticRetrievalHandler.functionArn,
-      description: 'ARN of the Agentic Retrieval Lambda function',
-    });
   }
 }

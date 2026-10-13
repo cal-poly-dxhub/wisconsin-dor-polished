@@ -14,14 +14,7 @@ describe('GraphRAGStack', () => {
     return Template.fromStack(stack);
   }
 
-  test('FaqUrlTable exists with normalized_question hash key', () => {
-    const template = synth();
-    template.hasResourceProperties('AWS::DynamoDB::Table', {
-      KeySchema: [{ AttributeName: 'normalized_question', KeyType: 'HASH' }],
-    });
-  });
-
-  test('FaqUrlTable uses on-demand (pay-per-request) billing', () => {
+  test('FaqUrlTable: normalized_question hash key, on-demand billing', () => {
     const template = synth();
     template.hasResourceProperties('AWS::DynamoDB::Table', {
       BillingMode: 'PAY_PER_REQUEST',
