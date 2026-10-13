@@ -16,17 +16,13 @@ const CreateSessionResponse = z.object({
 const SendMessageRequest = z.object({
   message: z.string().min(1),
   persona: z.enum(['citizen', 'government']).optional(),
-  // Suppresses only the TOPIC_SHIFT verdict for this send (OUT_OF_SCOPE /
-  // DISAMBIGUATE still apply). Set on "Continue here" and on the first send
-  // after dismissing a topic-shift suggestion, so the nudge fires at most once.
-  suppressTopicShift: z.boolean().optional(),
 });
 const SendMessageResponse = z.object({
   message: z.string(),
   queryId: z.string().uuid(),
 });
 // Structured feedback captured by the feedback modal. Mirrors the backend
-// RichFeedback model (step_function_types/models.py) and the frontend
+// RichFeedback Pydantic model (the chat_api request contract) and the frontend
 // FeedbackDraft store shape (minus transient/queryId fields).
 const RichSubsection = z.object({
   answer: z.enum(['yes', 'no']).nullable(),
@@ -92,9 +88,6 @@ const SessionHistoryResponse = z.object({
 const DeleteSessionResponse = z.object({
   message: z.string(),
 });
-const RenameSessionRequest = z.object({
-  title: z.string().min(1),
-});
 const RenameSessionResponse = z.object({
   message: z.string(),
   title: z.string(),
@@ -111,7 +104,6 @@ export type SessionsListResponse = z.infer<typeof SessionsListResponse>;
 export type ChatMessage = z.infer<typeof ChatMessage>;
 export type SessionHistoryResponse = z.infer<typeof SessionHistoryResponse>;
 export type DeleteSessionResponse = z.infer<typeof DeleteSessionResponse>;
-export type RenameSessionRequest = z.infer<typeof RenameSessionRequest>;
 export type RenameSessionResponse = z.infer<typeof RenameSessionResponse>;
 
 // Parses the API response, handling both wrapped (Lambda proxy 1.0 style)

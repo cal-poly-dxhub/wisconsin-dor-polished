@@ -2,24 +2,20 @@
 
 import { motion } from 'framer-motion';
 import { ChoiceChips } from './choice-chips';
-import type { ClarificationKind } from '@/stores/types';
 
 interface ClarificationBlockProps {
   queryId: string;
   /** The alternatives to offer as chips. The block renders nothing if empty. */
   choices: string[];
-  /** The single question to put to the user. Absent on the legacy pre-loop
-   *  disambiguation path, whose answer text already asks it. */
+  /** The single question to put to the user. */
   question?: string;
   /** Short noun phrase for the fact being asked about ("property
    *  classification"); becomes the block's label when present. */
   axis?: string;
-  kind?: ClarificationKind;
   onSelect?: (choice: string) => void;
 }
 
 const DEFAULT_LABEL = 'To narrow this down';
-const DISAMBIGUATION_LABEL = 'Property type';
 
 /** Sentence-case an axis for use as a label: the judge writes axes in the
  *  corpus's own lowercase vocabulary ("property classification"), and the
@@ -48,16 +44,11 @@ export function ClarificationBlock({
   choices,
   question,
   axis,
-  kind,
   onSelect,
 }: ClarificationBlockProps) {
   if (!choices || choices.length === 0) return null;
 
-  const label = axis
-    ? labelForAxis(axis)
-    : kind === 'disambiguation'
-      ? DISAMBIGUATION_LABEL
-      : DEFAULT_LABEL;
+  const label = axis ? labelForAxis(axis) : DEFAULT_LABEL;
 
   return (
     <motion.div

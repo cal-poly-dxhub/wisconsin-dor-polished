@@ -38,7 +38,6 @@ export interface Document {
     | 'vector-search'
     | 'graph-neighbor'
     | 'fetched'
-    | 'framework-list'
     | 'opinion-fetched'
     | 'unknown';
   chunks?: ChunkSnippet[];

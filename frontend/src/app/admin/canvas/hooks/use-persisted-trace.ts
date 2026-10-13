@@ -48,17 +48,17 @@ export interface PersistedTraceResult {
 // the canvas's `buildTurns` consumes (it reads everything off `ev.payload.*`).
 //
 // The persisted trace is a strict subset of the live agent-event stream: it
-// carries only `tool_result` + `loop_complete`, so the canvas's reasoning /
-// token-usage / disambiguation / FAQ-transition panes have no source data and
+// carries only `tool_result` + `loop_complete` (the trace is cut at the end of
+// Phase A, before the adequacy judge runs), so the canvas's reasoning /
+// token-usage / adequacy-judge / FAQ-transition panes have no source data and
 // stay blank on replay — acceptable for post-hoc inspection. The rich per-tool
 // metadata (scoreBuckets, docChunks, authorityBreakdown, statute/caselaw
 // backfill, chunkScores, faqScores, …) IS fully persisted, so the vector-search
 // and per-tool panes render for real.
 //
-// `buildTurns` only creates a pane when it first sees a `tool_call` (it then
-// completes the pending pane on the matching `tool_result`). Since no tool_call
-// is persisted, we synthesize one immediately before each tool_result so the
-// pane materializes; the following result then fills it in.
+// No tool_call is persisted, so we synthesize one immediately before each
+// tool_result: `buildTurns` pairs call → result, and the synthetic call carries
+// the call summary the result lacks.
 export function toCanvasEvents(trace: PersistedTraceEvent[]): FixtureTraceEvent[] {
   const events: FixtureTraceEvent[] = [];
   let seq = 0;

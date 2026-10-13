@@ -20,9 +20,9 @@ describe('canvas pane map', () => {
   });
 
   test('pane map has no entry for tools the backend no longer exposes', () => {
-    // `refine_query` became the auto_refine stage; `clarify` is executable but
-    // absent from TOOL_DEFINITIONS, so the model can never call it.
-    // `get_authority_chain` / `list_framework_docs` were retired outright.
+    // `refine_query` became the auto_refine stage; `clarify` was replaced by
+    // the adequacy judge; `get_authority_chain` / `list_framework_docs` were
+    // retired outright.
     expect(TOOL_PANES.refine_query).toBeUndefined();
     expect(TOOL_PANES.clarify).toBeUndefined();
     expect(TOOL_PANES.cite_documents).toBeUndefined();
@@ -106,26 +106,6 @@ describe('buildTurns', () => {
     expect(pane.toolName).toBe('_adequacy');
     expect(pane.metadata.result).toBe('clarify');
     expect(pane.metadata.clarificationOffered).toBe(true);
-  });
-
-  test('a pre-loop verdict is only short-circuited when no tool events follow', () => {
-    const verdict = ev('phase', null, {
-      phase: 'generality_classified',
-      label: 'Query is outside property tax scope',
-      result: 'out_of_scope',
-    });
-
-    const stopped = buildTurns([verdict]);
-    expect(stopped[0].panes[0].toolName).toBe('_scope_gate');
-    expect(stopped[0].panes[0].metadata.shortCircuited).toBe(true);
-
-    // Scope gate off (adequacy judge on): the verdict is recorded and the
-    // research loop runs anyway.
-    const continued = buildTurns([
-      verdict,
-      ev('tool_call', 0, { toolName: 'faq_search', summary: '"q"' }),
-    ]);
-    expect(continued[0].panes[0].metadata.shortCircuited).toBe(false);
   });
 });
 

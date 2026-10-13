@@ -9,8 +9,6 @@ import { GetNeighborsPane } from './components/get-neighbors-pane';
 import { SearchDocumentPane } from './components/search-document-pane';
 import { GetSectionPane } from './components/get-section-pane';
 import { ListSectionsPane } from './components/list-sections-pane';
-import { DisambiguationPane } from './components/disambiguation-pane';
-import { ScopeGatePane, type ScopeVerdict } from './components/scope-gate-pane';
 import { AdequacyPane, type AdequacyVerdict } from './components/adequacy-pane';
 import { PrepareAnswerPane } from './components/prepare-answer-pane';
 import { FaqSearchPane } from './components/faq-search-pane';
@@ -161,38 +159,8 @@ export function buildTurns(events: FixtureTraceEvent[]): TurnGroup[] {
     return group;
   }
 
-  // A pre-loop verdict only *short-circuits* when nothing follows it. With the
-  // adequacy judge on and the scope gate off (ADEQUACY_JUDGE_ENABLED &&
-  // !SCOPE_GATE_ENABLED), OUT_OF_SCOPE / DISAMBIGUATE are recorded and the
-  // research loop runs anyway — so read it off the trace, don't assume.
-  function loopRanAfter(index: number): boolean {
-    for (let i = index + 1; i < events.length; i++) {
-      const kind = events[i].kind;
-      if (kind === 'tool_call' || kind === 'tool_result' || kind === 'loop_complete') return true;
-    }
-    return false;
-  }
-
-  events.forEach((ev, index) => {
+  events.forEach((ev) => {
     const phase = ev.kind === 'phase' ? str(ev.payload.phase) : '';
-
-    // Pre-loop classifier verdict: proceed | disambiguate | out_of_scope | topic_shift
-    if (phase === 'generality_classified') {
-      const result = str(ev.payload.result, 'proceed');
-      const scopeVerdict = result === 'out_of_scope' || result === 'topic_shift';
-      const group = getOrCreateTurn(null, scopeVerdict ? 'Scope Gate' : 'Disambiguation');
-      group.panes.push({
-        id: `pane-${counter++}`,
-        toolName: scopeVerdict ? '_scope_gate' : '_disambiguation',
-        callSummary: str(ev.payload.label),
-        status: 'complete',
-        metadata: {
-          result,
-          label: ev.payload.label,
-          shortCircuited: !loopRanAfter(index),
-        },
-      });
-    }
 
     // Post-retrieval adequacy judge (between Phase A and Phase B)
     if (phase === 'adequacy_judged') {
@@ -352,27 +320,6 @@ type PaneRenderer = (pane: ToolPane, ctx: PaneContext) => ReactNode;
 
 export const TOOL_PANES: Record<string, PaneRenderer> = {
   _reasoning: (pane) => <ThinkingPane text={pane.callSummary} />,
-
-  _disambiguation: (pane, ctx) => (
-    <DisambiguationPane
-      data={{
-        result: (pane.metadata.result as 'disambiguate' | 'proceed') ?? 'proceed',
-        label: str(pane.metadata.label),
-        shortCircuited: pane.metadata.shortCircuited !== false,
-        onSelect: (choice) => ctx.sendQuery(choice),
-      }}
-    />
-  ),
-
-  _scope_gate: (pane) => (
-    <ScopeGatePane
-      data={{
-        verdict: (pane.metadata.result as ScopeVerdict) ?? 'out_of_scope',
-        label: str(pane.metadata.label),
-        shortCircuited: pane.metadata.shortCircuited !== false,
-      }}
-    />
-  ),
 
   _adequacy: (pane, ctx) => {
     const verdict = str(pane.metadata.result, 'answer') as AdequacyVerdict;
@@ -602,48 +549,6 @@ function renderToolPane(pane: ToolPane, ctx: PaneContext) {
   );
 }
 
-function CollapsibleScopeGate({ turn, passed, ctx }: { turn: TurnGroup; passed: boolean; ctx: PaneContext }) {
-  const [open, setOpen] = useState(false);
-  const pane = turn.panes[0];
-  const shortCircuited = pane?.metadata.shortCircuited !== false;
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200">
-      <button
-        type="button"
-        onClick={() => setOpen(prev => !prev)}
-        className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-neutral-50 transition-colors cursor-pointer"
-      >
-        <span className={`text-xs font-bold uppercase tracking-wide ${passed ? 'text-green-700' : 'text-red-700'}`}>
-          {passed ? 'Passed Pre-Loop Classifier' : `Classifier verdict: ${str(pane?.metadata.result, 'unknown').replace(/_/g, ' ')}`}
-        </span>
-        {!passed && (
-          <span className="text-xs font-medium text-neutral-400">
-            {shortCircuited ? 'loop short-circuited' : 'loop ran anyway'}
-          </span>
-        )}
-        <div className="flex-1" />
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 12 12"
-          fill="none"
-          className={`transition-transform duration-200 text-neutral-400 ${open ? 'rotate-90' : ''}`}
-        >
-          <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </button>
-      {open && (
-        <div className="border-t border-neutral-100 divide-y divide-neutral-100">
-          {turn.panes.map((p) => (
-            <div key={p.id}>{renderToolPane(p, ctx)}</div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function CollapsibleFaqTurn({ turn, ctx }: { turn: TurnGroup; ctx: PaneContext }) {
   const [open, setOpen] = useState(false);
   const faqPane = turn.panes.find(p => p.toolName === 'faq_search');
@@ -688,13 +593,12 @@ function CollapsibleFaqTurn({ turn, ctx }: { turn: TurnGroup; ctx: PaneContext }
   );
 }
 
-const PRE_GRID_PANES = new Set(['_disambiguation', '_scope_gate', 'faq_search']);
+const PRE_GRID_PANES = new Set(['faq_search']);
 
 // The turn-grouped pane layout — the visual body of the canvas, decoupled from
 // the page shell (nav bar / timing header) so it can be embedded anywhere that
 // has a trace: the full-page canvas, or inline in the admin activity detail.
-// `sendQuery` is used by the disambiguation pane's clarify buttons and the
-// Phase B clarification chips; it defaults to a no-op for read-only replays.
+// `sendQuery` is used by the Phase B clarification chips; it defaults to a no-op for read-only replays.
 // `answer` carries Phase B (streamed text, resources, chips, error) — omit it
 // and the canvas renders the research loop alone, exactly as before.
 export function CanvasView({
@@ -725,33 +629,6 @@ export function CanvasView({
           <RequestHeader data={{ received: summary.received, historyTurns: summary.historyTurns }} />
         </div>
       )}
-
-      {/* Pre-grid: pre-loop classifier as collapsible full-width row */}
-      <div className="px-4 pt-2">
-        <AnimatePresence initial={false}>
-          {turns
-            .filter((turn) => turn.panes.some(p => p.toolName === '_disambiguation' || p.toolName === '_scope_gate'))
-            .map((turn) => {
-              const pane = turn.panes.find(p => p.toolName === '_disambiguation' || p.toolName === '_scope_gate');
-              const passed = str(pane?.metadata.result) === 'proceed';
-              return (
-                <motion.div
-                  key={turn.id}
-                  layout="position"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{
-                    layout: { duration: 0.4, ease: [0.4, 0, 0.2, 1] },
-                    opacity: { duration: 0.35, delay: 0.15 },
-                  }}
-                  className="mb-2"
-                >
-                  <CollapsibleScopeGate turn={turn} passed={passed} ctx={ctx} />
-                </motion.div>
-              );
-            })}
-        </AnimatePresence>
-      </div>
 
       {/* Pre-grid: FAQ Search as collapsible full-width row */}
       <div className="px-4">

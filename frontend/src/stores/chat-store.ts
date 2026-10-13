@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type {
   AgentTraceEvent,
-  ChatError,
   ChatState,
   ChatStore,
   ConnectionState,
@@ -11,8 +10,6 @@ import type {
   QueryError,
   ResourceItem,
   QueryStatus,
-  SessionStatus,
-  SuggestionKind,
 } from './types';
 
 function traceStepKey(event: AgentTraceEvent): string {
@@ -27,25 +24,16 @@ function traceStepKey(event: AgentTraceEvent): string {
 export const useChatStore = create<ChatStore>()(
   immer((set, get) => ({
     // Initial application state
-    sessionStatus: 'idle' as SessionStatus,
     connectionState: 'closed' as ConnectionState,
     chatState: 'idle' as ChatState,
     currentQueryId: null,
     queries: {},
     queryOrder: [],
-    errors: [],
-    draftMessage: '',
     sessionId: null,
     sessionCache: {},
     switchingSession: false,
-    suppressTopicShiftOnNextSend: false,
 
     // Session management
-    setSessionStatus: (sessionStatus: SessionStatus) =>
-      set(state => {
-        state.sessionStatus = sessionStatus;
-      }),
-
     setSwitchingSession: (switching: boolean) =>
       set(state => {
         state.switchingSession = switching;
@@ -109,8 +97,6 @@ export const useChatStore = create<ChatStore>()(
         }
       }),
 
-    getQuery: (queryId: string) => get().queries[queryId],
-
     updateQueryStatus: (queryId: string, status: QueryStatus) =>
       set(state => {
         if (state.queries[queryId]) {
@@ -126,7 +112,7 @@ export const useChatStore = create<ChatStore>()(
       set(state => {
         if (state.queries[queryId]) {
           state.queries[queryId].choices = choices;
-          // Keep the question/axis/kind next to the options so the turn can be
+          // Keep the question/axis next to the options so the turn can be
           // rendered as one clarification block.
           state.queries[queryId].clarification = clarification;
         }
@@ -139,39 +125,10 @@ export const useChatStore = create<ChatStore>()(
         }
       }),
 
-    setQuerySuggestion: (queryId: string, suggestion: SuggestionKind) =>
-      set(state => {
-        if (state.queries[queryId]) {
-          state.queries[queryId].suggestion = suggestion;
-        }
-      }),
-
-    clearQuerySuggestion: (queryId: string) =>
-      set(state => {
-        if (state.queries[queryId]) {
-          state.queries[queryId].suggestion = undefined;
-        }
-      }),
-
     setQueryError: (queryId: string, error: QueryError) =>
       set(state => {
         if (state.queries[queryId]) {
           state.queries[queryId].error = error;
-        }
-      }),
-
-    clearQueryError: (queryId: string) =>
-      set(state => {
-        if (state.queries[queryId]) {
-          state.queries[queryId].error = undefined;
-        }
-      }),
-
-    incrementQueryRetry: (queryId: string) =>
-      set(state => {
-        if (state.queries[queryId]) {
-          const current = state.queries[queryId].retryCount || 0;
-          state.queries[queryId].retryCount = current + 1;
         }
       }),
 
@@ -203,39 +160,10 @@ export const useChatStore = create<ChatStore>()(
         query.agentTrace.push(event);
       }),
 
-    // Error and UI management
-    addError: (error: ChatError) =>
-      set(state => {
-        state.errors.push(error);
-      }),
-
-    removeError: (errorId: string) =>
-      set(state => {
-        state.errors = state.errors.filter((e: ChatError) => e.id !== errorId);
-      }),
-
-    clearErrors: () =>
-      set(state => {
-        state.errors = [];
-      }),
-
-    setDraftMessage: (draftMessage: string) =>
-      set(state => {
-        state.draftMessage = draftMessage;
-      }),
-
-    setSuppressTopicShiftOnNextSend: (value: boolean) =>
-      set(state => {
-        state.suppressTopicShiftOnNextSend = value;
-      }),
-
     clearHistory: () =>
       set(state => {
         state.queries = {};
         state.queryOrder = [];
-        state.errors = [];
-        // Leaving the conversation drops any pending one-shot suppression.
-        state.suppressTopicShiftOnNextSend = false;
       }),
 
     stashSession: (sessionId: string) =>
@@ -257,22 +185,17 @@ export const useChatStore = create<ChatStore>()(
         state.queryOrder = snapshot.queryOrder;
         state.currentQueryId = snapshot.currentQueryId;
         state.chatState = snapshot.chatState;
-        state.errors = [];
       });
       return true;
     },
 
     reset: () =>
       set(state => {
-        state.sessionStatus = 'idle';
         state.chatState = 'idle';
         state.currentQueryId = null;
         state.queries = {};
         state.queryOrder = [];
-        state.errors = [];
-        state.draftMessage = '';
         state.sessionId = null;
-        state.suppressTopicShiftOnNextSend = false;
       }),
 
     setSessionId: (sessionId: string | null) =>

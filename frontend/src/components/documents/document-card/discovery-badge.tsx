@@ -5,7 +5,6 @@ export type DiscoveryTag =
   | 'vector-search'
   | 'graph-neighbor'
   | 'fetched'
-  | 'framework-list'
   | 'opinion-fetched'
   | 'unknown';
 
@@ -29,11 +28,6 @@ const TAG_META: Record<DiscoveryTag, { label: string; tone: string; description:
     label: 'Directly looked up',
     tone: 'bg-teal-100 border-teal-200 text-teal-800 dark:bg-teal-950 dark:border-teal-800 dark:text-teal-200',
     description: 'The agent fetched this specific document by ID',
-  },
-  'framework-list': {
-    label: 'From framework list',
-    tone: 'bg-slate-100 border-slate-200 text-slate-800 dark:bg-slate-950 dark:border-slate-700 dark:text-slate-200',
-    description: 'Part of the authority framework the agent browsed',
   },
   'opinion-fetched': {
     label: 'Court opinion',
