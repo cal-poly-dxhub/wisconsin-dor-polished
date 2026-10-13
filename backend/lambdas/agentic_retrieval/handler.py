@@ -25,6 +25,7 @@ from typing import Any
 import pydantic
 from adequacy_judge import judge_answer_plan, resolve_pending_clarification
 from case_law import fetch_case_opinion, is_case_law_doc
+from chat_contracts.models import UserQuery
 from chat_history import get_chat_history, save_chat_history
 from config_validator import validate_env_and_log
 from faq import build_cited_faq_resource
@@ -40,14 +41,13 @@ from loop.phase_b import (
 )
 from prompt import ANSWER_STREAM_SYSTEM_PROMPT
 from rag_documents import build_rag_documents
-from websocket_utils.reporting import ValidationError, report_error
-from chat_contracts.models import UserQuery
 from streaming.delivery import send_resources
 from tracing.emitter import filter_metadata as _filter_metadata
 from tracing.runtime import emit as _emit
 from tracing.runtime import log_event as _log
 from tracing.runtime import query_fields as _query_fields
 from websocket_utils.models import ChoicesContent, ChoicesMessage
+from websocket_utils.reporting import ValidationError, report_error
 from websocket_utils.utils import get_ws_connection_from_session, post_message
 
 from config import AGENTIC_MODEL_ID, RAW_BUCKET, bedrock, neptune
@@ -97,9 +97,10 @@ def handler(event: dict, context) -> dict[str, Any]:
         # If the previous turn ended with a clarification from the adequacy
         # judge and this message answers it (a chip label, or a short typed
         # value), fold the answer back into the question that prompted it so
-        # retrieval and the flowchart router see the real question. Deterministic and keyed on stored state — a no-op (and
-        # therefore byte-for-byte the old behaviour) when no clarification is
-        # pending. The raw user message is still what gets persisted.
+        # retrieval and the flowchart router see the real question.
+        # Deterministic and keyed on stored state — a no-op when no
+        # clarification is pending. The raw user message is still what gets
+        # persisted.
         effective_query, clarification_reply = resolve_pending_clarification(
             user_query.query, chat_history
         )

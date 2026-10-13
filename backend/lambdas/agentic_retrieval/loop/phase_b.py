@@ -23,7 +23,6 @@ from .heartbeat import start_heartbeat
 from .link_repair import KNOWN_STATUTE_CHAPTERS, has_open_link, repair_citation_links
 from .url_guard import guard_external_urls, has_open_url, ungrounded_contacts
 
-
 logger = logging.getLogger(__name__)
 
 # Streaming fragments are held back while a `[label](doc:...)` link is still

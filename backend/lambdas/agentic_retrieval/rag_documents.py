@@ -9,8 +9,8 @@ from case_law import (
     collapse_case_law_by_title,
     is_case_law_doc,
 )
-from flowcharts import FLOWCHART_DOC_PREFIX, flowchart_citation_fields
 from chat_contracts.models import ChunkSnippet, RAGDocument
+from flowcharts import FLOWCHART_DOC_PREFIX, flowchart_citation_fields
 
 logger = logging.getLogger(__name__)
 

@@ -16,10 +16,10 @@ from dataclasses import dataclass, field
 
 from agent_tools import TOOL_DEFINITIONS, execute_tool
 from case_law import citation_to_doc_id
+from chat_contracts.models import FAQResource
 from faq import build_faq_resource, faq_search_direct
 from prompt import SYSTEM_PROMPT
 from rag_documents import NON_DOCUMENT_LABELS
-from chat_contracts.models import FAQResource
 from streaming.bedrock import converse_with_cache
 from tracing.emitter import filter_metadata
 from tracing.runtime import (

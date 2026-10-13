@@ -1,7 +1,6 @@
 """Integration tests for handler.py and loop.phase_a.run_agentic_loop."""
 
 import itertools
-import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
