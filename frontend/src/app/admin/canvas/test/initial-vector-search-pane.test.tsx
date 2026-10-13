@@ -34,7 +34,7 @@ const baseData = {
   },
   broadDocChunks: {
     'news-2025-assessment-deadline-reminder': 4,
-    'gov_publications-2026-agricultural-assessment-guide': 3,
+    'gov_publications-pb061': 3,
   },
 };
 

@@ -20,7 +20,7 @@ RETRIEVED = {
     "statutes-70",
     "statutes-62",
     "admin_rules-tax-18",
-    "gov_publications-2026-agricultural-assessment-guide",
+    "gov_publications-pb061",
     "case-law-405-wis-2d-616",
     "case-law-2025-wi-app-43",
 }
@@ -119,7 +119,7 @@ class TestStatuteRules:
 
     def test_wis_stat_prefix_and_s_dot_prefix(self):
         out, _ = _repair(
-            "[Wis. Stat. § 70.47](doc:gov_publications-2026-agricultural-assessment-guide#page=4) "
+            "[Wis. Stat. § 70.47](doc:gov_publications-pb061#page=4) "
             "and [s. 70.32(1)](doc:wpam-wisconsin-property-assessment-manual-2026#page=2)"
         )
         assert out == (
@@ -154,7 +154,7 @@ class TestStatuteRules:
 class TestAdminRules:
     def test_tax_rule_on_secondary_doc_repointed_to_admin_rules_doc(self):
         out, _ = _repair(
-            "under [Tax 18.06(1)](doc:gov_publications-2026-agricultural-assessment-guide#page=4), "
+            "under [Tax 18.06(1)](doc:gov_publications-pb061#page=4), "
             "an assessor"
         )
         assert out == "under [Tax 18.06(1)](doc:admin_rules-tax-18), an assessor"
@@ -289,11 +289,11 @@ class TestDualLinks:
     def test_admin_rule_claim_becomes_dual_without_ref_page(self):
         label = "must classify land under Tax 18.06(1)"
         out, stats = _repair(
-            f"an assessor [{label}](doc:gov_publications-2026-agricultural-assessment-guide#page=4)"
+            f"an assessor [{label}](doc:gov_publications-pb061#page=4)"
         )
         assert out == (
             f"an assessor [{label}]"
-            "(doc:gov_publications-2026-agricultural-assessment-guide"
+            "(doc:gov_publications-pb061"
             "#page=4&ref=admin_rules-tax-18)"
         )
         assert stats["dual"] == 1
@@ -345,8 +345,8 @@ class TestUntouched:
             "the guide covers [Chapter 13 commercial valuation]"
             "(doc:wpam-wisconsin-property-assessment-manual-2026#page=300) and "
             "[1st Grade Tillable examples]"
-            "(doc:gov_publications-2026-agricultural-assessment-guide#page=19) "
-            "with [2.5 acres](doc:gov_publications-2026-agricultural-assessment-guide#page=9)."
+            "(doc:gov_publications-pb061#page=19) "
+            "with [2.5 acres](doc:gov_publications-pb061#page=9)."
         )
         out, stats = _repair(answer)
         assert out == answer
@@ -552,7 +552,7 @@ class TestSectionPageFill:
 
     def test_repointed_link_falls_back_to_index_page(self):
         out, stats = repair_citation_links(
-            "[§ 74.37](doc:gov_publications-2026-agricultural-assessment-guide#page=4)",
+            "[§ 74.37](doc:gov_publications-pb061#page=4)",
             RETRIEVED,
             {},
             section_pages=self.INDEX,
