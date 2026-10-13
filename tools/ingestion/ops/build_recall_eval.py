@@ -75,8 +75,9 @@ EXCLUDED_ANSWER_PREFIXES = (
     "That question is outside the scope",
 )
 
-# Property-type chip labels from the disambiguation pane (frontend
-# disambiguation-pane.tsx PROPERTY_TYPE_CHOICES).
+# Property-type chip labels from the retired pre-loop disambiguation chips.
+# Older ChatHistory rows still hold them as one-word "queries", so they stay
+# excluded here.
 CHIP_LABELS = {
     "residential",
     "commercial",
@@ -182,7 +183,7 @@ MISSING_SOURCE_RULES: tuple[MissingRule, ...] = (
     ),
     MissingRule(
         r"flow ?chart on page 21",
-        ("gov_publications-2026-board-of-review-guide",),
+        ("gov_publications-pb056",),
         None,
         "Expected the BOR process flowchart in the Board of Review Guide",
     ),
@@ -194,7 +195,7 @@ MISSING_SOURCE_RULES: tuple[MissingRule, ...] = (
     ),
     MissingRule(
         r"agricultural, undeveloped, agricultural forest",
-        ("statutes-70", "gov_publications-2026-agricultural-assessment-guide"),
+        ("statutes-70", "gov_publications-pb061"),
         "70.32(2)",
         "Expected the ag / undeveloped / ag-forest classification rules (s. 70.32(2), ag guide)",
     ),

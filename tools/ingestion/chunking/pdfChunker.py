@@ -1,17 +1,13 @@
-import base64
-import io
 import json
 import logging
 import os
 import re
 from collections import OrderedDict
 from datetime import datetime
-from typing import Any
 
 import boto3
 import botocore
 from botocore.config import Config
-from PIL import Image
 from textractor.data.text_linearization_config import TextLinearizationConfig
 
 from tools.ingestion.chunking.aws_utils import (
@@ -21,7 +17,6 @@ from tools.ingestion.chunking.aws_utils import (
 )
 from tools.ingestion.chunking.boilerplate import strip_boilerplate
 from tools.ingestion.chunking.pymupdf_extractor import (
-    extract_raw_text_with_pymupdf,
     extract_with_pymupdf,
     extraction_looks_good,
 )
@@ -53,8 +48,10 @@ def textract_staging_bucket() -> str:
     return (os.environ.get("TEXTRACT_STAGING_BUCKET", "") or MEDIA_BUCKET_NAME).strip()
 
 
-# Debug flag to control chunk logging
-DEBUG = True  # Set to False to disable chunk logging
+# Local debugging aid: write raw / removed / final chunks under
+# ./pdf_chunking/chunk_logs/. Off unless CHUNK_DEBUG_LOGS=1, so Fargate runs and
+# tests never write to the working directory.
+DEBUG = os.environ.get("CHUNK_DEBUG_LOGS", "").strip().lower() in ("1", "true", "yes")
 logging_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 # Lazy-initialized module-level clients (avoid AWS calls at import time)
@@ -88,13 +85,6 @@ def _ensure_bucket_exists(s3_client, bucket_name: str):
         )
 
 
-CHUNKER_BY_SOURCE = {
-    "state-laws": "statute",
-    "admin-rules": "admin_rule",
-    "assessment-manual": "wpam",
-}
-
-
 def get_chunking_strategy(source_id: str) -> str:
     if source_id.startswith("wpam-"):
         return "wpam"
@@ -102,13 +92,7 @@ def get_chunking_strategy(source_id: str) -> str:
         return "admin_rule"
     if source_id.startswith("statutes-"):
         return "statute"
-    return CHUNKER_BY_SOURCE.get(source_id, "general")
-
-
-def encode_image_to_base64(img: Image.Image) -> str:
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
+    return "general"
 
 
 def get_chunk_logs_dir():
@@ -119,11 +103,6 @@ def get_chunk_logs_dir():
     chunk_logs_dir = "./pdf_chunking/chunk_logs"
     os.makedirs(chunk_logs_dir, exist_ok=True)
     return chunk_logs_dir
-
-
-def strip_newline(cell: Any) -> str:
-    """Remove newline characters from a cell value."""
-    return str(cell).strip()
 
 
 def sub_header_content_splitter(string: str) -> list[str]:
@@ -139,30 +118,6 @@ def sub_header_content_splitter(string: str) -> list[str]:
             else:
                 result.append(segment)
     return result
-
-
-def split_list_items_(items: str) -> list[str]:
-    """Split a string into a list of items, handling nested lists."""
-    parts = re.split("(<<list>><list>|</list><</list>>)", items)
-    output = []
-
-    inside_list = False
-    list_item = ""
-
-    for p in parts:
-        if p == "<<list>><list>":
-            inside_list = True
-            list_item = p
-        elif p == "</list><</list>>":
-            inside_list = False
-            list_item += p
-            output.append(list_item)
-            list_item = ""
-        elif inside_list:
-            list_item += p.strip()
-        else:
-            output.extend(p.split("\n"))
-    return output
 
 
 def process_document(document, local_pdf_path: str):
@@ -219,13 +174,7 @@ def process_document(document, local_pdf_path: str):
     else:
         header_split = result.split("<titles>")
 
-    """flowchart_chunks = extract_flowcharts_from_document(
-        document, bedrock_runtime, os.path.basename(local_pdf_path)
-    )"""
-
-    flowchart_chunks = []
-
-    return header_split, line_page_mapping, flowchart_chunks
+    return header_split, line_page_mapping
 
 
 # Dot-leader sequence used by TOC entries. Any line containing five or more
@@ -254,9 +203,10 @@ _TOC_ENTRY_LINE = re.compile(
 # Titan Embed Text v2 silently truncates inputs past 8000 characters in
 # embed.py. Any chunk larger than this was partially vector-invisible:
 # stored in Neptune, shown at retrieval, but the tail bytes were not part of
-# the match decision. 7500 leaves a margin for character-counting imprecision
-# between the chunker (which measures the buffer) and the final joined text
-# (which includes heading prefixes added at flush time).
+# the match decision. The caps below sit well under that limit, which also
+# leaves room for heading prefixes added at flush time and for enriched embed
+# input (embed.py prepends a title/alias header to statute and admin-rule
+# chunks).
 CHUNK_MAX_CHARS = 2500
 
 _CHUNK_CAP_BY_STRATEGY = {
@@ -1221,114 +1171,15 @@ def extract_clean_plaintext(doc_chunks, doc_id=None, is_statute=False):
     return all_cleaned_content, removed_chunks
 
 
-def extract_raw_text_from_document(document) -> str:
-    """
-    Extract raw text from a Textract document without any filtering or chunking.
-    This is used as a fallback when the filtered approach returns no chunks.
-
-    Args:
-        document: Textract document object
-
-    Returns:
-        str: Raw text content from the document
-    """
-    # Simple configuration for raw text extraction
-    simple_config = TextLinearizationConfig(
-        hide_figure_layout=True,
-        hide_table_layout=False,  # Keep tables as text
-        hide_header_layout=True,
-        hide_footer_layout=True,
-        hide_page_num_layout=True,
-    )
-
-    all_text = []
-    for page in document.pages:
-        page_text = page.get_text(config=simple_config)
-        if page_text.strip():
-            all_text.append(page_text.strip())
-
-    # Join all pages with double newlines
-    raw_text = "\n\n".join(all_text)
-
-    # Basic cleanup - remove excessive whitespace and XML tags
-    raw_text = re.sub(r"<[^>]+>", "", raw_text)  # Remove XML tags
-    raw_text = re.sub(r"\n\s*\n\s*\n+", "\n\n", raw_text)  # Collapse multiple newlines
-    raw_text = re.sub(r"[ \t]+", " ", raw_text)  # Normalize spaces
-
-    return raw_text.strip()
-
-
-def extract_raw_text_from_pdf_s3(bucket_name: str, s3_file_path: str) -> str:
-    """
-    Extract raw text from a PDF in S3.
-    Tries PyMuPDF first, falls back to Textract.
-
-    Args:
-        bucket_name (str): The S3 bucket name.
-        s3_file_path (str): The object key for the PDF file.
-
-    Returns:
-        str: Raw text content from the PDF
-    """
-    print(f"Extracting raw text from {os.path.basename(s3_file_path)}")
-    local_pdf_path = download_pdf_from_s3(_get_s3(), bucket_name, s3_file_path)
-
-    # Try PyMuPDF first
-    pymupdf_text = None
-    try:
-        raw_text = extract_raw_text_with_pymupdf(local_pdf_path)
-        pymupdf_text = raw_text
-        if raw_text and len(raw_text.split()) >= 10:
-            print(
-                f"Extracted raw text with PyMuPDF from {os.path.basename(s3_file_path)} successfully."
-            )
-            return raw_text
-        print("PyMuPDF raw text insufficient, falling back to Textract...")
-    except Exception as e:
-        print(f"PyMuPDF raw text extraction failed ({e}), falling back to Textract...")
-
-    # Textract fallback
-    staging_bucket = textract_staging_bucket()
-    if not staging_bucket:
-        if pymupdf_text is None:
-            raise RuntimeError(
-                f"PyMuPDF could not read {s3_file_path} and the Textract fallback is "
-                "unavailable: TEXTRACT_STAGING_BUCKET is not set."
-            )
-        logger.warning(
-            "TEXTRACT_STAGING_BUCKET is not set; skipping the Textract fallback for %s "
-            "and keeping the PyMuPDF raw text as-is (%d chars). Set the env var to a "
-            "bucket the task role can write to if you want the fallback back.",
-            s3_file_path,
-            len(pymupdf_text),
-        )
-        return pymupdf_text
-
-    s3_uri = f"s3://{bucket_name}/{s3_file_path}"
-    textract_output_path = None
-    try:
-        document, local_pdf_path, textract_output_path = extract_textract_data(
-            _get_s3(), s3_uri, bucket_name, staging_bucket
-        )
-        raw_text = extract_raw_text_from_document(document)
-
-        print(f"Extracted raw text from {os.path.basename(s3_file_path)} with Textract fallback.")
-        return raw_text
-    finally:
-        if textract_output_path:
-            media_bucket, prefix = parse_s3_uri(textract_output_path)
-            print("fallback-->deleting Textract output from s3")
-            delete_s3_prefix(_get_s3(), media_bucket, prefix)
-
-
 def process_pdf_from_s3(
     bucket_name: str, s3_file_path: str, document_url: str = "n/a", source_id: str = "n/a"
 ) -> list:
     """
-    Processes a PDF from S3 and returns a list of cleaned text + flowchart chunks.
+    Processes a PDF from S3 and returns its list of cleaned text chunks.
 
-    Uses PyMuPDF as the primary extraction engine; falls back to Textract when
-    PyMuPDF fails or produces insufficient output.
+    Uses PyMuPDF as the primary extraction engine. When PyMuPDF fails or fails
+    the quality gate, the Textract fallback runs only if TEXTRACT_STAGING_BUCKET
+    is set; otherwise the PyMuPDF result is kept.
 
     Args:
         bucket_name (str): The S3 bucket name.
@@ -1337,7 +1188,7 @@ def process_pdf_from_s3(
         source_id (str, optional): The source identifier for routing. Defaults to "n/a".
 
     Returns:
-        list: A list of cleaned text + flowchart chunks (dicts).
+        list: A list of cleaned text chunks (dicts).
     """
     doc_id = os.path.basename(s3_file_path)
     strategy = get_chunking_strategy(source_id)
@@ -1350,7 +1201,6 @@ def process_pdf_from_s3(
     # --- Try PyMuPDF extraction first ---
     header_split = None
     line_page_mapping = None
-    flowchart_chunks = []
     textract_output_path = None
     used_textract = False
 
@@ -1390,9 +1240,7 @@ def process_pdf_from_s3(
             document, local_pdf_path, textract_output_path = extract_textract_data(
                 _get_s3(), s3_uri, bucket_name, staging_bucket
             )
-            header_split, line_page_mapping, flowchart_chunks = process_document(
-                document, local_pdf_path
-            )
+            header_split, line_page_mapping = process_document(document, local_pdf_path)
             used_textract = True
             print(f"Using Textract fallback for {doc_id}")
         except Exception:
@@ -1496,9 +1344,8 @@ def process_pdf_from_s3(
                     f.write(json.dumps(chunk, indent=2) + "\n")
             print(f"✅ Saved {len(removed_chunks)} removed chunks to {removed_chunks_path}")
 
-        # --- Merge cleaned chunks + flowcharts ---
         all_chunks = []
-        total_chunks = len(cleaned_text_chunks) + len(flowchart_chunks)
+        total_chunks = len(cleaned_text_chunks)
 
         for out_idx, (raw_idx, chunk) in enumerate(cleaned_text_chunks):
             raw_meta = raw_chunks[raw_idx]["metadata"]
@@ -1526,22 +1373,6 @@ def process_pdf_from_s3(
                 }
             )
 
-        for idx, fc in enumerate(flowchart_chunks, start=len(cleaned_text_chunks)):
-            all_chunks.append(
-                {
-                    "chunk_id": f"{doc_id}_flowchart_{idx}",
-                    "text": fc["text"],
-                    "metadata": fc["metadata"]
-                    | {
-                        "source": s3_file_path,
-                        "source_url": document_url,
-                        "chunk_index": idx,
-                        "total_chunks": total_chunks,
-                        "source_id": source_id,
-                    },
-                }
-            )
-
         # Final cap enforcement: extract_clean_plaintext rejoins lines with
         # double newlines which can push a chunk past the cap that was
         # compliant during chunk_document's buffer-time measurement. Re-run
@@ -1563,9 +1394,7 @@ def process_pdf_from_s3(
             with open(final_chunks_path, "w") as f:
                 for chunk in all_chunks:
                     f.write(json.dumps(chunk, indent=2) + "\n")
-            print(
-                f"✅ Saved {len(all_chunks)} final chunks (including flowcharts) to {final_chunks_path}"
-            )
+            print(f"✅ Saved {len(all_chunks)} final chunks to {final_chunks_path}")
 
         return all_chunks
 

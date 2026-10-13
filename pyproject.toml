@@ -61,7 +61,6 @@ select = [
 "backend/lambdas/agentic_retrieval/tracing/summaries.py" = ["E501"]
 "backend/lambdas/chat_api/main.py" = ["E501"]
 "tools/bundle.py" = ["E501"]
-"tools/ingestion/chunking/flowchart_tools.py" = ["E501"]
 "tools/ingestion/chunking/pdfChunker.py" = ["E501"]
 "tools/ingestion/chunking/wpam_chunk_filter.py" = ["E501"]
 "tools/ingestion/embed.py" = ["E501"]

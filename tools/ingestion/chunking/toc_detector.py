@@ -24,15 +24,6 @@ _LEADER_PATTERN = re.compile(r"(?:\.[ \t\xa0]*){5,}\.")
 _PURE_ROMAN_HEADING = re.compile(r"^[IVXLCDM]+\.\s*$")
 
 
-def _leader_coverage(text: str) -> float:
-    """Fraction of text taken up by dot-leader runs."""
-    if not text:
-        return 0.0
-    total = len(text)
-    leader_chars = sum(len(m.group(0)) for m in _LEADER_PATTERN.finditer(text))
-    return leader_chars / total
-
-
 def is_toc_chunk(
     text: str,
     heading: str | None = None,

@@ -1,0 +1,14 @@
+# BuildKit reads <Dockerfile>.dockerignore next to the Dockerfile given to -f.
+# The build context is the repo root (build_and_push.sh), so these patterns are
+# repo-root-relative. The image needs only tools/__init__.py, tools/ingestion/
+# and the docker/ files the Dockerfile copies.
+*
+!tools/__init__.py
+!tools/ingestion/
+tools/ingestion/tests/
+tools/ingestion/chunking_test/
+tools/ingestion/ops/*.json
+tools/ingestion/ops/.regression_env.sh
+tools/ingestion/.ingest-case-law-progress.json
+**/__pycache__
+**/*.pyc

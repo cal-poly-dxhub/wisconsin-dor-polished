@@ -1,6 +1,6 @@
 """Selective, analysis-focused chunking for Wisconsin case-law opinions.
 
-This experiment deliberately omits low-value text rather than merely assigning it a
+This chunker deliberately omits low-value text rather than merely assigning it a
 lower retrieval tier.  It retains:
 
 * the majority opinion's opening issue/holding synopsis;
@@ -16,12 +16,9 @@ Used by tools.ingestion.extract for case-law opinion body selection.
 
 from __future__ import annotations
 
-import argparse
 import html
-import json
 import re
-from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, field
 
 TARGET_SIZE = 3500
 HARD_CAP = 4200

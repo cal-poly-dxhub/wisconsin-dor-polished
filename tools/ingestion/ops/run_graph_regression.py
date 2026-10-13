@@ -33,23 +33,22 @@ Two-run workflow:
 
 Scope / adequacy cases
 ----------------------
-With ADEQUACY_JUDGE_ENABLED=true the harness also runs the post-retrieval
-adequacy judge (backend/lambdas/agentic_retrieval/adequacy_judge.py) after
-Phase A and injects its Finding into the Phase-B context, exactly as the Lambda
-does. The finding is stored on each run record under "finding", and two extra
-per-case expectations gate on it:
+The harness runs the post-retrieval adequacy judge
+(backend/lambdas/agentic_retrieval/adequacy_judge.py) after Phase A and injects
+its Finding into the Phase-B context, exactly as the Lambda does. The finding is
+stored on each run record under "finding", and two extra per-case expectations
+gate on it:
 
     expected_verdict:            ANSWER | CLARIFY | DECLINE
     expected_clarification_axis: substring of finding.clarification.axis
 
 Run only the scope slice (cheap — ~16 cases):
 
-    ADEQUACY_JUDGE_ENABLED=true AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 \\
+    AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 \\
       python tools/ingestion/ops/run_graph_regression.py --mode after --tags scope
 
-If adequacy_judge is not importable (not merged yet) the harness logs once and
-runs without it; verdict expectations are then reported as UNCHECKED, never as
-silent passes.
+If the judge call fails for a case, that case's verdict expectations are
+reported as UNCHECKED, never as silent passes.
 
 Requires the agentic_retrieval Lambda env (Neptune graph id, FAQ KB id) — run
 it with the same AWS profile/region and env vars the Lambda uses. The relevant
@@ -133,31 +132,7 @@ def filter_entries(
 
 # ── Adequacy judge (post-retrieval ANSWER / CLARIFY / DECLINE) ────────────────
 # The judge lives in the agentic_retrieval Lambda source dir (already on sys.path
-# above). It may not exist yet on this branch — the harness must keep working, so
-# the import is lazy, failure-tolerant, and logged exactly once.
-ADEQUACY_ENV_FLAG = "ADEQUACY_JUDGE_ENABLED"
-_adequacy_import_logged = False
-
-
-def adequacy_enabled() -> bool:
-    return os.environ.get(ADEQUACY_ENV_FLAG, "").strip().lower() == "true"
-
-
-def _load_adequacy_judge():
-    """Import the adequacy_judge module, or return None (logged once)."""
-    global _adequacy_import_logged
-    try:
-        import adequacy_judge  # type: ignore[import-not-found]
-
-        return adequacy_judge
-    except Exception as exc:  # noqa: BLE001 — branch may not be merged yet
-        if not _adequacy_import_logged:
-            _adequacy_import_logged = True
-            logger.warning(
-                f"{ADEQUACY_ENV_FLAG}=true but adequacy_judge is unavailable ({exc}); "
-                "running without it. Verdict expectations will be reported as UNCHECKED."
-            )
-        return None
+# above) and runs on every case, as it does on every production query.
 
 
 def finding_to_dict(finding) -> dict | None:
@@ -361,29 +336,24 @@ def run_one_query(
     # injected into its context so the answer can hedge, clarify, or decline.
     finding_dict: dict | None = None
     finding = None
-    if adequacy_enabled():
-        judge_mod = _load_adequacy_judge()
-        if judge_mod is not None:
-            cited_set = set(cited_doc_ids)
-            # Everything retrieved (mirrors handler.py); the judge labels cited vs not.
-            cited_chunks = list(result.all_chunks)
-            try:
-                finding = judge_mod.judge_answer_plan(
-                    query,
-                    chat_history,
-                    # Mirrors handler.py: a prose fallback has no plan, so the
-                    # judge reads the text it did produce.
-                    result.fallback_answer
-                    if result.fallback_answer is not None
-                    else result.answer_plan,
-                    cited_chunks,
-                    result.discovery,
-                    cited_doc_ids=cited_set,
-                )
-                finding_dict = finding_to_dict(finding)
-            except Exception as exc:  # noqa: BLE001 — a flaky judge must not kill the run
-                logger.warning(f"  adequacy judge failed: {exc}")
-                finding = None
+    import adequacy_judge  # type: ignore[import-not-found]
+
+    # Everything retrieved (mirrors handler.py); the judge labels cited vs not.
+    try:
+        finding = adequacy_judge.judge_answer_plan(
+            query,
+            chat_history,
+            # Mirrors handler.py: a prose fallback has no plan, so the judge
+            # reads the text it did produce.
+            result.fallback_answer if result.fallback_answer is not None else result.answer_plan,
+            list(result.all_chunks),
+            result.discovery,
+            cited_doc_ids=set(cited_doc_ids),
+        )
+        finding_dict = finding_to_dict(finding)
+    except Exception as exc:  # noqa: BLE001 — a flaky judge must not kill the run
+        logger.warning(f"  adequacy judge failed: {exc}")
+        finding = None
 
     # Phase B: build context (independent of answerStream) then generate the
     # answer text non-streaming with the (possibly candidate) answerStream prompt.
@@ -1401,8 +1371,6 @@ def main() -> None:
     ids = [s.strip() for s in args.ids.split(",") if s.strip()] or None
     tags = [s.strip() for s in args.tags.split(",") if s.strip()] or None
     out_path = args.out or None
-    if adequacy_enabled():
-        logger.info(f"{ADEQUACY_ENV_FLAG}=true — running the post-retrieval adequacy judge.")
     answerstream_prompt = None
     if args.candidate_answerstream:
         answerstream_prompt = _load_answerstream_from_toml(args.candidate_answerstream)

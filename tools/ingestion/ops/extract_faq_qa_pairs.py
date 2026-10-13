@@ -1,11 +1,11 @@
 """Extract Q/A pairs from Wisconsin DOR SharePoint FAQ pages and upload
 them to the Bedrock FAQ knowledge base bucket.
 
-The agentic retrieval loop hits the Bedrock FAQ KB before touching Neptune
-(see packages/graphrag/lambdas/agentic_retrieval/main.py:679). When the top
-score clears 0.70, the graph is skipped entirely. So the faster path for
-answering common questions is ensuring the KB has the SharePoint content
-split into single-Q/A files matching the existing bucket format.
+The agentic retrieval Lambda seeds every query with a faq_search against this
+KB (backend/lambdas/agentic_retrieval/faq.py) before its tool loop runs, and a
+FAQ that scores at or above FAQ_SCORE_THRESHOLD (0.70) is shown as a source
+card. So common questions are best served by keeping the SharePoint content in
+the KB, split into single-Q/A files matching the existing bucket format.
 
 Usage:
     # Dry-run: print what would be generated, no network writes
