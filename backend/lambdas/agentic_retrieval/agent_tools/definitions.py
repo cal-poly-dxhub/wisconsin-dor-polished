@@ -28,7 +28,8 @@ TOOL_DEFINITIONS = [
             "description": (
                 "Search for relevant document chunks using semantic similarity. "
                 "Returns the most relevant text chunks from Wisconsin DOR documents. "
-                "Always start with this tool to find relevant content. "
+                "A vector_search on the user's question has already run (see "
+                "your first toolResult); call it again for new sub-topics. "
                 "The query is automatically refined for retrieval (casual wording "
                 "translated to assessment vocabulary, follow-up context resolved) — "
                 "just pass the user's question directly."
