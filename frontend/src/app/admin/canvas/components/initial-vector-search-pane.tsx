@@ -15,10 +15,8 @@ import {
   backfillLabel,
   docTypeColor,
   docTypeLabel,
-  groupDocChunks,
   resolveAuthorityBreakdown,
   resolveScoreBuckets,
-  Section,
 } from './vector-search-shared';
 
 export interface InitialVectorSearchData extends VectorSearchBaseData {
@@ -133,32 +131,6 @@ function MergedDocChunkRow({
               />
             ))}
           </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function DocChunkRow({
-  docChunks,
-  hatched = false,
-}: {
-  docChunks: Record<string, number>;
-  hatched?: boolean;
-}) {
-  const groups = groupDocChunks(docChunks);
-  if (groups.length === 0) {
-    return <p className="text-sm text-neutral-400">No chunks</p>;
-  }
-
-  return (
-    <div className="flex flex-wrap gap-x-6 gap-y-3">
-      {groups.map((g) => (
-        <div key={g.label}>
-          <p className="mb-1.5 text-sm font-bold text-neutral-900">
-            {g.count} {g.label}
-          </p>
-          <SquareGrid count={g.count} color={g.color} hatched={hatched} />
         </div>
       ))}
     </div>
