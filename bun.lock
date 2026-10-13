@@ -6,7 +6,6 @@
       "name": "wisconsin-sst",
       "dependencies": {
         "@aws-cdk/cloud-assembly-schema": "^49.2.0",
-        "@cdklabs/generative-ai-cdk-constructs": "0.1.312",
       },
       "devDependencies": {
         "@types/node": "^22.7.9",
@@ -65,15 +64,12 @@
     "infra": {
       "name": "infra",
       "version": "0.1.0",
-      "bin": {
-        "infra": "bin/infra.js",
-      },
       "dependencies": {
+        "@cdklabs/generative-ai-cdk-constructs": "0.1.312",
         "@iarna/toml": "2.2.5",
         "aws-cdk-lib": "^2.233.0",
         "cdk-nextjs-standalone": "^4.3.3",
         "constructs": "^10.0.0",
-        "date-fns": "^4.1.0",
       },
       "devDependencies": {
         "@types/jest": "^29.5.14",
