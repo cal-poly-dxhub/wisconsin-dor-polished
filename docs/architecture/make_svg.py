@@ -159,7 +159,7 @@ fill, stroke = TINT["ingest"]
 out.append(f'<rect x="330" y="830" width="1540" height="210" rx="14" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>')
 text(350, 862, "Offline ingestion pipeline (runs on ECS Fargate at each corpus refresh)", 18, 700)
 stages = [
-    ("Document manifest", ["~1,000 public sources:", "statutes, Tax rules, WPAM,", "DOR guides, FAQs, case law"]),
+    ("Document manifest", ["~850 public sources:", "statutes, Tax rules, WPAM,", "DOR guides, FAQs, news"]),
     ("Scraper", ["Downloads sources", "Skips unchanged files"]),
     ("Raw store (S3)", ["PDFs + metadata", "per document"]),
     ("Extract", ["Chunk PDFs (PyMuPDF)", "Classify: Claude Sonnet 4.6", "Aliases: Nova 2 Lite"]),
