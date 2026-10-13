@@ -9,12 +9,7 @@ from typing import Any
 
 import boto3
 import pydantic
-from aws_lambda_powertools.event_handler.api_gateway import (
-    APIGatewayHttpResolver,
-    CORSConfig,
-    Response,
-    Router,
-)
+from aws_lambda_powertools.event_handler.api_gateway import APIGatewayHttpResolver, Response
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from botocore.exceptions import ClientError
@@ -29,9 +24,8 @@ from chat_api_errors import (
     ValidationError,
     create_error_body,
 )
-from chat_contracts.models import FeedbackRequest, MessageEvent, MessageRequest
+from chat_contracts.models import FeedbackRequest, MessageRequest, UserQuery
 
-router = Router()
 dynamodb = boto3.client("dynamodb")
 session_table_name = os.environ["SESSIONS_TABLE_NAME"]
 message_table_name = os.environ["MESSAGES_TABLE_NAME"]
@@ -44,17 +38,9 @@ RATE_LIMITS = (
 )
 eventbridge = boto3.client("events")
 
-cors_config = CORSConfig(
-    allow_origin="*",
-    allow_headers=[
-        "Content-Type",
-        "Authorization",
-    ],
-    allow_credentials=True,
-)
-
-app = APIGatewayHttpResolver(cors=cors_config)
-app.include_router(router)
+# CORS is enforced by the HTTP API's corsPreflight (the allowedOrigins CDK
+# context); headers set here would be ignored.
+app = APIGatewayHttpResolver()
 
 logger = logging.getLogger()
 logger.setLevel(logging._nameToLevel.get(os.environ.get("LOG_LEVEL", "INFO"), logging.INFO))
@@ -112,15 +98,13 @@ def emit_message_event(
     query: str,
     query_id: str,
     persona: str | None = None,
-    suppress_topic_shift: bool = False,
 ):
     """Emit an EventBridge event to trigger chat message processing."""
-    event = MessageEvent(
+    event = UserQuery(
         query=query,
         query_id=query_id,
         session_id=session_id,
         persona=persona,
-        suppress_topic_shift=suppress_topic_shift,
     )
     logger.info(f"Emitting event: {event}")
 
@@ -660,7 +644,7 @@ def activity_handler() -> dict[str, Any]:
 
         query_kwargs: dict[str, Any] = {
             "TableName": message_table_name,
-            "IndexName": os.environ.get("ACTIVITY_INDEX_NAME", "activityIndexV2"),
+            "IndexName": os.environ.get("ACTIVITY_INDEX_NAME", "activityIndexV3"),
             "KeyConditionExpression": key_condition,
             "ExpressionAttributeValues": expr_values,
             "ExpressionAttributeNames": {"#q": "query", "#ts": "timestamp", "#rating": "rating"},
@@ -678,20 +662,10 @@ def activity_handler() -> dict[str, Any]:
         evaluated_count = 0
         consumed_capacity = 0.0
         query_count = 0
-        active_index = query_kwargs["IndexName"]
 
         while len(raw_items) < limit and query_count < 10 and evaluated_count < 1000:
             query_kwargs["Limit"] = limit - len(raw_items)
-            query_kwargs["IndexName"] = active_index
-            try:
-                response = dynamodb.query(**query_kwargs)
-            except ClientError as error:
-                error_code = error.response.get("Error", {}).get("Code")
-                if error_code != "ResourceNotFoundException" or active_index == "timestampIndex":
-                    raise
-                active_index = "timestampIndex"
-                query_kwargs["IndexName"] = active_index
-                response = dynamodb.query(**query_kwargs)
+            response = dynamodb.query(**query_kwargs)
 
             query_count += 1
             raw_items.extend(response.get("Items", []))
@@ -735,7 +709,7 @@ def activity_handler() -> dict[str, Any]:
 
         logger.info(
             "Activity list index=%s items=%d evaluated=%d queries=%d capacity=%.2f",
-            active_index,
+            query_kwargs["IndexName"],
             len(results),
             evaluated_count,
             query_count,
@@ -1034,34 +1008,6 @@ def chunks_text_handler(docId: str) -> Response:
         return create_json_response(e.status_code, e.to_response())
     except Exception as e:
         logger.error(f"Unexpected error in chunks_text_handler: {e}")
-        return create_json_response(500, create_error_body(e))
-
-
-@app.get("/admin/chunks/<docId>")
-def chunks_detail_handler(docId: str) -> Response:
-    """Every chunk of a document, text included (legacy full payload).
-
-    Superseded by ``/index`` + ``/text`` for the admin UI — a large document
-    can exceed the 6 MB Lambda response cap here. Kept for ad-hoc inspection.
-    """
-    try:
-        require_admin()
-        data = _load_extracted_document(docId)
-        if data is None:
-            return create_json_response(404, {"error": f"Document not found: {docId}"})
-
-        chunks = data.get("chunks", []) or []
-        result_chunks = [_chunk_full_entry(c, i, docId) for i, c in enumerate(chunks)]
-
-        return create_json_response(
-            200,
-            {"document": _document_meta(docId, data, chunks), "chunks": result_chunks},
-        )
-
-    except ChatAPIError as e:
-        return create_json_response(e.status_code, e.to_response())
-    except Exception as e:
-        logger.error(f"Unexpected error in chunks_detail_handler: {e}")
         return create_json_response(500, create_error_body(e))
 
 
@@ -1383,7 +1329,6 @@ def send_message_handler(session_id: str) -> dict[str, Any]:
             message_request.message,
             query_id,
             message_request.persona,
-            message_request.suppress_topic_shift,
         )
         update_session_timestamp(session_id)
         set_session_title_if_missing(session_id, message_request.message)
