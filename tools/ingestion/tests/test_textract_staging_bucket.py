@@ -85,22 +85,6 @@ def test_process_pdf_raises_when_pymupdf_itself_failed(no_staging_bucket):
     textract.assert_not_called()
 
 
-def test_extract_raw_text_keeps_short_pymupdf_text(no_staging_bucket, caplog):
-    """The raw-text path has the same contract: short output is returned
-    rather than escalated to a Textract run that cannot stage its output."""
-    with (
-        patch.object(pdfChunker, "download_pdf_from_s3", return_value="/tmp/fake.pdf"),
-        patch.object(pdfChunker, "extract_raw_text_with_pymupdf", return_value="three short words"),
-        patch.object(pdfChunker, "extract_textract_data") as textract,
-        caplog.at_level(logging.WARNING, logger=pdfChunker.__name__),
-    ):
-        text = pdfChunker.extract_raw_text_from_pdf_s3("raw-bucket", "raw/doc/doc.pdf")
-
-    assert text == "three short words"
-    textract.assert_not_called()
-    assert "TEXTRACT_STAGING_BUCKET is not set" in caplog.text
-
-
 def test_aws_utils_refuses_an_empty_staging_bucket():
     from tools.ingestion.chunking import aws_utils
 

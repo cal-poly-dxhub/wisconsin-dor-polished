@@ -105,7 +105,7 @@ def execute_query(client, graph_id: str, query: str, parameters: dict | None = N
 # source_url, reclassified doc_type, ...) never reaches the graph unless the
 # doc is also re-embedded. ``extracted/`` is therefore authoritative for these
 # keys and is overlaid onto the embedded doc at load time. Embedding data
-# (``chunks``, ``doc_embedding``, ``embed_input_mode``) is NEVER overlaid —
+# (``chunks``, ``embed_input_mode``) is NEVER overlaid —
 # chunk text and vectors must stay the pair that was actually embedded.
 DOC_METADATA_KEYS: tuple[str, ...] = (
     "title",
@@ -122,7 +122,7 @@ DOC_METADATA_KEYS: tuple[str, ...] = (
     "s3_key",
 )
 
-_EMBEDDING_KEYS: frozenset[str] = frozenset({"chunks", "doc_embedding", "embed_input_mode"})
+_EMBEDDING_KEYS: frozenset[str] = frozenset({"chunks", "embed_input_mode"})
 assert not _EMBEDDING_KEYS & set(DOC_METADATA_KEYS)
 
 

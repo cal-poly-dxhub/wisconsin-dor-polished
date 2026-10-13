@@ -6,7 +6,6 @@ from textractor.textractor import Textractor
 
 # Lazy-initialized to avoid AWS calls at import time
 _session = None
-_s3_client = None
 
 
 def _get_region():
@@ -15,41 +14,6 @@ def _get_region():
         _session = boto3.session.Session()
         print("Using AWS region:", _session.region_name)
     return _session.region_name
-
-
-def _get_s3_client():
-    global _s3_client
-    if _s3_client is None:
-        _s3_client = boto3.client("s3", region_name=_get_region())
-    return _s3_client
-
-
-def get_emb(embeddings_client, passage: str) -> list[float]:
-    """Get embedding for a given passage using titan embeddings."""
-
-    # Invoke the model
-    embedding = embeddings_client.embed_query(passage)
-    return embedding
-
-
-def extract_textract_data_local(local_pdf_path: str):
-    """
-    Run Textract on a local PDF file (synchronously).
-    Returns:
-      - document: Textractor Document object
-      - local_pdf_path: echo of input path (for downstream helpers)
-      - None: placeholder for textract_output_path (unused locally)
-    """
-    extractor = Textractor(region_name=_get_region())
-
-    # Use analyze_document for local files (synchronous)
-    document = extractor.analyze_document(
-        file_source=local_pdf_path,
-        features=[TextractFeatures.LAYOUT, TextractFeatures.TABLES],
-        save_image=True,
-    )
-
-    return document, local_pdf_path, None
 
 
 def extract_textract_data(s3, s3_file, bucket_name, media_bucket_name):

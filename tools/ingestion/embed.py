@@ -141,11 +141,12 @@ def embed_chunks(
     """Embed all chunks for a single document.
 
     Case-law opinions with extracted text are embedded chunk-by-chunk like the
-    rest of the corpus. Cases without opinion text remain thin stubs and skip
-    both chunk and document embeddings.
+    rest of the corpus. Cases without opinion text have no chunks and are not
+    embedded.
 
     Records ``doc["embed_input_mode"]`` and per-chunk ``embed_input_chars`` for
-    provenance. The document-level embedding is unchanged by ``embed_input``.
+    provenance. Only chunks are embedded: nothing reads a document-level vector
+    (load.py Phase 8 upserts chunk vectors only).
     """
     doc_id = doc["doc_id"]
     chunks = doc.get("chunks", [])
@@ -167,11 +168,6 @@ def embed_chunks(
         chunk["embedding"] = embed_text(text, model_id, dimension)
         if (i + 1) % 50 == 0:
             logger.info(f"  {doc_id}: embedded {i + 1}/{len(chunks)} chunks")
-
-    doc_text = f"{doc.get('title', '')} {doc.get('summary', '')} "
-    if chunks:
-        doc_text += chunks[0]["text"][:2000]
-    doc["doc_embedding"] = embed_text(doc_text, model_id, dimension)
 
     return doc
 
@@ -212,7 +208,7 @@ def try_metadata_refresh(
 
     Returns a new embedded doc (the EXTRACTED doc — fresh title/summary/citation/
     source_url/... — with the existing per-chunk ``embedding`` /
-    ``embed_input_chars`` and ``doc_embedding`` copied over) when:
+    ``embed_input_chars`` copied over) when:
       - an embedded copy exists,
       - chunk count matches,
       - every chunk's embed input (see ``chunk_fingerprints``) is identical,
@@ -250,15 +246,12 @@ def try_metadata_refresh(
         # Chunk-less case-law stubs are never embedded; embed_chunks() returns
         # them unchanged, so the refreshed copy is simply the extracted doc.
         return dict(extracted)
-    if "doc_embedding" not in embedded:
-        return None
 
     refreshed = dict(extracted)
     refreshed["chunks"] = [
         {**ext, "embedding": emb["embedding"], "embed_input_chars": emb.get("embed_input_chars")}
         for ext, emb in zip(ext_chunks, emb_chunks, strict=True)
     ]
-    refreshed["doc_embedding"] = embedded["doc_embedding"]
     refreshed["embed_input_mode"] = embedded.get("embed_input_mode", "plain")
     return refreshed
 

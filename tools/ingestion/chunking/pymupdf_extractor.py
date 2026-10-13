@@ -1,24 +1,6 @@
-import re
 from collections import Counter
 
 import fitz  # PyMuPDF
-
-STATUTE_NOISE_PATTERNS = [
-    re.compile(r"Updated\s+\d{4}.*Wisconsin\s+Statutes", re.IGNORECASE),
-    re.compile(r"^\d+$"),
-    re.compile(r"^Chapter\s+\d+\s*$"),
-]
-
-
-def strip_statute_noise(
-    line_page_mapping: list[tuple[str, int]],
-) -> list[tuple[str, int]]:
-    """Remove repeating headers, footers, and bare page numbers from statute PDFs."""
-    return [
-        (line, pnum)
-        for line, pnum in line_page_mapping
-        if not any(p.match(line.strip()) for p in STATUTE_NOISE_PATTERNS)
-    ]
 
 
 def _get_body_font_size(doc: fitz.Document) -> float:
@@ -259,22 +241,6 @@ def extract_with_pymupdf(
         header_split = full_text.split("<titles>")
 
     return header_split, line_page_mapping
-
-
-def extract_raw_text_with_pymupdf(pdf_path: str) -> str:
-    """Extract plain text from a PDF using PyMuPDF (no tagging or structuring)."""
-    doc = fitz.open(pdf_path)
-    pages = []
-    for page in doc:
-        text = page.get_text().strip()
-        if text:
-            pages.append(text)
-    doc.close()
-
-    raw_text = "\n\n".join(pages)
-    raw_text = re.sub(r"\n\s*\n\s*\n+", "\n\n", raw_text)
-    raw_text = re.sub(r"[ \t]+", " ", raw_text)
-    return raw_text.strip()
 
 
 def extraction_looks_good(
