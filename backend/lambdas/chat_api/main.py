@@ -2,6 +2,9 @@ import json
 import logging
 import os
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -1042,6 +1045,48 @@ INGEST_CATEGORIES = {
 }
 
 
+# Hosts /admin/ingest may fetch from: the publishers of the sources in
+# tools/ingestion/config/document_manifest.yaml. Https only, and every redirect
+# is re-checked, so the endpoint cannot be pointed at an arbitrary or internal
+# host. A new publisher needs an entry here.
+INGEST_ALLOWED_HOSTS = frozenset(
+    {
+        "www.revenue.wi.gov",
+        "revenue.wi.gov",
+        "docs.legis.wisconsin.gov",
+        "www.iaao.org",
+        "iaao.org",
+        "www3.lirealtor.com",
+    }
+)
+# The largest source today is ~23 MB (WPAM Volume 2); the Lambda has 256 MB.
+INGEST_MAX_BYTES = 50 * 1024 * 1024
+
+
+def _is_allowed_ingest_url(url: str) -> bool:
+    """True for an https URL on an allowed host, with no credentials or custom port."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").lower() in INGEST_ALLOWED_HOSTS
+        and parsed.username is None
+        and port in (None, 443)
+    )
+
+
+class _AllowlistRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only when its target passes the same allowlist."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _is_allowed_ingest_url(newurl):
+            raise urllib.error.URLError(f"redirect to a disallowed URL: {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 @app.post("/admin/ingest")
 def ingest_handler() -> dict[str, Any]:
     """Download documents from URLs, upload to S3, and launch Fargate ingestion.
@@ -1071,8 +1116,8 @@ def ingest_handler() -> dict[str, Any]:
             raise ValidationError(reason=f"Invalid category: {category}")
 
         for url in urls:
-            if not isinstance(url, str) or not url.startswith("http"):
-                raise ValidationError(reason=f"Invalid URL: {url}")
+            if not isinstance(url, str) or not _is_allowed_ingest_url(url):
+                raise ValidationError(reason=f"URL must be https on an allowed source host: {url}")
 
         s3 = boto3.client("s3")
         raw_bucket = os.environ.get("RAW_BUCKET_NAME", "")
@@ -1152,13 +1197,16 @@ def ingest_handler() -> dict[str, Any]:
 
 
 def _download_url(url: str) -> tuple[bytes, str]:
-    """Download a URL and return (content_bytes, content_type)."""
-    import urllib.request
-
+    """Download an allowlisted URL and return (content_bytes, content_type)."""
+    if not _is_allowed_ingest_url(url):
+        raise ValueError(f"URL is not on the ingest allowlist: {url}")
+    opener = urllib.request.build_opener(_AllowlistRedirectHandler)
     req = urllib.request.Request(url, headers={"User-Agent": "WI-DOR-Bot/1.0"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with opener.open(req, timeout=30) as resp:
         content_type = resp.headers.get("Content-Type", "application/octet-stream")
-        content_bytes = resp.read()
+        content_bytes = resp.read(INGEST_MAX_BYTES + 1)
+    if len(content_bytes) > INGEST_MAX_BYTES:
+        raise ValueError(f"Download exceeds {INGEST_MAX_BYTES // (1024 * 1024)} MB: {url}")
     return content_bytes, content_type
 
 
@@ -1231,7 +1279,6 @@ def _common_prefix(strings: list[str]) -> str:
 def _make_doc_id(category: str, url: str) -> str:
     """Derive a stable document ID from category + URL (mirrors scrape_documents.py logic)."""
     import re
-    import urllib.parse
 
     parsed = urllib.parse.urlparse(url)
     path = urllib.parse.unquote(parsed.path)

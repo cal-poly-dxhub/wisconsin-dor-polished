@@ -71,6 +71,7 @@ export class WisconsinBotStack extends cdk.Stack {
         faqKnowledgeBaseId: graphRAGStack.faqKnowledgeBaseId,
         faqUrlTable: graphRAGStack.faqUrlTable,
         modelConfigTable: graphRAGStack.modelConfigTable,
+        costAlerts: this.node.tryGetContext('costAlerts'),
       }
     );
 

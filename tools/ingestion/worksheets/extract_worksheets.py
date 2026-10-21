@@ -213,11 +213,15 @@ def main() -> None:
                 # Fall back to fetching the public URL if not yet in the bucket.
                 import urllib.request
 
+                source_url = meta["source_url"]
+                if not source_url.startswith("https://"):
+                    raise ValueError(
+                        f"{form_name}: refusing non-https source_url {source_url!r}"
+                    ) from None
                 logger.info("  not in bucket at %s; fetching public URL", key)
-                req = urllib.request.Request(
-                    meta["source_url"], headers={"User-Agent": "Mozilla/5.0"}
-                )
-                data = urllib.request.urlopen(req).read()  # noqa: S310
+                req = urllib.request.Request(source_url, headers={"User-Agent": "Mozilla/5.0"})
+                # The scheme is checked above; urllib only follows http(s)/ftp redirects.
+                data = urllib.request.urlopen(req, timeout=60).read()  # noqa: S310  # nosec B310
 
         result = extract_workbook(data, worksheet_id, meta)
         payload = json.dumps(result, indent=2, ensure_ascii=False)

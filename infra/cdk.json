@@ -107,6 +107,8 @@
     "allowedOrigins": [
       "https://d11c3qt90tkvk2.cloudfront.net",
       "http://localhost:3000"
-    ]
+    ],
+    "_comment_costAlerts": "Optional cost early-warning (infra/stacks/cost-alarms.ts). Alarms on retrieval Lambda invocations (one per question, ~$0.27 Bedrock) and a monthly Bedrock budget, all notifying one SNS topic. Defaults: questionsPerHour 120, questionsPerDay 600, monthlyBedrockUsd 500. Set email to subscribe an address (AWS sends a confirmation email that must be accepted).",
+    "costAlerts": {}
   }
 }
