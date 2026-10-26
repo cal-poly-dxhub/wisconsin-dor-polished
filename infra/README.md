@@ -63,11 +63,17 @@ bun run bundle           # from the repo root — CDK synthesizes from infra/bun
 cdk diff   -c stackName=WisconsinBotGraphRAG
 cdk deploy -c stackName=WisconsinBotGraphRAG --require-approval never
 bunx tsc --noEmit && bunx jest
+bun run nag             # cdk-nag AWS Solutions rules over the synthesized templates
 ```
 
 Context flags: `stackName` (defaults to `WisconsinBotGraphRAG`), plus `domainName` / `hostedZoneName` /
 `hostedZoneId` for a custom domain. Override the pin for a one-off synth with
 `-c neptuneGraphId=g-xxxxxxxx`.
+
+`bun run nag` exits non-zero when a rule fires that is not in the reviewed list
+at the top of `scripts/cdk-nag.js` (each accepted rule carries its reason; the
+`TODO` entries are open items in `docs/tasks.md` Task 86). `costAlerts` context
+sets the cost-alarm email and thresholds (`stacks/cost-alarms.ts`).
 
 Always `cdk diff` before deploying and read the resource list: the graph is
 outside CloudFormation precisely so that an unrelated change can never take the

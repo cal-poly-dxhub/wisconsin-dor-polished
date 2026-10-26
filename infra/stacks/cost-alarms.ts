@@ -61,6 +61,7 @@ export class CostAlarms extends Construct {
 
     this.topic = new sns.Topic(this, 'CostAlertTopic', {
       displayName: 'Wisconsin DOR chatbot cost alerts',
+      enforceSSL: true,
     });
     this.topic.addToResourcePolicy(
       new iam.PolicyStatement({
