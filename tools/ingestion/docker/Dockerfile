@@ -21,4 +21,12 @@ ENV PYTHONPATH=/app
 COPY tools/ingestion/docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# Run unprivileged. /app is chowned so optional debug output (CHUNK_DEBUG_LOGS)
+# can still be written next to the code; AWS access comes from the task role.
+RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin ingest && \
+    chown -R ingest:ingest /app
+USER ingest
+
+# No HEALTHCHECK: this is a one-shot Fargate batch task (it exits when the phase
+# finishes), and ECS ignores Docker HEALTHCHECK unless the task definition sets one.
 ENTRYPOINT ["/app/entrypoint.sh"]

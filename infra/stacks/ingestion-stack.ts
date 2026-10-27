@@ -84,10 +84,20 @@ export class IngestionStack extends cdk.NestedStack {
       })
     );
 
+    // Bedrock: Titan Embed v2 (embed), Nova 2 Lite (aliases, case-law holding
+    // summaries) and Claude (classification), the last two through US
+    // cross-region inference profiles, which also need the foundation-model
+    // ARN in every region the profile routes to.
     taskRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['bedrock:InvokeModel'],
-        resources: ['*'],
+        resources: [
+          `arn:aws:bedrock:*:${this.account}:inference-profile/us.anthropic.*`,
+          `arn:aws:bedrock:*:${this.account}:inference-profile/us.amazon.nova-*`,
+          'arn:aws:bedrock:*::foundation-model/anthropic.*',
+          'arn:aws:bedrock:*::foundation-model/amazon.nova-*',
+          `arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`,
+        ],
       })
     );
 

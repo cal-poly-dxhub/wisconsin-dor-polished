@@ -9,3 +9,6 @@ cdk.out
 
 # Lambda build outputs (see scripts/bundle.py)
 bundle/
+
+# Hand-written helper scripts are source, not compiled output.
+!scripts/*.js

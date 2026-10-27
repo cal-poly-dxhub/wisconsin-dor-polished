@@ -12,6 +12,8 @@ fixtures) so drift in either direction fails CI.
 
 import os
 import sys
+import urllib.error
+import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,7 +28,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "layers")
 sys.path.insert(0, os.path.dirname(__file__))
 
 with patch.dict(os.environ, {"SESSIONS_TABLE_NAME": "test-sessions-table"}):
-    from main import INGEST_CATEGORIES
+    from main import (
+        INGEST_CATEGORIES,
+        _AllowlistRedirectHandler,
+        _is_allowed_ingest_url,
+    )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _INGEST_CONFIG = _REPO_ROOT / "tools" / "ingestion" / "config" / "ingest_config.yaml"
@@ -89,3 +95,54 @@ def test_matches_the_scrapers_manifest_block(manifest_categories, category):
     assert entry["framework_id"] == expected["framework_id"]
     assert entry["doc_type"] == expected["doc_type"]
     assert entry["authority_level"] == expected["authority_level"]
+
+
+def _manifest_urls(manifest_categories):
+    for block in manifest_categories.values():
+        for entry in block.get("urls", []):
+            yield entry if isinstance(entry, str) else entry["url"]
+
+
+def test_every_manifest_source_is_on_the_ingest_allowlist(manifest_categories):
+    """Re-ingesting any manifest document from the admin page must be allowed, so
+    a new publisher added to the manifest has to be added to the allowlist too."""
+    rejected = sorted(
+        {
+            urllib.parse.urlparse(url).hostname
+            for url in _manifest_urls(manifest_categories)
+            if not _is_allowed_ingest_url(url)
+        }
+    )
+    assert not rejected, f"manifest hosts missing from INGEST_ALLOWED_HOSTS: {rejected}"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://www.revenue.wi.gov/documents/wpam26.pdf",  # not https
+        "file:///proc/self/environ",
+        "ftp://www.revenue.wi.gov/x.pdf",
+        "https://169.254.169.254/latest/meta-data/",
+        "https://localhost/x.pdf",
+        "https://evil.example.com/x.pdf",
+        "https://www.revenue.wi.gov.evil.example.com/x.pdf",
+        "https://user:pw@www.revenue.wi.gov/x.pdf",
+        "https://www.revenue.wi.gov:8443/x.pdf",
+        "https://[::1]/x.pdf",
+        "not a url",
+    ],
+)
+def test_ingest_url_allowlist_rejects(url):
+    assert not _is_allowed_ingest_url(url)
+
+
+def test_ingest_url_allowlist_accepts_source_hosts():
+    assert _is_allowed_ingest_url("https://www.revenue.wi.gov/documents/wpam26.pdf")
+    assert _is_allowed_ingest_url("https://docs.legis.wisconsin.gov/document/statutes/ch.%2070.pdf")
+    assert _is_allowed_ingest_url("https://WWW.REVENUE.WI.GOV:443/x.pdf")
+
+
+def test_redirect_off_the_allowlist_is_refused():
+    handler = _AllowlistRedirectHandler()
+    with pytest.raises(urllib.error.URLError):
+        handler.redirect_request(None, None, 302, "Found", {}, "http://169.254.169.254/")

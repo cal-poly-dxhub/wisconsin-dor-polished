@@ -80,7 +80,8 @@ def load_cases(path: str, only: set[str] | None, include_unlabeled: bool) -> lis
 
 
 def query_key(query: str) -> str:
-    return hashlib.sha1(query.strip().encode()).hexdigest()
+    """Embedding-cache key (not a security use). Older saved runs keyed by SHA1 just re-embed."""
+    return hashlib.sha256(query.strip().encode()).hexdigest()
 
 
 def load_embedding_cache() -> dict[str, list[float]]:

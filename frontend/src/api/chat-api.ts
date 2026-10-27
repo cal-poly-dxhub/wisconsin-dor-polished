@@ -13,7 +13,7 @@ const ApiResponse = z.object({
 const CreateSessionResponse = z.object({
   sessionId: z.string().uuid(),
 });
-const SendMessageRequest = z.object({
+export const SendMessageRequest = z.object({
   message: z.string().min(1),
   persona: z.enum(['citizen', 'government']).optional(),
 });
@@ -55,7 +55,7 @@ const RichFeedback = z.object({
   speedTimely: z.enum(['yes', 'no']).nullable(),
   speedComment: z.string(),
 });
-const FeedbackRequest = z.object({
+export const FeedbackRequest = z.object({
   queryId: z.string().uuid(),
   thumbUp: z.boolean(),
   feedback: z.string().optional(),

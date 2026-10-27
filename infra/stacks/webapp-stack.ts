@@ -42,7 +42,12 @@ export class WebAppStack extends cdk.NestedStack {
       });
     }
 
-    const buildCommand = `cd ../ && bun install && cd frontend && bunx open-next build && find .open-next -path '*/node_modules/.bin' -type d -exec rm -rf {} + 2>/dev/null || true`;
+    // Only the .bin cleanup may fail quietly: a failed `open-next build` must
+    // fail the synth, or CDK packages whatever stale .open-next/ is on disk.
+    // Next.js 15 left support on 2026-10-21, so OpenNext refuses it without
+    // the explicit flag (given a value: OpenNext 3.10's arg parser reads a
+    // value-less trailing flag as unset); drop it with the Next 16 upgrade.
+    const buildCommand = `cd ../ && bun install && cd frontend && bunx open-next build --dangerously-use-unsupported-next-version true && (find .open-next -path '*/node_modules/.bin' -type d -exec rm -rf {} + 2>/dev/null || true)`;
     const excludeBinSymlinks = ['**/node_modules/.bin/**'];
     const nextjs = new Nextjs(this, 'NextjsApp', {
       nextjsPath: '../frontend',

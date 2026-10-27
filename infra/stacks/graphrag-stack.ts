@@ -34,18 +34,21 @@ export class GraphRAGStack extends cdk.NestedStack {
       bucketName: cdk.Fn.join('-', ['wis-raw-bucket', uid]),
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       autoDeleteObjects: false,
+      enforceSSL: true,
     });
 
     const workBucket = new s3.Bucket(this, 'WisDorWorkBucket', {
       bucketName: cdk.Fn.join('-', ['wis-work-bucket', uid]),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
+      enforceSSL: true,
     });
 
     const faqBucket = new s3.Bucket(this, 'WisDorFaqGraphRAG', {
       bucketName: cdk.Fn.join('-', ['wis-faq-bucket-graphrag', uid]),
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       autoDeleteObjects: false,
+      enforceSSL: true,
     });
 
     // Maps a normalized FAQ question to its public revenue.wi.gov URL.

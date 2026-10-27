@@ -7,6 +7,7 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
 import { getRetrievalEnv } from '../lib/retrieval-config';
+import { CostAlarms, CostAlertsConfig } from './cost-alarms';
 
 export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   chatContractsLayer: lambda.LayerVersion;
@@ -25,6 +26,8 @@ export interface GraphRAGMessagesStackProps extends cdk.StackProps {
   faqKnowledgeBaseId: string;
   faqUrlTable: cdk.aws_dynamodb.ITable;
   modelConfigTable: cdk.aws_dynamodb.ITable;
+  /** Optional `costAlerts` context: alert email and thresholds (cost-alarms.ts). */
+  costAlerts?: CostAlertsConfig;
 }
 
 export class GraphRAGMessagesStack extends cdk.NestedStack {
@@ -177,10 +180,15 @@ export class GraphRAGMessagesStack extends cdk.NestedStack {
         effect: iam.Effect.ALLOW,
         actions: ['bedrock:Retrieve'],
         resources: [
-          `arn:aws:bedrock:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:knowledge-base/*`,
+          `arn:aws:bedrock:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:knowledge-base/${props.faqKnowledgeBaseId}`,
         ],
       })
     );
+
+    new CostAlarms(this, 'CostAlarms', {
+      retrievalFunction: agenticRetrievalHandler,
+      config: props.costAlerts,
+    });
 
     // EventBridge Rule — invokes AgenticRetrieval directly (no Step Function).
     // The Lambda handles retrieval, answer streaming, and resource delivery
