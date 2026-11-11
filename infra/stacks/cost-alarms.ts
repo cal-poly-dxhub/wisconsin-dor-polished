@@ -34,6 +34,17 @@ const BEDROCK_BILLING_SERVICES = [
   'Claude Haiku 4.5 (Amazon Bedrock Edition)',
 ];
 
+/**
+ * The top-level stack's name. Inside a nested stack `stackName` resolves to the
+ * long generated nested-stack name, which overflows the 100-character limit on
+ * budget names; the root name is a short literal.
+ */
+function rootStackName(scope: Construct): string {
+  let stack = cdk.Stack.of(scope);
+  while (stack.nestedStackParent) stack = stack.nestedStackParent;
+  return stack.stackName;
+}
+
 export interface CostAlarmsProps {
   /** The retrieval Lambda: one invocation per question (~$0.27 of Bedrock). */
   retrievalFunction: lambda.IFunction;
@@ -101,7 +112,7 @@ export class CostAlarms extends Construct {
     const subscriber = { subscriptionType: 'SNS', address: this.topic.topicArn };
     new budgets.CfnBudget(this, 'BedrockMonthlyBudget', {
       budget: {
-        budgetName: `${cdk.Stack.of(this).stackName}-bedrock-monthly`,
+        budgetName: `${rootStackName(this)}-bedrock-monthly`,
         budgetType: 'COST',
         timeUnit: 'MONTHLY',
         budgetLimit: { amount: budgetUsd, unit: 'USD' },
