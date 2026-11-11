@@ -5,6 +5,8 @@ import { GraphRAGStack } from '../stacks/graphrag-stack';
 import { WisconsinBotStack } from '../stacks/stack';
 import { parseSsoConfig, SsoResources } from '../stacks/sso';
 import { AdminsGroup } from '../stacks/admins-group';
+import { CostAlarms } from '../stacks/cost-alarms';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
 
 describe('GraphRAGStack', () => {
   function synth(): Template {
@@ -116,5 +118,23 @@ describe('Admins group (security pass F4)', () => {
     t.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: { Statement: [{ Action: 'cognito-idp:CreateGroup', Effect: 'Allow' }] },
     });
+  });
+});
+
+describe('CostAlarms', () => {
+  test('budget name comes from the root stack and fits the 100-char limit, even inside a nested stack', () => {
+    const app = new cdk.App();
+    const root = new cdk.Stack(app, 'WisconsinBotGraphRAG');
+    const nested = new cdk.NestedStack(root, 'WisconsinGraphRAGMessagesStackWithAVeryLongConstructId');
+    const fn = new lambda.Function(nested, 'Fn', {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: 'index.handler',
+      code: lambda.Code.fromInline('def handler(e, c): pass'),
+    });
+    new CostAlarms(nested, 'CostAlarms', { retrievalFunction: fn });
+    const budgets = Template.fromStack(nested).findResources('AWS::Budgets::Budget');
+    const names = Object.values(budgets).map(b => b.Properties.Budget.BudgetName);
+    expect(names).toEqual(['WisconsinBotGraphRAG-bedrock-monthly']);
+    expect(names[0].length).toBeLessThanOrEqual(100);
   });
 });
